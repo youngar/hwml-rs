@@ -1,0 +1,40 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+homepage = ""
+documentation = ""
+repository = ""
+authors = []
+license = ""
+
+[workspace.dependencies]
+# Local Crates
+hwml = { path = "crates/hwml" }
+hwml_db = { path = "crates/hwml_db" }
+hwml_server = { path = "crates/hwml_server" }
+hwml_parser = { path = "crates/hwml_parser" }
+
+# External Crates
+annotate-snippets = "0.11.5"
+clap = { version = "4.5.28", features = ["derive"] }
+derive-new = "0.7.0"
+salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
+lsp-server = "0.7.8"
+lsp-types = "0.97.0"
+lalrpop = { version = "0.22.1", features = ["unicode"] }
+lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+unreachable_pub = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(fuzzing)",
+    "cfg(codspeed)",
+] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -2 }

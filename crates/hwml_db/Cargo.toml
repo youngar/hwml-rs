@@ -1,0 +1,21 @@
+[package]
+name = "hwml_db"
+description = ""
+
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+salsa.workspace = true
+derive-new.workspace = true
+annotate-snippets.workspace = true
+
+[lints]
+workspace = true

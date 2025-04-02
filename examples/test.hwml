@@ -1,0 +1,40 @@
+
+
+def add (a b : Nat) := A -> ( a b : Type ) -> b
+
+
+// hello
+// my man
+
+def andrew := /*hello */ "andrew"
+def num := 123123 /* asdf */
+
+
+foo (x : UInt) => Uint
+
+{
+
+}
+o
+
+expr : { a: Nat, b : Nat}
+
+
+let a := 100 in
+  {a = succ x, b = y} = expr
+
+def x = y
+
+let a := 100 in
+let a := expr.a in
+let b := expr.b in
+let x = a;
+let y = b;
+
+
+Foo { y: 2, x: i }
+
+
+data Option 
+data List
+List

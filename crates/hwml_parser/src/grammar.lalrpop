@@ -1,0 +1,112 @@
+use std::str::FromStr;
+use crate::cst::*;
+use lalrpop_util::ErrorRecovery;
+
+grammar<'err>(errors: &'err mut Vec<ErrorRecovery<usize, Token<'input>, &'static str>>);
+
+pub Program: Program = {
+  Stmt* => Program::new(<>),
+};
+
+pub Stmt: Stmt = {
+    Def => Stmt::Def(<>),
+    ! => { errors.push(<>); Stmt::Error },
+};
+
+pub Def: Def = {
+    "def" <name:Id> <args:Bindings> ":=" <expr:Expr0> => Def::new(name, args, expr)
+};
+
+pub Expr0: Box<Expr> = {
+  #[precedence(level="0")] 
+  Pi => Box::new(Expr::Pi(<>)),
+  Fun => Box::new(Expr::Fun(<>)),
+
+  #[precedence(level="1")]
+  Expr1
+};
+
+pub Expr1: Box<Expr> = {
+  ExprList => Box::new(Expr::App(<>)),
+};
+
+pub Expr2: Box<Expr> = {
+  Lam => Box::new(Expr::Lam(<>)),
+  LetIn => Box::new(Expr::LetIn(<>)),
+  Expr3
+};
+
+pub Expr3: Box<Expr> = {
+  Var => Box::new(Expr::Var(<>)),
+  Underscore => Box::new(Expr::Underscore(<>)),
+  Paren => Box::new(Expr::Paren(<>)),
+  Num => Box::new(Expr::Num(<>)),
+  Str => Box::new(Expr::Str(<>)),
+};
+
+// (x1 .. xn : X) (y1 .. yn : Y) -> z
+pub Pi: Pi = {
+  <bs:Bindings> "->" <r:Expr0> => Pi::new(bs, r),
+};
+
+pub Fun: Fun = {
+  <types:Expr3+> "->" <r:Expr0> => Fun::new(types, r),
+};
+
+pub LetIn: LetIn = {
+  "let" <name:Id> ":=" <expr:Expr0> => LetIn::new(name, expr),
+};
+
+pub Lam: Lam = {
+  "fun" <bs:Bindings> "=>" <body:Expr0> => Lam::new(bs, body),
+};
+
+pub ExprList: Vec<Box<Expr>> = {
+  <mut xs:Expr3*> <x:Expr2> => { xs.push(x); xs },
+};
+
+pub Var: Id = {
+  Id
+};
+
+pub Underscore: Underscore = {
+  <l:@L> "_" <r:@R> => Underscore::new(l..r)
+};
+
+pub Paren: Paren = {
+  "(" <expr:Expr0> ")" => Paren::new(expr),
+};
+
+// (x1 .. xn : X) (y1 .. yn : Y)
+pub Bindings: Vec<BindingGroup> = {
+  BindingGroup*
+};
+
+// (x1 .. xn : A)
+pub BindingGroup: BindingGroup = {
+  "(" <el:ExprList> ":" <typ:Expr0> ")" => BindingGroup::new(el, typ)
+};
+
+pub Num: Num
+  = <l:@L> <s:r"[0-9]+"> <r:@R>
+  => Num::new(i32::from_str(s).unwrap(), l..r);
+
+pub Id: Id
+  = <l:@L> <s:r"[a-zA-Z]+"> <r:@R>
+  => Id::new(s.to_owned(), l..r);
+
+pub Str: Str = StrLit => Str::new(<>);
+
+pub StrLit: String = <l:r#""(\\\\|\\"|[^"\\])*""#> => l[1..l.len()-1].into();
+
+match {
+  // Ignore multiline comments.
+  r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => { },
+  // Ignore single line comments.
+  r"//[^\n\r]*[\n\r]*" => { },
+} else {
+  // Ignore whitespace.
+  r"\s*" => { },
+  // Everything else.
+  _
+}
