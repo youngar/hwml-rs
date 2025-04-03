@@ -1,3 +1,8 @@
+# HWL
+[![CI](https://github.com/youngar/hwml-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/youngar/hwml-rs/actions/workflows/ci.yml)
+
+HWL is an in-development hardware description language equiped with a powerful metaprogramming layer.
+
 A template Rust project with fully functional and no-frills Nix support, as well as builtin VSCode configuration to get IDE experience without any manual setup (just [install direnv](https://nixos.asia/en/direnv), open in VSCode and accept the suggestions). It uses [crane](https://crane.dev/), via [rust-flake](https://github.com/juspay/rust-flake).
 
 > [!NOTE]
