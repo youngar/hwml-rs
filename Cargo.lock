@@ -440,6 +440,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hwml_core"
+version = "0.0.0"
+
+[[package]]
 name = "hwml_db"
 version = "0.0.0"
 dependencies = [
