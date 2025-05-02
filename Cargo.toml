@@ -16,24 +16,29 @@ license = ""
 hwml = { path = "crates/hwml" }
 hwml_core = { path = "crates/hwml-core" }
 hwml_db = { path = "crates/hwml-db" }
+hwml_dev = { path = "crates/hwml_dev" }
 hwml_lsp_server = { path = "crates/hwml-lsp-server" }
 hwml_parser = { path = "crates/hwml-parser" }
+hwml_support = { path = "crates/hwml_support" }
 
 # External Crates
 annotate-snippets = "0.11.5"
+anyhow = "1.0"
 clap = { version = "4.5.28", features = ["derive"] }
+crossbeam-channel = "0.5.15"
+dashmap = "6.1.0"
 derive-new = "0.7.0"
-salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
-lsp-server = "0.7.8"
-lsp-types = "0.97.0"
+elegance = "0.3.2"
+eyre = "0.6.12"
 lalrpop = { version = "0.22.1", features = ["unicode"] }
 lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
+lsp-server = "0.7.8"
+lsp-types = "0.97.0"
+notify-debouncer-mini = "0.4.1"
+salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
 serde = "*"
 serde_json = "1.0.138"
-dashmap = "6.1.0"
-notify-debouncer-mini = "0.4.1"
-eyre = "0.6.12"
-crossbeam-channel = "0.5.15"
+thiserror = "2"
 
 [workspace.lints.rust]
 unsafe_code = "warn"

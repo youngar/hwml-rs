@@ -1,9 +1,10 @@
 use crate::db::Index;
+use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 pub type RcSyntax = Rc<Syntax>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Syntax {
     Variable(Variable),
     Check(Check),
@@ -63,7 +64,7 @@ impl Syntax {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct Variable {
     pub index: Index,
 }
@@ -74,7 +75,7 @@ impl Variable {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Check {
     pub ty: RcSyntax,
     pub term: RcSyntax,
@@ -86,7 +87,7 @@ impl Check {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pi {
     pub source: RcSyntax,
     pub target: RcSyntax,
@@ -98,7 +99,7 @@ impl Pi {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Lambda {
     pub body: RcSyntax,
 }
@@ -109,7 +110,7 @@ impl Lambda {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Application {
     pub function: RcSyntax,
     pub argument: RcSyntax,
@@ -123,7 +124,7 @@ impl Application {
 
 type UniverseLevel = u32;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct Universe {
     pub level: UniverseLevel,
 }
@@ -134,7 +135,7 @@ impl Universe {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Environment {
     pub variable_types: Vec<RcSyntax>,
 }
