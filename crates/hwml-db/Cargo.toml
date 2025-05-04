@@ -1,5 +1,5 @@
 [package]
-name = "hwml_server"
+name = "hwml_db"
 description = ""
 
 publish = false
@@ -12,8 +12,14 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-lsp-server.workspace = true
-lsp-types.workspace = true
+hwml_parser.workspace = true
+lalrpop-util.workspace = true
+clap.workspace = true
+salsa.workspace = true
+derive-new.workspace = true
+annotate-snippets.workspace = true
+dashmap.workspace = true
+eyre.workspace = true
 
 [lints]
 workspace = true

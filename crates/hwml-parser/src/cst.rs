@@ -15,7 +15,9 @@ pub enum Stmt {
 #[derive(Eq, PartialEq, Debug, Hash, new)]
 pub struct Def {
     name: Id,
+
     args: Vec<BindingGroup>,
+
     expr: Box<Expr>,
 }
 

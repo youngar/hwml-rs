@@ -1,6 +1,6 @@
-/target
+.DS_Store
+.direnv
+/.pre-commit-config.yaml
 /result
 /result-lib
-.direnv
-
-/.pre-commit-config.yaml
+/target

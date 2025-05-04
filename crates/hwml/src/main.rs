@@ -1,5 +1,8 @@
 use clap::Parser;
-use hwml_parser::grammar;
+use hwml_db::db::*;
+// use hwml_parser::grammar;
+use salsa::Setter;
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -21,16 +24,33 @@ fn main() {
     if args.verbose {
         println!("DEBUG {args:?}");
     }
-    let contents = fs::read_to_string(&args.file).expect("Should have been able to read the file");
+    let path = args.file.canonicalize().unwrap();
+    let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
 
     if args.verbose {
         println!("File contents:\n{contents}");
     }
+    let db = HwmlDatabase::new();
+    let file = File::new(&db, contents);
+    {
+        let program = parse_program(&db, file);
+        let diagnostics = parse_program::accumulated::<Diagnostics>(&db, file);
+        let line_info = get_line_info(&db, file);
 
-    let mut errors = Vec::new();
-    let result = hwml_parser::grammar::ProgramParser::new().parse(&mut errors, &contents);
-    println!("Result: {result:?}");
-    let program = result.unwrap();
-    println!("Program: {program:?}");
-    println!("Errors: {errors:?}");
+        // Get current working directory
+        let cwd = env::current_dir().unwrap();
+
+        for diagnostic in diagnostics {
+            let (line, col) = line_info.loc(diagnostic.0.span.start);
+            let relative_path = path.strip_prefix(&cwd).unwrap_or(&path);
+            println!(
+                "{:?}:{}:{}:{}",
+                relative_path, line, col, diagnostic.0.message
+            );
+        }
+        //println!("Diagnostics: {diagnostics:?}");
+        println!("Program: {program:?}");
+    }
+    let mut db = db.clone();
+    file.set_text(&mut db).to("".to_string());
 }

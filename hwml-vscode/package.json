@@ -1,0 +1,96 @@
+{
+  "name": "hwml-vscode",
+  "displayName": "hwml",
+  "description": "hwml Language Extension",
+  "version": "0.0.1",
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./out/extension",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "lint": "eslint ./client/src ./server/src --ext .ts,.tsx"
+  },
+  "engines": {
+    "vscode": "^1.87.0"
+  },
+  "dependencies": {
+    "base64-js": "^1.5.1",
+    "chokidar": "3.5.2",
+    "vscode-languageclient": "^8.0.2-next.5"
+  },
+  "devDependencies": {
+    "@types/mocha": "^7.0.2",
+    "@types/node": "^14.17.0",
+    "@types/vscode": "~1.67.0",
+    "@vscode/vsce": "^2.19.0",
+    "clang-format": "^1.8.0",
+    "typescript": "^4.6.4"
+  },
+  "activationEvents": [
+    "onLanguage:plaintext"
+  ],
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "hwml",
+      "properties": {
+        "hwml.maxNumberOfProblems": {
+          "scope": "resource",
+          "type": "number",
+          "default": 100,
+          "description": "Controls the maximum number of problems produced by the server."
+        },
+        "hwml.server_path": {
+          "scope": "resource",
+          "type": "string",
+          "default": "hwml_lsp_server",
+          "description": "The file path of the hwml_lsp_server executable."
+        },
+        "hwml.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VSCode and the language server."
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "hwml",
+        "aliases": [
+          "HWML",
+          "hwml"
+        ],
+        "extensions": [
+          ".hwml"
+        ],
+        "configuration": "./hwml-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hwml",
+        "scopeName": "source.hwml",
+        "path": "./syntaxes/hwml.tmLanguage.json"
+      }
+    ]
+  },
+  "commands": [
+    {
+      "command": "hwml.restart",
+      "title": "hwml: Restart language server"
+    },
+    {
+      "command": "hwml.helloworld",
+      "title": "hwml: hello world"
+    }
+  ]
+}
