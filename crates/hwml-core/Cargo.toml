@@ -10,3 +10,9 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 license.workspace = true
+
+[dependencies]
+elegance.workspace = true
+anyhow.workspace = true
+hwml_support.workspace = true
+serde.workspace = true

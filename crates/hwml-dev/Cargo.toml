@@ -1,6 +1,6 @@
 [package]
-name = "hwml"
-description = ""
+name = "hwml_dev"
+description = "Development shell and tooling."
 
 publish = false
 authors.workspace = true
@@ -12,12 +12,6 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-hwml_db.workspace = true
-clap.workspace = true
-salsa.workspace = true
-hwml_parser.workspace = true
 hwml_core.workspace = true
-hwml_dev.workspace = true
-
-[lints]
-workspace = true
+anyhow.workspace = true
+hwml_support.workspace = true
