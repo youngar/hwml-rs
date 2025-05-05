@@ -130,16 +130,16 @@ impl From<&ParseError<usize, Token<'_>, &str>> for Diagnostic {
                 span: *location..*location,
             },
             UnrecognizedToken {
-                token: (ref start, ref _token, ref end),
+                token: (ref start, ref token, ref end),
                 expected: _,
             } => Diagnostic {
-                message: "Unrecognized token".to_string(),
+                message: format!("unrecognized token: {token:?}"),
                 span: *start..*end,
             },
             ExtraToken {
-                token: (ref start, ref _token, ref end),
+                token: (ref start, ref token, ref end),
             } => Diagnostic {
-                message: "extra token".to_string(),
+                message: format!("extra token: {token:?}"),
                 span: *start..*end,
             },
         }
