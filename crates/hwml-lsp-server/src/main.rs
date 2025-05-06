@@ -4,7 +4,8 @@ use hwml_db::{
     *,
 };
 use lsp_server::{
-    Connection, Message, Notification as TNotification, Request as TRequest, RequestId, Response,
+    Connection, Message, Notification as TNotification, Request as TRequest, RequestId,
+    Response as TResponse,
 };
 use lsp_types::{
     notification::*, request::*, Diagnostic, DidChangeTextDocumentParams,
@@ -13,17 +14,21 @@ use lsp_types::{
     TextDocumentSyncKind, TextDocumentSyncOptions, Uri,
 };
 use salsa::Setter;
-use std::{collections::HashMap, error::Error};
+use std::{collections::HashMap, error::Error, time::Instant};
 
 struct DocumentInfo {
     version: Option<i32>,
     file: db::File,
 }
 
+pub(crate) type ResponseHandler = fn(&mut Server, TResponse);
+type ReqQueue = lsp_server::ReqQueue<(String, Instant), ResponseHandler>;
+
 struct Server {
     sender: Sender<Message>,
     documents: HashMap<Uri, DocumentInfo>,
     db: HwmlDatabase,
+    req_queue: ReqQueue,
 }
 
 impl Server {
@@ -32,6 +37,7 @@ impl Server {
             sender,
             documents: HashMap::new(),
             db: HwmlDatabase::new(),
+            req_queue: ReqQueue::default(),
         }
     }
 
@@ -73,10 +79,10 @@ impl Server {
         }
     }
 
-    fn handle_did_open_text_document(&mut self, params: DidOpenTextDocumentParams) {
+    fn recv_did_open_text_document(&mut self, params: DidOpenTextDocumentParams) {
         let text_document = params.text_document;
         let uri = text_document.uri;
-        let text = text_document.text;
+        let text: String = text_document.text;
         let file = File::new(&self.db, text);
         self.documents.insert(
             uri.clone(),
@@ -89,7 +95,7 @@ impl Server {
         self.compile_file(&self.db, &uri, &document);
     }
 
-    fn handle_did_change_text_document(&mut self, params: DidChangeTextDocumentParams) {
+    fn recv_did_change_text_document(&mut self, params: DidChangeTextDocumentParams) {
         let text_document = params.text_document;
         let uri = text_document.uri;
         let edits = params.content_changes;
@@ -99,7 +105,7 @@ impl Server {
         }
     }
 
-    fn handle_notification<F, P>(&mut self, n: TNotification, f: F)
+    fn on_notification<F, P>(&mut self, n: TNotification, f: F)
     where
         F: FnOnce(&mut Server, P) -> (),
         P: serde::de::DeserializeOwned,
@@ -112,16 +118,13 @@ impl Server {
         }
     }
 
-    fn handle_notifications(
-        &mut self,
-        n: TNotification,
-    ) -> Result<(), Box<dyn Error + Sync + Send>> {
+    fn recv_notification(&mut self, n: TNotification) -> Result<(), Box<dyn Error + Sync + Send>> {
         match n.method.as_str() {
             DidOpenTextDocument::METHOD => {
-                self.handle_notification(n, Self::handle_did_open_text_document)
+                self.on_notification(n, Self::recv_did_open_text_document)
             }
             DidChangeTextDocument::METHOD => {
-                self.handle_notification(n, Self::handle_did_change_text_document)
+                self.on_notification(n, Self::recv_did_change_text_document)
             }
             _ => {
                 eprintln!("unhandled notification: {n:?}");
@@ -131,7 +134,26 @@ impl Server {
         Ok(())
     }
 
-    fn handle_requests(&self, r: TRequest) -> Result<(), Box<dyn Error + Sync + Send>> {
+    fn on_request<F, P>(&mut self, n: TRequest, f: F)
+    where
+        F: FnOnce(&mut Server, RequestId, P) -> (),
+        P: serde::de::DeserializeOwned,
+    {
+        match serde_json::from_value(n.params) {
+            Ok(params) => f(self, n.id, params),
+            Err(e) => {
+                eprintln!("error decoding params for request: {e}");
+            }
+        }
+    }
+
+    fn recv_request(&mut self, r: TRequest) -> Result<(), Box<dyn Error + Sync + Send>> {
+        let now = Instant::now();
+        // Register this incomming request.
+        self.req_queue
+            .incoming
+            .register(r.id.clone(), (r.method.clone(), now));
+        // Dispatch to the handler.
         match r.method.as_str() {
             Initialize::METHOD => (),
             Shutdown::METHOD => (),
@@ -143,20 +165,64 @@ impl Server {
         Ok(())
     }
 
-    fn handle_responses(&self, _response: Response) -> Result<(), Box<dyn Error + Sync + Send>> {
+    fn recv_response(&mut self, r: TResponse) -> Result<(), Box<dyn Error + Sync + Send>> {
+        let handler = self
+            .req_queue
+            .outgoing
+            .complete(r.id.clone())
+            .expect("received response for unknown request");
+        handler(self, r);
         Ok(())
+    }
+
+    fn recv_message(&mut self, msg: Message) -> Result<(), Box<dyn Error + Sync + Send>> {
+        match msg {
+            Message::Notification(n) => self.recv_notification(n),
+            Message::Request(r) => self.recv_request(r),
+            Message::Response(r) => self.recv_response(r),
+        }
+    }
+
+    pub(crate) fn send_notification<N: lsp_types::notification::Notification>(
+        &self,
+        params: N::Params,
+    ) {
+        let not = lsp_server::Notification::new(N::METHOD.to_owned(), params);
+        self.send(not.into());
+    }
+
+    pub(crate) fn send_request<R: lsp_types::request::Request>(
+        &mut self,
+        params: R::Params,
+        handler: ResponseHandler,
+    ) {
+        let request = self
+            .req_queue
+            .outgoing
+            .register(R::METHOD.to_owned(), params, handler);
+        self.send(request.into());
+    }
+
+    pub(crate) fn is_completed(&self, request: &TRequest) -> bool {
+        self.req_queue.incoming.is_completed(&request.id)
+    }
+
+    fn send_response(&mut self, response: TResponse) -> Result<(), Box<dyn Error + Sync + Send>> {
+        if let Some((method, start)) = self.req_queue.incoming.complete(&response.id) {
+            let duration = start.elapsed();
+            self.send(response.into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn send_cancel(&mut self, request_id: RequestId) {
+        if let Some(response) = self.req_queue.incoming.cancel(request_id) {
+            self.send(response.into());
+        }
     }
 
     fn send(&self, message: lsp_server::Message) {
         self.sender.send(message).unwrap();
-    }
-
-    pub(crate) fn send_notification<N>(&self, params: N::Params)
-    where
-        N: Notification,
-    {
-        let n = lsp_server::Notification::new(N::METHOD.to_owned(), params);
-        self.send(n.into());
     }
 
     fn send_diagnostics(&self, uri: Uri, diagnostics: Vec<Diagnostic>) {
@@ -178,33 +244,29 @@ impl Server {
     fn compile_file(&self, db: &HwmlDatabase, uri: &Uri, document: &DocumentInfo) {
         let _program = db::parse_program(&*db, document.file);
         let diagnostics = db::parse_program::accumulated::<db::Diagnostics>(db, document.file);
-        let line_info = db::get_line_info(db, document.file);
-        let lsp_diagnostics = diagnostics
-            .into_iter()
-            .map(|diagnostic| {
-                let start = Self::to_position(line_info.loc(diagnostic.0.span.start));
-                let end = Self::to_position(line_info.loc(diagnostic.0.span.start));
-                Diagnostic {
-                    range: Range { start, end },
-                    message: diagnostic.0.message,
-                    ..Default::default()
-                }
-            })
-            .collect::<Vec<_>>();
-        self.send_diagnostics(uri.clone(), lsp_diagnostics);
-    }
-
-    fn handle_message(&mut self, msg: Message) -> Result<(), Box<dyn Error + Sync + Send>> {
-        match msg {
-            Message::Request(r) => self.handle_requests(r),
-            Message::Response(r) => self.handle_responses(r),
-            Message::Notification(n) => self.handle_notifications(n),
+        if diagnostics.len() > 0 {
+            let line_info = db::get_line_info(db, document.file);
+            let lsp_diagnostics = diagnostics
+                .into_iter()
+                .map(|diagnostic| {
+                    let start = Self::to_position(line_info.loc(diagnostic.0.span.start));
+                    let end = Self::to_position(line_info.loc(diagnostic.0.span.start));
+                    Diagnostic {
+                        range: Range { start, end },
+                        message: diagnostic.0.message,
+                        ..Default::default()
+                    }
+                })
+                .collect::<Vec<_>>();
+            self.send_diagnostics(uri.clone(), lsp_diagnostics);
         }
+        // If there are no diagnostics, clear them for this file.
+        self.send_diagnostics(uri.clone(), vec![]);
     }
 
     fn run(&mut self, receiver: Receiver<Message>) -> Result<(), Box<dyn Error + Sync + Send>> {
         for msg in receiver {
-            self.handle_message(msg)?;
+            self.recv_message(msg)?;
         }
         Ok(())
     }
