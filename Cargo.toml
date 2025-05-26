@@ -15,6 +15,7 @@ license = ""
 # Local Crates
 hwml = { path = "crates/hwml" }
 hwml_db = { path = "crates/hwml-db" }
+hwml_elab = { path = "crates/hwml-elab" }
 hwml_parser = { path = "crates/hwml-parser" }
 hwml_lsp_server = { path = "crates/hwml-lsp-server" }
 
