@@ -1,10 +1,3 @@
-
-def add (a b : Nat) := A -> ( a b : Type ) -> b
-
-// hello
-// my man
-
-def andrew := /*hello */ "andrew"
-def num := 123123 /* asdf */
-
-def myname := 123
+// Token Tests.
+def foo := let bar := 1 in bar
+def qux := baz

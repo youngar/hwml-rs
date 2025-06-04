@@ -12,14 +12,18 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-hwml_parser.workspace = true
-lalrpop-util.workspace = true
-clap.workspace = true
-salsa.workspace = true
-derive-new.workspace = true
 annotate-snippets.workspace = true
+clap.workspace = true
 dashmap.workspace = true
+derive-new.workspace = true
 eyre.workspace = true
+la-arena.workspace = true
+lalrpop-util.workspace = true
+logos.workspace = true
+salsa.workspace = true
+
+[build-dependencies]
+lalrpop.workspace = true
 
 [lints]
 workspace = true

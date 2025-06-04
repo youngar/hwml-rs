@@ -1,0 +1,220 @@
+use std::str::FromStr;
+use crate::cst::*;
+use crate::parsing::*;
+use crate::db::*;
+use lalrpop_util::ErrorRecovery;
+use la_arena::Arena;
+use la_arena::Idx;
+
+grammar<'input, 'db, 'ast, 'err>(
+    input: &'input str,
+    //db: &'db HwmlDatabase,
+    ast: &'ast mut Arena<Node>,
+    loc: &'ast mut Arena<Location>,
+    errors: &'err mut Vec<ErrorRecovery<u32, Token, &'static str>>
+);
+
+pub Program: Idx<Node> = {
+  <l:@L> <stmts:Stmt*> "eof" <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Program(Program::new(stmts)))
+  }
+};
+
+pub Stmt: Idx<Node> = {
+    Def,
+    //! => { errors.push(<>); Node::Error() },
+};
+
+pub Def: Idx<Node> = {
+    <l:@L> "def" <id:Id> <a:Assoc> <p:Precedence> <bs:OptionalBindings> ":=" <value:Expr0> <r:@R> => {
+        loc.alloc(Location::from_u32(l, r));
+        ast.alloc(Node::Def(Def::new(id, a, p, bs, value)))
+    }
+};
+
+pub Assoc: Assoc = {
+  "rassoc" => Assoc::Right,
+  "lassoc" => Assoc::Left,
+  => Assoc::None,
+};
+
+pub Precedence: u8 = {
+  <s:"num"> => s.str.parse().unwrap(),
+  => 0,
+};
+
+pub Expr0: Idx<Node> = {
+  #[precedence(level="0")] 
+  Pi,
+  Fun,
+
+  #[precedence(level="1")]
+  Expr1,
+};
+
+pub Expr1: Idx<Node> = {
+  ExprList
+};
+
+pub Expr2: Idx<Node> = {
+  Lam,
+  LetIn,
+  Expr3,
+};
+
+pub Expr3: Idx<Node> = {
+  Var,
+  Underscore,
+  Paren,
+  Num,
+  // Str => Box::new(Expr::Str(<>)),
+};
+
+// (x1 .. xn : X) (y1 .. yn : Y) -> Z
+pub Pi: Idx<Node> = {
+  <l:@L> <bs:Bindings> "->" <e:Expr0> <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Pi(Pi::new(bs, e)))
+  },
+};
+
+// Y -> Z
+pub Fun: Idx<Node> = {
+  <l:@L> <d:Expr3List> "->" <e:Expr0> <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Fun(Fun::new(d, e)))
+  },
+};
+
+// TODO: should probably be desctructuring here.
+pub LetIn: Idx<Node> = {
+  <l:@L> "let" <b:Id> ":=" <v:Expr0> "in" <e:Expr0> <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::LetIn(LetIn::new(b, v, e)))
+  },
+};
+
+pub Lam: Idx<Node> = {
+  <l:@L> "fun" <bs:Bindings> "=>" <e:Expr0> <r:@R> => {
+      loc.alloc(Location::from_u32(l, r));
+      ast.alloc(Node::Lam(Lam::new(bs, e)))
+  },
+};
+
+// Returns the length of the expression list.
+pub ExprList: Idx<Node> = {
+  <l:@L> <es:Expr3List> <e:Expr2> <r:@R>  => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::App(App::new(es, e)))
+  },
+  Expr2,
+};
+
+pub Expr3List: Idx<Node> = {
+  <l:@L> <es:Expr3List> <e:Expr3> <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::App(App::new(es, e)))
+  },
+  Expr3,
+};
+
+// TODO: how do we want to wrap an Id into an expression?
+pub Var: Idx<Node> = {
+  Id
+};
+
+pub Underscore: Idx<Node> = {
+  <l:@L> "_" <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Underscore(Underscore::new()))
+  }
+};
+
+pub Paren: Idx<Node> = {
+  <l:@L> "(" <e:Expr0> ")" <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Paren(Paren::new(e)))
+  },
+};
+
+pub OptionalBindings: Idx<Node> = {
+  Bindings,
+  => {ast.alloc(Node::Bindings(Bindings::new(vec![])))},
+}
+
+// Parse multiple binding groups. Returns the number of binding groups.
+// (x1 .. xn : X) (y1 .. yn : Y)
+pub Bindings: Idx<Node> = {
+  <l:@L> <bs:BindingGroupList> <r:@R> => {
+     loc.alloc(Location::from_u32(l, r));
+     ast.alloc(Node::Bindings(Bindings::new(bs)))
+  },
+};
+
+pub BindingGroupList: Vec<Idx<Node>> = {
+  <mut bgs:BindingGroupList> <bg:BindingGroup> => {
+    bgs.push(bg);
+    bgs
+  },
+  <bg:BindingGroup> => {
+    vec![bg]
+  },
+};
+
+// Parse a single binding group.
+// (x1 .. xn : A)
+pub BindingGroup: Idx<Node> = {
+  <l:@L> "(" <el:ExprList> ":" <t:Expr0> ")" <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::BindingGroup(BindingGroup::new(el, t)))
+  }
+};
+
+pub Num: Idx<Node> = {
+  <l:@L> <s:"num"> <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Num(Num::new(s.str.to_string())))
+  }
+};
+
+pub Id: Idx<Node> = {
+  <l:@L> <s:"id"> <r:@R> => {
+    loc.alloc(Location::from_u32(l, r));
+    ast.alloc(Node::Id(Id::new(s.str.to_string())))
+  }
+};
+
+// pub Str: Str = StrLit => Str::new(<>);
+// pub StrLit: String = <l:r#""(\\\\|\\"|[^"\\])*""#> => l[1..l.len()-1].into();
+
+extern {
+  type Location = u32;
+
+  enum T<'input> {
+    "def" => T {kind: TokenKind::Def, ..},
+    "rassoc" => T {kind: TokenKind::RAssoc, ..},
+    "lassoc" => T {kind: TokenKind::LAssoc, ..},
+    "let" => T { kind: TokenKind::Let, ..},
+    "in" => T { kind: TokenKind::In, ..},
+    "fun" => T { kind: TokenKind::Fun, ..},
+    "(" => T { kind: TokenKind::LParen, ..},
+    ")" => T { kind: TokenKind::RParen, ..},
+    "{" => T { kind: TokenKind::LBrace, ..},
+    "}" => T { kind: TokenKind::RBrace, ..},
+    "[" => T { kind: TokenKind::LBrack, ..},
+    "]" => T { kind: TokenKind::RBrack, ..},
+    "->" => T { kind: TokenKind::Arrow, ..},
+    "=>" => T { kind: TokenKind::FatArrow, ..},
+    ":=" => T { kind: TokenKind::ColonEqual, ..},
+    "," => T { kind: TokenKind::Comma, ..},
+    "." => T { kind: TokenKind::Period, ..},
+    ":" => T { kind: TokenKind::Colon, ..},
+    ";" => T { kind: TokenKind::Semicolon, ..},
+    "_" => T { kind: TokenKind::Underscore, ..},
+    "num" => T { kind: TokenKind::Number, ..},
+    "id" => T { kind: TokenKind::Ident, ..},
+    "error" => T { kind: TokenKind::Error, ..},
+    "eof" => T { kind: TokenKind::Eof, ..},
+  }
+}

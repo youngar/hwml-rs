@@ -15,7 +15,8 @@ license.workspace = true
 hwml_db.workspace = true
 clap.workspace = true
 salsa.workspace = true
-hwml_parser.workspace = true
+lalrpop-util.workspace = true
+la-arena.workspace = true
 
 [lints]
 workspace = true

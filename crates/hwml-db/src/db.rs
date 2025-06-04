@@ -153,19 +153,20 @@ pub fn get_line_info(db: &dyn salsa::Database, source_program: File) -> LineInfo
 
 #[salsa::tracked]
 pub fn parse_program(db: &dyn salsa::Database, source_program: File) -> Program<'_> {
-    let mut errors = Vec::new();
-    let text = source_program.text(db);
-    let result = hwml_parser::grammar::ProgramParser::new().parse(&mut errors, &text);
-    if let Err(ref error) = result {
-        Diagnostics(error.into()).accumulate(db);
-    }
-    for error in errors {
-        Diagnostics((&error.error).into()).accumulate(db);
-    }
-    if let Result::Ok(_) = result {
-        //Program::new(db, program.statements)
-        Program::new(db, vec![])
-    } else {
-        Program::new(db, vec![])
-    }
+    // let mut errors = Vec::new();
+    // let text = source_program.text(db);
+    // let result = hwml_parser::grammar::ProgramParser::new().parse(&mut errors, &text);
+    // if let Err(ref error) = result {
+    //     Diagnostics(error.into()).accumulate(db);
+    // }
+    // for error in errors {
+    //     Diagnostics((&error.error).into()).accumulate(db);
+    // }
+    // if let Result::Ok(_) = result {
+    //     //Program::new(db, program.statements)
+    //     Program::new(db, vec![])
+    // } else {
+    //     Program::new(db, vec![])
+    // }
+    Program::new(db, vec![])
 }
