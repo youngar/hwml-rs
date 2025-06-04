@@ -16,6 +16,8 @@ hwml_db.workspace = true
 clap.workspace = true
 salsa.workspace = true
 hwml_parser.workspace = true
+hwml_core.workspace = true
+hwml_dev.workspace = true
 
 [lints]
 workspace = true

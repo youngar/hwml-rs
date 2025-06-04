@@ -1,6 +1,6 @@
 [package]
-name = "hwml_elab"
-description = "The elaborator, converting surface syntax to core syntax."
+name = "hwml_dev"
+description = "Development shell and tooling."
 
 publish = false
 authors.workspace = true
@@ -12,10 +12,6 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-clap.workspace = true
-salsa.workspace = true
-derive-new.workspace = true
-annotate-snippets.workspace = true
-
-[lints]
-workspace = true
+hwml_core.workspace = true
+anyhow.workspace = true
+hwml_support.workspace = true

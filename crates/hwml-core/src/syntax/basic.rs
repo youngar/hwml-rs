@@ -1,5 +1,6 @@
 use crate::db::Index;
 use std::rc::Rc;
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug)]
 pub struct NameId(pub u32);
@@ -21,7 +22,9 @@ pub struct Environment {
     pub types: Vec<RcSyntax>,
 }
 
-#[derive(Clone, Debug)]
+pub type RcSyntax = Rc<Syntax>;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Syntax {
     Constant(Constant),
     Variable(Variable),
@@ -99,7 +102,7 @@ impl Syntax {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct Constant {
     pub name: NameId,
 }
@@ -121,7 +124,8 @@ impl Variable {
     }
 }
 
-#[derive(Clone, Debug)]
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Check {
     pub ty: RcSyntax,
     pub term: RcSyntax,
@@ -133,7 +137,7 @@ impl Check {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pi {
     pub source: RcSyntax,
     pub target: RcSyntax,
@@ -145,7 +149,7 @@ impl Pi {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Lambda {
     pub body: RcSyntax,
 }
@@ -156,7 +160,7 @@ impl Lambda {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Application {
     pub function: RcSyntax,
     pub argument: RcSyntax,
@@ -168,7 +172,10 @@ impl Application {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+type UniverseLevel = u32;
+
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct UniverseLevel(pub u32);
 
 #[derive(Clone, Copy, Debug)]
@@ -180,6 +187,12 @@ impl Universe {
     pub fn new(level: UniverseLevel) -> Universe {
         Universe { level }
     }
+}
+
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Environment {
+    pub variable_types: Vec<RcSyntax>,
 }
 
 /// The identifier of a meta variable.
