@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct Level(pub usize);
 
 impl Level {
@@ -15,7 +17,7 @@ impl Level {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct Index(pub usize);
 
 impl Index {
@@ -31,3 +33,6 @@ impl Index {
         self.0
     }
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct UniverseLevel(pub u32);

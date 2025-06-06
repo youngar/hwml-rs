@@ -88,6 +88,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.98"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
+
+[[package]]
 name = "append-only-vec"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -319,6 +325,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
+name = "elegance"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1547651323d0b7dbe8fb9c13ccd6c67c7dfc836342244678d570b955cda0faed"
+dependencies = [
+ "unicode-width",
+]
+
+[[package]]
 name = "ena"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -442,6 +457,12 @@ dependencies = [
 [[package]]
 name = "hwml_core"
 version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "elegance",
+ "hwml_support",
+ "serde",
+]
 
 [[package]]
 name = "hwml_db"
@@ -460,6 +481,12 @@ dependencies = [
 [[package]]
 name = "hwml_elab"
 version = "0.0.0"
+dependencies = [
+ "annotate-snippets",
+ "clap",
+ "derive-new",
+ "salsa",
+]
 
 [[package]]
 name = "hwml_lsp_server"
@@ -483,6 +510,13 @@ dependencies = [
  "derive-new",
  "lalrpop",
  "lalrpop-util",
+]
+
+[[package]]
+name = "hwml_support"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
