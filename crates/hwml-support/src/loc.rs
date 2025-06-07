@@ -23,12 +23,12 @@ impl Source {
     }
 }
 
-struct SourceId(pub usize);
+pub struct SourceId(pub usize);
 
 /// A source and a range.
 pub struct SourceRange {
-    range: Range<usize>,
-    source: SourceId,
+    pub range: Range<usize>,
+    pub source: SourceId,
 }
 
 /// A value that has an associated range of source text.

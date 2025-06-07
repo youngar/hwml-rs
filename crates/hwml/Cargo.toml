@@ -12,11 +12,12 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-hwml_db.workspace = true
 clap.workspace = true
-salsa.workspace = true
-lalrpop-util.workspace = true
+hwml_db.workspace = true
+hwml_surface.workspace = true
 la-arena.workspace = true
+lalrpop-util.workspace = true
+salsa.workspace = true
 
 [lints]
 workspace = true

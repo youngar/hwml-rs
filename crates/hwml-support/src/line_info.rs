@@ -1,6 +1,8 @@
 /// Line break information for a file.
 /// Recorded as an array of offsets of the line breaks.
 /// The line break itself is treated as the termina
+
+#[derive(Eq, PartialEq, Debug, Hash, Clone)]
 pub struct LineInfo {
     /// The offset of the first character of a line.
     breaks: Vec<usize>,
@@ -89,7 +91,7 @@ impl LineInfo {
             }
 
             // If we are after M, then slide L up to M and continue.
-            if self.line_end(m) < offset + 1 {
+            if self.line_end(m) <= offset {
                 l = m + 1;
                 continue;
             }
@@ -101,10 +103,15 @@ impl LineInfo {
         return usize::MAX;
     }
 
+    /// 0-Based line and column. Column reported as a byte offset.
     pub fn loc(&self, offset: usize) -> (usize, usize) {
         let line = self.line(offset);
         let column = offset - self.line_start(line);
         (line, column)
+    }
+
+    pub fn offset(&self, pos: (usize, usize)) -> usize {
+        self.line_start(pos.0) + pos.1
     }
 }
 
@@ -207,18 +214,17 @@ mod tests {
         assert_eq!(info.line(1), 0);
         assert_eq!(info.line(usize::MAX - 1), 0);
         assert_eq!(info.line(usize::MAX), 1);
-
-        info.push(usize::MAX);
     }
 
     #[test]
     fn test_2_breaks_at_max_offset() {
         let mut info = LineInfo::new();
-        info.push(usize::MAX);
-        info.push(usize::MAX);
+        for _ in 0..32 {
+            info.push(usize::MAX);
+        }
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 0);
         assert_eq!(info.line(usize::MAX - 1), 0);
-        assert_eq!(info.line(usize::MAX), 2);
+        assert_eq!(info.line(usize::MAX), 32);
     }
 }

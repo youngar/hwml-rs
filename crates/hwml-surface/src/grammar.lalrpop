@@ -1,0 +1,185 @@
+use std::str::FromStr;
+use crate::cst::*;
+use crate::lex::Token;
+use lalrpop_util::ErrorRecovery;
+
+grammar<'input>(input: &'input [u8]);
+
+pub Program: Program = {
+  <stmts:Stmt*> "eof" => Program::new(stmts)
+};
+
+Stmt: Statement = {
+    <d:Def> => Statement::Def(d),
+    <m:Meta> => Statement::Meta(m),
+};
+
+Meta: Meta = {
+    "meta" <id:Id> <bs:OptionalBindings> ":" <ty:Expr0> ":=" <value:Expr0> => {
+        Meta::new(id, bs, ty, value)
+    }
+};
+
+Def: Def = {
+    "def" <id:Id> <bs:OptionalBindings> ":" <ty:Expr0> ":=" <value:Expr0> => {
+        Def::new(id, bs, ty, value)
+    }
+};
+
+Expr0: Box<Expression> = {
+  #[precedence(level="0")] 
+  <p:Pi> => Box::new(Expression::Pi(p)),
+  <a:Arrow> => Box::new(Expression::Arrow(a)),
+  <fa:FatArrow> => Box::new(Expression::FatArrow(fa)),
+
+  #[precedence(level="1")]
+  Expr1,
+};
+
+Expr1: Box<Expression> = {
+  <mut el:ExprList> => {
+    if el.len() == 1 {
+        el.pop().unwrap()
+    } else {
+        Box::new(Expression::App(App::new(el)))
+    }
+  }
+};
+
+Expr2: Box<Expression> = {
+  <f:Fun> => Box::new(Expression::Fun(f)),
+  <li:LetIn> => Box::new(Expression::LetIn(li)),
+  Expr3,
+};
+
+Expr3: Box<Expression> = {
+  <id:Id> => Box::new(Expression::Id(id)),
+  <u:Underscore> => Box::new(Expression::Underscore(u)),
+  <p:Paren> => Box::new(Expression::Paren(p)),
+  <n:Num> => Box::new(Expression::Num(n)),
+};
+
+// (x1 .. xn : X) (y1 .. yn : Y) -> Z
+Pi: Pi = {
+  <bs:Bindings> "->" <e:Expr0> => {
+    Pi::new(bs, e)
+  },
+};
+
+// Y -> Z
+Arrow: Arrow = {
+  <mut s:Expr3*> "->" <t:Expr0> => {
+    if s.len() == 1 {
+        Arrow::new(s.pop().unwrap(), t)
+    } else {
+        Arrow::new(Box::new(Expression::App(App::new(s))), t)
+    }
+  },
+};
+
+// Y => Z
+FatArrow: FatArrow = {
+  <mut s:Expr3*> "=>" <t:Expr0> => {
+    if s.len() == 1 {
+        FatArrow::new(s.pop().unwrap(), t)
+    } else {
+        FatArrow::new(Box::new(Expression::App(App::new(s))), t)
+    }
+  },
+};
+
+// TODO: should probably be desctructuring here.
+LetIn: LetIn = {
+  "let" <id:Id> ":" <ty:Expr0> ":=" <v:Expr0> "in" <e:Expr0> => {
+    LetIn::new(id, ty, v, e)
+  },
+};
+
+Fun: Fun = {
+  "fun" <bs:Bindings> "=>" <e:Expr0> => {
+    Fun::new(bs, e)
+  },
+};
+
+// Returns the length of the expression list.
+ExprList: Vec<Box<Expression>> = {
+  <mut es:Expr3*> <e:Expr2> => {
+    es.push(e);
+    es
+  },
+};
+
+Underscore: Underscore = {
+  <l:@L> "_" <r:@R> => {
+    Underscore::new(l..r)
+  }
+};
+
+Paren: Paren = {
+  "(" <e:Expr0> ")" => {
+    Paren::new(e)
+  },
+};
+
+#[inline]
+OptionalBindings: Bindings = {
+  Bindings,
+  => Bindings::new(vec![]),
+}
+
+// Parse multiple binding groups. Returns the number of binding groups.
+// (x1 .. xn : X) (y1 .. yn : Y)
+#[inline]
+Bindings: Bindings = {
+  <bgs:BindingGroup+> => Bindings::new(bgs),
+};
+
+// Parse a single binding group.
+// (x1 .. xn : A)
+BindingGroup: BindingGroup = {
+  "(" <el:ExprList> ":" <ty:Expr0> ")" => BindingGroup::new(el, ty),
+};
+
+Num: Num = {
+  <l:@L> <s:"num"> <r:@R> => {
+    Num::new(l..r, Box::from(&input[l..r]))
+  }
+};
+
+Id: Id = {
+  <l:@L> <s:"id"> <r:@R> => {
+    Id::new(l..r, Box::from(&input[l..r]))
+  }
+};
+
+extern {
+  type Location = usize;
+
+  enum Token {
+    "def" => Token::Def,
+    "meta" => Token::Meta,
+    "rassoc" => Token::RAssoc,
+    "lassoc" => Token::LAssoc,
+    "let" => Token::Let,
+    "in" => Token::In,
+    "fun" => Token::Fun,
+    "(" => Token::LParen,
+    ")" => Token::RParen,
+    "{" => Token::LBrace,
+    "}" => Token::RBrace,
+    "[" => Token::LBrack,
+    "]" => Token::RBrack,
+    "->" => Token::Arrow,
+    "=>" => Token::FatArrow,
+    ":=" => Token::ColonEqual,
+    "," => Token::Comma,
+    "." => Token::Period,
+    ":" => Token::Colon,
+    ";" => Token::Semicolon,
+    "_" => Token::Underscore,
+    "num" => Token::Number,
+    "id" => Token::Ident,
+    "error" => Token::Error,
+    "eof" => Token::Eof,
+  }
+}

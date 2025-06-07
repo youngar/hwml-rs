@@ -5,13 +5,12 @@ use eyre::{Context, Result};
 use lalrpop_util::lexer::Token;
 use lalrpop_util::ParseError;
 use lalrpop_util::ParseError::*;
-use salsa::Accumulator;
 use std::convert::From;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::ir::Program;
-use crate::line_info::LineInfo;
+use hwml_support::line_info::LineInfo;
 
 #[salsa::input]
 pub struct File {

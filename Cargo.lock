@@ -462,6 +462,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "hwml_db",
+ "hwml_surface",
  "la-arena",
  "lalrpop-util",
  "salsa",
@@ -486,6 +487,7 @@ dependencies = [
  "dashmap",
  "derive-new",
  "eyre",
+ "hwml_support",
  "la-arena",
  "lalrpop",
  "lalrpop-util",
@@ -519,19 +521,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "hwml_parser"
-version = "0.0.0"
-dependencies = [
- "derive-new",
- "lalrpop",
- "lalrpop-util",
-]
-
-[[package]]
 name = "hwml_support"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+]
+
+[[package]]
+name = "hwml_surface"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "derive-new",
+ "lalrpop",
+ "lalrpop-util",
+ "logos",
 ]
 
 [[package]]

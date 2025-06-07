@@ -1,15 +1,16 @@
-use derive_new::new;
-use logos::Logos;
+use logos::{Logos, SpannedIter};
 use std::fmt;
 
-pub struct StringId(pub u32);
-
-pub struct StringStore {}
+#[derive(Default, Debug, Clone, PartialEq)]
+pub enum LexicalError {
+    #[default]
+    InvalidToken,
+}
 
 // See the the Unicode Standard Annex #31, Identifier and Pattern Syntax for
 // information about these character classes.
-#[derive(Logos, Copy, Clone, Debug, Eq, PartialEq, Hash, new)]
-#[logos(source = [u8])]
+#[derive(Logos, Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[logos(source = [u8], error = LexicalError)]
 // Vertical whitespace. See Unicode Standard Annex #14, Unicode Line Breaking Algorithm. A CR
 // indicates a mandatory break after, unless followed by a LF.
 // 000A LINE FEED (LF)
@@ -42,9 +43,11 @@ pub struct StringStore {}
 // 205F MEDIUM MATHEMATICAL SPACE
 // 3000 IDEOGRAPHIC SPACE
 #[logos(subpattern horizontal_whitespace = "\u{0009}|\u{0020}|\u{00A0}|\u{1680}|\u{2000}|\u{2001}|\u{2002}|\u{2003}|\u{2004}|\u{2005}|\u{2006}|\u{2007}|\u{2008}|\u{2009}|\u{200A}|\u{202F}|\u{205F}|\u{3000}")]
-pub enum TokenKind {
+pub enum Token {
     #[token("def", priority = 4)]
     Def,
+    #[token("meta", priority = 4)]
+    Meta,
     #[token("rassoc", priority = 4)]
     RAssoc,
     #[token("lassoc", priority = 4)]
@@ -106,14 +109,14 @@ pub enum TokenKind {
     Eof,
 }
 
-impl TokenKind {
+impl Token {
     pub fn is_trivia(&self) -> bool {
         match self {
-            TokenKind::Space
-            | TokenKind::Newline
-            | TokenKind::LineComment
-            | TokenKind::BlockComment
-            | TokenKind::Unknown => true,
+            Token::Space
+            | Token::Newline
+            | Token::LineComment
+            | Token::BlockComment
+            | Token::Unknown => true,
             _ => false,
         }
     }
@@ -125,75 +128,33 @@ impl fmt::Display for Token {
     }
 }
 
-type TokenSize = u32;
-
-#[derive(Copy, Clone, Debug)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub size: TokenSize,
+pub struct Lexer<'input> {
+    // instead of an iterator over characters, we have a token iterator
+    token_stream: SpannedIter<'input, Token>,
 }
 
-impl Token {
-    pub fn new(kind: TokenKind, size: TokenSize) -> Token {
-        Token { kind, size }
-    }
-
-    pub fn is_trivia(&self) -> bool {
-        self.kind.is_trivia()
-    }
-}
-
-pub struct TokenIndex(pub u32);
-
-pub struct TokenStore {
-    storage: Vec<Token>,
-}
-
-impl TokenStore {
-    pub fn new(storage: Vec<Token>) -> TokenStore {
-        TokenStore { storage }
-    }
-
-    pub fn get(&self, index: TokenIndex) -> Token {
-        self.storage[index.0 as usize]
-    }
-}
-
-pub fn lex(input: &[u8]) -> la_arena::Arena<Token> {
-    let mut lexer = TokenKind::lexer(input);
-    let mut tokens = la_arena::Arena::new();
-    while let Some(result) = lexer.next() {
-        let span = lexer.span();
-        let size = (span.end - span.start) as u32;
-        match result {
-            Ok(kind) => {
-                tokens.alloc(Token::new(kind, size));
-            }
-            Err(error) => {
-                // Since our lexer covers every possible input, we should never
-                // encounter an error.
-                panic!("Lexing error: {:?}", error);
-            }
+impl<'input> Lexer<'input> {
+    pub fn new(input: &'input [u8]) -> Self {
+        // the Token::lexer() method is provided by the Logos trait
+        Self {
+            token_stream: Token::lexer(input).spanned(),
         }
     }
-
-    tokens.alloc(Token::new(TokenKind::Eof, 0));
-    return tokens;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-///
-///
-use lalrpop_util::lalrpop_mod;
+impl<'input> Iterator for Lexer<'input> {
+    type Item = (usize, Token, usize);
 
-#[derive(Eq, PartialEq, Debug, Hash, Copy, Clone, new)]
-pub struct T<'input> {
-    pub kind: TokenKind,
-    pub str: &'input str,
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(result) = self.token_stream.next() {
+            match result {
+                (Ok(token), span) => match token.is_trivia() {
+                    true => continue,
+                    false => return Some((span.start, token, span.end)),
+                },
+                (Err(_err), _span) => panic!("invalid token"),
+            }
+        }
+        return None;
+    }
 }
-
-lalrpop_mod!(
-    #[allow(clippy::ptr_arg)]
-    #[rustfmt::skip]
-    pub grammar
-);

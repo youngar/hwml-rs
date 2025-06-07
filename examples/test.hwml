@@ -1,3 +1,109 @@
 // Token Tests.
-def foo := let bar := 1 in bar
-def qux := baz
+def foo : Nat := let bar : Nat := 1 in bar
+def qux : Nat := baz
+
+mod Adder {T} (l r : T) := l + r
+
+mod Adder := fun (l r : u32) -> l + r
+
+
+
+def foo :=
+  def bar := 1;
+  bar;
+def bar := 2;
+bar
+
+
+def my_const := 1 + 1
+
+module my_const (
+    out o: i32
+);
+  o := 1 + 1;
+endmodule;
+
+
+
+
+def my_reg (in: i32) (c : Clock): i32 := reg(c, in)
+
+module my_reg(
+    in in : i32,
+    in c : i1,
+    out o : i32,
+);
+  o <= in;
+endmodule;
+
+def my_reg {T} (in: T) (c : Clock): T := reg(c, in)
+
+(x y : a) (z : b) -> c
+(x : a) -> (y : a) -> (z : b) -> c
+a -> a -> b -> c
+
+(x y : a) (z : b) => c
+a => a => b => c
+
+
+def foo (a : i32) := 
+  a
+
+def foo : i32 => i32 :=
+  mod a => a
+
+
+meta my_reg {T} : T => Clock => T :=
+    mod in clock =>
+      reg(c, in)
+
+(a : i32) -> i32
+
+meta my_reg {T : HWType} (in: T) (c : Clock): T := reg(c, in)
+
+meta my_reg {T : HWType} (in: ^T) (c : ^Clock): ^T :=
+  [ reg(c, in) ]
+
+def foo (c : clock) (a b : I32) : I32 :=
+  let sum := a + b in
+  my_reg sum clock
+
+def foo (c : clock) (a b : I32) : I32 :=
+  let sum := a + b in
+  ~(my_reg [sum] [clock])
+
+
+  
+meta my-reg ()
+  quote mod x in => reg x in
+
+{sum}
+<u32>
+[my-reg {sum} {clock}]
+
+^[u32]
+
+~[my-reg '[sum] '[clock]]
+
+variables x y z
+hardware-level-terms H ::=
+  | Num
+  | mod x => H
+  | H H
+
+signal-type
+component-type
+hw-type
+meta-type
+
+a : signal-type
+b : hw-type
+=======================
+a => b : component-type
+
+a : signal-type
+b : hw-typex : a |- m : b
+-==============
+======(mod x => m) : a =b> 
+
+
