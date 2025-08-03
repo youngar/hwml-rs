@@ -502,6 +502,7 @@ dependencies = [
  "annotate-snippets",
  "clap",
  "derive-new",
+ "hwml_core",
  "salsa",
 ]
 

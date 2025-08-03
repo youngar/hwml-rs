@@ -25,7 +25,6 @@ We also provide a [`justfile`](https://just.systems/) for Makefile'esque command
 
 - Run `nix flake update` to update all flake inputs.
 - Run `nix --accept-flake-config run github:juspay/omnix ci` to build _all_ outputs.
-- [pre-commit] hooks will automatically be setup in Nix shell. You can also run `pre-commit run -a` manually to run the hooks (e.g.: to autoformat the project tree using `rustfmt`, `nixpkgs-fmt`, etc.).
 
 ## See Also
 
