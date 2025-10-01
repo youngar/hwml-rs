@@ -348,100 +348,138 @@ mod tests {
 
     #[test]
     fn test_print_ast_to_stdout() {
-        // Create some example AST nodes
-
         // Simple constant: @42
-        let constant = Syntax::constant(NameId(42));
-        assert_snapshot!(print_syntax_to_string(&constant), @"@42");
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::constant(NameId(42))),
+            @"@42"
+        );
 
         // Universe: 𝒰@0
-        let universe = Syntax::universe(UniverseLevel(0));
-        assert_snapshot!(print_syntax_to_string(&universe), @"𝒰0");
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::universe(UniverseLevel(0))),
+            @"𝒰0"
+        );
 
-        let lambda_body = Syntax::variable_rc(Index(0));
-        let lambda = Syntax::lambda(lambda_body);
-        assert_snapshot!(print_syntax_to_string(&lambda), @"λ%0 → %0");
+        // Lambda: λ%0 → %0
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::lambda(Syntax::variable_rc(Index(0)))),
+            @"λ%0 → %0"
+        );
 
-        let app_fun = Syntax::constant_rc(NameId(42));
-        let app_arg = Syntax::constant_rc(NameId(99));
-        let application = Syntax::application(app_fun, app_arg);
-        assert_snapshot!(print_syntax_to_string(&application), @"@42 @99");
+        // Application: @42 @99
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::application(
+                Syntax::constant_rc(NameId(42)),
+                Syntax::constant_rc(NameId(99))
+            )),
+            @"@42 @99"
+        );
 
-        let pi_source = Syntax::universe_rc(UniverseLevel(0));
-        let pi_target = Syntax::universe_rc(UniverseLevel(1));
-        let pi = Syntax::pi(pi_source, pi_target);
-        assert_snapshot!(print_syntax_to_string(&pi), @"∀(%0 : 𝒰0) → 𝒰1");
+        // Pi type: ∀(%0 : 𝒰0) → 𝒰1
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::pi(
+                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::universe_rc(UniverseLevel(1))
+            )),
+            @"∀(%0 : 𝒰0) → 𝒰1"
+        );
 
-        let inner_pi_source = Syntax::variable_rc(Index(1)); // refers to outer pi binder
-        let inner_pi_target = Syntax::variable_rc(Index(0)); // refers to inner pi binder
-        let inner_pi = Syntax::pi_rc(inner_pi_source, inner_pi_target);
-        let outer_pi_source = Syntax::universe_rc(UniverseLevel(0));
-        let outer_pi = Syntax::pi(outer_pi_source, inner_pi);
-        assert_snapshot!(print_syntax_to_string(&outer_pi), @"∀(%0 : 𝒰0) (%1 : %0) → %1");
+        // Nested pi: ∀(%0 : 𝒰0) (%1 : %0) → %1
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::pi(
+                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::pi_rc(
+                    Syntax::variable_rc(Index(1)), // refers to outer pi binder
+                    Syntax::variable_rc(Index(0))  // refers to inner pi binder
+                )
+            )),
+            @"∀(%0 : 𝒰0) (%1 : %0) → %1"
+        );
 
-        let check_term = Syntax::constant_rc(NameId(42));
-        let check_type = Syntax::universe_rc(UniverseLevel(0));
-        let check = Syntax::check(check_type, check_term);
-        assert_snapshot!(print_syntax_to_string(&check), @"@42 : 𝒰0");
+        // Check: @42 : 𝒰0
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::check(
+                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::constant_rc(NameId(42))
+            )),
+            @"@42 : 𝒰0"
+        );
 
-        let complex_fun = Syntax::constant_rc(NameId(999)); // @id
-        let complex_arg = Syntax::variable_rc(Index(0)); // refers to lambda parameter
-        let complex_app = Syntax::application_rc(complex_fun, complex_arg);
-        let complex_lambda = Syntax::lambda(complex_app);
-        assert_snapshot!(print_syntax_to_string(&complex_lambda), @"λ%0 → @999 %0");
+        // Lambda with application: λ%0 → @999 %0
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::lambda(Syntax::application_rc(
+                Syntax::constant_rc(NameId(999)),
+                Syntax::variable_rc(Index(0))
+            ))),
+            @"λ%0 → @999 %0"
+        );
 
-        let inner_fun = Syntax::variable_rc(Index(0)); // outer lambda param
-        let inner_arg = Syntax::variable_rc(Index(1)); // inner lambda param
-        let inner_app = Syntax::application_rc(inner_fun, inner_arg);
-        let inner_lambda = Syntax::lambda_rc(inner_app);
-        let outer_lambda = Syntax::lambda(inner_lambda);
-        assert_snapshot!(print_syntax_to_string(&outer_lambda), @"λ%0 %1 → %1 %0");
+        // Nested lambda: λ%0 %1 → %1 %0
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::lambda(Syntax::lambda_rc(
+                Syntax::application_rc(
+                    Syntax::variable_rc(Index(0)), // outer lambda param
+                    Syntax::variable_rc(Index(1))  // inner lambda param
+                )
+            ))),
+            @"λ%0 %1 → %1 %0"
+        );
 
-        let inner_fun = Syntax::variable_rc(Index(0)); // outer lambda param
-        let inner_arg = Syntax::variable_rc(Index(1)); // inner lambda param
-        let inner_app = Syntax::application_rc(inner_fun, inner_arg);
-        let inner_lambda = Syntax::lambda_rc(inner_app);
-        let outer_check = Syntax::check_rc(Syntax::universe_rc(UniverseLevel(0)), inner_lambda);
-        let outer_lambda = Syntax::lambda_rc(outer_check);
-        assert_snapshot!(print_syntax_to_string(&outer_lambda), @"λ%0 → (λ%1 → %1 %0 : 𝒰0)");
+        // Lambda with checked nested lambda: λ%0 → (λ%1 → %1 %0 : 𝒰0)
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::lambda_rc(Syntax::check_rc(
+                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::lambda_rc(Syntax::application_rc(
+                    Syntax::variable_rc(Index(0)), // outer lambda param
+                    Syntax::variable_rc(Index(1))  // inner lambda param
+                ))
+            ))),
+            @"λ%0 → (λ%1 → %1 %0 : 𝒰0)"
+        );
 
         // Test metavariables
         use crate::syn::Closure;
 
-        let meta_id1 = MetavariableId(0);
-        let meta_id2 = MetavariableId(1);
-        let closure = Closure::new();
-
         // Simple metavariable: ?0
-        let metavar = Syntax::metavariable(meta_id1, closure.clone());
-        assert_snapshot!(print_syntax_to_string(&metavar), @"?0");
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::metavariable(
+                MetavariableId(0),
+                Closure::new()
+            )),
+            @"?0"
+        );
 
         // Application with two different metavariables: ?0 ?1
         // (both metavariables must be in the same expression to share GlobalState)
-        let meta_app = Syntax::application(
-            Syntax::metavariable_rc(meta_id1, closure.clone()),
-            Syntax::metavariable_rc(meta_id2, closure.clone()),
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::application(
+                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+                Syntax::metavariable_rc(MetavariableId(1), Closure::new())
+            )),
+            @"?0 ?1"
         );
-        assert_snapshot!(print_syntax_to_string(&meta_app), @"?0 ?1");
 
         // Same metavariable used twice: ?0 ?0
         // (shows that the same metavariable ID gets the same name)
-        let meta_app_same = Syntax::application(
-            Syntax::metavariable_rc(meta_id1, closure.clone()),
-            Syntax::metavariable_rc(meta_id1, closure.clone()),
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::application(
+                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+                Syntax::metavariable_rc(MetavariableId(0), Closure::new())
+            )),
+            @"?0 ?0"
         );
-        assert_snapshot!(print_syntax_to_string(&meta_app_same), @"?0 ?0");
 
         // Complex expression with three metavariables: (?0 ?1) ?2
         // (shows that distinct metavariables get distinct names)
-        let meta_id3 = MetavariableId(2);
-        let meta_complex = Syntax::application(
-            Syntax::application_rc(
-                Syntax::metavariable_rc(meta_id1, closure.clone()),
-                Syntax::metavariable_rc(meta_id2, closure.clone()),
-            ),
-            Syntax::metavariable_rc(meta_id3, closure.clone()),
+        assert_snapshot!(
+            print_syntax_to_string(&Syntax::application(
+                Syntax::application_rc(
+                    Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+                    Syntax::metavariable_rc(MetavariableId(1), Closure::new())
+                ),
+                Syntax::metavariable_rc(MetavariableId(2), Closure::new())
+            )),
+            @"?0 ?1 ?2"
         );
-        assert_snapshot!(print_syntax_to_string(&meta_complex), @"?0 ?1 ?2");
     }
 }
