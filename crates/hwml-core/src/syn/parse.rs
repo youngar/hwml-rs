@@ -4,18 +4,22 @@ use crate::common::Index;
 use crate::{syn, syn::RcSyntax, syn::Syntax};
 use core::fmt::{Debug, Display};
 use logos::{Lexer, Logos, SpannedIter};
-use std::fmt;
+use std::fmt::{self, write};
 use std::num::ParseIntError;
 use std::ops::Range;
+
+/// The names of the expected token types.
+type Expected = &'static [&'static str];
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     InvalidToken(Range<usize>),
     InvalidInteger(String),
-    MissingRParen,
-    MissingArrow,
-    MissingVariable,
-    MissingTerm,
+    UnknownVariable(String),
+    ParseError {
+        token: Option<Token>,
+        expected: Expected,
+    },
     #[default]
     Other,
 }
@@ -25,6 +29,37 @@ impl Error {
         Error::InvalidToken(lex.span())
     }
 }
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::InvalidToken(_) => write!(f, "invalid token"),
+            Error::InvalidInteger(txt) => write!(f, "invalid integer '{}'", txt),
+            Error::UnknownVariable(name) => write!(f, "unknown variable '{}'", name),
+            Error::ParseError {token, expected} => {
+                match token {
+                    Some(token) => write!(f, "unexpected token {}", token),
+                    None => write!(f, "unexpected end of input"),
+                }?;
+                match expected.len() {
+                    0 => Ok(()),
+                    1 => write!(f, ", expected {}", expected[0]),
+                    2 => write!(f, ", expected {} or {}", expected[0], expected[1]),
+                    _ => {
+                        write!(f, ", expected one of {}", expected[0]);
+                        for i in 1 .. expected.len() - 1 {
+                            write!(f, ", {}", expected[i]);
+                        }
+                        write!(f, ", or {}", expected[expected.len() - 1])
+                    }
+                }
+            }
+            Error::Other => write!(f, "unknown"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 impl From<ParseIntError> for Error {
     fn from(err: ParseIntError) -> Self {
@@ -110,9 +145,9 @@ impl<'input> State<'input> {
     }
 
     /// Find a name in the environment.
-    fn find_name(&self, name: String) -> Option<Index> {
+    fn find_name(&self, name: &String) -> Option<Index> {
         for (i, n) in self.names.iter().rev().enumerate() {
-            if name == n.as_str() {
+            if name == n {
                 return Some(Index::new(i));
             }
         }
@@ -141,7 +176,7 @@ where
     Ok(result)
 }
 
-fn p_while1<'input, T, F>(state: &mut State<'input>, err: Error, f: F) -> ParseResult<Vec<T>>
+fn p_while1<'input, T, F>(state: &mut State<'input>, expected: Expected, f: F) -> ParseResult<Vec<T>>
 where
     F: Fn(&mut State<'input>) -> ParseResult<Option<T>>,
 {
@@ -149,7 +184,7 @@ where
     if let Some(t) = f(state)? {
         result.push(t);
     } else {
-        return Err(err);
+        return Err(Error::ParseError{token: None, expected});
     }
     result.append(&mut p_while0(state, f)?);
     Ok(result)
@@ -166,14 +201,18 @@ fn p_token_opt<'input>(state: &mut State<'input>, token: Token) -> ParseResult<O
     }
 }
 
-fn p_token<'input>(state: &mut State<'input>, token: Token, err: Error) -> ParseResult<()> {
+fn p_token<'input>(state: &mut State<'input>, token: Token, expected: Expected) -> ParseResult<()> {
     match state.peek_token() {
         Some(Err(e)) => Err(e),
-        Some(Ok(t)) if t == token => {
-            state.advance_token();
-            Ok(())
+        Some(Ok(t)) => {
+            if t == token {
+                state.advance_token();
+                Ok(())
+            } else {
+                Err(Error::ParseError { token: Some(t), expected })
+            }
         }
-        _ => Err(err),
+        None => Err(Error::ParseError { token: None, expected }),
     }
 }
 
@@ -182,15 +221,15 @@ fn p_lparen_opt(state: &mut State) -> ParseResult<Option<()>> {
 }
 
 fn p_rparen(state: &mut State) -> ParseResult<()> {
-    p_token(state, Token::RParen, Error::MissingRParen)
+    p_token(state, Token::RParen, &[")"])
 }
 
 fn p_arrow(state: &mut State) -> ParseResult<()> {
-    p_token(state, Token::Arrow, Error::MissingArrow)
+    p_token(state, Token::Arrow, &["->"])
 }
 
 fn p_colon(state: &mut State) -> ParseResult<()> {
-    p_token(state, Token::Colon, Error::Other)
+    p_token(state, Token::Colon, &[])
 }
 
 fn p_colon_opt(state: &mut State) -> ParseResult<Option<()>> {
@@ -206,7 +245,8 @@ fn p_binder(state: &mut State) -> ParseResult<Option<()>> {
             state.push_name(name);
             Ok(Some(()))
         }
-        _ => Err(Error::MissingVariable),
+        Some(Ok(token)) => Err(Error::ParseError { token: Some(token), expected: &["binder"] }),
+        None => Err(Error::ParseError { token: None, expected: &["binder"] }),
     }
 }
 
@@ -249,7 +289,7 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::Lambda => {
                 state.advance_token();
                 let depth = state.names_depth();
-                let vars = p_while1(state, Error::MissingVariable, p_binder_opt)?;
+                let vars = p_while1(state, &["variable"], p_binder_opt)?;
                 p_arrow(state)?;
                 let body = p_term(state)?;
                 state.reset_names(depth);
@@ -263,7 +303,7 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::Pi => {
                 state.advance_token();
                 let depth = state.names_depth();
-                let vars = p_while1(state, Error::MissingVariable, p_pi_binder_opt)?;
+                let vars = p_while1(state, &["variable"], p_pi_binder_opt)?;
                 p_arrow(state)?;
                 let target = p_term(state)?;
                 state.reset_names(depth);
@@ -280,9 +320,9 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::Variable(name) => {
                 state.advance_token();
                 // Otherwise, look it up in the environment
-                match state.find_name(name) {
+                match state.find_name(&name) {
                     Some(index) => Ok(Some(Syntax::variable_rc(index))),
-                    _ => Err(Error::MissingVariable),
+                    _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::Universe(level) => {
@@ -338,7 +378,7 @@ fn p_term_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>
 fn p_term<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
     match p_term_opt(state) {
         Err(err) => Err(err),
-        Ok(None) => Err(Error::MissingTerm),
+        Ok(None) => Err(Error::ParseError{token: None, expected: &["term"]}),
         Ok(Some(term)) => Ok(term),
     }
 }
