@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::common::Index;
@@ -63,6 +64,8 @@ pub enum Token {
     Universe(usize),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
     Variable(String),
+    #[regex(r"\?(?&id)+", priority = 4, callback = |lex| lex.slice()["?".len()..].to_owned())]
+    Metavariable(String),
     // Brackets, semicolons, commas, and periods should break up identifiers.
     #[regex("(?&id)", priority = 2, callback = |lex| lex.slice().to_owned())]
     Ident(String),
@@ -77,6 +80,8 @@ impl fmt::Display for Token {
 struct State<'input> {
     /// The names in scope. Each new name is pushed on the end.
     names: Vec<String>,
+    /// Mapping from metavariable names to their IDs.
+    metavariables: HashMap<String, syn::MetavariableId>,
     /// The main lexer.
     lexer: Lexer<'input, Token>,
     /// The current token. We support single token peeking.
@@ -89,6 +94,7 @@ impl<'input> State<'input> {
         let token = lexer.next();
         State {
             names: Vec::new(),
+            metavariables: HashMap::new(),
             lexer,
             token,
         }
@@ -127,6 +133,18 @@ impl<'input> State<'input> {
     /// Reset the name environment to a given depth.
     fn reset_names(&mut self, depth: usize) {
         self.names.truncate(depth);
+    }
+
+    /// Get or create a metavariable ID for the given name.
+    /// Metavariables are assigned IDs in the order they are discovered.
+    fn get_or_create_metavar(&mut self, name: String) -> syn::MetavariableId {
+        if let Some(&id) = self.metavariables.get(&name) {
+            id
+        } else {
+            let id = syn::MetavariableId(self.metavariables.len());
+            self.metavariables.insert(name, id);
+            id
+        }
     }
 }
 
@@ -290,6 +308,12 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
                 Ok(Some(Syntax::universe_rc(crate::common::UniverseLevel(
                     level as u32,
                 ))))
+            }
+            Token::Metavariable(name) => {
+                state.advance_token();
+                let id = state.get_or_create_metavar(name);
+                let closure = syn::Closure::new();
+                Ok(Some(Syntax::metavariable_rc(id, closure)))
             }
             _ => Ok(None),
         },
@@ -582,6 +606,128 @@ mod tests {
             Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
             Syntax::variable_rc(Index(0)),
         ));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_simple() {
+        // Test parsing: ?x
+        let input = "?x";
+        let result = parse_syntax(input);
+
+        assert!(result.is_ok(), "Failed to parse metavariable: {:?}", result);
+
+        let parsed = result.unwrap();
+
+        // Build expected: ?x with ID 0
+        use crate::syn::{Closure, MetavariableId};
+        let expected = Syntax::metavariable_rc(MetavariableId(0), Closure::new());
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_multiple() {
+        // Test parsing: ?x ?y ?x
+        // ?x should get ID 0, ?y should get ID 1, and the second ?x should reuse ID 0
+        let input = "?x ?y ?x";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse multiple metavariables: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: (?x ?y) ?x
+        // Application is left-associative
+        use crate::syn::{Closure, MetavariableId};
+        let expected = Syntax::application_rc(
+            Syntax::application_rc(
+                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+                Syntax::metavariable_rc(MetavariableId(1), Closure::new()),
+            ),
+            Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_in_lambda() {
+        // Test parsing: λ %x → ?f %x
+        let input = "λ %x → ?f %x";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse metavariable in lambda: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: λ %x → ?f %x
+        use crate::syn::{Closure, MetavariableId};
+        let expected = Syntax::lambda_rc(Syntax::application_rc(
+            Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+            Syntax::variable_rc(Index(0)),
+        ));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_ordering() {
+        // Test parsing: ?z ?a ?m
+        // Should get IDs in order of discovery: ?z=0, ?a=1, ?m=2
+        let input = "?z ?a ?m";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse metavariable ordering: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: (?z ?a) ?m
+        use crate::syn::{Closure, MetavariableId};
+        let expected = Syntax::application_rc(
+            Syntax::application_rc(
+                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+                Syntax::metavariable_rc(MetavariableId(1), Closure::new()),
+            ),
+            Syntax::metavariable_rc(MetavariableId(2), Closure::new()),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_with_type() {
+        // Test parsing: ?x : 𝒰0
+        let input = "?x : 𝒰0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse metavariable with type: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: ?x : 𝒰0
+        use crate::syn::{Closure, MetavariableId};
+        let expected = Syntax::check_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+        );
 
         assert_eq!(parsed, expected);
     }
