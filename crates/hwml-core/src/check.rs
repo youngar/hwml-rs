@@ -1,10 +1,10 @@
 use crate::common::Level;
-use crate::domain;
-use crate::domain::Value;
 use crate::eval;
-use crate::syntax as stx;
-use crate::syntax;
-use crate::syntax::Syntax;
+use crate::syn as stx;
+use crate::syn;
+use crate::syn::Syntax;
+use crate::val;
+use crate::val::Value;
 use std::rc::Rc;
 
 pub struct EnvironmentEntry {
@@ -16,8 +16,8 @@ pub type Environment = Vec<EnvironmentEntry>;
 
 /// Convert a typechecking environment to an environment in the semantic domain, by throwing
 /// away the types and just remembering the semanticvalues associated with each variable.
-fn semantic_env(env: &Environment) -> domain::Environment {
-    let mut dom_env = domain::Environment::new();
+fn semantic_env(env: &Environment) -> val::Environment {
+    let mut dom_env = val::Environment::new();
     for entry in env.iter() {
         dom_env.push(entry.value.clone());
     }
@@ -63,7 +63,7 @@ fn eval(env: &Environment, term: &Syntax) -> Result<Rc<Value>> {
 }
 
 /// Adaptor for running a closure from the semantic domain.
-fn run_closure<T>(closure: &domain::Closure, args: T) -> Result<Rc<Value>>
+fn run_closure<T>(closure: &val::Closure, args: T) -> Result<Rc<Value>>
 where
     T: IntoIterator<Item = Rc<Value>>,
 {
@@ -83,10 +83,7 @@ pub fn type_synth(env: &mut Environment, term: &Syntax) -> Result<Rc<Value>> {
 }
 
 /// Synthesize a type for a variable.
-pub fn type_synth_variable(
-    env: &mut Environment,
-    variable: &syntax::Variable,
-) -> Result<Rc<Value>> {
+pub fn type_synth_variable(env: &mut Environment, variable: &syn::Variable) -> Result<Rc<Value>> {
     // Pull the type from the typing environment.
     Ok(var_type(env, variable).clone())
 }
@@ -94,7 +91,7 @@ pub fn type_synth_variable(
 /// Synthesize the type of a function application.
 pub fn type_synth_application(
     env: &mut Environment,
-    application: &syntax::Application,
+    application: &syn::Application,
 ) -> Result<Rc<Value>> {
     // First synthesize the type of the term being applied.
     let fun_ty = type_synth(env, &application.function)?;
@@ -121,7 +118,7 @@ pub fn type_check(env: &mut Environment, term: &Syntax, ty: &Value) -> Result<()
 }
 
 /// Typecheck a pi term.
-fn type_check_pi(env: &mut Environment, pi: &syntax::Pi, ty: &Value) -> Result<()> {
+fn type_check_pi(env: &mut Environment, pi: &syn::Pi, ty: &Value) -> Result<()> {
     // The expected type of a pi must be a universe.
     let Value::Universe(_) = ty else {
         return Err(Error::TypeMismatch);

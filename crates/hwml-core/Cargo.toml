@@ -12,7 +12,14 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-elegance.workspace = true
 anyhow.workspace = true
+elegance.workspace = true
 hwml_support.workspace = true
+logos.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+
+[lints]
+workspace = true

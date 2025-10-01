@@ -17,7 +17,7 @@ impl Level {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[derive(Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct Index(pub usize);
 
 impl Index {
@@ -32,7 +32,17 @@ impl Index {
     pub fn to_usize(self: Index) -> usize {
         self.0
     }
+
+    pub fn raise(self: Index, amount: usize) -> Index {
+        Index(self.to_usize() + amount)
+    }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 pub struct UniverseLevel(pub u32);
+
+impl std::fmt::Display for UniverseLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}

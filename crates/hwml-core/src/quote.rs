@@ -1,8 +1,8 @@
 use crate::common::{Index, Level};
-use crate::domain;
-use crate::domain::{Closure, Neutral, Normal, Value};
 use crate::eval;
-use crate::syntax::{RcSyntax, Syntax};
+use crate::syn::{RcSyntax, Syntax};
+use crate::val;
+use crate::val::{Closure, Neutral, Normal, Value};
 use std::rc::Rc;
 
 /// A quotation error.
@@ -34,7 +34,7 @@ pub fn quote(depth: usize, ty: &Value, value: &Value) -> Result<RcSyntax> {
 }
 
 /// Read an instance of a pi type back to syntax.
-fn quote_pi_instance(depth: usize, ty: &domain::Pi, value: &Value) -> Result<RcSyntax> {
+fn quote_pi_instance(depth: usize, ty: &val::Pi, value: &Value) -> Result<RcSyntax> {
     // Build a variable representing the lambda's argument.
     let var = Rc::new(Value::variable(ty.source.clone(), Level(depth)));
 
@@ -59,12 +59,12 @@ fn quote_pi_instance(depth: usize, ty: &domain::Pi, value: &Value) -> Result<RcS
 }
 
 /// Read an instance of a universe back to syntax.
-fn quote_universe_instance(depth: usize, _: &domain::Universe, value: &Value) -> Result<RcSyntax> {
+fn quote_universe_instance(depth: usize, _: &val::Universe, value: &Value) -> Result<RcSyntax> {
     quote_type(depth, value)
 }
 
 /// Read an instance of some neutral type back to syntax.
-fn quote_neutral_instance(depth: usize, _: &domain::Neutral, value: &Value) -> Result<RcSyntax> {
+fn quote_neutral_instance(depth: usize, _: &val::Neutral, value: &Value) -> Result<RcSyntax> {
     // The type is unknown, so we proceed by syntax. If the value was not a neutral,
     // then we would know the type. EG if the value was headed by a lambda, we could
     // know that the type was a pi.
@@ -85,7 +85,7 @@ pub fn quote_type(depth: usize, value: &Value) -> Result<RcSyntax> {
 }
 
 // Read a pi back to syntax.
-fn quote_pi(depth: usize, sem_pi: &domain::Pi) -> Result<RcSyntax> {
+fn quote_pi(depth: usize, sem_pi: &val::Pi) -> Result<RcSyntax> {
     // Read back the source type.
     let sem_source_ty = &sem_pi.source;
     let syn_source_ty = quote_type(depth, sem_source_ty)?;
@@ -104,14 +104,14 @@ fn quote_pi(depth: usize, sem_pi: &domain::Pi) -> Result<RcSyntax> {
 }
 
 /// Read a universe back to syntax.
-fn quote_universe(_depth: usize, sem_universe: &domain::Universe) -> Result<RcSyntax> {
+fn quote_universe(_depth: usize, sem_universe: &val::Universe) -> Result<RcSyntax> {
     // Return a syntactic universe at the same universe level.
     let syn_universe = Syntax::universe(sem_universe.level);
     Ok(Rc::new(syn_universe))
 }
 
 /// Read a neutral term back to syntax.
-fn quote_neutral(depth: usize, neutral: &domain::Neutral) -> Result<RcSyntax> {
+fn quote_neutral(depth: usize, neutral: &val::Neutral) -> Result<RcSyntax> {
     match neutral {
         Neutral::Variable(var) => quote_variable(depth, var),
         Neutral::Application(app) => quote_application(depth, app),
@@ -119,14 +119,14 @@ fn quote_neutral(depth: usize, neutral: &domain::Neutral) -> Result<RcSyntax> {
 }
 
 /// Read a variable back to syntax.
-fn quote_variable(depth: usize, sem_var: &domain::Variable) -> Result<RcSyntax> {
+fn quote_variable(depth: usize, sem_var: &val::Variable) -> Result<RcSyntax> {
     // Convert the DB level to an index, and return the syntactic variable.
     let syn_var = Syntax::variable(sem_var.level.to_index(depth));
     Ok(Rc::new(syn_var))
 }
 
 /// Read a stuck application back to syntax.
-fn quote_application(depth: usize, sem_app: &domain::Application) -> Result<RcSyntax> {
+fn quote_application(depth: usize, sem_app: &val::Application) -> Result<RcSyntax> {
     // Read back the function.
     let sem_fun = &sem_app.function;
     let syn_fun = quote_neutral(depth, &sem_fun)?;

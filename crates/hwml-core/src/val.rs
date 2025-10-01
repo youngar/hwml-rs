@@ -1,5 +1,5 @@
 use crate::common::{Level, UniverseLevel};
-use crate::syntax::{NameId, RcSyntax};
+use crate::syn::{NameId, RcSyntax};
 use std::rc::Rc;
 
 /// A closure represents a pending evaluation. A closure records the term to be
@@ -103,7 +103,7 @@ impl Lambda {
 }
 
 /// A universe, the "type of a type".
-#[derive(Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Universe {
     pub level: UniverseLevel,
 }
