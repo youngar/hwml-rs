@@ -1,11 +1,13 @@
-use crate::{ConstraintId, MetaId};
+use hwml_core::syn::Metavariable;
+
+use crate::Constraint;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Debug)]
 pub enum Blocker {
     /// Unblock when the meta is solved.
-    Meta(MetaId),
+    Meta(Metavariable),
     /// Unblock when the constraint is satisfied.
-    Constraint(ConstraintId),
+    Constraint(Constraint),
     /// Unblock when all are unblocked.
     All(Vec<Blocker>),
     /// Unblock when any are unblocked.
@@ -27,22 +29,21 @@ impl Blocker {
 
     pub fn all_and(mut xs: Vec<Blocker>, y: Blocker) -> Blocker {
         match y {
-            Blocker::All(ys) => {
-                xs.extend(ys);
-                Blocker::all(xs)
-            }
-            y => {
-                xs.push(y);
-                Blocker::all(xs)
-            }
+            Blocker::All(ys) => xs.extend(ys),
+            y => xs.push(y),
         }
+        Blocker::all(xs)
     }
 
     pub fn and(x: Blocker, y: Blocker) -> Blocker {
-        match x {
-            Blocker::All(xs) => Blocker::all_and(xs, y),
-            x => Blocker::all(vec![x, y]),
+        if let Blocker::All(xs) = x {
+            return Blocker::all_and(xs, y);
         }
+        if let Blocker::All(mut ys) = y {
+            ys.push(x);
+            return Blocker::all(ys);
+        }
+        Blocker::all(vec![x, y])
     }
 
     pub fn any(mut xs: Vec<Blocker>) -> Blocker {
@@ -59,30 +60,29 @@ impl Blocker {
 
     pub fn any_or(mut xs: Vec<Blocker>, y: Blocker) -> Blocker {
         match y {
-            Blocker::Any(ys) => {
-                xs.extend(ys);
-                Blocker::any(xs)
-            }
-            y => {
-                xs.push(y);
-                Blocker::any(xs)
-            }
+            Blocker::Any(ys) => xs.extend(ys),
+            y => xs.push(y),
         }
+        Blocker::any(xs)
     }
 
     pub fn or(x: Blocker, y: Blocker) -> Blocker {
-        match x {
-            Blocker::Any(xs) => Blocker::any_or(xs, y),
-            x => Blocker::any(vec![x, y]),
+        if let Blocker::Any(xs) = x {
+            return Blocker::any_or(xs, y);
         }
+        if let Blocker::Any(mut ys) = y {
+            ys.push(x);
+            return Blocker::any(ys);
+        }
+        Blocker::any(vec![x, y])
     }
 
-    pub fn meta(id: MetaId) -> Blocker {
-        Blocker::Meta(id)
+    pub fn meta(meta: Metavariable) -> Blocker {
+        Blocker::Meta(meta)
     }
 
-    pub fn constraint(id: ConstraintId) -> Blocker {
-        Blocker::Constraint(id)
+    pub fn constraint(constaint: Constraint) -> Blocker {
+        Blocker::Constraint(constaint)
     }
 
     pub fn is_blocked(&self) -> bool {
@@ -100,10 +100,10 @@ impl Blocker {
     }
 
     /// Unblock a meta, by ID. If this blocker is now unblocked, return true.
-    pub fn unblock_meta(&mut self, id: MetaId) -> bool {
+    pub fn unblock_meta(&mut self, meta: Metavariable) -> bool {
         match self {
             Blocker::Meta(x) => {
-                if *x == id {
+                if *x == meta {
                     *self = Blocker::None;
                     return true;
                 }
@@ -111,7 +111,7 @@ impl Blocker {
             }
             Blocker::Constraint(_) => false,
             Blocker::All(xs) => {
-                xs.retain_mut(|x| !x.unblock_meta(id));
+                xs.retain_mut(|x| !x.unblock_meta(meta.clone()));
                 if xs.is_empty() {
                     *self = Blocker::None;
                     return true;
@@ -119,7 +119,7 @@ impl Blocker {
                 false
             }
             Blocker::Any(xs) => {
-                if xs.iter_mut().any(|x| x.unblock_meta(id)) {
+                if xs.iter_mut().any(|x| x.unblock_meta(meta.clone())) {
                     *self = Blocker::None;
                     return true;
                 }
@@ -129,19 +129,19 @@ impl Blocker {
         }
     }
 
-    /// Unblock a constraint, by ID. If this blocker is now unblocked, return true.
-    pub fn unblock_constraint(&mut self, id: ConstraintId) -> bool {
+    /// Unblock a constraint. If this blocker is now unblocked, return true.
+    pub fn unblock_constraint(&mut self, constraint: &Constraint) -> bool {
         match self {
             Blocker::Meta(_) => false,
             Blocker::Constraint(x) => {
-                if *x == id {
+                if x == constraint {
                     *self = Blocker::None;
                     return true;
                 }
                 false
             }
             Blocker::All(xs) => {
-                xs.retain_mut(|x| !x.unblock_constraint(id));
+                xs.retain_mut(|x| !x.unblock_constraint(constraint));
                 if xs.is_empty() {
                     *self = Blocker::None;
                     return true;
@@ -149,7 +149,7 @@ impl Blocker {
                 false
             }
             Blocker::Any(xs) => {
-                if xs.iter_mut().any(|x| x.unblock_constraint(id)) {
+                if xs.iter_mut().any(|x| x.unblock_constraint(constraint)) {
                     *self = Blocker::None;
                     return true;
                 }
