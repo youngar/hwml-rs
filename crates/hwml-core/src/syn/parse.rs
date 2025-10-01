@@ -350,7 +350,7 @@ pub fn parse_syntax<'input>(input: &'input str) -> ParseResult<RcSyntax> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::Index;
+    use crate::common::{Index, UniverseLevel};
 
     #[test]
     fn test_parse_lambda_single_var() {
@@ -360,21 +360,12 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse lambda: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be a Lambda node
-        match &*syntax {
-            Syntax::Lambda(lambda) => {
-                // Body should be a variable with index 0
-                match &*lambda.body {
-                    Syntax::Variable(var) => {
-                        assert_eq!(var.index, Index::new(0));
-                    }
-                    other => panic!("Expected Variable in lambda body, got {:?}", other),
-                }
-            }
-            other => panic!("Expected Lambda, got {:?}", other),
-        }
+        // Build expected: λ %0 → %0
+        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(0)));
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -387,22 +378,13 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse lambda: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be a nested Lambda (λ %x → λ %y → %x)
-        match &*syntax {
-            Syntax::Lambda(outer_lambda) => match &*outer_lambda.body {
-                Syntax::Lambda(inner_lambda) => match &*inner_lambda.body {
-                    Syntax::Variable(var) => {
-                        // %x is at index 1 because we need to skip over %y (index 0)
-                        assert_eq!(var.index, Index::new(1));
-                    }
-                    other => panic!("Expected Variable in inner lambda body, got {:?}", other),
-                },
-                other => panic!("Expected nested Lambda, got {:?}", other),
-            },
-            other => panic!("Expected Lambda, got {:?}", other),
-        }
+        // Build expected: λ %x → λ %y → %x
+        // %x is at index 1 in the innermost scope
+        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(1))));
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -417,17 +399,12 @@ mod tests {
             result
         );
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        match &*syntax {
-            Syntax::Lambda(lambda) => match &*lambda.body {
-                Syntax::Variable(var) => {
-                    assert_eq!(var.index, Index::new(0));
-                }
-                other => panic!("Expected Variable, got {:?}", other),
-            },
-            other => panic!("Expected Lambda, got {:?}", other),
-        }
+        // Build expected: λ %0 → %0
+        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(0)));
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -439,28 +416,15 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse pi: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be a Pi node
-        match &*syntax {
-            Syntax::Pi(pi) => {
-                // Source should be Universe(0)
-                match &*pi.source {
-                    Syntax::Universe(univ) => {
-                        assert_eq!(univ.level, crate::common::UniverseLevel(0));
-                    }
-                    other => panic!("Expected Universe in pi source, got {:?}", other),
-                }
-                // Target should be Universe(0)
-                match &*pi.target {
-                    Syntax::Universe(univ) => {
-                        assert_eq!(univ.level, crate::common::UniverseLevel(0));
-                    }
-                    other => panic!("Expected Universe in pi target, got {:?}", other),
-                }
-            }
-            other => panic!("Expected Pi, got {:?}", other),
-        }
+        // Build expected: ∀(%x : 𝒰0) → 𝒰0
+        let expected = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel(0)),
+        );
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -471,14 +435,12 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse universe: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        match &*syntax {
-            Syntax::Universe(univ) => {
-                assert_eq!(univ.level, crate::common::UniverseLevel(0));
-            }
-            other => panic!("Expected Universe, got {:?}", other),
-        }
+        // Build expected: 𝒰0
+        let expected = Syntax::universe_rc(UniverseLevel(0));
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -490,84 +452,40 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse pi: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be a nested Pi (∀(%x : 𝒰0) → ∀(%y : 𝒰0) → %x)
-        match &*syntax {
-            Syntax::Pi(outer_pi) => {
-                // Outer source should be Universe(0)
-                match &*outer_pi.source {
-                    Syntax::Universe(univ) => {
-                        assert_eq!(univ.level, crate::common::UniverseLevel(0));
-                    }
-                    other => panic!("Expected Universe in outer pi source, got {:?}", other),
-                }
-                // Outer target should be another Pi
-                match &*outer_pi.target {
-                    Syntax::Pi(inner_pi) => {
-                        // Inner source should be Universe(0)
-                        match &*inner_pi.source {
-                            Syntax::Universe(univ) => {
-                                assert_eq!(univ.level, crate::common::UniverseLevel(0));
-                            }
-                            other => {
-                                panic!("Expected Universe in inner pi source, got {:?}", other)
-                            }
-                        }
-                        // Inner target should be a variable with index 1 (referring to %x)
-                        match &*inner_pi.target {
-                            Syntax::Variable(var) => {
-                                assert_eq!(var.index, Index::new(1));
-                            }
-                            other => {
-                                panic!("Expected Variable in inner pi target, got {:?}", other)
-                            }
-                        }
-                    }
-                    other => panic!("Expected nested Pi, got {:?}", other),
-                }
-            }
-            other => panic!("Expected Pi, got {:?}", other),
-        }
+        // Build expected: ∀(%x : 𝒰0) → ∀(%y : 𝒰0) → %x
+        // %x is at index 1 in the innermost scope (skip over %y)
+        let expected = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::pi_rc(
+                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::variable_rc(Index(1)),
+            ),
+        );
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_application_simple() {
-        // Test parsing: (λ %f %x → %f %x) applied within a lambda context
+        // Test parsing: λ %f %x → %f %x
         // We need variables to be bound, so we use a lambda expression
         let input = "λ %f %x → %f %x";
         let result = parse_syntax(input);
 
         assert!(result.is_ok(), "Failed to parse application: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be Lambda(Lambda(Application(%f, %x)))
-        match &*syntax {
-            Syntax::Lambda(outer_lambda) => match &*outer_lambda.body {
-                Syntax::Lambda(inner_lambda) => match &*inner_lambda.body {
-                    Syntax::Application(app) => {
-                        // Function should be %f (index 1, skipping %x)
-                        match &*app.function {
-                            Syntax::Variable(var) => {
-                                assert_eq!(var.index, Index::new(1));
-                            }
-                            other => panic!("Expected Variable in function, got {:?}", other),
-                        }
-                        // Argument should be %x (index 0)
-                        match &*app.argument {
-                            Syntax::Variable(var) => {
-                                assert_eq!(var.index, Index::new(0));
-                            }
-                            other => panic!("Expected Variable in argument, got {:?}", other),
-                        }
-                    }
-                    other => panic!("Expected Application, got {:?}", other),
-                },
-                other => panic!("Expected inner Lambda, got {:?}", other),
-            },
-            other => panic!("Expected outer Lambda, got {:?}", other),
-        }
+        // Build expected: λ %f → λ %x → %f %x
+        // %f is at index 1 (skip over %x), %x is at index 0
+        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
+            Syntax::variable_rc(Index(1)),
+            Syntax::variable_rc(Index(0)),
+        )));
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -580,62 +498,21 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse application: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Navigate through the nested lambdas to the application
-        match &*syntax {
-            Syntax::Lambda(lambda_f) => match &*lambda_f.body {
-                Syntax::Lambda(lambda_x) => match &*lambda_x.body {
-                    Syntax::Lambda(lambda_y) => {
-                        // Body should be Application(Application(%f, %x), %y)
-                        match &*lambda_y.body {
-                            Syntax::Application(outer_app) => {
-                                // Outer argument should be %y (index 0)
-                                match &*outer_app.argument {
-                                    Syntax::Variable(var) => {
-                                        assert_eq!(var.index, Index::new(0));
-                                    }
-                                    other => {
-                                        panic!(
-                                            "Expected Variable %y in outer argument, got {:?}",
-                                            other
-                                        )
-                                    }
-                                }
-                                // Outer function should be Application(%f, %x)
-                                match &*outer_app.function {
-                                    Syntax::Application(inner_app) => {
-                                        // Inner function should be %f (index 2)
-                                        match &*inner_app.function {
-                                            Syntax::Variable(var) => {
-                                                assert_eq!(var.index, Index::new(2));
-                                            }
-                                            other => {
-                                                panic!("Expected Variable %f, got {:?}", other)
-                                            }
-                                        }
-                                        // Inner argument should be %x (index 1)
-                                        match &*inner_app.argument {
-                                            Syntax::Variable(var) => {
-                                                assert_eq!(var.index, Index::new(1));
-                                            }
-                                            other => {
-                                                panic!("Expected Variable %x, got {:?}", other)
-                                            }
-                                        }
-                                    }
-                                    other => panic!("Expected nested Application, got {:?}", other),
-                                }
-                            }
-                            other => panic!("Expected Application, got {:?}", other),
-                        }
-                    }
-                    other => panic!("Expected lambda %y, got {:?}", other),
-                },
-                other => panic!("Expected lambda %x, got {:?}", other),
-            },
-            other => panic!("Expected lambda %f, got {:?}", other),
-        }
+        // Build expected: λ %f → λ %x → λ %y → ((%f %x) %y)
+        // %f is at index 2, %x is at index 1, %y is at index 0
+        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::lambda_rc(
+            Syntax::application_rc(
+                Syntax::application_rc(
+                    Syntax::variable_rc(Index(2)),
+                    Syntax::variable_rc(Index(1)),
+                ),
+                Syntax::variable_rc(Index(0)),
+            ),
+        )));
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -647,31 +524,15 @@ mod tests {
 
         assert!(result.is_ok(), "Failed to parse check: {:?}", result);
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be a Check node
-        match &*syntax {
-            Syntax::Check(check) => {
-                // Term should be a Lambda
-                match &*check.term {
-                    Syntax::Lambda(lambda) => match &*lambda.body {
-                        Syntax::Variable(var) => {
-                            assert_eq!(var.index, Index::new(0));
-                        }
-                        other => panic!("Expected Variable in lambda body, got {:?}", other),
-                    },
-                    other => panic!("Expected Lambda in term, got {:?}", other),
-                }
-                // Type should be Universe(0)
-                match &*check.ty {
-                    Syntax::Universe(univ) => {
-                        assert_eq!(univ.level, crate::common::UniverseLevel(0));
-                    }
-                    other => panic!("Expected Universe in type, got {:?}", other),
-                }
-            }
-            other => panic!("Expected Check, got {:?}", other),
-        }
+        // Build expected: (λ %x → %x) : 𝒰0
+        let expected = Syntax::check_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+        );
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -687,49 +548,18 @@ mod tests {
             result
         );
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be Check(Lambda(Lambda(Application(%f, %x))), Universe(0))
-        match &*syntax {
-            Syntax::Check(check) => {
-                // Term should be nested Lambdas with Application
-                match &*check.term {
-                    Syntax::Lambda(outer_lambda) => match &*outer_lambda.body {
-                        Syntax::Lambda(inner_lambda) => match &*inner_lambda.body {
-                            Syntax::Application(app) => {
-                                // Function should be %f (index 1)
-                                match &*app.function {
-                                    Syntax::Variable(var) => {
-                                        assert_eq!(var.index, Index::new(1));
-                                    }
-                                    other => panic!("Expected Variable %f, got {:?}", other),
-                                }
-                                // Argument should be %x (index 0)
-                                match &*app.argument {
-                                    Syntax::Variable(var) => {
-                                        assert_eq!(var.index, Index::new(0));
-                                    }
-                                    other => panic!("Expected Variable %x, got {:?}", other),
-                                }
-                            }
-                            other => {
-                                panic!("Expected Application in inner lambda, got {:?}", other)
-                            }
-                        },
-                        other => panic!("Expected inner Lambda, got {:?}", other),
-                    },
-                    other => panic!("Expected outer Lambda in term, got {:?}", other),
-                }
-                // Type should be Universe(0)
-                match &*check.ty {
-                    Syntax::Universe(univ) => {
-                        assert_eq!(univ.level, crate::common::UniverseLevel(0));
-                    }
-                    other => panic!("Expected Universe in type, got {:?}", other),
-                }
-            }
-            other => panic!("Expected Check, got {:?}", other),
-        }
+        // Build expected: (λ %f → λ %x → %f %x) : 𝒰0
+        let expected = Syntax::check_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
+                Syntax::variable_rc(Index(1)),
+                Syntax::variable_rc(Index(0)),
+            ))),
+        );
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
@@ -745,33 +575,14 @@ mod tests {
             result
         );
 
-        let syntax = result.unwrap();
+        let parsed = result.unwrap();
 
-        // Should be Lambda(Application(Lambda(%y), %x))
-        match &*syntax {
-            Syntax::Lambda(outer_lambda) => match &*outer_lambda.body {
-                Syntax::Application(app) => {
-                    // Function should be Lambda(%y → %y)
-                    match &*app.function {
-                        Syntax::Lambda(inner_lambda) => match &*inner_lambda.body {
-                            Syntax::Variable(var) => {
-                                assert_eq!(var.index, Index::new(0));
-                            }
-                            other => panic!("Expected Variable in lambda body, got {:?}", other),
-                        },
-                        other => panic!("Expected Lambda in function, got {:?}", other),
-                    }
-                    // Argument should be %x (index 0 in outer lambda context)
-                    match &*app.argument {
-                        Syntax::Variable(var) => {
-                            assert_eq!(var.index, Index::new(0));
-                        }
-                        other => panic!("Expected Variable in argument, got {:?}", other),
-                    }
-                }
-                other => panic!("Expected Application, got {:?}", other),
-            },
-            other => panic!("Expected outer Lambda, got {:?}", other),
-        }
+        // Build expected: λ %x → (λ %y → %y) %x
+        let expected = Syntax::lambda_rc(Syntax::application_rc(
+            Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+            Syntax::variable_rc(Index(0)),
+        ));
+
+        assert_eq!(parsed, expected);
     }
 }
