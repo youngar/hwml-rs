@@ -1,0 +1,100 @@
+
+// Examples..
+def foo := (pair x y) -> c
+def foo := ((pair.mk x y) : pair a b) -> c
+
+
+def foo {a = d} := 
+def foo ({a = d} : {a : c}) :=
+
+def foo {a : b} := c
+
+
+
+def foo (a : 'b) := c
+def foo ('b : d) (a : 'b) := c
+def foo: (a : 'b) -> (b : 'b) -> Pair 'b 'b :=
+
+^ lift
+~ splice
+[expr] quote?
+
+
+
+meta [_] ('ht : HWType) (h : 'ht): ^'ht :=
+  'h
+
+meta [_] ('ht : HWType) (h : ^'ht): ^'ht :=
+  h
+
+meta [_] (m : 'T) -> 'T := m
+
+
+letm foo = [x y z]
+letm foo = (x y z)
+letm foo = bar (x y z)
+
+
+def VMul (u : Vec UInt 'n) (v : Vec UInt 'n): Vec UInt 'n :=
+  match (u, v) with
+    | (Nil, Nil) => Nil
+    | (Cons ux ux', vy) => Cons (ux * vy) (VMul ux' vy)
+
+def VMul (u : Vec UInt 'n) (v : Vec UInt 'n): Vec UInt 'n :=
+  match n with
+    | Z => Nil
+    | S n => Cons (u.head * v.head) (VMul u.tail v.tail)
+
+
+meta VMul (u : Vec UInt 'n) (v : Vec UInt 'n): Vec UInt 'n :=
+  match (u, v) with
+    | (Nil, Nil) => Nil
+    | (Cons ux ux', vy) => Cons (ux * vy) (VMul ux' vy)
+
+
+def VMULREAL := ~(VMUL 5)
+
+========================
+
+meta add_three (a b c : ^i1): ^i1 := [~a + ~b + ~c]
+def add_three (a b c : i1): i1 := a + b + c
+
+
+meta add_three (a : ^i1): ^(i1 -> i1 -> i1) :=
+  [fun (b : i1) (c : i1) => ~a + b + c]
+
+
+def Foo := \x \y => x + y
+def Foo x y := x + y
+
+
+def Foo x y := (\x \y => x + y) x y
+
+
+meta QM := '(def MyModule := ...)
+
+meta VMUL (n : Nat) := ...
+def VMUL_5 := ~(VMUL 5)
+
+    
+def VMUREAL := VMUL_5
+def top x y := VMUREAL x y
+
+module Top(x, y)
+  VMULREAL vmul_real (x, y);
+endmodule
+
+module VMULREAL(x, y)
+  VMUL_5 vmul_5 (x, y)
+endmodule
+
+module VMULREAL(x, y)
+  VMUL_5 vmul_5 (x, y);
+endmodule
+
+
+
+def foo {n} a := make_vec n a
+
+check_dups {t} {n} (v: Vec t n): Bool := ....
+def foo {n} a := check_dups n=n a

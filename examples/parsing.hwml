@@ -1,0 +1,53 @@
+// Basic definitions
+def foo := a
+def foo : a := b
+
+// Untyped binders
+def foo a := b
+def foo a : b := c
+def foo a b := c
+def foo a b : c := d
+def foo a : b c := d
+
+// Destructuring binders
+def foo (a) := b
+def foo (a b) := c
+def foo (a) (b) := c
+
+// Dependent binders
+def foo (a : b) := c
+def foo (a b : c) := d
+def foo (a : b c) := d
+def foo (a : b) (c : d) := e
+
+// Destructuring dependent binders
+def foo ((a) : b) := c
+
+// Independent functions
+def foo := a -> b
+def foo := a -> b -> c
+def foo := a b -> c
+def foo := (a b) -> c
+
+// Dependent functions
+def foo := (a : b) -> c
+def foo := (a : b) (c : d) -> e
+def foo := (a b : c) -> d
+
+// Destructuring binders
+def foo := ((a) : b) -> c
+def foo := ((a b) : c) -> d
+
+// Implicits.
+//def foo {a} := b
+//def foo {a} {b} := c
+//def foo {a b} := c
+//def foo {a : b} := c
+//def foo {a : b} {c : d} := e
+//def foo {a b : c} := d
+//def foo {(a)} := b
+//def foo {(a) (b)} := c
+//def foo {(a b)} := c
+//def foo {(a) : b} := c
+//def foo {(a) (b) : c} := d
+
