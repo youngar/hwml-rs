@@ -62,6 +62,8 @@ pub enum Token {
     Colon,
     #[regex(r"𝒰[0-9]+", priority = 4, callback = |lex| lex.slice()["𝒰".len()..].parse())]
     Universe(usize),
+    #[regex(r"@[0-9]+", priority = 4, callback = |lex| lex.slice()["@".len()..].parse())]
+    Constant(u32),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
     Variable(String),
     #[regex(r"\?(?&id)+", priority = 4, callback = |lex| lex.slice()["?".len()..].to_owned())]
@@ -308,6 +310,10 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
                 Ok(Some(Syntax::universe_rc(crate::common::UniverseLevel(
                     level as u32,
                 ))))
+            }
+            Token::Constant(id) => {
+                state.advance_token();
+                Ok(Some(Syntax::constant_rc(syn::ConstantId(id))))
             }
             Token::Metavariable(name) => {
                 state.advance_token();
@@ -727,6 +733,157 @@ mod tests {
         let expected = Syntax::check_rc(
             Syntax::universe_rc(UniverseLevel(0)),
             Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_simple() {
+        // Test parsing: @42
+        let input = "@42";
+        let result = parse_syntax(input);
+
+        assert!(result.is_ok(), "Failed to parse constant: {:?}", result);
+
+        let parsed = result.unwrap();
+
+        // Build expected: @42
+        use crate::syn::ConstantId;
+        let expected = Syntax::constant_rc(ConstantId(42));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_zero() {
+        // Test parsing: @0
+        let input = "@0";
+        let result = parse_syntax(input);
+
+        assert!(result.is_ok(), "Failed to parse constant @0: {:?}", result);
+
+        let parsed = result.unwrap();
+
+        // Build expected: @0
+        use crate::syn::ConstantId;
+        let expected = Syntax::constant_rc(ConstantId(0));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_large() {
+        // Test parsing: @123456789
+        let input = "@123456789";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse large constant: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: @123456789
+        use crate::syn::ConstantId;
+        let expected = Syntax::constant_rc(ConstantId(123456789));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_application() {
+        // Test parsing: @42 @99
+        let input = "@42 @99";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse constant application: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: @42 @99
+        use crate::syn::ConstantId;
+        let expected = Syntax::application_rc(
+            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(ConstantId(99)),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_with_type() {
+        // Test parsing: @42 : 𝒰0
+        let input = "@42 : 𝒰0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse constant with type: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: @42 : 𝒰0
+        use crate::syn::ConstantId;
+        let expected = Syntax::check_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::constant_rc(ConstantId(42)),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_in_lambda() {
+        // Test parsing: λ %x → @42 %x
+        let input = "λ %x → @42 %x";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse constant in lambda: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: λ %x → @42 %x
+        use crate::syn::ConstantId;
+        let expected = Syntax::lambda_rc(Syntax::application_rc(
+            Syntax::constant_rc(ConstantId(42)),
+            Syntax::variable_rc(Index(0)),
+        ));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_constant_in_pi() {
+        // Test parsing: ∀(%x : @42) → 𝒰0
+        let input = "∀(%x : @42) → 𝒰0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse constant in pi: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: ∀(%x : @42) → 𝒰0
+        use crate::syn::ConstantId;
+        let expected = Syntax::pi_rc(
+            Syntax::constant_rc(ConstantId(42)),
+            Syntax::universe_rc(UniverseLevel(0)),
         );
 
         assert_eq!(parsed, expected);
