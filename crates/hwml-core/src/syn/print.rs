@@ -234,7 +234,7 @@ impl Lambda {
                         p.space()?;
                     }
                     p.space()?;
-                    p.text("↦")
+                    p.text("→")
                 })?;
                 p.space()?;
                 print_right_subterm(st, p, &*next.body, LAMBDA_RHS)
@@ -288,7 +288,7 @@ mod tests {
 
         let lambda_body = Syntax::variable_rc(Index(0));
         let lambda = Syntax::lambda(lambda_body);
-        assert_snapshot!(print_syntax_to_string(&lambda), @"λ%0 ↦ %0");
+        assert_snapshot!(print_syntax_to_string(&lambda), @"λ%0 → %0");
 
         let app_fun = Syntax::constant_rc(NameId(42));
         let app_arg = Syntax::constant_rc(NameId(99));
@@ -316,14 +316,14 @@ mod tests {
         let complex_arg = Syntax::variable_rc(Index(0)); // refers to lambda parameter
         let complex_app = Syntax::application_rc(complex_fun, complex_arg);
         let complex_lambda = Syntax::lambda(complex_app);
-        assert_snapshot!(print_syntax_to_string(&complex_lambda), @"λ%0 ↦ @999 %0");
+        assert_snapshot!(print_syntax_to_string(&complex_lambda), @"λ%0 → @999 %0");
 
         let inner_fun = Syntax::variable_rc(Index(0)); // outer lambda param
         let inner_arg = Syntax::variable_rc(Index(1)); // inner lambda param
         let inner_app = Syntax::application_rc(inner_fun, inner_arg);
         let inner_lambda = Syntax::lambda_rc(inner_app);
         let outer_lambda = Syntax::lambda(inner_lambda);
-        assert_snapshot!(print_syntax_to_string(&outer_lambda), @"λ%0 %1 ↦ %1 %0");
+        assert_snapshot!(print_syntax_to_string(&outer_lambda), @"λ%0 %1 → %1 %0");
 
         let inner_fun = Syntax::variable_rc(Index(0)); // outer lambda param
         let inner_arg = Syntax::variable_rc(Index(1)); // inner lambda param
@@ -331,6 +331,6 @@ mod tests {
         let inner_lambda = Syntax::lambda_rc(inner_app);
         let outer_check = Syntax::check_rc(Syntax::universe_rc(UniverseLevel(0)), inner_lambda);
         let outer_lambda = Syntax::lambda_rc(outer_check);
-        assert_snapshot!(print_syntax_to_string(&outer_lambda), @"λ%0 ↦ (λ%1 ↦ %1 %0 : 𝒰0)");
+        assert_snapshot!(print_syntax_to_string(&outer_lambda), @"λ%0 → (λ%1 → %1 %0 : 𝒰0)");
     }
 }
