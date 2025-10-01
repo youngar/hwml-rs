@@ -66,6 +66,8 @@ pub enum Token {
     Constant(u32),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
     Variable(String),
+    #[regex(r"![0-9]+", priority = 4, callback = |lex| lex.slice()["!".len()..].parse())]
+    UnboundVariable(usize),
     #[regex(r"\?(?&id)+", priority = 4, callback = |lex| lex.slice()["?".len()..].to_owned())]
     Metavariable(String),
     // Brackets, semicolons, commas, and periods should break up identifiers.
@@ -304,6 +306,12 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
                     Some(index) => Ok(Some(Syntax::variable_rc(index))),
                     _ => Err(Error::MissingVariable),
                 }
+            }
+            Token::UnboundVariable(negative_level) => {
+                state.advance_token();
+                // Convert negative level to index: index = depth + negative_level
+                let index = Index::new(state.names_depth() + negative_level);
+                Ok(Some(Syntax::variable_rc(index)))
             }
             Token::Universe(level) => {
                 state.advance_token();
@@ -887,5 +895,220 @@ mod tests {
         );
 
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_unbound_variable_simple() {
+        // Test parsing: !0
+        let input = "!0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse unbound variable: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: !0 (index 0 at depth 0)
+        let expected = Syntax::variable_rc(Index(0));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_unbound_variable_higher() {
+        // Test parsing: !5
+        let input = "!5";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse unbound variable !5: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: !5 (index 5 at depth 0)
+        let expected = Syntax::variable_rc(Index(5));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_unbound_variable_in_lambda() {
+        // Test parsing: λ %x → !0
+        // At depth 1, !0 should become index 1
+        let input = "λ %x → !0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse unbound variable in lambda: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: λ %x → !0
+        // Inside the lambda (depth 1), !0 means index = 1 + 0 = 1
+        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(1)));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_unbound_variable_in_nested_lambda() {
+        // Test parsing: λ %x %y → !0
+        // At depth 2, !0 should become index 2
+        let input = "λ %x %y → !0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse unbound variable in nested lambda: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: λ %x → λ %y → !0
+        // Inside the nested lambda (depth 2), !0 means index = 2 + 0 = 2
+        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(2))));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_mixed_bound_and_unbound() {
+        // Test parsing: λ %x %y → %y !0
+        // %y is bound (index 0), !0 is unbound (index 2 at depth 2)
+        let input = "λ %x %y → %y !0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse mixed bound and unbound: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: λ %x → λ %y → %y !0
+        // %y has index 0, !0 has index 2
+        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
+            Syntax::variable_rc(Index(0)),
+            Syntax::variable_rc(Index(2)),
+        )));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_unbound_variable_in_pi() {
+        // Test parsing: ∀(%x : 𝒰0) → !0
+        // At depth 1, !0 should become index 1
+        let input = "∀(%x : 𝒰0) → !0";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse unbound variable in pi: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: ∀(%x : 𝒰0) → !0
+        // Inside the pi (depth 1), !0 means index = 1 + 0 = 1
+        let expected = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::variable_rc(Index(1)),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_unbound_variable_application() {
+        // Test parsing: !0 !1
+        let input = "!0 !1";
+        let result = parse_syntax(input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse unbound variable application: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: !0 !1
+        let expected =
+            Syntax::application_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1)));
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_print_roundtrip_unbound() {
+        use crate::syn::print::print_syntax_to_string;
+
+        // Test that parsing and printing unbound variables works correctly
+        // Note: The parser uses named binders (%x, %y) while the printer uses
+        // numeric binders (%0, %1), so we can't do a perfect round-trip.
+        // Instead, we test that parsing works and produces the expected AST.
+        let test_cases = vec![
+            ("!0", Syntax::variable_rc(Index(0))),
+            ("!5", Syntax::variable_rc(Index(5))),
+            (
+                "λ %x → !0",
+                Syntax::lambda_rc(Syntax::variable_rc(Index(1))),
+            ),
+            (
+                "λ %x %y → %y !0",
+                Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
+                    Syntax::variable_rc(Index(0)),
+                    Syntax::variable_rc(Index(2)),
+                ))),
+            ),
+            (
+                "∀(%x : 𝒰0) → !0",
+                Syntax::pi_rc(
+                    Syntax::universe_rc(UniverseLevel(0)),
+                    Syntax::variable_rc(Index(1)),
+                ),
+            ),
+            (
+                "!0 !1",
+                Syntax::application_rc(
+                    Syntax::variable_rc(Index(0)),
+                    Syntax::variable_rc(Index(1)),
+                ),
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let parsed = parse_syntax(input).expect(&format!("Failed to parse: {}", input));
+            assert_eq!(
+                parsed, expected,
+                "Parse result mismatch for input: {}",
+                input
+            );
+
+            // Also verify that the printed form can be understood
+            let printed = print_syntax_to_string(&parsed);
+            // The printed form should contain !N for unbound variables
+            if input.contains("!") {
+                assert!(
+                    printed.contains("!"),
+                    "Printed form should contain ! for input: {} (got: {})",
+                    input,
+                    printed
+                );
+            }
+        }
     }
 }
