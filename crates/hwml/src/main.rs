@@ -25,13 +25,23 @@ fn main() {
     let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
     let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
 
-    match parse_result {
-        Some(program) => println!("Program: {program:?}"),
-        _ => println!("Failed to parse"),
+    let Some(program) = parse_result else {
+        println!("Failed to parse");
+        return;
+    };
+    println!("Program: {program:?}");
+    let elab_result = hwml_elab::go(program);
+    let Ok(declarations) = elab_result else {
+        println!("Failed to elaborate");
+        return;
+    };
+    println!("Elaborated:");
+    for decl in declarations {
+        println!("{decl:?}");
     }
 
     // let program = result.unwrap();
-    // let prog: Prog = AstMakerGuy::new(&nodes, &loc, &toks, &contents).create_prog(program);
+    // let prog: Prog = AstMakerGuy::ne(&nodes, &loc, &toks, &contents).create_prog(program);
 
     //     println!("Program: {program:?}");
 

@@ -15,6 +15,7 @@ license.workspace = true
 clap.workspace = true
 hwml_db.workspace = true
 hwml_surface.workspace = true
+hwml_elab.workspace = true
 la-arena.workspace = true
 lalrpop-util.workspace = true
 salsa.workspace = true
