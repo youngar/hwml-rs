@@ -13,6 +13,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arbitrary = { workspace = true, optional = true }
 elegance.workspace = true
 hwml_support.workspace = true
 logos.workspace = true
@@ -20,6 +21,9 @@ serde.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+
+[features]
+arbitrary = ["dep:arbitrary"]
 
 [lints]
 workspace = true

@@ -2,7 +2,12 @@ use crate::common::{Index, Level, UniverseLevel};
 use std::rc::Rc;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct NameId(pub u32);
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct MetavariableId(pub usize);
 
 pub type RcSyntax = Rc<Syntax>;
 
@@ -11,6 +16,7 @@ pub type Ty = Syntax;
 
 /// A captured environment.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Closure {
     /// The environment contains a vector of definitions.
     pub values: Vec<RcSyntax>,
@@ -65,6 +71,7 @@ impl Environment {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Syntax {
     Constant(Constant),
     Variable(Variable),
@@ -144,6 +151,7 @@ impl Syntax {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Constant {
     pub name: NameId,
 }
@@ -155,6 +163,7 @@ impl Constant {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Variable {
     pub index: Index,
 }
@@ -166,6 +175,7 @@ impl Variable {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Check {
     pub ty: RcSyntax,
     pub term: RcSyntax,
@@ -178,6 +188,7 @@ impl Check {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Pi {
     pub source: RcSyntax,
     pub target: RcSyntax,
@@ -190,6 +201,7 @@ impl Pi {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Lambda {
     pub body: RcSyntax,
 }
@@ -201,6 +213,7 @@ impl Lambda {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Application {
     pub function: RcSyntax,
     pub argument: RcSyntax,
@@ -213,6 +226,7 @@ impl Application {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Universe {
     pub level: UniverseLevel,
 }
@@ -224,6 +238,8 @@ impl Universe {
 }
 
 // A reference to a metavariable. All metavariables have identity equality.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Metavariable {
     pub id: MetavariableId,
     pub closure: Closure,
@@ -232,69 +248,6 @@ pub struct Metavariable {
 impl Metavariable {
     pub fn new(id: MetavariableId, closure: Closure) -> Metavariable {
         Metavariable { id, closure }
-    }
-}
-
-impl PartialEq for Metavariable {
-    // Metavariables are identity equal.
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.id, &other.id)
-    }
-}
-
-impl Eq for Metavariable {}
-
-impl std::hash::Hash for Metavariable {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash based on the pointer address for identity equality
-        (self.id.as_ref() as *const MetavariableData).hash(state);
-    }
-}
-
-impl PartialOrd for Metavariable {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Metavariable {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Compare based on pointer addresses for consistent ordering
-        let self_ptr = self.id.as_ref() as *const MetavariableData;
-        let other_ptr = other.id.as_ref() as *const MetavariableData;
-        self_ptr.cmp(&other_ptr)
-    }
-}
-
-impl std::fmt::Debug for Metavariable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let data_ptr = self.id.as_ref() as *const MetavariableData;
-        f.debug_struct("Metavariable")
-            .field("id", &format!("{:p}", data_ptr))
-            .field("data", &self.id)
-            .finish()
-    }
-}
-
-impl Clone for Metavariable {
-    fn clone(&self) -> Self {
-        Metavariable {
-            id: Rc::clone(&self.id),
-            closure: self.closure.clone(),
-        }
-    }
-}
-
-/// This is the unique identifier for a metavariable, and its associated data.
-pub type MetavariableId = Rc<MetavariableData>;
-
-/// This represents the associated data for a metavariable.
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub struct MetavariableData {}
-
-impl MetavariableData {
-    pub fn new() -> MetavariableData {
-        MetavariableData {}
     }
 }
 
@@ -444,17 +397,17 @@ mod tests {
 
     #[test]
     fn test_metavariable_identity_equality() {
-        // Metavariables use identity equality (pointer comparison)
-        let meta_id1 = Rc::new(MetavariableData::new());
-        let meta_id2 = Rc::clone(&meta_id1);
-        let meta_id3 = Rc::new(MetavariableData::new());
+        // Metavariables use identity equality (id comparison)
+        let meta_id1 = MetavariableId(0);
+        let meta_id2 = MetavariableId(0);
+        let meta_id3 = MetavariableId(1);
 
         let closure1 = Closure::new();
         let closure2 = Closure::new();
 
-        let meta1 = Metavariable::new(meta_id1.clone(), closure1.clone());
-        let meta2 = Metavariable::new(meta_id2.clone(), closure2.clone());
-        let meta3 = Metavariable::new(meta_id3.clone(), closure1.clone());
+        let meta1 = Metavariable::new(meta_id1, closure1.clone());
+        let meta2 = Metavariable::new(meta_id2, closure2.clone());
+        let meta3 = Metavariable::new(meta_id3, closure1.clone());
 
         // Same identity, even with different closures
         assert_eq!(meta1, meta2);
@@ -547,9 +500,9 @@ mod tests {
 
     #[test]
     fn test_syntax_metavariable_equality() {
-        let meta_id1 = Rc::new(MetavariableData::new());
-        let meta_id2 = Rc::clone(&meta_id1);
-        let meta_id3 = Rc::new(MetavariableData::new());
+        let meta_id1 = MetavariableId(0);
+        let meta_id2 = MetavariableId(0);
+        let meta_id3 = MetavariableId(1);
 
         let closure = Closure::new();
 

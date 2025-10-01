@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::Constraint;
 use hwml_core::common::*;
 use hwml_core::syn::basic::*;
-use hwml_core::syn::{Closure, Environment, NameId};
+use hwml_core::syn::{Closure, Environment, MetavariableId, NameId};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum NameKind {
@@ -42,6 +42,7 @@ pub struct State {
     env: Environment,
     name_map: NameMap,
     solved_metas: HashMap<MetavariableId, RcSyntax>,
+    next_metavariable_id: usize,
 }
 
 impl State {
@@ -52,6 +53,7 @@ impl State {
             env: Environment::new(),
             name_map: NameMap::new(),
             solved_metas: HashMap::new(),
+            next_metavariable_id: 0,
         }
     }
 
@@ -111,8 +113,10 @@ impl State {
         self.env.lookup(level)
     }
 
-    pub fn fresh_metavariable_id(&self) -> MetavariableId {
-        MetavariableId::new(MetavariableData::new())
+    pub fn fresh_metavariable_id(&mut self) -> MetavariableId {
+        let id = MetavariableId(self.next_metavariable_id);
+        self.next_metavariable_id += 1;
+        id
     }
 
     pub fn solve_metavariable_id(&mut self, meta: MetavariableId, tm: RcSyntax) {
@@ -121,13 +125,14 @@ impl State {
     }
 
     /// Create a new metavariable under the current context.
-    pub fn metavariable(&self, id: MetavariableId) -> RcSyntax {
+    pub fn metavariable(&mut self, id: MetavariableId) -> RcSyntax {
         Syntax::metavariable_rc(id, self.closure.clone())
     }
 
     /// Create a fresh metavariable under the current context.
-    pub fn fresh_metavariable(&self) -> RcSyntax {
-        self.metavariable(self.fresh_metavariable_id())
+    pub fn fresh_metavariable(&mut self) -> RcSyntax {
+        let id = self.fresh_metavariable_id();
+        self.metavariable(id)
     }
 
     pub fn solve_metavariable(&mut self, meta: Metavariable, tm: RcSyntax) {
@@ -145,7 +150,7 @@ impl State {
         ty: RcSyntax,
     ) -> MetavariableId {
         let antiunifier = self.fresh_metavariable_id();
-        let constraint = Constraint::equality(lhs, rhs, ty, antiunifier.clone());
+        let constraint = Constraint::equality(lhs, rhs, ty, antiunifier);
         self.register_constraint(constraint);
         antiunifier
     }
