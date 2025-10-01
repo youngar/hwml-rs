@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use crate::Constraint;
 use hwml_core::common::*;
 use hwml_core::syn::basic::*;
-use hwml_core::syn::{Closure, Environment, MetavariableId, NameId};
+use hwml_core::syn::{Closure, ConstantId, Environment, MetavariableId};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum NameKind {
     Local(Level),
-    Global(NameId),
+    Global(ConstantId),
 }
 
 pub struct NameMap {

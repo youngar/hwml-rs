@@ -1,5 +1,5 @@
 use crate::common::{Level, UniverseLevel};
-use crate::syn::{NameId, RcSyntax};
+use crate::syn::{ConstantId, RcSyntax};
 use std::rc::Rc;
 
 /// A closure represents a pending evaluation. A closure records the term to be
@@ -196,7 +196,7 @@ impl Environment {
         self.get(variable.level)
     }
 
-    pub fn constant(&self, name: NameId) -> &Rc<Value> {
+    pub fn constant(&self, name: ConstantId) -> &Rc<Value> {
         &self.const_env[name.0 as usize]
     }
 

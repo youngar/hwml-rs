@@ -343,14 +343,14 @@ impl Metavariable {
 mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
-    use crate::syn::{NameId, Syntax};
+    use crate::syn::{ConstantId, Syntax};
     use insta::assert_snapshot;
 
     #[test]
     fn test_print_ast_to_stdout() {
         // Simple constant: @42
         assert_snapshot!(
-            print_syntax_to_string(&Syntax::constant(NameId(42))),
+            print_syntax_to_string(&Syntax::constant(ConstantId(42))),
             @"@42"
         );
 
@@ -369,8 +369,8 @@ mod tests {
         // Application: @42 @99
         assert_snapshot!(
             print_syntax_to_string(&Syntax::application(
-                Syntax::constant_rc(NameId(42)),
-                Syntax::constant_rc(NameId(99))
+                Syntax::constant_rc(ConstantId(42)),
+                Syntax::constant_rc(ConstantId(99))
             )),
             @"@42 @99"
         );
@@ -400,7 +400,7 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&Syntax::check(
                 Syntax::universe_rc(UniverseLevel(0)),
-                Syntax::constant_rc(NameId(42))
+                Syntax::constant_rc(ConstantId(42))
             )),
             @"@42 : 𝒰0"
         );
@@ -408,7 +408,7 @@ mod tests {
         // Lambda with application: λ%0 → @999 %0
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda(Syntax::application_rc(
-                Syntax::constant_rc(NameId(999)),
+                Syntax::constant_rc(ConstantId(999)),
                 Syntax::variable_rc(Index(0))
             ))),
             @"λ%0 → @999 %0"
