@@ -16,7 +16,7 @@ pub enum Statement {
 pub struct Meta {
     pub id: Id,
     pub bindings: Bindings,
-    pub ty: Box<Expression>,
+    pub ty: Option<Box<Expression>>,
     pub value: Box<Expression>,
 }
 
@@ -24,7 +24,7 @@ pub struct Meta {
 pub struct Def {
     pub id: Id,
     pub bindings: Bindings,
-    pub ty: Box<Expression>,
+    pub ty: Option<Box<Expression>>,
     pub value: Box<Expression>,
 }
 
@@ -45,7 +45,7 @@ pub enum Expression {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Pi {
-    pub bindings: Bindings,
+    pub bindings: TypedBindings,
     pub target: Box<Expression>,
 }
 
@@ -64,7 +64,8 @@ pub struct FatArrow {
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct LetIn {
     pub id: Id,
-    pub ty: Box<Expression>,
+    pub bindings: Bindings,
+    pub ty: Option<Box<Expression>>,
     pub value: Box<Expression>,
     pub expr: Box<Expression>,
 }
@@ -86,14 +87,30 @@ pub struct Paren {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub enum BindingGroup {
+    Typed(TypedBindingGroup),
+    Untyped(UntypedBindingGroup),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Bindings {
     pub groups: Vec<BindingGroup>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
-pub struct BindingGroup {
+pub struct TypedBindings {
+    pub groups: Vec<TypedBindingGroup>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct TypedBindingGroup {
     pub binders: Vec<Box<Expression>>,
     pub ty: Box<Expression>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct UntypedBindingGroup {
+    pub binders: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]

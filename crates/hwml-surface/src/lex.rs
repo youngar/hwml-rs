@@ -106,7 +106,6 @@ pub enum Token {
     // Any invalid character is an error.
     #[regex(r"[\x00-\xFF]", priority = 0)]
     Error,
-    Eof,
 }
 
 impl Token {

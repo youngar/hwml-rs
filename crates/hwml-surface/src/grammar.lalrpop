@@ -1,12 +1,12 @@
 use std::str::FromStr;
-use crate::cst::*;
+use crate::syntax::*;
 use crate::lex::Token;
 use lalrpop_util::ErrorRecovery;
 
 grammar<'input>(input: &'input [u8]);
 
 pub Program: Program = {
-  <stmts:Stmt*> "eof" => Program::new(stmts)
+  <stmts:Stmt*> => Program::new(stmts)
 };
 
 Stmt: Statement = {
@@ -15,14 +15,14 @@ Stmt: Statement = {
 };
 
 Meta: Meta = {
-    "meta" <id:Id> <bs:OptionalBindings> ":" <ty:Expr0> ":=" <value:Expr0> => {
-        Meta::new(id, bs, ty, value)
+    "meta" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> => {
+        Meta::new(id, bs, ty.map(|(_,expr)| expr), value)
     }
 };
 
 Def: Def = {
-    "def" <id:Id> <bs:OptionalBindings> ":" <ty:Expr0> ":=" <value:Expr0> => {
-        Def::new(id, bs, ty, value)
+    "def" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> => {
+        Def::new(id, bs, ty.map(|(_, expr)| expr), value)
     }
 };
 
@@ -61,8 +61,8 @@ Expr3: Box<Expression> = {
 
 // (x1 .. xn : X) (y1 .. yn : Y) -> Z
 Pi: Pi = {
-  <bs:Bindings> "->" <e:Expr0> => {
-    Pi::new(bs, e)
+  <bgs:TypedBindings> "->" <e:Expr0> => {
+    Pi::new(bgs, e)
   },
 };
 
@@ -88,11 +88,10 @@ FatArrow: FatArrow = {
   },
 };
 
-// TODO: should probably be desctructuring here.
 LetIn: LetIn = {
-  "let" <id:Id> ":" <ty:Expr0> ":=" <v:Expr0> "in" <e:Expr0> => {
-    LetIn::new(id, ty, v, e)
-  },
+    "let" <id:Id> <bs:OptionalBindings> <t:(":" Expr0)?> ":=" <v:Expr0> "in" <e:Expr0> => {
+        LetIn::new(id, bs, t.map(|(_, t)| t), v, e)
+    }
 };
 
 Fun: Fun = {
@@ -127,17 +126,33 @@ OptionalBindings: Bindings = {
   => Bindings::new(vec![]),
 }
 
-// Parse multiple binding groups. Returns the number of binding groups.
-// (x1 .. xn : X) (y1 .. yn : Y)
+// Parse a list of typed and untyped binding groups.
 #[inline]
 Bindings: Bindings = {
   <bgs:BindingGroup+> => Bindings::new(bgs),
 };
 
-// Parse a single binding group.
-// (x1 .. xn : A)
+// Parse a list of typed binding groups.
+#[inline]
+TypedBindings: TypedBindings = {
+  <bgs:TypedBindingGroup+> => TypedBindings::new(bgs),
+};
+
 BindingGroup: BindingGroup = {
-  "(" <el:ExprList> ":" <ty:Expr0> ")" => BindingGroup::new(el, ty),
+  <ubg:UntypedBindingGroup> => BindingGroup::Untyped(ubg),
+  <tbg:TypedBindingGroup> => BindingGroup::Typed(tbg),
+};
+
+// Parse a single binding group without a type.
+// x
+UntypedBindingGroup: UntypedBindingGroup = {
+  <el:Expr3> => UntypedBindingGroup::new(el)
+};
+
+// Parse a single binding group with a type.
+// (x1 .. xn : A)
+TypedBindingGroup: TypedBindingGroup = {
+  "(" <el:ExprList> ":" <ty:Expr0> ")" => TypedBindingGroup::new(el, ty)
 };
 
 Num: Num = {
@@ -180,6 +195,5 @@ extern {
     "num" => Token::Number,
     "id" => Token::Ident,
     "error" => Token::Error,
-    "eof" => Token::Eof,
   }
 }

@@ -1,9 +1,9 @@
 use lalrpop_util::lalrpop_mod;
 
 use crate::{
-    cst::Program,
     lex::{Lexer, Token},
     parsing::grammar::ProgramParser,
+    syntax::Program,
 };
 
 lalrpop_mod!(
