@@ -31,17 +31,22 @@ dashmap = "6.1.0"
 derive-new = "0.7.0"
 elegance = "0.3.2"
 eyre = "0.6.12"
+insta = { version = "1.43.1", features = ["yaml"] }
 la-arena = "0.3.1"
 lalrpop = { version = "0.22.1", features = ["unicode"] }
 lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
-logos = "0.15.0"
-lsp-server = "0.7.8"
+logos = "0.15.1"
+lsp-server = "0.7.9"
 lsp-types = "0.97.0"
 notify-debouncer-mini = "0.4.1"
 salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
-serde = "*"
-serde_json = "1.0.138"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.145"
 thiserror = "2"
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
 
 [workspace.lints.rust]
 unsafe_code = "warn"
