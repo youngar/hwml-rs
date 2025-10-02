@@ -22,32 +22,16 @@ const APP_RHS: Option<usize> = Some(5);
 pub fn dump_syntax(syntax: &Syntax) {
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
     let st = State::new();
-    let mut global = GlobalState::new();
-    let _ = syntax.print(&mut global, st, &mut p);
+    let _ = syntax.print(st, &mut p);
     let _ = p.hard_break();
     let _ = p.finish();
 }
 
 pub fn print_syntax_to_string(syntax: &Syntax) -> String {
-    let mut p = Printer::new(String::new(), 40);
+    let mut p = Printer::new(String::new(), 80);
     let st = State::new();
-    let mut global = GlobalState::new();
-    let _ = syntax.print(&mut global, st, &mut p);
-    let _ = p.hard_break();
+    let _ = syntax.print(st, &mut p);
     p.finish().unwrap_or_default()
-}
-
-struct GlobalState {
-    // Mapping from metavariable ids to names.
-    metavar_names: HashMap<MetavariableId, usize>,
-}
-
-impl GlobalState {
-    fn new() -> GlobalState {
-        GlobalState {
-            metavar_names: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -89,7 +73,6 @@ impl State {
 }
 
 fn print_left_subterm<R>(
-    global: &mut GlobalState,
     st: State,
     p: &mut Printer<R>,
     x: &Syntax,
@@ -98,11 +81,10 @@ fn print_left_subterm<R>(
 where
     R: Render,
 {
-    x.print(global, st.set_rhs_prec(lhs_prec), p)
+    x.print(st.set_rhs_prec(lhs_prec), p)
 }
 
 fn print_right_subterm<R>(
-    global: &mut GlobalState,
     st: State,
     p: &mut Printer<R>,
     x: &Syntax,
@@ -111,23 +93,17 @@ fn print_right_subterm<R>(
 where
     R: Render,
 {
-    x.print(global, st.set_lhs_prec(rhs_prec), p)
+    x.print(st.set_lhs_prec(rhs_prec), p)
 }
 
-fn print_internal_subterm<R>(
-    global: &mut GlobalState,
-    st: State,
-    p: &mut Printer<R>,
-    x: &Syntax,
-) -> Result<(), R::Error>
+fn print_internal_subterm<R>(st: State, p: &mut Printer<R>, x: &Syntax) -> Result<(), R::Error>
 where
     R: Render,
 {
-    x.print(global, st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)
+    x.print(st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)
 }
 
 fn with_prec<F, R>(
-    global: &mut GlobalState,
     st: State,
     p: &mut Printer<R>,
     lhs_prec: Option<usize>,
@@ -135,7 +111,7 @@ fn with_prec<F, R>(
     f: F,
 ) -> Result<(), R::Error>
 where
-    F: FnOnce(&mut GlobalState, State, &mut Printer<R>) -> Result<(), R::Error>,
+    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
 {
     // If the parent precedence is greater than the child precedence, we need parens.
@@ -153,11 +129,11 @@ where
     if need_parens {
         p.igroup(INDENT, |p| {
             p.text("(")?;
-            f(global, st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)?;
+            f(st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)?;
             p.text(")")
         })
     } else {
-        f(global, st, p)
+        f(st, p)
     }
 }
 
@@ -169,43 +145,28 @@ where
 }
 
 impl Syntax {
-    fn print<R: Render>(
-        &self,
-        global: &mut GlobalState,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         match self {
-            Syntax::Constant(constant) => constant.print(global, st, p),
-            Syntax::Variable(var) => var.print(global, st, p),
-            Syntax::Check(chk) => chk.print(global, st, p),
-            Syntax::Pi(pi) => pi.print(global, st, p),
-            Syntax::Lambda(lam) => lam.print(global, st, p),
-            Syntax::Application(app) => app.print(global, st, p),
-            Syntax::Universe(uni) => uni.print(global, st, p),
-            Syntax::Metavariable(meta) => meta.print(global, st, p),
+            Syntax::Constant(constant) => constant.print(st, p),
+            Syntax::Variable(var) => var.print(st, p),
+            Syntax::Check(chk) => chk.print(st, p),
+            Syntax::Pi(pi) => pi.print(st, p),
+            Syntax::Lambda(lam) => lam.print(st, p),
+            Syntax::Application(app) => app.print(st, p),
+            Syntax::Universe(uni) => uni.print(st, p),
+            Syntax::Metavariable(meta) => meta.print(st, p),
         }
     }
 }
 
 impl Constant {
-    fn print<R: Render>(
-        &self,
-        _global: &mut GlobalState,
-        _st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
+    fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         p.text_owned(&format!("@{}", self.name.0))
     }
 }
 
 impl Variable {
-    fn print<R: Render>(
-        &self,
-        _global: &mut GlobalState,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         let index = self.index.to_usize();
         // Check if the variable is bound by comparing index with depth
         // A variable with index i is bound if i < depth
@@ -223,31 +184,21 @@ impl Variable {
 }
 
 impl Check {
-    fn print<R: Render>(
-        &self,
-        global: &mut GlobalState,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        with_prec(global, st, p, CHECK_LHS, CHECK_RHS, |global, st, p| {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, CHECK_LHS, CHECK_RHS, |st, p| {
             p.igroup(0, |p| {
-                print_left_subterm(global, st, p, &*self.term, CHECK_LHS)?;
+                print_left_subterm(st, p, &*self.term, CHECK_LHS)?;
                 p.text(" :")?;
                 p.space()?;
-                print_right_subterm(global, st, p, &*self.ty, CHECK_RHS)
+                print_right_subterm(st, p, &*self.ty, CHECK_RHS)
             })
         })
     }
 }
 
 impl Pi {
-    fn print<R: Render>(
-        &self,
-        global: &mut GlobalState,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        with_prec(global, st, p, PI_LHS, PI_RHS, |global, st, p| {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, PI_LHS, PI_RHS, |st, p| {
             p.cgroup(0, |p| {
                 let mut next = self;
                 let mut st = st;
@@ -259,7 +210,7 @@ impl Pi {
                         st = st.inc_depth();
                         p.text(" :")?;
                         p.space()?;
-                        print_internal_subterm(global, st, p, &*next.source)
+                        print_internal_subterm(st, p, &*next.source)
                     })?;
                     p.text(")")?;
                     match &*next.target {
@@ -271,25 +222,20 @@ impl Pi {
                 p.space()?;
                 p.text("→")?;
                 p.space()?;
-                print_right_subterm(global, st, p, &*next.target, PI_RHS)
+                print_right_subterm(st, p, &*next.target, PI_RHS)
             })
         })
     }
 }
 
 impl Lambda {
-    fn print<R: Render>(
-        &self,
-        global: &mut GlobalState,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        with_prec(global, st, p, LAMBDA_LHS, LAMBDA_RHS, |global, st, p| {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, LAMBDA_LHS, LAMBDA_RHS, |st, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
                 let mut st = st;
                 p.cgroup(0, |p| {
-                    p.text("λ")?;
+                    p.text("λ ")?;
                     loop {
                         print_binder(st, p)?;
                         st = st.inc_depth();
@@ -303,50 +249,33 @@ impl Lambda {
                     p.text("→")
                 })?;
                 p.space()?;
-                print_right_subterm(global, st, p, &*next.body, LAMBDA_RHS)
+                print_right_subterm(st, p, &*next.body, LAMBDA_RHS)
             })
         })
     }
 }
 
 impl Application {
-    fn print<R: Render>(
-        &self,
-        global: &mut GlobalState,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        with_prec(global, st, p, APP_LHS, APP_RHS, |global, st, p| {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, APP_LHS, APP_RHS, |st, p| {
             p.cgroup(0, |p| {
-                print_left_subterm(global, st, p, &*self.function, APP_LHS)?;
+                print_left_subterm(st, p, &*self.function, APP_LHS)?;
                 p.space()?;
-                print_right_subterm(global, st, p, &*self.argument, APP_RHS)
+                print_right_subterm(st, p, &*self.argument, APP_RHS)
             })
         })
     }
 }
 
 impl Universe {
-    fn print<R: Render>(
-        &self,
-        _global: &mut GlobalState,
-        _st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
+    fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         p.text_owned(&format!("𝒰{}", self.level))
     }
 }
 
 impl Metavariable {
-    fn print<R: Render>(
-        &self,
-        global: &mut GlobalState,
-        _st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        let len = global.metavar_names.len();
-        let name = *global.metavar_names.entry(self.id).or_insert(len);
-        p.text_owned(&format!("?{}", name))
+    fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        p.text_owned(&format!("{}", self.id))
     }
 }
 
@@ -374,7 +303,7 @@ mod tests {
         // Lambda: λ%0 → %0
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda(Syntax::variable_rc(Index(0)))),
-            @"λ%0 → %0"
+            @"λ %0 → %0"
         );
 
         // Application: @42 @99

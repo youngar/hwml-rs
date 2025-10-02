@@ -9,6 +9,12 @@ pub struct ConstantId(pub u32);
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MetavariableId(pub usize);
 
+impl std::fmt::Display for MetavariableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "?{}", self.0)
+    }
+}
+
 pub type RcSyntax = Rc<Syntax>;
 
 pub type Tm = Syntax;

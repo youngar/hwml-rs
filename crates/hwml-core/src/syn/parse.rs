@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::common::Index;
+use crate::syn::MetavariableId;
 use crate::{syn, syn::RcSyntax, syn::Syntax};
 use core::fmt::{Debug, Display};
 use logos::{Lexer, Logos, SpannedIter};
@@ -39,6 +40,10 @@ impl From<ParseIntError> for Error {
 
 type ParseResult<T> = std::result::Result<T, Error>;
 
+fn lex_metavariable_id(lex: &mut logos::Lexer<Token>) -> Result<usize, ParseIntError> {
+    lex.slice()["?".len()..].parse()
+}
+
 #[derive(Logos, Clone, Debug, Eq, PartialEq, Hash)]
 #[logos(error(Error, Error::from_lexer))]
 // Whitespace
@@ -68,11 +73,8 @@ pub enum Token {
     Variable(String),
     #[regex(r"![0-9]+", priority = 4, callback = |lex| lex.slice()["!".len()..].parse())]
     UnboundVariable(usize),
-    #[regex(r"\?(?&id)+", priority = 4, callback = |lex| lex.slice()["?".len()..].to_owned())]
-    Metavariable(String),
-    // Brackets, semicolons, commas, and periods should break up identifiers.
-    #[regex("(?&id)", priority = 2, callback = |lex| lex.slice().to_owned())]
-    Ident(String),
+    #[regex(r"\?[0-9]+", priority = 4, callback = lex_metavariable_id)]
+    Metavariable(usize),
 }
 
 impl fmt::Display for Token {
@@ -323,11 +325,10 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
                 state.advance_token();
                 Ok(Some(Syntax::constant_rc(syn::ConstantId(id))))
             }
-            Token::Metavariable(name) => {
+            Token::Metavariable(id) => {
                 state.advance_token();
-                let id = state.get_or_create_metavar(name);
                 let closure = syn::Closure::new();
-                Ok(Some(Syntax::metavariable_rc(id, closure)))
+                Ok(Some(Syntax::metavariable_rc(MetavariableId(id), closure)))
             }
             _ => Ok(None),
         },
@@ -389,6 +390,7 @@ pub fn parse_syntax<'input>(input: &'input str) -> ParseResult<RcSyntax> {
 mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
+    use crate::syn::*;
 
     #[test]
     fn test_parse_lambda_single_var() {
@@ -1110,5 +1112,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn robert_test() {
+        let a = "λ %0 → %0";
+        let x = parse_syntax(&a).unwrap();
+        let b = print_syntax_to_string(&x);
+        assert_eq!(a, b);
     }
 }
