@@ -78,8 +78,8 @@ impl Environment {
     pub fn truncate(&mut self, depth: usize) {
         self.types.truncate(depth);
     }
-    pub fn lookup(&self, level: Level) -> RcSyntax {
-        self.types.get(level.to_usize()).unwrap().clone()
+    pub fn lookup(&self, Level(i): Level) -> RcSyntax {
+        self.types.get(i).unwrap().clone()
     }
 }
 

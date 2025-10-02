@@ -31,7 +31,8 @@ fn var_push(env: &mut Environment, value: Rc<Value>, ty: Rc<Value>) {
 
 /// Access the entry of a variable in the syntax.
 fn var_entry<'a>(env: &'a Environment, var: &stx::Variable) -> &'a EnvironmentEntry {
-    &env[var.index.to_usize()]
+    let i: usize = var.index.into();
+    &env[i]
 }
 
 /// Access the type of a variable in the syntax.

@@ -188,8 +188,8 @@ impl Environment {
         }
     }
 
-    pub fn get(&self, level: Level) -> &Rc<Value> {
-        &self.map[level.to_usize()]
+    pub fn get(&self, Level(i): Level) -> &Rc<Value> {
+        &self.map[i]
     }
 
     pub fn variable_type(&self, variable: Variable) -> &Rc<Value> {
