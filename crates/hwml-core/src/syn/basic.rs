@@ -9,6 +9,12 @@ pub struct ConstantId(pub u32);
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MetavariableId(pub usize);
 
+impl std::fmt::Display for MetavariableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "?{}", self.0)
+    }
+}
+
 pub type RcSyntax = Rc<Syntax>;
 
 pub type Tm = Syntax;
@@ -26,14 +32,21 @@ impl Closure {
     pub fn new() -> Closure {
         Closure { values: Vec::new() }
     }
+
     pub fn with_values(values: Vec<RcSyntax>) -> Closure {
         Closure { values }
     }
+
     pub fn pop(&mut self) {
         self.values.pop();
     }
+
     pub fn truncate(&mut self, depth: usize) {
         self.values.truncate(depth);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 }
 
