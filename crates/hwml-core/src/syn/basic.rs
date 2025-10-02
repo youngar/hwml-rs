@@ -32,14 +32,21 @@ impl Closure {
     pub fn new() -> Closure {
         Closure { values: Vec::new() }
     }
+
     pub fn with_values(values: Vec<RcSyntax>) -> Closure {
         Closure { values }
     }
+
     pub fn pop(&mut self) {
         self.values.pop();
     }
+
     pub fn truncate(&mut self, depth: usize) {
         self.values.truncate(depth);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 }
 

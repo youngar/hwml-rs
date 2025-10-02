@@ -1,8 +1,5 @@
-use std::collections::HashMap;
-
 use crate::syn::{
-    Application, Check, Constant, Lambda, Metavariable, MetavariableId, Pi, Syntax, Universe,
-    Variable,
+    Application, Check, Closure, Constant, Lambda, Metavariable, Pi, Syntax, Universe, Variable,
 };
 use elegance::{Io, Printer, Render};
 
@@ -114,16 +111,17 @@ where
     F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
 {
-    // If the parent precedence is greater than the child precedence, we need parens.
+    // If the parent binds tighter, or if equal, then we need parens to ensure
+    // that this subexpression would be parsed together as an atomic expression.
     let mut need_parens = false;
     if let Some(left_prec) = lhs_prec {
         if let Some(left_parent) = st.precedence.0 {
-            need_parens |= left_parent > left_prec;
+            need_parens |= left_parent >= left_prec;
         }
     }
     if let Some(right_prec) = rhs_prec {
         if let Some(right_parent) = st.precedence.1 {
-            need_parens |= right_parent > right_prec;
+            need_parens |= right_parent >= right_prec;
         }
     }
     if need_parens {
@@ -142,6 +140,24 @@ where
     R: Render,
 {
     p.text_owned(format!("%{}", st.depth))
+}
+
+impl Closure {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        p.text("[")?;
+        p.cgroup(1, |p| {
+            for (i, value) in self.values.iter().enumerate() {
+                if i > 0 {
+                    p.text(",")?;
+                    p.space()?;
+                }
+                value.print(st, p)?;
+            }
+            Ok(())
+        })?;
+        p.text("]")?;
+        Ok(())
+    }
 }
 
 impl Syntax {
@@ -198,29 +214,31 @@ impl Check {
 
 impl Pi {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
-        with_prec(st, p, PI_LHS, PI_RHS, |st, p| {
+        with_prec(st, p, PI_LHS, PI_RHS, |mut st, p| {
             p.cgroup(0, |p| {
                 let mut next = self;
-                let mut st = st;
-                p.text("∀")?;
-                loop {
-                    p.text("(")?;
-                    p.cgroup(INDENT, |p| {
-                        print_binder(st, p)?;
+                p.text("∀ ")?;
+                p.cgroup(2, |p| {
+                    loop {
+                        p.text("(")?;
+                        p.cgroup(INDENT, |p| {
+                            print_binder(st, p)?;
+                            p.text(" :")?;
+                            p.space()?;
+                            print_right_subterm(st, p, &*next.source, CHECK_RHS)
+                        })?;
+                        p.text(")")?;
                         st = st.inc_depth();
-                        p.text(" :")?;
+
+                        match &*next.target {
+                            Syntax::Pi(pi) => next = pi,
+                            _ => break,
+                        }
                         p.space()?;
-                        print_internal_subterm(st, p, &*next.source)
-                    })?;
-                    p.text(")")?;
-                    match &*next.target {
-                        Syntax::Pi(pi) => next = pi,
-                        _ => break,
                     }
-                    p.space()?;
-                }
-                p.space()?;
-                p.text("→")?;
+                    Ok(())
+                })?;
+                p.text(" →")?;
                 p.space()?;
                 print_right_subterm(st, p, &*next.target, PI_RHS)
             })
@@ -274,8 +292,13 @@ impl Universe {
 }
 
 impl Metavariable {
-    fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
-        p.text_owned(&format!("{}", self.id))
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        p.text_owned(&format!("{}", self.id))?;
+        if !self.closure.is_empty() {
+            self.closure.print(st, p)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -376,9 +399,6 @@ mod tests {
             ))),
             @"λ%0 → (λ%1 → %1 %0 : 𝒰0)"
         );
-
-        // Test metavariables
-        use crate::syn::Closure;
 
         // Simple metavariable: ?0
         assert_snapshot!(

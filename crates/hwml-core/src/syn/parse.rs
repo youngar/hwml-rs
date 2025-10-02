@@ -1,11 +1,8 @@
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use crate::common::Index;
-use crate::syn::MetavariableId;
-use crate::{syn, syn::RcSyntax, syn::Syntax};
-use core::fmt::{Debug, Display};
-use logos::{Lexer, Logos, SpannedIter};
+use crate::syn;
+use crate::syn::{Closure, MetavariableId, RcSyntax, Syntax};
+use core::fmt::Debug;
+use logos::{Lexer, Logos};
 use std::fmt;
 use std::num::ParseIntError;
 use std::ops::Range;
@@ -15,9 +12,11 @@ pub enum Error {
     InvalidToken(Range<usize>),
     InvalidInteger(String),
     MissingRParen,
+    MissingRBracket,
     MissingArrow,
     MissingVariable,
     MissingTerm,
+    UnknownVariable(String),
     #[default]
     Other,
 }
@@ -51,7 +50,7 @@ fn lex_metavariable_id(lex: &mut logos::Lexer<Token>) -> Result<usize, ParseIntE
 // Comments
 #[logos(skip r"//[^\\r\\n]*")]
 // Ids
-#[logos(subpattern id = r"[^\p{gc=Separator}\p{gc=Control}():;]+")]
+#[logos(subpattern id = r"[^\p{gc=Separator}\p{gc=Control}():;,\[\]!\?\%]+")]
 pub enum Token {
     #[token("∀", priority = 4)]
     Pi,
@@ -61,10 +60,16 @@ pub enum Token {
     LParen,
     #[token(")", priority = 10)]
     RParen,
+    #[token("[", priority = 10)]
+    LBracket,
+    #[token("]", priority = 10)]
+    RBracket,
     #[token("→", priority = 5)]
     Arrow,
     #[token(":", priority = 4)]
     Colon,
+    #[token(",", priority = 10)]
+    Comma,
     #[regex(r"𝒰[0-9]+", priority = 4, callback = |lex| lex.slice()["𝒰".len()..].parse())]
     Universe(usize),
     #[regex(r"@[0-9]+", priority = 4, callback = |lex| lex.slice()["@".len()..].parse())]
@@ -86,8 +91,6 @@ impl fmt::Display for Token {
 struct State<'input> {
     /// The names in scope. Each new name is pushed on the end.
     names: Vec<String>,
-    /// Mapping from metavariable names to their IDs.
-    metavariables: HashMap<String, syn::MetavariableId>,
     /// The main lexer.
     lexer: Lexer<'input, Token>,
     /// The current token. We support single token peeking.
@@ -100,7 +103,6 @@ impl<'input> State<'input> {
         let token = lexer.next();
         State {
             names: Vec::new(),
-            metavariables: HashMap::new(),
             lexer,
             token,
         }
@@ -122,7 +124,7 @@ impl<'input> State<'input> {
     }
 
     /// Find a name in the environment.
-    fn find_name(&self, name: String) -> Option<Index> {
+    fn find_name(&self, name: &String) -> Option<Index> {
         for (i, n) in self.names.iter().rev().enumerate() {
             if name == n.as_str() {
                 return Some(Index::new(i));
@@ -139,18 +141,6 @@ impl<'input> State<'input> {
     /// Reset the name environment to a given depth.
     fn reset_names(&mut self, depth: usize) {
         self.names.truncate(depth);
-    }
-
-    /// Get or create a metavariable ID for the given name.
-    /// Metavariables are assigned IDs in the order they are discovered.
-    fn get_or_create_metavar(&mut self, name: String) -> syn::MetavariableId {
-        if let Some(&id) = self.metavariables.get(&name) {
-            id
-        } else {
-            let id = syn::MetavariableId(self.metavariables.len());
-            self.metavariables.insert(name, id);
-            id
-        }
     }
 }
 
@@ -209,6 +199,14 @@ fn p_rparen(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::RParen, Error::MissingRParen)
 }
 
+fn p_lbracket_opt(state: &mut State) -> ParseResult<Option<()>> {
+    p_token_opt(state, Token::LBracket)
+}
+
+fn p_rbracket(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::RBracket, Error::MissingRBracket)
+}
+
 fn p_arrow(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::Arrow, Error::MissingArrow)
 }
@@ -221,42 +219,58 @@ fn p_colon_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Colon)
 }
 
-fn p_binder(state: &mut State) -> ParseResult<Option<()>> {
+fn p_variable_opt(state: &mut State) -> ParseResult<Option<String>> {
     match state.peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(Token::Variable(name))) => {
-            let name = name.clone();
             state.advance_token();
-            state.push_name(name);
-            Ok(Some(()))
-        }
-        _ => Err(Error::MissingVariable),
-    }
-}
-
-fn p_binder_opt(state: &mut State) -> ParseResult<Option<()>> {
-    match state.peek_token() {
-        Some(Err(err)) => Err(err),
-        Some(Ok(Token::Variable(name))) => {
-            let name = name.clone();
-            state.advance_token();
-            state.push_name(name);
-            Ok(Some(()))
+            Ok(Some(name))
         }
         _ => Ok(None),
     }
 }
 
-fn p_pi_binder_opt(state: &mut State) -> ParseResult<Option<RcSyntax>> {
-    if let Some(()) = p_lparen_opt(state)? {
-        p_binder(state)?;
-        p_colon(state)?;
-        let ty = p_term(state)?;
-        p_rparen(state)?;
-        Ok(Some(ty))
-    } else {
-        Ok(None)
+fn p_variable(state: &mut State) -> ParseResult<String> {
+    match p_variable_opt(state) {
+        Err(e) => Err(e),
+        Ok(Some(n)) => Ok(n),
+        Ok(None) => Err(Error::MissingVariable),
     }
+}
+
+fn p_pi_binder_opt(state: &mut State) -> ParseResult<Option<RcSyntax>> {
+    let Some(()) = p_lparen_opt(state)? else {
+        return Ok(None);
+    };
+    let var = p_variable(state)?;
+    p_colon(state)?;
+    let ty = p_application(state)?;
+    p_rparen(state)?;
+    state.push_name(var);
+    Ok(Some(ty))
+}
+
+fn p_closure_opt(state: &mut State) -> ParseResult<Option<Closure>> {
+    let mut values = Vec::new();
+    let Some(()) = p_lbracket_opt(state)? else {
+        return Ok(None);
+    };
+    loop {
+        match p_term_opt(state) {
+            Ok(Some(term)) => {
+                values.push(term);
+                match p_token_opt(state, Token::Comma) {
+                    Ok(Some(())) => continue,
+                    Ok(None) => break,
+                    Err(err) => return Err(err),
+                }
+            }
+            Ok(None) => break,
+            Err(err) => return Err(err),
+        }
+    }
+    p_rbracket(state)?;
+    return Ok(Some(crate::syn::Closure::with_values(values)));
 }
 
 // Parse an atomic term (no operators)
@@ -273,13 +287,23 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::Lambda => {
                 state.advance_token();
                 let depth = state.names_depth();
-                let vars = p_while1(state, Error::MissingVariable, p_binder_opt)?;
+                let mut i = 0;
+                loop {
+                    match p_variable_opt(state) {
+                        Err(e) => return Err(e),
+                        Ok(Some(var)) => {
+                            i = i + 1;
+                            state.push_name(var)
+                        }
+                        Ok(None) => break,
+                    }
+                }
                 p_arrow(state)?;
-                let body = p_term(state)?;
+                let body = p_application(state)?;
                 state.reset_names(depth);
                 // Build nested lambdas from right to left
                 let mut result = body;
-                for _ in vars.iter().rev() {
+                for _ in 0..i {
                     result = Syntax::lambda_rc(result);
                 }
                 Ok(Some(result))
@@ -287,16 +311,19 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::Pi => {
                 state.advance_token();
                 let depth = state.names_depth();
-                let vars = p_while1(state, Error::MissingVariable, p_pi_binder_opt)?;
+                let mut tys = Vec::new();
+                loop {
+                    match p_pi_binder_opt(state) {
+                        Err(e) => return Err(e),
+                        Ok(Some(ty)) => tys.push(ty),
+                        Ok(None) => break,
+                    }
+                }
                 p_arrow(state)?;
-                let target = p_term(state)?;
+                let target = p_application(state)?;
                 state.reset_names(depth);
-                // Build nested Pi types from right to left
-                // For each variable, we need a source type
-                // For now, we'll use a placeholder - this needs to be extended
-                // to parse the full syntax: ∀(%0 : source) → target
                 let mut result = target;
-                for ty in vars.iter().rev() {
+                for ty in tys.iter().rev() {
                     result = Syntax::pi_rc(ty.clone(), result);
                 }
                 Ok(Some(result))
@@ -304,9 +331,9 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::Variable(name) => {
                 state.advance_token();
                 // Otherwise, look it up in the environment
-                match state.find_name(name) {
+                match state.find_name(&name) {
                     Some(index) => Ok(Some(Syntax::variable_rc(index))),
-                    _ => Err(Error::MissingVariable),
+                    _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
@@ -327,7 +354,11 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             }
             Token::Metavariable(id) => {
                 state.advance_token();
-                let closure = syn::Closure::new();
+                let closure = match p_closure_opt(state) {
+                    Ok(Some(closure)) => closure,
+                    Ok(None) => Closure::new(),
+                    Err(err) => return Err(err),
+                };
                 Ok(Some(Syntax::metavariable_rc(MetavariableId(id), closure)))
             }
             _ => Ok(None),
@@ -337,7 +368,7 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
 }
 
 // Parse application (left-associative): a b c => (a b) c
-fn p_application<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
+fn p_application_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
     let first = p_atom(state)?;
     if first.is_none() {
         return Ok(None);
@@ -353,14 +384,17 @@ fn p_application<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSynt
     Ok(Some(result))
 }
 
-// Parse check (type annotation): term : type
-fn p_check<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    let term = p_application(state)?;
-    if term.is_none() {
-        return Ok(None);
+fn p_application<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
+    match p_application_opt(state) {
+        Ok(None) => Err(Error::MissingTerm),
+        Ok(Some(term)) => Ok(term),
+        Err(err) => Err(err),
     }
+}
 
-    let term = term.unwrap();
+// Parse check (type annotation): term : type
+fn p_check_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
+    let term = p_application(state)?;
 
     // Check if there's a colon
     if let Some(()) = p_colon_opt(state)? {
@@ -371,7 +405,7 @@ fn p_check<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
 }
 
 fn p_term_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    p_check(state)
+    p_check_opt(state)
 }
 
 fn p_term<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
