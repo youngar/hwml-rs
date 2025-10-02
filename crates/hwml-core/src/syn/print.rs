@@ -306,7 +306,7 @@ impl Metavariable {
 mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
-    use crate::syn::{ConstantId, Syntax};
+    use crate::syn::*;
     use insta::assert_snapshot;
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
                 Syntax::universe_rc(UniverseLevel(0)),
                 Syntax::universe_rc(UniverseLevel(1))
             )),
-            @"∀(%0 : 𝒰0) → 𝒰1"
+            @"∀ (%0 : 𝒰0) → 𝒰1"
         );
 
         // Nested pi: ∀(%0 : 𝒰0) (%1 : %0) → %1
