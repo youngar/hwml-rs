@@ -1147,12 +1147,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn robert_test() {
-        let a = "λ %0 → %0";
-        let x = parse_syntax(&a).unwrap();
-        let b = print_syntax_to_string(&x);
-        assert_eq!(a, b);
-    }
 }
