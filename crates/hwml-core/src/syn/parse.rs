@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn test_parse_metavariable_simple() {
         // Test parsing: ?x
-        let input = "?x";
+        let input = "?0";
         let result = parse_syntax(input);
 
         assert!(result.is_ok(), "Failed to parse metavariable: {:?}", result);
@@ -686,9 +686,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_multiple() {
-        // Test parsing: ?x ?y ?x
-        // ?x should get ID 0, ?y should get ID 1, and the second ?x should reuse ID 0
-        let input = "?x ?y ?x";
+        let input = "?0 ?1 ?0";
         let result = parse_syntax(input);
 
         assert!(
@@ -716,7 +714,7 @@ mod tests {
     #[test]
     fn test_parse_metavariable_in_lambda() {
         // Test parsing: λ %x → ?f %x
-        let input = "λ %x → ?f %x";
+        let input = "λ %x → ?0 %x";
         let result = parse_syntax(input);
 
         assert!(
@@ -741,7 +739,7 @@ mod tests {
     fn test_parse_metavariable_ordering() {
         // Test parsing: ?z ?a ?m
         // Should get IDs in order of discovery: ?z=0, ?a=1, ?m=2
-        let input = "?z ?a ?m";
+        let input = "?0 ?1 ?2";
         let result = parse_syntax(input);
 
         assert!(
@@ -768,7 +766,7 @@ mod tests {
     #[test]
     fn test_parse_metavariable_with_type() {
         // Test parsing: ?x : 𝒰0
-        let input = "?x : 𝒰0";
+        let input = "?0 : 𝒰0";
         let result = parse_syntax(input);
 
         assert!(
@@ -942,41 +940,29 @@ mod tests {
 
     #[test]
     fn test_parse_unbound_variable_simple() {
-        // Test parsing: !0
         let input = "!0";
         let result = parse_syntax(input);
-
         assert!(
             result.is_ok(),
             "Failed to parse unbound variable: {:?}",
             result
         );
-
         let parsed = result.unwrap();
-
-        // Build expected: !0 (index 0 at depth 0)
         let expected = Syntax::variable_rc(Index(0));
-
         assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_unbound_variable_higher() {
-        // Test parsing: !5 (level 5 at depth 0).
-        let input = "!5";
+        let input = "!4";
         let result = parse_syntax(input);
-
         assert!(
             result.is_ok(),
             "Failed to parse unbound variable !5: {:?}",
             result
         );
-
         let parsed = result.unwrap();
-
-        // Build expected: !5 = depth + (level - 1).
         let expected = Syntax::variable_rc(Index(4));
-
         assert_eq!(parsed, expected);
     }
 

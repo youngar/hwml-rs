@@ -298,7 +298,7 @@ impl Metavariable {
 mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
-    use crate::syn::{ConstantId, Syntax};
+    use crate::syn::{ConstantId, MetavariableId, Syntax};
     use insta::assert_snapshot;
 
     #[test]
@@ -336,7 +336,7 @@ mod tests {
                 Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::universe_rc(UniverseLevel::new(1))
             )),
-            @"∀(%0 : 𝒰0) → 𝒰1"
+            @"∀ (%0 : 𝒰0) → 𝒰1"
         );
 
         // Nested pi: ∀(%0 : 𝒰0) (%1 : %0) → %1
@@ -348,7 +348,7 @@ mod tests {
                     Syntax::variable_rc(Index(0))  // refers to inner pi binder
                 )
             )),
-            @"∀ (%0 : 𝒰0) (%1 : !1) → %1"
+            @"∀ (%0 : 𝒰0) (%1 : !0) → %1"
         );
 
         // Check: @42 : 𝒰0
@@ -438,35 +438,35 @@ mod tests {
         // (variable with index 0 when there are no binders)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::variable(Index(0))),
-            @"!1"
+            @"!0"
         );
 
         // Unbound variable at depth 0: !1
         // (variable with index 1 when there are no binders)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::variable(Index(1))),
-            @"!2"
+            @"!1"
         );
 
         // Unbound variable at depth 0: !5
         // (variable with index 5 when there are no binders)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::variable(Index(5))),
-            @"!6"
+            @"!5"
         );
 
         // Lambda with unbound variable: λ%0 → !0
         // (the lambda binds one variable, but the body references index 1 which is unbound)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda(Syntax::variable_rc(Index(1)))),
-            @"λ %0 → !1"
+            @"λ %0 → !0"
         );
 
         // Lambda with unbound variable: λ%0 → !1
         // (the lambda binds one variable, but the body references index 2 which is unbound)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda(Syntax::variable_rc(Index(2)))),
-            @"λ %0 → !2"
+            @"λ %0 → !1"
         );
 
         // Nested lambda with mixed bound and unbound variables: λ%0 %1 → %1 !0
@@ -478,7 +478,7 @@ mod tests {
                     Syntax::variable_rc(Index(2))  // unbound (negative level 0)
                 )
             ))),
-            @"λ %0 %1 → %1 !1"
+            @"λ %0 %1 → %1 !0"
         );
 
         // Pi with unbound variable in target: ∀(%0 : 𝒰0) → !0
@@ -488,7 +488,7 @@ mod tests {
                 Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::variable_rc(Index(1))
             )),
-            @"∀ (%0 : 𝒰0) → !1"
+            @"∀ (%0 : 𝒰0) → !0"
         );
     }
 }
