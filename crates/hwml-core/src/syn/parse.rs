@@ -1,4 +1,4 @@
-use crate::common::Index;
+use crate::common::{DBParseError, Index, Level, NegativeLevel};
 use crate::syn;
 use crate::syn::{Closure, MetavariableId, RcSyntax, Syntax};
 use core::fmt::Debug;
@@ -17,6 +17,7 @@ pub enum Error {
     MissingVariable,
     MissingTerm,
     UnknownVariable(String),
+    DBParseError(DBParseError),
     #[default]
     Other,
 }
@@ -34,6 +35,12 @@ impl From<ParseIntError> for Error {
             PosOverflow | NegOverflow => Error::InvalidInteger("overflow error".to_owned()),
             _ => Error::InvalidInteger("other error".to_owned()),
         }
+    }
+}
+
+impl From<DBParseError> for Error {
+    fn from(err: DBParseError) -> Self {
+        Error::DBParseError(err)
     }
 }
 
@@ -76,8 +83,8 @@ pub enum Token {
     Constant(u32),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
     Variable(String),
-    #[regex(r"![0-9]+", priority = 4, callback = |lex| lex.slice()["!".len()..].parse())]
-    UnboundVariable(usize),
+    #[regex(r"![0-9]+", priority = 4, callback = |lex| lex.slice().parse())]
+    UnboundVariable(NegativeLevel),
     #[regex(r"\?[0-9]+", priority = 4, callback = lex_metavariable_id)]
     Metavariable(usize),
 }
@@ -339,14 +346,14 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
             Token::UnboundVariable(negative_level) => {
                 state.advance_token();
                 // Convert negative level to index: index = depth + negative_level
-                let index = Index::new(state.names_depth() + negative_level);
+                let index = negative_level.to_index(state.names_depth());
                 Ok(Some(Syntax::variable_rc(index)))
             }
             Token::Universe(level) => {
                 state.advance_token();
-                Ok(Some(Syntax::universe_rc(crate::common::UniverseLevel(
-                    level as u32,
-                ))))
+                Ok(Some(Syntax::universe_rc(
+                    crate::common::UniverseLevel::new(level),
+                )))
             }
             Token::Constant(id) => {
                 state.advance_token();
@@ -494,8 +501,8 @@ mod tests {
 
         // Build expected: ∀(%x : 𝒰0) → 𝒰0
         let expected = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         assert_eq!(parsed, expected);
@@ -512,7 +519,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: 𝒰0
-        let expected = Syntax::universe_rc(UniverseLevel(0));
+        let expected = Syntax::universe_rc(UniverseLevel::new(0));
 
         assert_eq!(parsed, expected);
     }
@@ -531,9 +538,9 @@ mod tests {
         // Build expected: ∀(%x : 𝒰0) → ∀(%y : 𝒰0) → %x
         // %x is at index 1 in the innermost scope (skip over %y)
         let expected = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
             Syntax::pi_rc(
-                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::variable_rc(Index(1)),
             ),
         );
@@ -602,7 +609,7 @@ mod tests {
 
         // Build expected: (λ %x → %x) : 𝒰0
         let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
             Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
         );
 
@@ -626,7 +633,7 @@ mod tests {
 
         // Build expected: (λ %f → λ %x → %f %x) : 𝒰0
         let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
             Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
                 Syntax::variable_rc(Index(1)),
                 Syntax::variable_rc(Index(0)),
@@ -775,7 +782,7 @@ mod tests {
         // Build expected: ?x : 𝒰0
         use crate::syn::{Closure, MetavariableId};
         let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
             Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
         );
 
@@ -878,7 +885,7 @@ mod tests {
         // Build expected: @42 : 𝒰0
         use crate::syn::ConstantId;
         let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
             Syntax::constant_rc(ConstantId(42)),
         );
 
@@ -927,7 +934,7 @@ mod tests {
         use crate::syn::ConstantId;
         let expected = Syntax::pi_rc(
             Syntax::constant_rc(ConstantId(42)),
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         assert_eq!(parsed, expected);
@@ -955,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_parse_unbound_variable_higher() {
-        // Test parsing: !5
+        // Test parsing: !5 (level 5 at depth 0).
         let input = "!5";
         let result = parse_syntax(input);
 
@@ -967,8 +974,8 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: !5 (index 5 at depth 0)
-        let expected = Syntax::variable_rc(Index(5));
+        // Build expected: !5 = depth + (level - 1).
+        let expected = Syntax::variable_rc(Index(4));
 
         assert_eq!(parsed, expected);
     }
@@ -1010,8 +1017,8 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: λ %x → λ %y → !0
-        // Inside the nested lambda (depth 2), !0 means index = 2 + 0 = 2
+        // Build expected: λ %x → λ %y → !1
+        // Inside the nested lambda (depth 2), !1 means index = 2 + 1 - 1 = 2
         let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(2))));
 
         assert_eq!(parsed, expected);
@@ -1060,7 +1067,7 @@ mod tests {
         // Build expected: ∀(%x : 𝒰0) → !0
         // Inside the pi (depth 1), !0 means index = 1 + 0 = 1
         let expected = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
             Syntax::variable_rc(Index(1)),
         );
 
@@ -1113,7 +1120,7 @@ mod tests {
             (
                 "∀(%x : 𝒰0) → !0",
                 Syntax::pi_rc(
-                    Syntax::universe_rc(UniverseLevel(0)),
+                    Syntax::universe_rc(UniverseLevel::new(0)),
                     Syntax::variable_rc(Index(1)),
                 ),
             ),

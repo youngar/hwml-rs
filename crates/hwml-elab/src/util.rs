@@ -13,7 +13,7 @@ use hwml_core::*;
 pub fn raise(tm: RcSyntax, amount: usize) -> RcSyntax {
     fn r(tm: RcSyntax, depth: usize, amount: usize) -> RcSyntax {
         match &*tm {
-            Syntax::Variable(var) if var.index.to_usize() >= depth => {
+            Syntax::Variable(var) if Into::<usize>::into(var.index) >= depth => {
                 Syntax::variable_rc(var.index.raise(amount))
             }
             Syntax::Application(app) => {

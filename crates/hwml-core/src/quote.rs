@@ -36,7 +36,7 @@ pub fn quote(depth: usize, ty: &Value, value: &Value) -> Result<RcSyntax> {
 /// Read an instance of a pi type back to syntax.
 fn quote_pi_instance(depth: usize, ty: &val::Pi, value: &Value) -> Result<RcSyntax> {
     // Build a variable representing the lambda's argument.
-    let var = Rc::new(Value::variable(ty.source.clone(), Level(depth)));
+    let var = Rc::new(Value::variable(ty.source.clone(), Level::new(depth)));
 
     // Compute the body type by substituting the variable into the target type.
     let body_ty = match eval::run_closure(&ty.target, [var.clone()]) {
@@ -91,7 +91,7 @@ fn quote_pi(depth: usize, sem_pi: &val::Pi) -> Result<RcSyntax> {
     let syn_source_ty = quote_type(depth, sem_source_ty)?;
 
     // Read back the target type.
-    let var = Rc::new(Value::variable(sem_pi.source.clone(), Level(depth)));
+    let var = Rc::new(Value::variable(sem_pi.source.clone(), Level::new(depth)));
     let sem_target_ty = match eval::run_closure(&sem_pi.target, [var]) {
         Ok(ty) => ty,
         Err(error) => return Err(Error::Eval(error)),

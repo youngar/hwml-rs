@@ -189,7 +189,8 @@ impl Environment {
     }
 
     pub fn get(&self, level: Level) -> &Rc<Value> {
-        &self.map[level.to_usize()]
+        let index: usize = level.into();
+        &self.map[index]
     }
 
     pub fn variable_type(&self, variable: Variable) -> &Rc<Value> {

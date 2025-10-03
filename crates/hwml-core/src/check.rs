@@ -31,7 +31,8 @@ fn var_push(env: &mut Environment, value: Rc<Value>, ty: Rc<Value>) {
 
 /// Access the entry of a variable in the syntax.
 fn var_entry<'a>(env: &'a Environment, var: &stx::Variable) -> &'a EnvironmentEntry {
-    &env[var.index.to_usize()]
+    let i: usize = var.index.into();
+    &env[i]
 }
 
 /// Access the type of a variable in the syntax.
@@ -131,7 +132,10 @@ fn type_check_pi(env: &mut Environment, pi: &syn::Pi, ty: &Value) -> Result<()> 
     let sem_source_ty = eval(env, &pi.source)?;
 
     // Construct a variable of the source type.
-    let var = Rc::new(Value::variable(sem_source_ty.clone(), Level(env.len())));
+    let var = Rc::new(Value::variable(
+        sem_source_ty.clone(),
+        Level::new(env.len()),
+    ));
 
     // Check that the target type is of the same universe as the pi.
     var_push(env, var, sem_source_ty);
@@ -178,7 +182,7 @@ fn check_pi_type(env: &mut Environment, pi: &stx::Pi) -> Result<()> {
 
     // Check the codomain under an environment extended with one additional
     // variable, of the domain type, representing the pi binder.
-    let tm = Rc::new(Value::variable(ty.clone(), Level(env.len())));
+    let tm = Rc::new(Value::variable(ty.clone(), Level::new(env.len())));
     var_push(env, tm, ty);
     let result = check_type(env, &pi.target);
     env.pop();

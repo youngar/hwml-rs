@@ -22,7 +22,7 @@ pub fn infer_app(state: &mut State, app: surface::App) -> Result<(core::RcSyntax
         state.equality_constraint(
             fun_ety.clone(),
             pi.clone(),
-            core::Syntax::universe_rc(UniverseLevel(0)),
+            core::Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         // Check the type of the operand has the type of the domain.
@@ -84,8 +84,8 @@ pub fn infer_id(state: &mut State, id: surface::Id) -> Result<(core::RcSyntax, c
     println!("inferring id: {}", std::str::from_utf8(&id.value).unwrap());
     if *id.value == *b"Type" {
         return Ok((
-            core::Syntax::universe_rc(UniverseLevel(0)),
-            core::Syntax::universe_rc(UniverseLevel(1)),
+            core::Syntax::universe_rc(UniverseLevel::new(0)),
+            core::Syntax::universe_rc(UniverseLevel::new(1)),
         ));
     }
     if let Some(level) = state.lookup_local(&id.value) {
@@ -136,7 +136,7 @@ pub fn check_app(
     ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     let (etm, ety) = infer_app(state, app)?;
-    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel(0)));
+    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
@@ -146,7 +146,7 @@ pub fn check_fun(
     ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     let (etm, ety) = infer_fun(state, fun)?;
-    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel(0)));
+    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
@@ -192,7 +192,7 @@ pub fn check_str(
 
 pub fn check_id(state: &mut State, id: surface::Id, ty: core::RcSyntax) -> Result<core::RcSyntax> {
     let (etm, ety) = infer_id(state, id)?;
-    state.equality_constraint(ety, ty, core::Syntax::universe_rc(UniverseLevel(0)));
+    state.equality_constraint(ety, ty, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
@@ -218,7 +218,7 @@ pub fn check_type(
 }
 
 pub fn elab_type(state: &mut State, ty: surface::Expression) -> Result<core::RcSyntax> {
-    check_type(state, ty, core::Syntax::universe_rc(UniverseLevel(0)))
+    check_type(state, ty, core::Syntax::universe_rc(UniverseLevel::new(0)))
 }
 
 pub fn elab_def(state: &mut State, def: surface::Def) -> Result<decl::Declaration> {

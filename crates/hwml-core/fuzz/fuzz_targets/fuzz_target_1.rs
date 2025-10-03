@@ -3,21 +3,11 @@
 use hwml_core::syn::{parse_syntax, print_syntax_to_string, Syntax};
 use libfuzzer_sys::fuzz_target;
 
+/// Round trip syntax through the printer and parser.
 fuzz_target!(|syntax: Syntax| {
-    // Skip metavariables as they don't have a stable string representation
-    // (they print as "?helpme" which can't be parsed back)
-    if matches!(syntax, Syntax::Metavariable(_)) {
-        return;
-    }
-
-    // Print the syntax to a string
     let printed = print_syntax_to_string(&syntax);
-
-    // Parse it back
     match parse_syntax(&printed) {
         Ok(parsed) => {
-            // Compare the original and parsed syntax
-            // They should be equal
             assert_eq!(
                 *parsed, syntax,
                 "Round-trip failed!\nOriginal: {:?}\nPrinted: {}\nParsed: {:?}",
@@ -25,7 +15,6 @@ fuzz_target!(|syntax: Syntax| {
             );
         }
         Err(err) => {
-            // If parsing fails, it's a bug - either in printing or parsing
             panic!(
                 "Failed to parse printed syntax!\nOriginal: {:?}\nPrinted: {}\nError: {:?}",
                 syntax, printed, err

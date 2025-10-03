@@ -183,18 +183,10 @@ impl Constant {
 
 impl Variable {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
-        let index = self.index.to_usize();
-        // Check if the variable is bound by comparing index with depth
-        // A variable with index i is bound if i < depth
-        if index < st.depth {
-            // Bound variable: convert to level and print as %N
-            let lvl: usize = self.index.to_level(st.depth).to_usize();
-            p.text_owned(&format!("%{}", lvl))
+        if self.index.is_bound(st.depth) {
+            p.text_owned(&format!("{}", self.index.to_level(st.depth)))
         } else {
-            // Unbound variable: calculate "negative level" and print as !N
-            // The negative level is the remainder after subtracting the binder depth
-            let negative_level = index - st.depth;
-            p.text_owned(&format!("!{}", negative_level))
+            p.text_owned(&format!("{}", self.index.to_negative_level(st.depth)))
         }
     }
 }
@@ -319,7 +311,7 @@ mod tests {
 
         // Universe: 𝒰@0
         assert_snapshot!(
-            print_syntax_to_string(&Syntax::universe(UniverseLevel(0))),
+            print_syntax_to_string(&Syntax::universe(UniverseLevel::new(0))),
             @"𝒰0"
         );
 
@@ -341,8 +333,8 @@ mod tests {
         // Pi type: ∀(%0 : 𝒰0) → 𝒰1
         assert_snapshot!(
             print_syntax_to_string(&Syntax::pi(
-                Syntax::universe_rc(UniverseLevel(0)),
-                Syntax::universe_rc(UniverseLevel(1))
+                Syntax::universe_rc(UniverseLevel::new(0)),
+                Syntax::universe_rc(UniverseLevel::new(1))
             )),
             @"∀(%0 : 𝒰0) → 𝒰1"
         );
@@ -350,19 +342,19 @@ mod tests {
         // Nested pi: ∀(%0 : 𝒰0) (%1 : %0) → %1
         assert_snapshot!(
             print_syntax_to_string(&Syntax::pi(
-                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::pi_rc(
                     Syntax::variable_rc(Index(1)), // refers to outer pi binder
                     Syntax::variable_rc(Index(0))  // refers to inner pi binder
                 )
             )),
-            @"∀(%0 : 𝒰0) (%1 : %0) → %1"
+            @"∀ (%0 : 𝒰0) (%1 : !1) → %1"
         );
 
         // Check: @42 : 𝒰0
         assert_snapshot!(
             print_syntax_to_string(&Syntax::check(
-                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::constant_rc(ConstantId(42))
             )),
             @"@42 : 𝒰0"
@@ -374,7 +366,7 @@ mod tests {
                 Syntax::constant_rc(ConstantId(999)),
                 Syntax::variable_rc(Index(0))
             ))),
-            @"λ%0 → @999 %0"
+            @"λ %0 → @999 %0"
         );
 
         // Nested lambda: λ%0 %1 → %1 %0
@@ -385,19 +377,19 @@ mod tests {
                     Syntax::variable_rc(Index(1))  // inner lambda param
                 )
             ))),
-            @"λ%0 %1 → %1 %0"
+            @"λ %0 %1 → %1 %0"
         );
 
         // Lambda with checked nested lambda: λ%0 → (λ%1 → %1 %0 : 𝒰0)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda_rc(Syntax::check_rc(
-                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::lambda_rc(Syntax::application_rc(
                     Syntax::variable_rc(Index(0)), // outer lambda param
                     Syntax::variable_rc(Index(1))  // inner lambda param
                 ))
             ))),
-            @"λ%0 → (λ%1 → %1 %0 : 𝒰0)"
+            @"λ %0 → (λ %1 → %1 %0 : 𝒰0)"
         );
 
         // Simple metavariable: ?0
@@ -446,35 +438,35 @@ mod tests {
         // (variable with index 0 when there are no binders)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::variable(Index(0))),
-            @"!0"
+            @"!1"
         );
 
         // Unbound variable at depth 0: !1
         // (variable with index 1 when there are no binders)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::variable(Index(1))),
-            @"!1"
+            @"!2"
         );
 
         // Unbound variable at depth 0: !5
         // (variable with index 5 when there are no binders)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::variable(Index(5))),
-            @"!5"
+            @"!6"
         );
 
         // Lambda with unbound variable: λ%0 → !0
         // (the lambda binds one variable, but the body references index 1 which is unbound)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda(Syntax::variable_rc(Index(1)))),
-            @"λ%0 → !0"
+            @"λ %0 → !1"
         );
 
         // Lambda with unbound variable: λ%0 → !1
         // (the lambda binds one variable, but the body references index 2 which is unbound)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::lambda(Syntax::variable_rc(Index(2)))),
-            @"λ%0 → !1"
+            @"λ %0 → !2"
         );
 
         // Nested lambda with mixed bound and unbound variables: λ%0 %1 → %1 !0
@@ -486,17 +478,17 @@ mod tests {
                     Syntax::variable_rc(Index(2))  // unbound (negative level 0)
                 )
             ))),
-            @"λ%0 %1 → %1 !0"
+            @"λ %0 %1 → %1 !1"
         );
 
         // Pi with unbound variable in target: ∀(%0 : 𝒰0) → !0
         // (the pi binds one variable, but the target references index 1 which is unbound)
         assert_snapshot!(
             print_syntax_to_string(&Syntax::pi(
-                Syntax::universe_rc(UniverseLevel(0)),
+                Syntax::universe_rc(UniverseLevel::new(0)),
                 Syntax::variable_rc(Index(1))
             )),
-            @"∀(%0 : 𝒰0) → !0"
+            @"∀ (%0 : 𝒰0) → !1"
         );
     }
 }

@@ -79,7 +79,8 @@ impl Environment {
         self.types.truncate(depth);
     }
     pub fn lookup(&self, level: Level) -> RcSyntax {
-        self.types.get(level.to_usize()).unwrap().clone()
+        let index: usize = level.into();
+        self.types.get(index).unwrap().clone()
     }
 }
 
@@ -301,9 +302,9 @@ mod tests {
 
     #[test]
     fn test_universe_equality() {
-        let uni1 = Universe::new(UniverseLevel(0));
-        let uni2 = Universe::new(UniverseLevel(0));
-        let uni3 = Universe::new(UniverseLevel(1));
+        let uni1 = Universe::new(UniverseLevel::new(0));
+        let uni2 = Universe::new(UniverseLevel::new(0));
+        let uni3 = Universe::new(UniverseLevel::new(1));
 
         assert_eq!(uni1, uni2);
         assert_ne!(uni1, uni3);
@@ -370,13 +371,13 @@ mod tests {
 
     #[test]
     fn test_pi_equality() {
-        let source1 = Syntax::universe_rc(UniverseLevel(0));
-        let source2 = Syntax::universe_rc(UniverseLevel(0));
-        let source3 = Syntax::universe_rc(UniverseLevel(1));
+        let source1 = Syntax::universe_rc(UniverseLevel::new(0));
+        let source2 = Syntax::universe_rc(UniverseLevel::new(0));
+        let source3 = Syntax::universe_rc(UniverseLevel::new(1));
 
-        let target1 = Syntax::universe_rc(UniverseLevel(1));
-        let target2 = Syntax::universe_rc(UniverseLevel(1));
-        let target3 = Syntax::universe_rc(UniverseLevel(2));
+        let target1 = Syntax::universe_rc(UniverseLevel::new(1));
+        let target2 = Syntax::universe_rc(UniverseLevel::new(1));
+        let target3 = Syntax::universe_rc(UniverseLevel::new(2));
 
         let pi1 = Pi::new(source1.clone(), target1.clone());
         let pi2 = Pi::new(source2.clone(), target2.clone());
@@ -390,9 +391,9 @@ mod tests {
 
     #[test]
     fn test_check_equality() {
-        let ty1 = Syntax::universe_rc(UniverseLevel(0));
-        let ty2 = Syntax::universe_rc(UniverseLevel(0));
-        let ty3 = Syntax::universe_rc(UniverseLevel(1));
+        let ty1 = Syntax::universe_rc(UniverseLevel::new(0));
+        let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
+        let ty3 = Syntax::universe_rc(UniverseLevel::new(1));
 
         let term1 = Syntax::constant_rc(ConstantId(42));
         let term2 = Syntax::constant_rc(ConstantId(42));
@@ -450,9 +451,9 @@ mod tests {
 
     #[test]
     fn test_syntax_universe_equality() {
-        let syn1 = Syntax::universe(UniverseLevel(0));
-        let syn2 = Syntax::universe(UniverseLevel(0));
-        let syn3 = Syntax::universe(UniverseLevel(1));
+        let syn1 = Syntax::universe(UniverseLevel::new(0));
+        let syn2 = Syntax::universe(UniverseLevel::new(0));
+        let syn3 = Syntax::universe(UniverseLevel::new(1));
 
         assert_eq!(syn1, syn2);
         assert_ne!(syn1, syn3);
@@ -487,10 +488,10 @@ mod tests {
 
     #[test]
     fn test_syntax_pi_equality() {
-        let source1 = Syntax::universe_rc(UniverseLevel(0));
-        let source2 = Syntax::universe_rc(UniverseLevel(0));
-        let target1 = Syntax::universe_rc(UniverseLevel(1));
-        let target2 = Syntax::universe_rc(UniverseLevel(1));
+        let source1 = Syntax::universe_rc(UniverseLevel::new(0));
+        let source2 = Syntax::universe_rc(UniverseLevel::new(0));
+        let target1 = Syntax::universe_rc(UniverseLevel::new(1));
+        let target2 = Syntax::universe_rc(UniverseLevel::new(1));
 
         let syn1 = Syntax::pi(source1, target1);
         let syn2 = Syntax::pi(source2, target2);
@@ -500,8 +501,8 @@ mod tests {
 
     #[test]
     fn test_syntax_check_equality() {
-        let ty1 = Syntax::universe_rc(UniverseLevel(0));
-        let ty2 = Syntax::universe_rc(UniverseLevel(0));
+        let ty1 = Syntax::universe_rc(UniverseLevel::new(0));
+        let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
         let term1 = Syntax::constant_rc(ConstantId(42));
         let term2 = Syntax::constant_rc(ConstantId(42));
 
@@ -531,7 +532,7 @@ mod tests {
     fn test_syntax_different_variants_not_equal() {
         let constant = Syntax::constant(ConstantId(0));
         let variable = Syntax::variable(Index(0));
-        let universe = Syntax::universe(UniverseLevel(0));
+        let universe = Syntax::universe(UniverseLevel::new(0));
 
         assert_ne!(constant, variable);
         assert_ne!(constant, universe);
@@ -563,24 +564,24 @@ mod tests {
     #[test]
     fn test_complex_pi_type_equality() {
         // Test: ∀(%0 : 𝒰0) → 𝒰1
-        let source1 = Syntax::universe_rc(UniverseLevel(0));
-        let target1 = Syntax::universe_rc(UniverseLevel(1));
+        let source1 = Syntax::universe_rc(UniverseLevel::new(0));
+        let target1 = Syntax::universe_rc(UniverseLevel::new(1));
         let pi1 = Syntax::pi(source1, target1);
 
-        let source2 = Syntax::universe_rc(UniverseLevel(0));
-        let target2 = Syntax::universe_rc(UniverseLevel(1));
+        let source2 = Syntax::universe_rc(UniverseLevel::new(0));
+        let target2 = Syntax::universe_rc(UniverseLevel::new(1));
         let pi2 = Syntax::pi(source2, target2);
 
         assert_eq!(pi1, pi2);
 
         // Nested pi: ∀(%0 : 𝒰0) (%1 : %0) → %1
-        let outer_source1 = Syntax::universe_rc(UniverseLevel(0));
+        let outer_source1 = Syntax::universe_rc(UniverseLevel::new(0));
         let inner_source1 = Syntax::variable_rc(Index(0));
         let inner_target1 = Syntax::variable_rc(Index(1));
         let inner_pi1 = Syntax::pi_rc(inner_source1, inner_target1);
         let outer_pi1 = Syntax::pi(outer_source1, inner_pi1);
 
-        let outer_source2 = Syntax::universe_rc(UniverseLevel(0));
+        let outer_source2 = Syntax::universe_rc(UniverseLevel::new(0));
         let inner_source2 = Syntax::variable_rc(Index(0));
         let inner_target2 = Syntax::variable_rc(Index(1));
         let inner_pi2 = Syntax::pi_rc(inner_source2, inner_target2);
