@@ -1,6 +1,4 @@
-use crate::syn::{
-    Application, Check, Closure, Constant, Lambda, Metavariable, Pi, Syntax, Universe, Variable,
-};
+use crate::syn::*;
 use elegance::{Io, Printer, Render};
 
 const INDENT: isize = 2;
@@ -15,6 +13,14 @@ const LAMBDA_LHS: Option<usize> = NO_PREC;
 const LAMBDA_RHS: Option<usize> = Some(3);
 const APP_LHS: Option<usize> = Some(4);
 const APP_RHS: Option<usize> = Some(5);
+const LIFT_LHS: Option<usize> = NO_PREC;
+const LIFT_RHS: Option<usize> = Some(5);
+const QUOTE_LHS: Option<usize> = NO_PREC;
+const QUOTE_RHS: Option<usize> = Some(5);
+const HARROW_LHS: Option<usize> = Some(4);
+const HARROW_RHS: Option<usize> = Some(3);
+const SPLICE_LHS: Option<usize> = NO_PREC;
+const SPLICE_RHS: Option<usize> = Some(5);
 
 pub fn dump_syntax(syntax: &Syntax) {
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
@@ -28,6 +34,13 @@ pub fn print_syntax_to_string(syntax: &Syntax) -> String {
     let mut p = Printer::new(String::new(), 80);
     let st = State::new();
     let _ = syntax.print(st, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+pub fn print_hsyntax_to_string(hsyntax: &HSyntax) -> String {
+    let mut p = Printer::new(String::new(), 80);
+    let st = State::new();
+    let _ = hsyntax.print(st, &mut p);
     p.finish().unwrap_or_default()
 }
 
@@ -69,33 +82,40 @@ impl State {
     }
 }
 
-fn print_left_subterm<R>(
+trait Print {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error>;
+}
+
+fn print_left_subterm<R, A>(
     st: State,
     p: &mut Printer<R>,
-    x: &Syntax,
+    x: &A,
     lhs_prec: Option<usize>,
 ) -> Result<(), R::Error>
 where
     R: Render,
+    A: Print,
 {
     x.print(st.set_rhs_prec(lhs_prec), p)
 }
 
-fn print_right_subterm<R>(
+fn print_right_subterm<R, A>(
     st: State,
     p: &mut Printer<R>,
-    x: &Syntax,
+    x: &A,
     rhs_prec: Option<usize>,
 ) -> Result<(), R::Error>
 where
     R: Render,
+    A: Print,
 {
     x.print(st.set_lhs_prec(rhs_prec), p)
 }
 
-fn print_internal_subterm<R>(st: State, p: &mut Printer<R>, x: &Syntax) -> Result<(), R::Error>
+fn print_internal_subterm<R, A>(st: State, p: &mut Printer<R>, x: &A) -> Result<(), R::Error>
 where
     R: Render,
+    A: Print,
 {
     x.print(st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)
 }
@@ -142,7 +162,7 @@ where
     p.text_owned(format!("%{}", st.depth))
 }
 
-impl Closure {
+impl Print for Closure {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         p.text("[")?;
         p.cgroup(1, |p| {
@@ -160,7 +180,7 @@ impl Closure {
     }
 }
 
-impl Syntax {
+impl Print for Syntax {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         match self {
             Syntax::Constant(constant) => constant.print(st, p),
@@ -171,17 +191,20 @@ impl Syntax {
             Syntax::Application(app) => app.print(st, p),
             Syntax::Universe(uni) => uni.print(st, p),
             Syntax::Metavariable(meta) => meta.print(st, p),
+            Syntax::Lift(lift) => lift.print(st, p),
+            Syntax::Quote(quote) => quote.print(st, p),
+            Syntax::HArrow(harrow) => harrow.print(st, p),
         }
     }
 }
 
-impl Constant {
+impl Print for Constant {
     fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         p.text_owned(&format!("@{}", self.name.0))
     }
 }
 
-impl Variable {
+impl Print for Variable {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         if self.index.is_bound(st.depth) {
             p.text_owned(&format!("{}", self.index.to_level(st.depth)))
@@ -191,7 +214,7 @@ impl Variable {
     }
 }
 
-impl Check {
+impl Print for Check {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         with_prec(st, p, CHECK_LHS, CHECK_RHS, |st, p| {
             p.igroup(0, |p| {
@@ -204,7 +227,7 @@ impl Check {
     }
 }
 
-impl Pi {
+impl Print for Pi {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         with_prec(st, p, PI_LHS, PI_RHS, |mut st, p| {
             p.cgroup(0, |p| {
@@ -238,7 +261,7 @@ impl Pi {
     }
 }
 
-impl Lambda {
+impl Print for Lambda {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         with_prec(st, p, LAMBDA_LHS, LAMBDA_RHS, |st, p| {
             p.cgroup(2, |p| {
@@ -265,7 +288,7 @@ impl Lambda {
     }
 }
 
-impl Application {
+impl Print for Application {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         with_prec(st, p, APP_LHS, APP_RHS, |st, p| {
             p.cgroup(0, |p| {
@@ -277,13 +300,13 @@ impl Application {
     }
 }
 
-impl Universe {
+impl Print for Universe {
     fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         p.text_owned(&format!("𝒰{}", self.level))
     }
 }
 
-impl Metavariable {
+impl Print for Metavariable {
     fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
         p.text_owned(&format!("{}", self.id))?;
         if !self.closure.is_empty() {
@@ -291,6 +314,112 @@ impl Metavariable {
         } else {
             Ok(())
         }
+    }
+}
+
+impl Print for Lift {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, LIFT_LHS, LIFT_RHS, |st, p| {
+            p.text("^")?;
+            print_right_subterm(st, p, &*self.tm, LIFT_RHS)
+        })
+    }
+}
+
+impl Print for Quote {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, QUOTE_LHS, QUOTE_RHS, |st, p| {
+            p.text("'")?;
+            print_right_subterm(st, p, &*self.tm, QUOTE_RHS)
+        })
+    }
+}
+
+impl Print for HArrow {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, HARROW_LHS, HARROW_RHS, |st, p| {
+            p.cgroup(0, |p| {
+                print_left_subterm(st, p, &*self.source, HARROW_LHS)?;
+                p.space()?;
+                p.text("→")?;
+                p.space()?;
+                print_right_subterm(st, p, &*self.target, HARROW_RHS)
+            })
+        })
+    }
+}
+
+impl Print for HSyntax {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        match self {
+            HSyntax::HConstant(constant) => constant.print(st, p),
+            HSyntax::HVariable(variable) => variable.print(st, p),
+            HSyntax::HCheck(check) => check.print(st, p),
+            HSyntax::HLambda(lambda) => lambda.print(st, p),
+            HSyntax::HApplication(application) => application.print(st, p),
+            HSyntax::Splice(splice) => splice.print(st, p),
+        }
+    }
+}
+
+impl Print for HCheck {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, CHECK_LHS, CHECK_RHS, |st, p| {
+            p.igroup(0, |p| {
+                print_left_subterm(st, p, &*self.term, CHECK_LHS)?;
+                p.text(" :")?;
+                p.space()?;
+                print_right_subterm(st, p, &*self.ty, CHECK_RHS)
+            })
+        })
+    }
+}
+
+impl Print for HLambda {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, LAMBDA_LHS, LAMBDA_RHS, |st, p| {
+            p.cgroup(2, |p| {
+                let mut next = self;
+                let mut st = st;
+                p.cgroup(0, |p| {
+                    p.text("λ ")?;
+                    loop {
+                        print_binder(st, p)?;
+                        st = st.inc_depth();
+                        match &*next.body {
+                            HSyntax::HLambda(lam) => next = lam,
+                            _ => break,
+                        }
+                        p.space()?;
+                    }
+                    p.space()?;
+                    p.text("→")
+                })?;
+                p.space()?;
+                print_right_subterm(st, p, &*next.body, LAMBDA_RHS)
+            })
+        })
+    }
+}
+
+impl Print for HApplication {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, APP_LHS, APP_RHS, |st, p| {
+            p.cgroup(0, |p| {
+                print_left_subterm(st, p, &*self.function, APP_LHS)?;
+                p.space()?;
+                print_right_subterm(st, p, &*self.argument, APP_RHS)
+            })
+        })
+    }
+}
+
+impl Print for Splice {
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        with_prec(st, p, SPLICE_LHS, SPLICE_RHS, |st, p| {
+            p.text("~")?;
+            print_right_subterm(st, p, &*self.term, SPLICE_RHS)
+        })
     }
 }
 
@@ -489,6 +618,194 @@ mod tests {
                 Syntax::variable_rc(Index(1))
             )),
             @"∀ (%0 : 𝒰0) → !0"
+        );
+    }
+
+    #[test]
+    fn test_print_hardware_terms() {
+        use crate::syn::{Constant, HApplication, HCheck, HLambda, HSyntax, Splice, Variable};
+        use std::rc::Rc;
+
+        // Simple HConstant: @42
+        assert_snapshot!(
+            print_hsyntax_to_string(&HSyntax::HConstant(Constant::new(ConstantId(42)))),
+            @"@42"
+        );
+
+        // Simple HVariable bound: %0 (at depth 1)
+        let hvar_bound = HSyntax::HVariable(Variable::new(Index(0)));
+        let mut p = Printer::new(String::new(), 80);
+        let st = State::new().inc_depth(); // depth 1, so index 0 is bound
+        let _ = hvar_bound.print(st, &mut p);
+        let result = p.finish().unwrap_or_default();
+        assert_eq!(result, "%0");
+
+        // Simple HVariable unbound: !0 (at depth 0)
+        assert_snapshot!(
+            print_hsyntax_to_string(&HSyntax::HVariable(Variable::new(Index(0)))),
+            @"!0"
+        );
+
+        // HCheck: @42 : @99
+        let hcheck = HSyntax::HCheck(HCheck::new(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+        ));
+        assert_snapshot!(
+            print_hsyntax_to_string(&hcheck),
+            @"@42 : @99"
+        );
+
+        // HLambda: λ%0 → %0
+        let hlambda = HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HVariable(Variable::new(
+            Index(0),
+        )))));
+        assert_snapshot!(
+            print_hsyntax_to_string(&hlambda),
+            @"λ %0 → %0"
+        );
+
+        // HApplication: @42 @99
+        let happ = HSyntax::HApplication(HApplication::new(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
+        ));
+        assert_snapshot!(
+            print_hsyntax_to_string(&happ),
+            @"@42 @99"
+        );
+
+        // Splice: ~@42
+        let splice = HSyntax::Splice(Splice::new(Syntax::constant_rc(ConstantId(42))));
+        assert_snapshot!(
+            print_hsyntax_to_string(&splice),
+            @"~@42"
+        );
+    }
+
+    #[test]
+    fn test_print_complex_hardware_terms() {
+        use crate::syn::{Constant, HApplication, HCheck, HLambda, HSyntax, Splice, Variable};
+        use std::rc::Rc;
+
+        // Nested HLambda: λ%0 %1 → %1 %0
+        let nested_hlambda = HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HLambda(
+            HLambda::new(Rc::new(HSyntax::HApplication(HApplication::new(
+                Rc::new(HSyntax::HVariable(Variable::new(Index(0)))), // inner lambda param
+                Rc::new(HSyntax::HVariable(Variable::new(Index(1)))), // outer lambda param
+            )))),
+        ))));
+        assert_snapshot!(
+            print_hsyntax_to_string(&nested_hlambda),
+            @"λ %0 %1 → %1 %0"
+        );
+
+        // HLambda with HCheck: λ%0 → (@42 : @99)
+        let hlambda_with_check =
+            HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HCheck(HCheck::new(
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+            )))));
+        assert_snapshot!(
+            print_hsyntax_to_string(&hlambda_with_check),
+            @"λ %0 → (@42 : @99)"
+        );
+
+        // HApplication with HLambda: (λ%0 → %0) @42
+        let happ_with_lambda = HSyntax::HApplication(HApplication::new(
+            Rc::new(HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HVariable(
+                Variable::new(Index(0)),
+            ))))),
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+        ));
+        assert_snapshot!(
+            print_hsyntax_to_string(&happ_with_lambda),
+            @"(λ %0 → %0) @42"
+        );
+
+        // Splice with complex term: ~λ %0 → @42 %0
+        let splice_complex =
+            HSyntax::Splice(Splice::new(Syntax::lambda_rc(Syntax::application_rc(
+                Syntax::constant_rc(ConstantId(42)),
+                Syntax::variable_rc(Index(0)),
+            ))));
+        assert_snapshot!(
+            print_hsyntax_to_string(&splice_complex),
+            @"~λ %0 → @42 %0"
+        );
+
+        // HVariable unbound at different indices
+        assert_snapshot!(
+            print_hsyntax_to_string(&HSyntax::HVariable(Variable::new(Index(5)))),
+            @"!5"
+        );
+
+        // HCheck with HLambda: (λ%0 → %0) : (λ%1 → %1)
+        let hcheck_lambdas = HSyntax::HCheck(HCheck::new(
+            Rc::new(HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HVariable(
+                Variable::new(Index(0)),
+            ))))),
+            Rc::new(HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HVariable(
+                Variable::new(Index(0)),
+            ))))),
+        ));
+        assert_snapshot!(
+            print_hsyntax_to_string(&hcheck_lambdas),
+            @"λ %0 → %0 : λ %0 → %0"
+        );
+    }
+
+    #[test]
+    fn test_print_quote_with_hardware_terms() {
+        use crate::syn::{Constant, HApplication, HLambda, HSyntax, Lift, Quote, Splice, Variable};
+        use std::rc::Rc;
+
+        // Quote with HConstant: '@42
+        let quote_hconst = Syntax::Quote(Quote::new(Rc::new(HSyntax::HConstant(Constant::new(
+            ConstantId(42),
+        )))));
+        assert_snapshot!(
+            print_syntax_to_string(&quote_hconst),
+            @"'@42"
+        );
+
+        // Quote with HLambda: '(λ%0 → %0)
+        let quote_hlambda = Syntax::Quote(Quote::new(Rc::new(HSyntax::HLambda(HLambda::new(
+            Rc::new(HSyntax::HVariable(Variable::new(Index(0)))),
+        )))));
+        assert_snapshot!(
+            print_syntax_to_string(&quote_hlambda),
+            @"'λ %0 → %0"
+        );
+
+        // Quote with HApplication: '@42 @99
+        let quote_happ = Syntax::Quote(Quote::new(Rc::new(HSyntax::HApplication(
+            HApplication::new(
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
+            ),
+        ))));
+        assert_snapshot!(
+            print_syntax_to_string(&quote_happ),
+            @"'(@42 @99)"
+        );
+
+        // Quote with Splice: '~@42
+        let quote_splice = Syntax::Quote(Quote::new(Rc::new(HSyntax::Splice(Splice::new(
+            Syntax::constant_rc(ConstantId(42)),
+        )))));
+        assert_snapshot!(
+            print_syntax_to_string(&quote_splice),
+            @"'~@42"
+        );
+
+        // Lift with Quote: ^'@42
+        let lift_quote = Syntax::Lift(Lift::new(Syntax::quote_rc(Rc::new(HSyntax::HConstant(
+            Constant::new(ConstantId(42)),
+        )))));
+        assert_snapshot!(
+            print_syntax_to_string(&lift_quote),
+            @"^'@42"
         );
     }
 }

@@ -95,6 +95,9 @@ pub enum Syntax {
     Application(Application),
     Universe(Universe),
     Metavariable(Metavariable),
+    Lift(Lift),
+    Quote(Quote),
+    HArrow(HArrow),
 }
 
 impl Syntax {
@@ -161,6 +164,30 @@ impl Syntax {
 
     pub fn metavariable_rc(metavariable: MetavariableId, closure: Closure) -> RcSyntax {
         Rc::new(Syntax::metavariable(metavariable, closure))
+    }
+
+    pub fn lift(tm: RcSyntax) -> Syntax {
+        Syntax::Lift(Lift::new(tm))
+    }
+
+    pub fn lift_rc(tm: RcSyntax) -> RcSyntax {
+        Rc::new(Syntax::lift(tm))
+    }
+
+    pub fn quote(tm: RcHSyntax) -> Syntax {
+        Syntax::Quote(Quote::new(tm))
+    }
+
+    pub fn quote_rc(tm: RcHSyntax) -> RcSyntax {
+        Rc::new(Syntax::quote(tm))
+    }
+
+    pub fn harrow(source: RcSyntax, target: RcSyntax) -> Syntax {
+        Syntax::HArrow(HArrow::new(source, target))
+    }
+
+    pub fn harrow_rc(source: RcSyntax, target: RcSyntax) -> RcSyntax {
+        Rc::new(Syntax::harrow(source, target))
     }
 }
 
@@ -262,6 +289,159 @@ pub struct Metavariable {
 impl Metavariable {
     pub fn new(id: MetavariableId, closure: Closure) -> Metavariable {
         Metavariable { id, closure }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Lift {
+    pub tm: RcSyntax,
+}
+
+impl Lift {
+    pub fn new(tm: RcSyntax) -> Lift {
+        Lift { tm }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Quote {
+    pub tm: RcHSyntax,
+}
+
+impl Quote {
+    pub fn new(tm: RcHSyntax) -> Quote {
+        Quote { tm }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct HArrow {
+    pub source: RcSyntax,
+    pub target: RcSyntax,
+}
+
+impl HArrow {
+    pub fn new(source: RcSyntax, target: RcSyntax) -> HArrow {
+        HArrow { source, target }
+    }
+}
+
+pub type RcHSyntax = Rc<HSyntax>;
+
+pub type HTm = HSyntax;
+pub type HTy = HSyntax;
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum HSyntax {
+    HConstant(Constant),
+    HVariable(Variable),
+    HCheck(HCheck),
+    HLambda(HLambda),
+    HApplication(HApplication),
+    Splice(Splice),
+}
+
+impl HSyntax {
+    pub fn hconstant(name: ConstantId) -> HSyntax {
+        HSyntax::HConstant(Constant::new(name))
+    }
+
+    pub fn hconstant_rc(name: ConstantId) -> RcHSyntax {
+        Rc::new(HSyntax::hconstant(name))
+    }
+
+    pub fn hvariable(index: Index) -> HSyntax {
+        HSyntax::HVariable(Variable::new(index))
+    }
+
+    pub fn hvariable_rc(index: Index) -> RcHSyntax {
+        Rc::new(HSyntax::hvariable(index))
+    }
+
+    pub fn hcheck(ty: RcHSyntax, term: RcHSyntax) -> HSyntax {
+        HSyntax::HCheck(HCheck::new(ty, term))
+    }
+
+    pub fn hcheck_rc(ty: RcHSyntax, term: RcHSyntax) -> RcHSyntax {
+        Rc::new(HSyntax::hcheck(ty, term))
+    }
+
+    pub fn hlambda(body: RcHSyntax) -> HSyntax {
+        HSyntax::HLambda(HLambda::new(body))
+    }
+
+    pub fn hlambda_rc(body: RcHSyntax) -> RcHSyntax {
+        Rc::new(HSyntax::hlambda(body))
+    }
+
+    pub fn happlication(function: RcHSyntax, argument: RcHSyntax) -> HSyntax {
+        HSyntax::HApplication(HApplication::new(function, argument))
+    }
+
+    pub fn happlication_rc(function: RcHSyntax, argument: RcHSyntax) -> RcHSyntax {
+        Rc::new(HSyntax::happlication(function, argument))
+    }
+
+    pub fn splice(term: RcSyntax) -> HSyntax {
+        HSyntax::Splice(Splice::new(term))
+    }
+
+    pub fn splice_rc(term: RcSyntax) -> RcHSyntax {
+        Rc::new(HSyntax::splice(term))
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct HCheck {
+    pub ty: RcHSyntax,
+    pub term: RcHSyntax,
+}
+
+impl HCheck {
+    pub fn new(ty: RcHSyntax, term: RcHSyntax) -> HCheck {
+        HCheck { ty, term }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct HLambda {
+    pub body: RcHSyntax,
+}
+
+impl HLambda {
+    pub fn new(body: RcHSyntax) -> HLambda {
+        HLambda { body }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct HApplication {
+    pub function: RcHSyntax,
+    pub argument: RcHSyntax,
+}
+
+impl HApplication {
+    pub fn new(function: RcHSyntax, argument: RcHSyntax) -> HApplication {
+        HApplication { function, argument }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Splice {
+    pub term: RcSyntax,
+}
+
+impl Splice {
+    pub fn new(term: RcSyntax) -> Splice {
+        Splice { term }
     }
 }
 

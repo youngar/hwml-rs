@@ -21,6 +21,7 @@ pub fn eval(env: &mut Environment, stx: &Syntax) -> Result<Rc<Value>, Error> {
         Syntax::Application(app) => eval_application(env, &app),
         Syntax::Universe(uni) => eval_universe(env, &uni),
         Syntax::Metavariable(meta) => eval_metavariable(env, meta),
+        _ => todo!(),
     }
 }
 
