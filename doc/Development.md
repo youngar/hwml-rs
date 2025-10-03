@@ -65,5 +65,5 @@ cargo install cargo-fuzz
 For example:
 ```sh
 cd crates/hwml-core/fuzz
-cargo fuzz run fuzz_target_1
+cargo fuzz run fuzz_core_roundtrip
 ```

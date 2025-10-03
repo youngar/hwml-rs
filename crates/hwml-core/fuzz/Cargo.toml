@@ -18,8 +18,15 @@ path = ".."
 features = ["arbitrary"]
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
+name = "fuzz_core_roundtrip"
+path = "fuzz_targets/fuzz_core_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_core_parser"
+path = "fuzz_targets/fuzz_core_parser.rs"
 test = false
 doc = false
 bench = false

@@ -4,7 +4,7 @@ This directory contains fuzzing targets for the `hwml_core` crate.
 
 ## Fuzz Targets
 
-### `fuzz_target_1` - Syntax Round-trip Testing
+### `fuzz_core_roundtrip` - Syntax Round-trip Testing
 
 This fuzzer tests the round-trip property of the Syntax printer and parser:
 1. Generate an arbitrary `Syntax` node using the `arbitrary` crate
@@ -25,13 +25,13 @@ These issues indicate that the printer and parser are not fully compatible, whic
 
 ```bash
 cd crates/hwml-core/fuzz
-cargo fuzz run fuzz_target_1
+cargo fuzz run fuzz_core_roundtrip
 ```
 
 To run for a specific amount of time:
 
 ```bash
-cargo fuzz run fuzz_target_1 -- -max_total_time=60
+cargo fuzz run fuzz_core_roundtrip -- -max_total_time=60
 ```
 
 ## Building Without Running
