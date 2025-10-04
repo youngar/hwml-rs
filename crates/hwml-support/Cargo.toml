@@ -13,3 +13,4 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+elegance.workspace = true

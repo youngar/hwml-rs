@@ -1249,7 +1249,7 @@ mod tests {
 
     #[test]
     fn test_parse_print_roundtrip_unbound() {
-        use crate::syn::print::print_syntax_to_string;
+        use hwml_support::pp::dump_to_str;
 
         // Test that parsing and printing unbound variables works correctly
         // Note: The parser uses named binders (%x, %y) while the printer uses
@@ -1294,7 +1294,7 @@ mod tests {
             );
 
             // Also verify that the printed form can be understood
-            let printed = print_syntax_to_string(&parsed);
+            let printed = dump_to_str(&parsed);
             // The printed form should contain !N for unbound variables
             if input.contains("!") {
                 assert!(
@@ -1812,7 +1812,7 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_roundtrip_examples() {
-        use crate::syn::print::print_hsyntax_to_string;
+        use hwml_support::pp::dump_to_str;
 
         // Test that parsing and printing hterms works correctly
         let test_cases = vec![
@@ -1831,7 +1831,7 @@ mod tests {
             let parsed = parse_hsyntax(input).expect(&format!("Failed to parse: {}", input));
 
             // Also verify that the printed form can be understood
-            let printed = print_hsyntax_to_string(&parsed);
+            let printed = dump_to_str(&parsed);
 
             // The printed form should be parseable
             let reparsed = parse_hsyntax(&printed);

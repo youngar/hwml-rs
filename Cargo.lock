@@ -570,6 +570,7 @@ name = "hwml_support"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "elegance",
 ]
 
 [[package]]
