@@ -1,6 +1,6 @@
 use crate::*;
 use anyhow::{anyhow, Result};
-use hwml_core::{syn::Syntax, *};
+use hwml_core::syn::Syntax;
 
 pub fn solve_equality(state: &mut State, cons: EqualityConstraint) -> Result<()> {
     println!("solving equality: {:?}", cons);
@@ -26,7 +26,7 @@ pub fn solve_equality(state: &mut State, cons: EqualityConstraint) -> Result<()>
             // Domains are equal.
             let mdom =
                 state.equality_constraint(pi1.source.clone(), pi2.source.clone(), cons.ty.clone());
-            let mdomTy = state.metavariable(mdom);
+            let mdom_ty = state.metavariable(mdom);
 
             // TODO: here in the paper, they rewrite the second pi's codomain
             // to use the binder of the first pi.  I don't think that we have to
@@ -35,14 +35,14 @@ pub fn solve_equality(state: &mut State, cons: EqualityConstraint) -> Result<()>
 
             // TODO: why do we do this?  We constrain equality under an extended
             // context to create the metavariable with the correct context?
-            state.extend_context_nameless(mdomTy.clone());
+            state.extend_context_nameless(mdom_ty.clone());
             let mcod =
                 state.equality_constraint(pi1.target.clone(), pi2.target.clone(), cons.ty.clone());
             state.pop_context();
-            let mcodTy = state.metavariable(mcod);
+            let mcod_ty = state.metavariable(mcod);
 
             // Solve the antiunifier for the original constraint.
-            state.solve_metavariable_id(cons.meta, Syntax::pi_rc(mdomTy, mcodTy));
+            state.solve_metavariable_id(cons.meta, Syntax::pi_rc(mdom_ty, mcod_ty));
             return Ok(());
         }
     }

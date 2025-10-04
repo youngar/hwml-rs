@@ -1,10 +1,6 @@
 use lalrpop_util::lalrpop_mod;
 
-use crate::{
-    lex::{Lexer, Token},
-    parsing::grammar::ProgramParser,
-    syntax::Program,
-};
+use crate::{lex::Lexer, parsing::grammar::ProgramParser, syntax::Program};
 
 lalrpop_mod!(
     #[allow(clippy::ptr_arg)]

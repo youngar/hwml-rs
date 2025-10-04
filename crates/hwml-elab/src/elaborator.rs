@@ -4,7 +4,6 @@ use anyhow::Result;
 use hwml_core::common::*;
 use hwml_core::declaration as decl;
 use hwml_core::syn as core;
-use hwml_core::syn::Metavariable;
 use hwml_surface::syntax as surface;
 
 pub fn infer_app(state: &mut State, app: surface::App) -> Result<(core::RcSyntax, core::RcSyntax)> {
@@ -66,7 +65,7 @@ pub fn infer_fun(state: &mut State, fun: surface::Fun) -> Result<(core::RcSyntax
     let etm = core::Syntax::lambda_rc(body);
 
     // Build the type of the lambda.
-    let mut ety = codomain;
+    let ety = codomain;
     // for ty in types.iter().rev() {
     //     ety = core::Syntax::pi_rc(ty.clone(), ety);
     // }
@@ -110,22 +109,26 @@ pub fn infer_type(
     }
 }
 
-pub fn check_pi(state: &mut State, pi: surface::Pi, ty: core::RcSyntax) -> Result<core::RcSyntax> {
+pub fn check_pi(
+    _state: &mut State,
+    _pi: surface::Pi,
+    _ty: core::RcSyntax,
+) -> Result<core::RcSyntax> {
     todo!()
 }
 
 pub fn check_arrow(
-    state: &mut State,
-    arrow: surface::Arrow,
-    ty: core::RcSyntax,
+    _state: &mut State,
+    _arrow: surface::Arrow,
+    _ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     todo!()
 }
 
 pub fn check_fat_arrow(
-    state: &mut State,
-    fat_arrow: surface::FatArrow,
-    ty: core::RcSyntax,
+    _state: &mut State,
+    _fat_arrow: surface::FatArrow,
+    _ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     todo!()
 }
@@ -151,17 +154,17 @@ pub fn check_fun(
 }
 
 pub fn check_let_in(
-    state: &mut State,
-    let_in: surface::LetIn,
-    ty: core::RcSyntax,
+    _state: &mut State,
+    _let_in: surface::LetIn,
+    _ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     todo!()
 }
 
 pub fn check_underscore(
-    state: &mut State,
-    underscore: surface::Underscore,
-    ty: core::RcSyntax,
+    _state: &mut State,
+    _underscore: surface::Underscore,
+    _ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     todo!()
 }
@@ -175,17 +178,17 @@ pub fn check_paren(
 }
 
 pub fn check_num(
-    state: &mut State,
-    num: surface::Num,
-    ty: core::RcSyntax,
+    _state: &mut State,
+    _num: surface::Num,
+    _ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     todo!()
 }
 
 pub fn check_str(
-    state: &mut State,
-    str: surface::Str,
-    ty: core::RcSyntax,
+    _state: &mut State,
+    _str: surface::Str,
+    _ty: core::RcSyntax,
 ) -> Result<core::RcSyntax> {
     todo!()
 }
@@ -213,7 +216,6 @@ pub fn check_type(
         surface::Expression::Num(num) => check_num(state, num, ty),
         surface::Expression::Str(str) => check_str(state, str, ty),
         surface::Expression::Id(id) => check_id(state, id, ty),
-        _ => todo!(),
     }
 }
 
@@ -226,7 +228,7 @@ pub fn elab_def(state: &mut State, def: surface::Def) -> Result<decl::Declaratio
     // A list of the elaborated types of all binders in scope.  This is used to
     // build the overall pi type of this definition.
     // let mut types = Vec::new();
-    for group in def.bindings.groups {
+    for _group in def.bindings.groups {
         // Elaborate the type of the binder.
         // let ety = elab_type(state, *group.ty)?;
         // All binders in the group share the same type.
@@ -240,7 +242,7 @@ pub fn elab_def(state: &mut State, def: surface::Def) -> Result<decl::Declaratio
         // }
     }
     // Elaborate the target type of the definition.
-    let mut ety = match def.ty {
+    let ety = match def.ty {
         Some(ty) => elab_type(state, *ty)?,
         None => {
             // If no type annotation is provided, we need to infer it
@@ -249,7 +251,7 @@ pub fn elab_def(state: &mut State, def: surface::Def) -> Result<decl::Declaratio
         }
     };
     // Check the body of the definition.
-    let mut etm = check_type(state, *def.value, ety.clone())?;
+    let etm = check_type(state, *def.value, ety.clone())?;
 
     // Reset the context.
     state.truncate_context(depth);

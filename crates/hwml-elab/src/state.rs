@@ -101,7 +101,7 @@ impl State {
             .map(|level| self.env.lookup(level))
     }
 
-    pub fn lookup_global_type(&self, name: Box<[u8]>) -> RcSyntax {
+    pub fn lookup_global_type(&self, _name: Box<[u8]>) -> RcSyntax {
         todo!()
     }
 

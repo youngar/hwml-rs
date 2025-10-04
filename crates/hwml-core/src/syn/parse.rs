@@ -1,4 +1,4 @@
-use crate::common::{DBParseError, Index, Level, NegativeLevel};
+use crate::common::{DBParseError, Index, NegativeLevel};
 use crate::syn::{self, HSyntax, RcHSyntax};
 use crate::syn::{Closure, MetavariableId, RcSyntax, Syntax};
 use core::fmt::Debug;
@@ -155,31 +155,6 @@ impl<'input> State<'input> {
     fn reset_names(&mut self, depth: usize) {
         self.names.truncate(depth);
     }
-}
-
-fn p_while0<'input, T, F>(state: &mut State<'input>, f: F) -> ParseResult<Vec<T>>
-where
-    F: Fn(&mut State<'input>) -> ParseResult<Option<T>>,
-{
-    let mut result = Vec::new();
-    while let Some(t) = f(state)? {
-        result.push(t);
-    }
-    Ok(result)
-}
-
-fn p_while1<'input, T, F>(state: &mut State<'input>, err: Error, f: F) -> ParseResult<Vec<T>>
-where
-    F: Fn(&mut State<'input>) -> ParseResult<Option<T>>,
-{
-    let mut result = Vec::new();
-    if let Some(t) = f(state)? {
-        result.push(t);
-    } else {
-        return Err(err);
-    }
-    result.append(&mut p_while0(state, f)?);
-    Ok(result)
 }
 
 fn p_token_opt<'input>(state: &mut State<'input>, token: Token) -> ParseResult<Option<()>> {
