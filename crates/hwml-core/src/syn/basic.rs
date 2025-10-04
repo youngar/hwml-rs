@@ -51,40 +51,6 @@ impl Closure {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub struct Environment {
-    types: Vec<RcSyntax>,
-}
-
-impl Environment {
-    pub fn new() -> Environment {
-        Environment { types: Vec::new() }
-    }
-    pub fn depth(&self) -> usize {
-        self.types.len()
-    }
-    pub fn to_index(&self, level: Level) -> Index {
-        level.to_index(self.depth())
-    }
-    pub fn to_level(&self, index: Index) -> Level {
-        index.to_level(self.depth())
-    }
-    pub fn extend(&mut self, ty: RcSyntax) -> Level {
-        self.types.push(ty);
-        Level::new(self.depth() - 1)
-    }
-    pub fn pop(&mut self) {
-        self.types.pop();
-    }
-    pub fn truncate(&mut self, depth: usize) {
-        self.types.truncate(depth);
-    }
-    pub fn lookup(&self, level: Level) -> RcSyntax {
-        let index: usize = level.into();
-        self.types.get(index).unwrap().clone()
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Syntax {
     Constant(Constant),
@@ -506,13 +472,6 @@ mod tests {
 
         assert_eq!(closure3, closure4);
         assert_ne!(closure3, closure5);
-    }
-
-    #[test]
-    fn test_environment_equality() {
-        let env1 = Environment::new();
-        let env2 = Environment::new();
-        assert_eq!(env1, env2);
     }
 
     #[test]
