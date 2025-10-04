@@ -1,10 +1,6 @@
-use std::rc::Rc;
-
 use crate::State;
 use hwml_core::common::*;
 use hwml_core::syn::basic::*;
-use hwml_core::syn::*;
-use hwml_core::*;
 
 /// Walk the term, raising all bound variables by a certain amount. This is used
 /// when subsituting an argument under a binder, we need to raise the argument
@@ -74,6 +70,6 @@ pub fn subst(tm: RcSyntax, from: Index, to: RcSyntax) -> RcSyntax {
 }
  */
 
-pub fn whnf(state: &mut State, tm: RcSyntax) -> RcSyntax {
+pub fn whnf(_state: &mut State, _tm: RcSyntax) -> RcSyntax {
     todo!()
 }

@@ -151,7 +151,7 @@ pub fn type_check_synth_term(env: &mut Environment, term: &Syntax, ty1: &Value) 
 }
 
 /// Check that two types are equal.
-pub fn check_type_equal(env: &Environment, a: &Value, b: &Value) -> Result<()> {
+pub fn check_type_equal(_: &Environment, _: &Value, _: &Value) -> Result<()> {
     err("not implemented")
 }
 
