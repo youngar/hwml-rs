@@ -151,7 +151,7 @@ pub fn get_line_info(db: &dyn salsa::Database, source_program: File) -> LineInfo
 }
 
 #[salsa::tracked]
-pub fn parse_program(db: &dyn salsa::Database, source_program: File) -> Program<'_> {
+pub fn parse_program(db: &dyn salsa::Database, _source_program: File) -> Program<'_> {
     // let mut errors = Vec::new();
     // let text = source_program.text(db);
     // let result = hwml_parser::grammar::ProgramParser::new().parse(&mut errors, &text);

@@ -1,5 +1,4 @@
 use clap::Parser;
-use la_arena;
 use std::fs;
 use std::path::PathBuf;
 
