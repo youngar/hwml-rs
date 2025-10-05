@@ -1,9 +1,8 @@
-use crate::common::{Index, Level, UniverseLevel};
+use crate::{
+    common::{Index, Level, UniverseLevel},
+    name::Name,
+};
 use std::rc::Rc;
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct ConstantId(pub u32);
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -101,12 +100,12 @@ pub enum Syntax {
 }
 
 impl Syntax {
-    pub fn constant(name: ConstantId) -> Syntax {
-        Syntax::Constant(Constant::new(name))
+    pub fn constant<T: Into<Constant>>(x: T) -> Syntax {
+        Syntax::Constant(x.into())
     }
 
-    pub fn constant_rc(name: ConstantId) -> RcSyntax {
-        Rc::new(Syntax::constant(name))
+    pub fn constant_rc<T: Into<Constant>>(x: T) -> RcSyntax {
+        Rc::new(Syntax::constant(x))
     }
 
     pub fn variable(index: Index) -> Syntax {
@@ -194,12 +193,21 @@ impl Syntax {
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Constant {
-    pub name: ConstantId,
+    pub name: Name,
 }
 
 impl Constant {
-    pub fn new(name: ConstantId) -> Constant {
+    pub fn new(name: Name) -> Constant {
         Constant { name }
+    }
+}
+
+impl<T> From<T> for Constant
+where
+    T: Into<Name>,
+{
+    fn from(x: T) -> Constant {
+        Constant::new(x.into())
     }
 }
 
@@ -346,12 +354,12 @@ pub enum HSyntax {
 }
 
 impl HSyntax {
-    pub fn hconstant(name: ConstantId) -> HSyntax {
-        HSyntax::HConstant(Constant::new(name))
+    pub fn hconstant<T: Into<Constant>>(x: T) -> HSyntax {
+        HSyntax::HConstant(x.into())
     }
 
-    pub fn hconstant_rc(name: ConstantId) -> RcHSyntax {
-        Rc::new(HSyntax::hconstant(name))
+    pub fn hconstant_rc<T: Into<Constant>>(x: T) -> RcHSyntax {
+        Rc::new(HSyntax::hconstant(x))
     }
 
     pub fn hvariable(index: Index) -> HSyntax {
@@ -451,21 +459,10 @@ mod tests {
     use crate::common::{Index, UniverseLevel};
 
     #[test]
-    fn test_name_id_equality() {
-        let name1 = ConstantId(42);
-        let name2 = ConstantId(42);
-        let name3 = ConstantId(99);
-
-        assert_eq!(name1, name2);
-        assert_ne!(name1, name3);
-    }
-
-    #[test]
     fn test_constant_equality() {
-        let const1 = Constant::new(ConstantId(42));
-        let const2 = Constant::new(ConstantId(42));
-        let const3 = Constant::new(ConstantId(99));
-
+        let const1 = Constant::from(42);
+        let const2 = Constant::from(42);
+        let const3 = Constant::from(99);
         assert_eq!(const1, const2);
         assert_ne!(const1, const3);
     }
@@ -496,9 +493,9 @@ mod tests {
         let closure2 = Closure::new();
         assert_eq!(closure1, closure2);
 
-        let val1 = Syntax::constant_rc(ConstantId(42));
-        let val2 = Syntax::constant_rc(ConstantId(42));
-        let val3 = Syntax::constant_rc(ConstantId(99));
+        let val1 = Syntax::constant_rc(42);
+        let val2 = Syntax::constant_rc(42);
+        let val3 = Syntax::constant_rc(99);
 
         let closure3 = Closure::with_values(vec![val1.clone()]);
         let closure4 = Closure::with_values(vec![val2.clone()]);
@@ -531,9 +528,9 @@ mod tests {
 
     #[test]
     fn test_application_equality() {
-        let fun1 = Syntax::constant_rc(ConstantId(42));
-        let fun2 = Syntax::constant_rc(ConstantId(42));
-        let fun3 = Syntax::constant_rc(ConstantId(99));
+        let fun1 = Syntax::constant_rc(42);
+        let fun2 = Syntax::constant_rc(42);
+        let fun3 = Syntax::constant_rc(99);
 
         let arg1 = Syntax::variable_rc(Index(0));
         let arg2 = Syntax::variable_rc(Index(0));
@@ -575,9 +572,9 @@ mod tests {
         let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
         let ty3 = Syntax::universe_rc(UniverseLevel::new(1));
 
-        let term1 = Syntax::constant_rc(ConstantId(42));
-        let term2 = Syntax::constant_rc(ConstantId(42));
-        let term3 = Syntax::constant_rc(ConstantId(99));
+        let term1 = Syntax::constant_rc(42);
+        let term2 = Syntax::constant_rc(42);
+        let term3 = Syntax::constant_rc(99);
 
         let check1 = Check::new(ty1.clone(), term1.clone());
         let check2 = Check::new(ty2.clone(), term2.clone());
@@ -611,9 +608,9 @@ mod tests {
 
     #[test]
     fn test_syntax_constant_equality() {
-        let syn1 = Syntax::constant(ConstantId(42));
-        let syn2 = Syntax::constant(ConstantId(42));
-        let syn3 = Syntax::constant(ConstantId(99));
+        let syn1 = Syntax::constant(42);
+        let syn2 = Syntax::constant(42);
+        let syn3 = Syntax::constant(99);
 
         assert_eq!(syn1, syn2);
         assert_ne!(syn1, syn3);
@@ -655,8 +652,8 @@ mod tests {
 
     #[test]
     fn test_syntax_application_equality() {
-        let fun1 = Syntax::constant_rc(ConstantId(42));
-        let fun2 = Syntax::constant_rc(ConstantId(42));
+        let fun1 = Syntax::constant_rc(42);
+        let fun2 = Syntax::constant_rc(42);
         let arg1 = Syntax::variable_rc(Index(0));
         let arg2 = Syntax::variable_rc(Index(0));
 
@@ -683,8 +680,8 @@ mod tests {
     fn test_syntax_check_equality() {
         let ty1 = Syntax::universe_rc(UniverseLevel::new(0));
         let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
-        let term1 = Syntax::constant_rc(ConstantId(42));
-        let term2 = Syntax::constant_rc(ConstantId(42));
+        let term1 = Syntax::constant_rc(42);
+        let term2 = Syntax::constant_rc(42);
 
         let syn1 = Syntax::check(ty1, term1);
         let syn2 = Syntax::check(ty2, term2);
@@ -710,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_syntax_different_variants_not_equal() {
-        let constant = Syntax::constant(ConstantId(0));
+        let constant = Syntax::constant(0);
         let variable = Syntax::variable(Index(0));
         let universe = Syntax::universe(UniverseLevel::new(0));
 
@@ -725,18 +722,18 @@ mod tests {
         // (λ %0 → %0) @42
         let lambda_body1 = Syntax::variable_rc(Index(0));
         let lambda1 = Syntax::lambda_rc(lambda_body1);
-        let arg1 = Syntax::constant_rc(ConstantId(42));
+        let arg1 = Syntax::constant_rc(42);
         let app1 = Syntax::application(lambda1.clone(), arg1.clone());
 
         let lambda_body2 = Syntax::variable_rc(Index(0));
         let lambda2 = Syntax::lambda_rc(lambda_body2);
-        let arg2 = Syntax::constant_rc(ConstantId(42));
+        let arg2 = Syntax::constant_rc(42);
         let app2 = Syntax::application(lambda2.clone(), arg2.clone());
 
         assert_eq!(app1, app2);
 
         // Different argument
-        let arg3 = Syntax::constant_rc(ConstantId(99));
+        let arg3 = Syntax::constant_rc(99);
         let app3 = Syntax::application(lambda1, arg3);
         assert_ne!(app1, app3);
     }
@@ -773,9 +770,9 @@ mod tests {
     #[test]
     fn test_rc_syntax_equality() {
         // Test that RcSyntax (Rc<Syntax>) compares by value, not by pointer
-        let rc1 = Syntax::constant_rc(ConstantId(42));
-        let rc2 = Syntax::constant_rc(ConstantId(42));
-        let rc3 = Syntax::constant_rc(ConstantId(99));
+        let rc1 = Syntax::constant_rc(42);
+        let rc2 = Syntax::constant_rc(42);
+        let rc3 = Syntax::constant_rc(99);
 
         assert_eq!(rc1, rc2); // Different Rc pointers, same value
         assert_ne!(rc1, rc3);

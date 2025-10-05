@@ -1,6 +1,6 @@
-use crate::common::{DBParseError, Index, Level, NegativeLevel};
-use crate::syn::{self, HSyntax, RcHSyntax};
+use crate::common::{DBParseError, Index, NegativeLevel};
 use crate::syn::{Closure, MetavariableId, RcSyntax, Syntax};
+use crate::syn::{HSyntax, RcHSyntax};
 use core::fmt::Debug;
 use logos::{Lexer, Logos};
 use std::fmt;
@@ -341,7 +341,7 @@ fn p_hatom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSynta
             }
             Token::Constant(id) => {
                 state.advance_token();
-                Ok(Some(HSyntax::hconstant_rc(syn::ConstantId(id))))
+                Ok(Some(HSyntax::hconstant_rc(id as usize)))
             }
             Token::Splice => {
                 state.advance_token();
@@ -487,7 +487,7 @@ fn p_atom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>
             }
             Token::Constant(id) => {
                 state.advance_token();
-                Ok(Some(Syntax::constant_rc(syn::ConstantId(id))))
+                Ok(Some(Syntax::constant_rc(id as usize)))
             }
             Token::Metavariable(id) => {
                 state.advance_token();
@@ -955,19 +955,22 @@ mod tests {
 
     #[test]
     fn test_parse_constant_simple() {
-        // Test parsing: @42
-        let input = "@42";
-        let result = parse_syntax(input);
+        use crate::name::*;
 
-        assert!(result.is_ok(), "Failed to parse constant: {:?}", result);
+        let cases = vec![
+            ("@42", Syntax::constant_rc(42)),
+            // ("@_", Syntax::constant_rc(Name::anon())),
+            ("@x", Syntax::constant_rc("x")),
+            (
+                "@x/123/y/456",
+                Syntax::constant_rc(Name::anon().ext("x").ext(123).ext("y").ext(456)),
+            ),
+        ];
 
-        let parsed = result.unwrap();
-
-        // Build expected: @42
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId(42));
-
-        assert_eq!(parsed, expected);
+        for (input, expected) in cases {
+            eprintln!("testing: {}", hwml_support::pp::dump_to_str(&expected));
+            assert_eq!(parse_syntax(input).unwrap(), expected);
+        }
     }
 
     #[test]
@@ -981,8 +984,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @0
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId(0));
+        let expected = Syntax::constant_rc(0);
 
         assert_eq!(parsed, expected);
     }
@@ -1002,8 +1004,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @123456789
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId(123456789));
+        let expected = Syntax::constant_rc(123456789);
 
         assert_eq!(parsed, expected);
     }
@@ -1023,11 +1024,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42 @99
-        use crate::syn::ConstantId;
-        let expected = Syntax::application_rc(
-            Syntax::constant_rc(ConstantId(42)),
-            Syntax::constant_rc(ConstantId(99)),
-        );
+        let expected = Syntax::application_rc(Syntax::constant_rc(42), Syntax::constant_rc(99));
 
         assert_eq!(parsed, expected);
     }
@@ -1047,10 +1044,9 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42 : 𝒰0
-        use crate::syn::ConstantId;
         let expected = Syntax::check_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(42),
         );
 
         assert_eq!(parsed, expected);
@@ -1071,9 +1067,8 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: λ %x → @42 %x
-        use crate::syn::ConstantId;
         let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(42),
             Syntax::variable_rc(Index(0)),
         ));
 
@@ -1095,9 +1090,8 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: ∀(%x : @42) → 𝒰0
-        use crate::syn::ConstantId;
         let expected = Syntax::pi_rc(
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(42),
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
@@ -1320,8 +1314,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42
-        use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId(42));
+        let expected = HSyntax::hconstant_rc(42);
 
         assert_eq!(parsed, expected);
     }
@@ -1337,9 +1330,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @0
-        use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId(0));
-
+        let expected = HSyntax::hconstant_rc(0);
         assert_eq!(parsed, expected);
     }
 
@@ -1358,8 +1349,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @123456789
-        use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId(123456789));
+        let expected = HSyntax::hconstant_rc(123456789);
 
         assert_eq!(parsed, expected);
     }
@@ -1540,11 +1530,8 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42 @99
-        use crate::syn::ConstantId;
-        let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
-            HSyntax::hconstant_rc(ConstantId(99)),
-        );
+        let expected =
+            HSyntax::happlication_rc(HSyntax::hconstant_rc(42), HSyntax::hconstant_rc(99));
 
         assert_eq!(parsed, expected);
     }
@@ -1561,9 +1548,8 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: (λ %x → %x) : @42
-        use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(42),
             HSyntax::hlambda_rc(HSyntax::hvariable_rc(Index(0))),
         );
 
@@ -1585,13 +1571,10 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: (@42 @99) : @100
-        use crate::syn::ConstantId;
+
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId(100)),
-            HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId(42)),
-                HSyntax::hconstant_rc(ConstantId(99)),
-            ),
+            HSyntax::hconstant_rc(100),
+            HSyntax::happlication_rc(HSyntax::hconstant_rc(42), HSyntax::hconstant_rc(99)),
         );
 
         assert_eq!(parsed, expected);
@@ -1608,8 +1591,8 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: ~@42
-        use crate::syn::ConstantId;
-        let expected = HSyntax::splice_rc(Syntax::constant_rc(ConstantId(42)));
+
+        let expected = HSyntax::splice_rc(Syntax::constant_rc(42));
 
         assert_eq!(parsed, expected);
     }
@@ -1670,13 +1653,13 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: λ %f → (λ %x → %f %x) @42
-        use crate::syn::ConstantId;
+
         let expected = HSyntax::hlambda_rc(HSyntax::happlication_rc(
             HSyntax::hlambda_rc(HSyntax::happlication_rc(
                 HSyntax::hvariable_rc(Index(1)), // %f
                 HSyntax::hvariable_rc(Index(0)), // %x
             )),
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(42),
         ));
 
         assert_eq!(parsed, expected);
@@ -1722,9 +1705,9 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42 ~𝒰0
-        use crate::syn::ConstantId;
+
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(42),
             HSyntax::splice_rc(Syntax::universe_rc(UniverseLevel::new(0))),
         );
 
@@ -1746,10 +1729,10 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: ~@42 : @99
-        use crate::syn::ConstantId;
+
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId(99)),
-            HSyntax::splice_rc(Syntax::constant_rc(ConstantId(42))),
+            HSyntax::hconstant_rc(99),
+            HSyntax::splice_rc(Syntax::constant_rc(42)),
         );
 
         assert_eq!(parsed, expected);
@@ -1798,13 +1781,10 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42 (@99 @100)
-        use crate::syn::ConstantId;
+
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
-            HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId(99)),
-                HSyntax::hconstant_rc(ConstantId(100)),
-            ),
+            HSyntax::hconstant_rc(42),
+            HSyntax::happlication_rc(HSyntax::hconstant_rc(99), HSyntax::hconstant_rc(100)),
         );
 
         assert_eq!(parsed, expected);
