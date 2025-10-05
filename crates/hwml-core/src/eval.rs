@@ -25,7 +25,7 @@ pub fn eval(env: &mut Environment, stx: &Syntax) -> Result<Rc<Value>, Error> {
     }
 }
 
-fn eval_constant(env: &mut Environment, constant: &syn::Constant) -> Result<Rc<Value>, Error> {
+fn eval_constant(_: &mut Environment, _: &syn::Constant) -> Result<Rc<Value>, Error> {
     todo!()
 }
 
@@ -53,7 +53,7 @@ fn eval_universe(_: &mut Environment, universe: &syn::Universe) -> Result<Rc<Val
     Ok(Rc::new(Value::universe(universe.level)))
 }
 
-fn eval_metavariable(env: &mut Environment, meta: &syn::Metavariable) -> Result<Rc<Value>, Error> {
+fn eval_metavariable(_: &mut Environment, _: &syn::Metavariable) -> Result<Rc<Value>, Error> {
     todo!()
 }
 

@@ -1,8 +1,8 @@
-use crate::common::{Index, Level};
+use crate::common::Level;
 use crate::eval;
 use crate::syn::{RcSyntax, Syntax};
 use crate::val;
-use crate::val::{Closure, Neutral, Normal, Value};
+use crate::val::{Neutral, Normal, Value};
 use std::rc::Rc;
 
 /// A quotation error.

@@ -208,8 +208,8 @@ impl Server {
     }
 
     fn send_response(&mut self, response: TResponse) -> Result<(), Box<dyn Error + Sync + Send>> {
-        if let Some((method, start)) = self.req_queue.incoming.complete(&response.id) {
-            let duration = start.elapsed();
+        if let Some((_method, _start)) = self.req_queue.incoming.complete(&response.id) {
+            let _duration = _start.elapsed();
             self.send(response.into());
         }
         Ok(())
