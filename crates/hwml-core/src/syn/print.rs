@@ -57,8 +57,9 @@ impl PP for Syntax {
 }
 
 impl PP for Constant {
-    fn print<R: Render>(&self, _st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
-        p.text_owned(&format!("@{}", self.name.0))
+    fn print<R: Render>(&self, st: State, p: &mut Printer<R>) -> Result<(), R::Error> {
+        p.text("@")?;
+        self.name.print(st, p)
     }
 }
 
@@ -283,7 +284,7 @@ impl PPTerm for Splice {
 mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
-    use crate::syn::{ConstantId, MetavariableId, Syntax};
+    use crate::syn::{MetavariableId, Syntax};
     use hwml_support::pp::dump_to_str;
     use insta::assert_snapshot;
 
@@ -291,7 +292,7 @@ mod tests {
     fn test_print_ast_to_stdout() {
         // Simple constant: @42
         assert_snapshot!(
-            dump_to_str(&Syntax::constant(ConstantId(42))),
+            dump_to_str(&Syntax::constant(42)),
             @"@42"
         );
 
@@ -310,8 +311,8 @@ mod tests {
         // Application: @42 @99
         assert_snapshot!(
             dump_to_str(&Syntax::application(
-                Syntax::constant_rc(ConstantId(42)),
-                Syntax::constant_rc(ConstantId(99))
+                Syntax::constant_rc(42),
+                Syntax::constant_rc(99)
             )),
             @"@42 @99"
         );
@@ -341,7 +342,7 @@ mod tests {
         assert_snapshot!(
             dump_to_str(&Syntax::check(
                 Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::constant_rc(ConstantId(42))
+                Syntax::constant_rc(42)
             )),
             @"@42 : 𝒰0"
         );
@@ -349,7 +350,7 @@ mod tests {
         // Lambda with application: λ%0 → @999 %0
         assert_snapshot!(
             dump_to_str(&Syntax::lambda(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId(999)),
+                Syntax::constant_rc(999),
                 Syntax::variable_rc(Index(0))
             ))),
             @"λ %0 → @999 %0"
@@ -485,7 +486,7 @@ mod tests {
 
         // Simple HConstant: @42
         assert_snapshot!(
-            dump_to_str(&HSyntax::HConstant(Constant::new(ConstantId(42)))),
+            dump_to_str(&HSyntax::HConstant(Constant::from(42))),
             @"@42"
         );
 
@@ -505,8 +506,8 @@ mod tests {
 
         // HCheck: @42 : @99
         let hcheck = HSyntax::HCheck(HCheck::new(
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+            Rc::new(HSyntax::HConstant(Constant::from(99))),
+            Rc::new(HSyntax::HConstant(Constant::from(42))),
         ));
         assert_snapshot!(
             dump_to_str(&hcheck),
@@ -524,8 +525,8 @@ mod tests {
 
         // HApplication: @42 @99
         let happ = HSyntax::HApplication(HApplication::new(
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
+            Rc::new(HSyntax::HConstant(Constant::from(42))),
+            Rc::new(HSyntax::HConstant(Constant::from(99))),
         ));
         assert_snapshot!(
             dump_to_str(&happ),
@@ -533,7 +534,7 @@ mod tests {
         );
 
         // Splice: ~@42
-        let splice = HSyntax::Splice(Splice::new(Syntax::constant_rc(ConstantId(42))));
+        let splice = HSyntax::Splice(Splice::new(Syntax::constant_rc(42)));
         assert_snapshot!(
             dump_to_str(&splice),
             @"~@42"
@@ -560,8 +561,8 @@ mod tests {
         // HLambda with HCheck: λ%0 → (@42 : @99)
         let hlambda_with_check =
             HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HCheck(HCheck::new(
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+                Rc::new(HSyntax::HConstant(Constant::from(99))),
+                Rc::new(HSyntax::HConstant(Constant::from(42))),
             )))));
         assert_snapshot!(
             dump_to_str(&hlambda_with_check),
@@ -573,7 +574,7 @@ mod tests {
             Rc::new(HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HVariable(
                 Variable::new(Index(0)),
             ))))),
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
+            Rc::new(HSyntax::HConstant(Constant::from(42))),
         ));
         assert_snapshot!(
             dump_to_str(&happ_with_lambda),
@@ -581,11 +582,9 @@ mod tests {
         );
 
         // Splice with complex term: ~λ %0 → @42 %0
-        let splice_complex =
-            HSyntax::Splice(Splice::new(Syntax::lambda_rc(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId(42)),
-                Syntax::variable_rc(Index(0)),
-            ))));
+        let splice_complex = HSyntax::Splice(Splice::new(Syntax::lambda_rc(
+            Syntax::application_rc(Syntax::constant_rc(42), Syntax::variable_rc(Index(0))),
+        )));
         assert_snapshot!(
             dump_to_str(&splice_complex),
             @"~λ %0 → @42 %0"
@@ -618,9 +617,8 @@ mod tests {
         use std::rc::Rc;
 
         // Quote with HConstant: '@42
-        let quote_hconst = Syntax::Quote(Quote::new(Rc::new(HSyntax::HConstant(Constant::new(
-            ConstantId(42),
-        )))));
+        let quote_hconst =
+            Syntax::Quote(Quote::new(Rc::new(HSyntax::HConstant(Constant::from(42)))));
         assert_snapshot!(
             dump_to_str(&quote_hconst),
             @"'@42"
@@ -638,8 +636,8 @@ mod tests {
         // Quote with HApplication: '@42 @99
         let quote_happ = Syntax::Quote(Quote::new(Rc::new(HSyntax::HApplication(
             HApplication::new(
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(42)))),
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId(99)))),
+                Rc::new(HSyntax::HConstant(Constant::from(42))),
+                Rc::new(HSyntax::HConstant(Constant::from(99))),
             ),
         ))));
         assert_snapshot!(
@@ -649,7 +647,7 @@ mod tests {
 
         // Quote with Splice: '~@42
         let quote_splice = Syntax::Quote(Quote::new(Rc::new(HSyntax::Splice(Splice::new(
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(42),
         )))));
         assert_snapshot!(
             dump_to_str(&quote_splice),
@@ -658,7 +656,7 @@ mod tests {
 
         // Lift with Quote: ^'@42
         let lift_quote = Syntax::Lift(Lift::new(Syntax::quote_rc(Rc::new(HSyntax::HConstant(
-            Constant::new(ConstantId(42)),
+            Constant::from(42),
         )))));
         assert_snapshot!(
             dump_to_str(&lift_quote),

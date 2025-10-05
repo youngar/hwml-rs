@@ -1,5 +1,7 @@
 use crate::common::{Level, UniverseLevel};
-use crate::syn::{ConstantId, RcSyntax};
+use crate::name::Name;
+use crate::syn::RcSyntax;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// A closure represents a pending evaluation. A closure records the term to be
@@ -174,7 +176,7 @@ impl Application {
 #[derive(Clone, Debug)]
 pub struct Environment {
     /// Constant environment.
-    const_env: Vec<Rc<Value>>,
+    const_env: HashMap<Name, Rc<Value>>,
 
     /// The typing environment.
     map: Vec<Rc<Value>>,
@@ -183,7 +185,7 @@ pub struct Environment {
 impl Environment {
     pub fn new() -> Environment {
         Environment {
-            const_env: Vec::new(),
+            const_env: HashMap::new(),
             map: Vec::new(),
         }
     }
@@ -197,8 +199,8 @@ impl Environment {
         self.get(variable.level)
     }
 
-    pub fn constant(&self, name: ConstantId) -> &Rc<Value> {
-        &self.const_env[name.0 as usize]
+    pub fn constant(&self, name: &Name) -> &Rc<Value> {
+        &self.const_env[name]
     }
 
     /// The number of bound variables in scope.
