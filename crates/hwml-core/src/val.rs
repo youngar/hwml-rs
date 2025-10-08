@@ -1,5 +1,6 @@
 use crate::common::{Level, UniverseLevel};
 use crate::syn::{ConstantId, RcSyntax};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// A closure represents a pending evaluation. A closure records the term to be
@@ -9,66 +10,66 @@ use std::rc::Rc;
 /// can be performed simultaneously with reduction of the term by extending the
 /// environment.
 #[derive(Clone, Debug)]
-pub struct Closure {
-    pub environment: Environment,
-    pub term: RcSyntax,
+pub struct Closure<'db> {
+    pub environment: Environment<'db>,
+    pub term: RcSyntax<'db>,
 }
 
-impl Closure {
-    pub fn new(environment: Environment, term: RcSyntax) -> Closure {
+impl<'db> Closure<'db> {
+    pub fn new(environment: Environment<'db>, term: RcSyntax<'db>) -> Closure<'db> {
         Closure { environment, term }
     }
 }
 
 /// A value in normal form.
 #[derive(Clone, Debug)]
-pub struct Normal {
-    pub ty: Rc<Value>,
-    pub value: Rc<Value>,
+pub struct Normal<'db> {
+    pub ty: Rc<Value<'db>>,
+    pub value: Rc<Value<'db>>,
 }
 
-impl Normal {
-    pub fn new(ty: Rc<Value>, value: Rc<Value>) -> Normal {
+impl<'db> Normal<'db> {
+    pub fn new(ty: Rc<Value<'db>>, value: Rc<Value<'db>>) -> Normal<'db> {
         Normal { ty, value }
     }
 }
 
 /// Fully normalized values in the semantic domain.
 #[derive(Clone, Debug)]
-pub enum Value {
-    Pi(Pi),
-    Lambda(Lambda),
+pub enum Value<'db> {
+    Pi(Pi<'db>),
+    Lambda(Lambda<'db>),
     Universe(Universe),
-    Neutral(Rc<Value>, Rc<Neutral>),
+    Neutral(Rc<Value<'db>>, Rc<Neutral<'db>>),
 }
 
-impl Value {
-    pub fn pi(source: Rc<Value>, target: Closure) -> Value {
+impl<'db> Value<'db> {
+    pub fn pi(source: Rc<Value<'db>>, target: Closure<'db>) -> Value<'db> {
         Value::Pi(Pi::new(source, target))
     }
 
-    pub fn lambda(body: Closure) -> Value {
+    pub fn lambda(body: Closure<'db>) -> Value<'db> {
         Value::Lambda(Lambda::new(body))
     }
 
-    pub fn universe(level: UniverseLevel) -> Value {
+    pub fn universe(level: UniverseLevel) -> Value<'db> {
         Value::Universe(Universe::new(level))
     }
 
-    pub fn neutral(ty: Rc<Value>, neutral: Rc<Neutral>) -> Value {
+    pub fn neutral(ty: Rc<Value<'db>>, neutral: Rc<Neutral<'db>>) -> Value<'db> {
         Value::Neutral(ty, neutral)
     }
 
-    pub fn variable(ty: Rc<Value>, level: Level) -> Value {
+    pub fn variable(ty: Rc<Value<'db>>, level: Level) -> Value<'db> {
         Value::neutral(ty, Rc::new(Neutral::variable(level)))
     }
 
     pub fn application(
-        ty: Rc<Value>,
-        function: Rc<Neutral>,
-        argument_ty: Rc<Value>,
-        argument: Rc<Value>,
-    ) -> Value {
+        ty: Rc<Value<'db>>,
+        function: Rc<Neutral<'db>>,
+        argument_ty: Rc<Value<'db>>,
+        argument: Rc<Value<'db>>,
+    ) -> Value<'db> {
         let app = Neutral::application(function, argument_ty, argument);
         Value::neutral(ty, Rc::new(app))
     }
@@ -76,28 +77,28 @@ impl Value {
 
 /// A dependent function type. Written `(x : source) -> target(x)`.
 #[derive(Clone, Debug)]
-pub struct Pi {
+pub struct Pi<'db> {
     /// The domain or source-type of this function type.
-    pub source: Rc<Value>,
+    pub source: Rc<Value<'db>>,
 
     /// The codomain or target-type of this function type.
-    pub target: Closure,
+    pub target: Closure<'db>,
 }
 
-impl Pi {
-    pub fn new(source: Rc<Value>, target: Closure) -> Pi {
+impl<'db> Pi<'db> {
+    pub fn new(source: Rc<Value<'db>>, target: Closure<'db>) -> Pi<'db> {
         Pi { source, target }
     }
 }
 
 /// A function. Written `\x => body`.
 #[derive(Clone, Debug)]
-pub struct Lambda {
-    pub body: Closure,
+pub struct Lambda<'db> {
+    pub body: Closure<'db>,
 }
 
-impl Lambda {
-    pub fn new(body: Closure) -> Lambda {
+impl<'db> Lambda<'db> {
+    pub fn new(body: Closure<'db>) -> Lambda<'db> {
         Lambda { body }
     }
 }
@@ -122,22 +123,22 @@ impl Universe {
 ///
 /// The structure of the neutral ensures that the prima.
 #[derive(Clone, Debug)]
-pub enum Neutral {
+pub enum Neutral<'db> {
     Variable(Variable),
-    Application(Application),
+    Application(Application<'db>),
 }
 
-impl Neutral {
-    pub fn variable(level: Level) -> Neutral {
+impl<'db> Neutral<'db> {
+    pub fn variable(level: Level) -> Neutral<'db> {
         let var: Variable = Variable::new(level);
         Neutral::Variable(var)
     }
 
     pub fn application(
-        function: Rc<Neutral>,
-        argument_ty: Rc<Value>,
-        argument: Rc<Value>,
-    ) -> Neutral {
+        function: Rc<Neutral<'db>>,
+        argument_ty: Rc<Value<'db>>,
+        argument: Rc<Value<'db>>,
+    ) -> Neutral<'db> {
         Neutral::Application(Application::new(function, argument_ty, argument))
     }
 }
@@ -156,13 +157,17 @@ impl Variable {
 
 /// Function application.
 #[derive(Clone, Debug)]
-pub struct Application {
-    pub function: Rc<Neutral>,
-    pub argument: Normal,
+pub struct Application<'db> {
+    pub function: Rc<Neutral<'db>>,
+    pub argument: Normal<'db>,
 }
 
-impl Application {
-    pub fn new(function: Rc<Neutral>, argument_ty: Rc<Value>, argument: Rc<Value>) -> Application {
+impl<'db> Application<'db> {
+    pub fn new(
+        function: Rc<Neutral<'db>>,
+        argument_ty: Rc<Value<'db>>,
+        argument: Rc<Value<'db>>,
+    ) -> Application<'db> {
         Application {
             function,
             argument: Normal::new(argument_ty, argument),
@@ -172,33 +177,38 @@ impl Application {
 
 /// A mapping from bound variables to associated values.
 #[derive(Clone, Debug)]
-pub struct Environment {
-    /// Constant environment.
-    const_env: Vec<Rc<Value>>,
+pub struct Environment<'db> {
+    /// Constant environment mapping ConstantId to values.
+    const_env: HashMap<ConstantId<'db>, Rc<Value<'db>>>,
 
     /// The typing environment.
-    map: Vec<Rc<Value>>,
+    map: Vec<Rc<Value<'db>>>,
 }
 
-impl Environment {
-    pub fn new() -> Environment {
+impl<'db> Environment<'db> {
+    pub fn new() -> Environment<'db> {
         Environment {
-            const_env: Vec::new(),
+            const_env: HashMap::new(),
             map: Vec::new(),
         }
     }
 
-    pub fn get(&self, level: Level) -> &Rc<Value> {
+    pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
         let index: usize = level.into();
         &self.map[index]
     }
 
-    pub fn variable_type(&self, variable: Variable) -> &Rc<Value> {
+    pub fn variable_type(&self, variable: Variable) -> &Rc<Value<'db>> {
         self.get(variable.level)
     }
 
-    pub fn constant(&self, name: ConstantId) -> &Rc<Value> {
-        &self.const_env[name.0 as usize]
+    pub fn constant(&self, name: ConstantId<'db>) -> Option<&Rc<Value<'db>>> {
+        self.const_env.get(&name)
+    }
+
+    /// Add a constant to the environment.
+    pub fn add_constant(&mut self, name: ConstantId<'db>, value: Rc<Value<'db>>) {
+        self.const_env.insert(name, value);
     }
 
     /// The number of bound variables in scope.
@@ -207,12 +217,12 @@ impl Environment {
     }
 
     /// Extend the environment by pushing a definition onto the end.
-    pub fn push(&mut self, value: Rc<Value>) {
+    pub fn push(&mut self, value: Rc<Value<'db>>) {
         self.map.push(value);
     }
 
     /// Extend the environment by pushing a variable onto the end.
-    pub fn push_var(&mut self, ty: Rc<Value>) -> Rc<Value> {
+    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
         let depth = self.depth();
         let value = Rc::new(Value::variable(ty, Level::new(depth)));
         self.push(value.clone());
@@ -224,10 +234,10 @@ impl Environment {
     }
 }
 
-impl Extend<Rc<Value>> for Environment {
+impl<'db> Extend<Rc<Value<'db>>> for Environment<'db> {
     fn extend<T>(&mut self, iter: T)
     where
-        T: IntoIterator<Item = Rc<Value>>,
+        T: IntoIterator<Item = Rc<Value<'db>>>,
     {
         self.map.extend(iter);
     }

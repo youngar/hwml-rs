@@ -1,9 +1,33 @@
 use crate::common::{Index, Level, UniverseLevel};
+use crate::symbol::InternedString;
+use salsa::Database;
 use std::rc::Rc;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct ConstantId(pub u32);
+pub struct ConstantId<'db>(pub InternedString<'db>);
+
+impl<'db> ConstantId<'db> {
+    /// Create a new ConstantId from an interned string.
+    pub fn new(interned: InternedString<'db>) -> Self {
+        ConstantId(interned)
+    }
+
+    /// Create a new ConstantId from a string, interning it in the database.
+    pub fn from_str(db: &'db dyn Database, name: &str) -> Self {
+        ConstantId(InternedString::new(db, name.to_string()))
+    }
+
+    /// Get the interned string for this constant.
+    pub fn interned(&self) -> InternedString<'db> {
+        self.0
+    }
+
+    /// Get the string name for this constant.
+    pub fn name(&self, db: &'db dyn Database) -> &str {
+        self.0.text(db)
+    }
+}
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -15,25 +39,25 @@ impl std::fmt::Display for MetavariableId {
     }
 }
 
-pub type RcSyntax = Rc<Syntax>;
+pub type RcSyntax<'db> = Rc<Syntax<'db>>;
 
-pub type Tm = Syntax;
-pub type Ty = Syntax;
+pub type Tm<'db> = Syntax<'db>;
+pub type Ty<'db> = Syntax<'db>;
 
 /// A captured environment.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Closure {
+pub struct Closure<'db> {
     /// The environment contains a vector of definitions.
-    pub values: Vec<RcSyntax>,
+    pub values: Vec<RcSyntax<'db>>,
 }
 
-impl Closure {
-    pub fn new() -> Closure {
+impl<'db> Closure<'db> {
+    pub fn new() -> Closure<'db> {
         Closure { values: Vec::new() }
     }
 
-    pub fn with_values(values: Vec<RcSyntax>) -> Closure {
+    pub fn with_values(values: Vec<RcSyntax<'db>>) -> Closure<'db> {
         Closure { values }
     }
 
@@ -52,119 +76,129 @@ impl Closure {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub enum Syntax {
-    Constant(Constant),
+pub enum Syntax<'db> {
+    Constant(Constant<'db>),
     Variable(Variable),
-    Check(Check),
-    Pi(Pi),
-    Lambda(Lambda),
-    Application(Application),
+    Check(Check<'db>),
+    Pi(Pi<'db>),
+    Lambda(Lambda<'db>),
+    Application(Application<'db>),
     Universe(Universe),
-    Metavariable(Metavariable),
-    Lift(Lift),
-    Quote(Quote),
-    HArrow(HArrow),
+    Metavariable(Metavariable<'db>),
+    Lift(Lift<'db>),
+    Quote(Quote<'db>),
+    HArrow(HArrow<'db>),
 }
 
-impl Syntax {
-    pub fn constant(name: ConstantId) -> Syntax {
+impl<'db> Syntax<'db> {
+    pub fn constant(name: ConstantId<'db>) -> Syntax<'db> {
         Syntax::Constant(Constant::new(name))
     }
 
-    pub fn constant_rc(name: ConstantId) -> RcSyntax {
+    pub fn constant_rc(name: ConstantId<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::constant(name))
     }
 
-    pub fn variable(index: Index) -> Syntax {
+    /// Create a constant from a string name, interning it in the database.
+    pub fn constant_from_str(db: &'db dyn Database, name: &str) -> Syntax<'db> {
+        Syntax::constant(ConstantId::from_str(db, name))
+    }
+
+    /// Create a constant RC from a string name, interning it in the database.
+    pub fn constant_from_str_rc(db: &'db dyn Database, name: &str) -> RcSyntax<'db> {
+        Rc::new(Syntax::constant_from_str(db, name))
+    }
+
+    pub fn variable(index: Index) -> Syntax<'db> {
         Syntax::Variable(Variable::new(index))
     }
 
-    pub fn variable_rc(index: Index) -> RcSyntax {
+    pub fn variable_rc(index: Index) -> RcSyntax<'db> {
         Rc::new(Syntax::variable(index))
     }
 
-    pub fn check(ty: RcSyntax, term: RcSyntax) -> Syntax {
+    pub fn check(ty: RcSyntax<'db>, term: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Check(Check::new(ty, term))
     }
 
-    pub fn check_rc(ty: RcSyntax, term: RcSyntax) -> RcSyntax {
+    pub fn check_rc(ty: RcSyntax<'db>, term: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::check(ty, term))
     }
 
-    pub fn pi(source: RcSyntax, target: RcSyntax) -> Syntax {
+    pub fn pi(source: RcSyntax<'db>, target: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Pi(Pi::new(source, target))
     }
 
-    pub fn pi_rc(source: RcSyntax, target: RcSyntax) -> RcSyntax {
+    pub fn pi_rc(source: RcSyntax<'db>, target: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::pi(source, target))
     }
 
-    pub fn lambda(body: RcSyntax) -> Syntax {
+    pub fn lambda(body: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Lambda(Lambda::new(body))
     }
 
-    pub fn lambda_rc(body: RcSyntax) -> RcSyntax {
+    pub fn lambda_rc(body: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::lambda(body))
     }
 
-    pub fn application(fun: RcSyntax, arg: RcSyntax) -> Syntax {
+    pub fn application(fun: RcSyntax<'db>, arg: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Application(Application::new(fun, arg))
     }
 
-    pub fn application_rc(fun: RcSyntax, arg: RcSyntax) -> RcSyntax {
+    pub fn application_rc(fun: RcSyntax<'db>, arg: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::application(fun, arg))
     }
 
-    pub fn universe(level: UniverseLevel) -> Syntax {
+    pub fn universe(level: UniverseLevel) -> Syntax<'db> {
         Syntax::Universe(Universe::new(level))
     }
 
-    pub fn universe_rc(level: UniverseLevel) -> RcSyntax {
+    pub fn universe_rc(level: UniverseLevel) -> RcSyntax<'db> {
         Rc::new(Syntax::universe(level))
     }
 
     // Create a metavariable syntax node with a reference to an existing metavariable.
-    pub fn metavariable(metavariable: MetavariableId, closure: Closure) -> Syntax {
+    pub fn metavariable(metavariable: MetavariableId, closure: Closure<'db>) -> Syntax<'db> {
         Syntax::Metavariable(Metavariable::new(metavariable, closure))
     }
 
-    pub fn metavariable_rc(metavariable: MetavariableId, closure: Closure) -> RcSyntax {
+    pub fn metavariable_rc(metavariable: MetavariableId, closure: Closure<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::metavariable(metavariable, closure))
     }
 
-    pub fn lift(tm: RcSyntax) -> Syntax {
+    pub fn lift(tm: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Lift(Lift::new(tm))
     }
 
-    pub fn lift_rc(tm: RcSyntax) -> RcSyntax {
+    pub fn lift_rc(tm: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::lift(tm))
     }
 
-    pub fn quote(tm: RcHSyntax) -> Syntax {
+    pub fn quote(tm: RcHSyntax<'db>) -> Syntax<'db> {
         Syntax::Quote(Quote::new(tm))
     }
 
-    pub fn quote_rc(tm: RcHSyntax) -> RcSyntax {
+    pub fn quote_rc(tm: RcHSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::quote(tm))
     }
 
-    pub fn harrow(source: RcSyntax, target: RcSyntax) -> Syntax {
+    pub fn harrow(source: RcSyntax<'db>, target: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::HArrow(HArrow::new(source, target))
     }
 
-    pub fn harrow_rc(source: RcSyntax, target: RcSyntax) -> RcSyntax {
+    pub fn harrow_rc(source: RcSyntax<'db>, target: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::harrow(source, target))
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Constant {
-    pub name: ConstantId,
+pub struct Constant<'db> {
+    pub name: ConstantId<'db>,
 }
 
-impl Constant {
-    pub fn new(name: ConstantId) -> Constant {
+impl<'db> Constant<'db> {
+    pub fn new(name: ConstantId<'db>) -> Constant<'db> {
         Constant { name }
     }
 }
@@ -183,51 +217,51 @@ impl Variable {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Check {
-    pub ty: RcSyntax,
-    pub term: RcSyntax,
+pub struct Check<'db> {
+    pub ty: RcSyntax<'db>,
+    pub term: RcSyntax<'db>,
 }
 
-impl Check {
-    pub fn new(ty: RcSyntax, term: RcSyntax) -> Check {
+impl<'db> Check<'db> {
+    pub fn new(ty: RcSyntax<'db>, term: RcSyntax<'db>) -> Check<'db> {
         Check { ty, term }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Pi {
-    pub source: RcSyntax,
-    pub target: RcSyntax,
+pub struct Pi<'db> {
+    pub source: RcSyntax<'db>,
+    pub target: RcSyntax<'db>,
 }
 
-impl Pi {
-    pub fn new(source: RcSyntax, target: RcSyntax) -> Pi {
+impl<'db> Pi<'db> {
+    pub fn new(source: RcSyntax<'db>, target: RcSyntax<'db>) -> Pi<'db> {
         Pi { source, target }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Lambda {
-    pub body: RcSyntax,
+pub struct Lambda<'db> {
+    pub body: RcSyntax<'db>,
 }
 
-impl Lambda {
-    pub fn new(body: RcSyntax) -> Lambda {
+impl<'db> Lambda<'db> {
+    pub fn new(body: RcSyntax<'db>) -> Lambda<'db> {
         Lambda { body }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Application {
-    pub function: RcSyntax,
-    pub argument: RcSyntax,
+pub struct Application<'db> {
+    pub function: RcSyntax<'db>,
+    pub argument: RcSyntax<'db>,
 }
 
-impl Application {
-    pub fn new(function: RcSyntax, argument: RcSyntax) -> Application {
+impl<'db> Application<'db> {
+    pub fn new(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Application<'db> {
         Application { function, argument }
     }
 }
@@ -247,166 +281,176 @@ impl Universe {
 // A reference to a metavariable. All metavariables have identity equality.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Metavariable {
+pub struct Metavariable<'db> {
     pub id: MetavariableId,
-    pub closure: Closure,
+    pub closure: Closure<'db>,
 }
 
-impl Metavariable {
-    pub fn new(id: MetavariableId, closure: Closure) -> Metavariable {
+impl<'db> Metavariable<'db> {
+    pub fn new(id: MetavariableId, closure: Closure<'db>) -> Metavariable<'db> {
         Metavariable { id, closure }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Lift {
-    pub tm: RcSyntax,
+pub struct Lift<'db> {
+    pub tm: RcSyntax<'db>,
 }
 
-impl Lift {
-    pub fn new(tm: RcSyntax) -> Lift {
+impl<'db> Lift<'db> {
+    pub fn new(tm: RcSyntax<'db>) -> Lift<'db> {
         Lift { tm }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Quote {
-    pub tm: RcHSyntax,
+pub struct Quote<'db> {
+    pub tm: RcHSyntax<'db>,
 }
 
-impl Quote {
-    pub fn new(tm: RcHSyntax) -> Quote {
+impl<'db> Quote<'db> {
+    pub fn new(tm: RcHSyntax<'db>) -> Quote<'db> {
         Quote { tm }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct HArrow {
-    pub source: RcSyntax,
-    pub target: RcSyntax,
+pub struct HArrow<'db> {
+    pub source: RcSyntax<'db>,
+    pub target: RcSyntax<'db>,
 }
 
-impl HArrow {
-    pub fn new(source: RcSyntax, target: RcSyntax) -> HArrow {
+impl<'db> HArrow<'db> {
+    pub fn new(source: RcSyntax<'db>, target: RcSyntax<'db>) -> HArrow<'db> {
         HArrow { source, target }
     }
 }
 
-pub type RcHSyntax = Rc<HSyntax>;
+pub type RcHSyntax<'db> = Rc<HSyntax<'db>>;
 
-pub type HTm = HSyntax;
-pub type HTy = HSyntax;
+pub type HTm<'db> = HSyntax<'db>;
+pub type HTy<'db> = HSyntax<'db>;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub enum HSyntax {
-    HConstant(Constant),
+pub enum HSyntax<'db> {
+    HConstant(Constant<'db>),
     HVariable(Variable),
-    HCheck(HCheck),
-    HLambda(HLambda),
-    HApplication(HApplication),
-    Splice(Splice),
+    HCheck(HCheck<'db>),
+    HLambda(HLambda<'db>),
+    HApplication(HApplication<'db>),
+    Splice(Splice<'db>),
 }
 
-impl HSyntax {
-    pub fn hconstant(name: ConstantId) -> HSyntax {
+impl<'db> HSyntax<'db> {
+    pub fn hconstant(name: ConstantId<'db>) -> HSyntax<'db> {
         HSyntax::HConstant(Constant::new(name))
     }
 
-    pub fn hconstant_rc(name: ConstantId) -> RcHSyntax {
+    pub fn hconstant_rc(name: ConstantId<'db>) -> RcHSyntax<'db> {
         Rc::new(HSyntax::hconstant(name))
     }
 
-    pub fn hvariable(index: Index) -> HSyntax {
+    /// Create an hconstant from a string name, interning it in the database.
+    pub fn hconstant_from_str(db: &'db dyn Database, name: &str) -> HSyntax<'db> {
+        HSyntax::hconstant(ConstantId::from_str(db, name))
+    }
+
+    /// Create an hconstant RC from a string name, interning it in the database.
+    pub fn hconstant_from_str_rc(db: &'db dyn Database, name: &str) -> RcHSyntax<'db> {
+        Rc::new(HSyntax::hconstant_from_str(db, name))
+    }
+
+    pub fn hvariable(index: Index) -> HSyntax<'db> {
         HSyntax::HVariable(Variable::new(index))
     }
 
-    pub fn hvariable_rc(index: Index) -> RcHSyntax {
+    pub fn hvariable_rc(index: Index) -> RcHSyntax<'db> {
         Rc::new(HSyntax::hvariable(index))
     }
 
-    pub fn hcheck(ty: RcHSyntax, term: RcHSyntax) -> HSyntax {
+    pub fn hcheck(ty: RcHSyntax<'db>, term: RcHSyntax<'db>) -> HSyntax<'db> {
         HSyntax::HCheck(HCheck::new(ty, term))
     }
 
-    pub fn hcheck_rc(ty: RcHSyntax, term: RcHSyntax) -> RcHSyntax {
+    pub fn hcheck_rc(ty: RcHSyntax<'db>, term: RcHSyntax<'db>) -> RcHSyntax<'db> {
         Rc::new(HSyntax::hcheck(ty, term))
     }
 
-    pub fn hlambda(body: RcHSyntax) -> HSyntax {
+    pub fn hlambda(body: RcHSyntax<'db>) -> HSyntax<'db> {
         HSyntax::HLambda(HLambda::new(body))
     }
 
-    pub fn hlambda_rc(body: RcHSyntax) -> RcHSyntax {
+    pub fn hlambda_rc(body: RcHSyntax<'db>) -> RcHSyntax<'db> {
         Rc::new(HSyntax::hlambda(body))
     }
 
-    pub fn happlication(function: RcHSyntax, argument: RcHSyntax) -> HSyntax {
+    pub fn happlication(function: RcHSyntax<'db>, argument: RcHSyntax<'db>) -> HSyntax<'db> {
         HSyntax::HApplication(HApplication::new(function, argument))
     }
 
-    pub fn happlication_rc(function: RcHSyntax, argument: RcHSyntax) -> RcHSyntax {
+    pub fn happlication_rc(function: RcHSyntax<'db>, argument: RcHSyntax<'db>) -> RcHSyntax<'db> {
         Rc::new(HSyntax::happlication(function, argument))
     }
 
-    pub fn splice(term: RcSyntax) -> HSyntax {
+    pub fn splice(term: RcSyntax<'db>) -> HSyntax<'db> {
         HSyntax::Splice(Splice::new(term))
     }
 
-    pub fn splice_rc(term: RcSyntax) -> RcHSyntax {
+    pub fn splice_rc(term: RcSyntax<'db>) -> RcHSyntax<'db> {
         Rc::new(HSyntax::splice(term))
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct HCheck {
-    pub ty: RcHSyntax,
-    pub term: RcHSyntax,
+pub struct HCheck<'db> {
+    pub ty: RcHSyntax<'db>,
+    pub term: RcHSyntax<'db>,
 }
 
-impl HCheck {
-    pub fn new(ty: RcHSyntax, term: RcHSyntax) -> HCheck {
+impl<'db> HCheck<'db> {
+    pub fn new(ty: RcHSyntax<'db>, term: RcHSyntax<'db>) -> HCheck<'db> {
         HCheck { ty, term }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct HLambda {
-    pub body: RcHSyntax,
+pub struct HLambda<'db> {
+    pub body: RcHSyntax<'db>,
 }
 
-impl HLambda {
-    pub fn new(body: RcHSyntax) -> HLambda {
+impl<'db> HLambda<'db> {
+    pub fn new(body: RcHSyntax<'db>) -> HLambda<'db> {
         HLambda { body }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct HApplication {
-    pub function: RcHSyntax,
-    pub argument: RcHSyntax,
+pub struct HApplication<'db> {
+    pub function: RcHSyntax<'db>,
+    pub argument: RcHSyntax<'db>,
 }
 
-impl HApplication {
-    pub fn new(function: RcHSyntax, argument: RcHSyntax) -> HApplication {
+impl<'db> HApplication<'db> {
+    pub fn new(function: RcHSyntax<'db>, argument: RcHSyntax<'db>) -> HApplication<'db> {
         HApplication { function, argument }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Splice {
-    pub term: RcSyntax,
+pub struct Splice<'db> {
+    pub term: RcSyntax<'db>,
 }
 
-impl Splice {
-    pub fn new(term: RcSyntax) -> Splice {
+impl<'db> Splice<'db> {
+    pub fn new(term: RcSyntax<'db>) -> Splice<'db> {
         Splice { term }
     }
 }
@@ -418,9 +462,11 @@ mod tests {
 
     #[test]
     fn test_name_id_equality() {
-        let name1 = ConstantId(42);
-        let name2 = ConstantId(42);
-        let name3 = ConstantId(99);
+        use crate::Database;
+        let db = Database::default();
+        let name1 = ConstantId::from_str(&db, "42");
+        let name2 = ConstantId::from_str(&db, "42");
+        let name3 = ConstantId::from_str(&db, "99");
 
         assert_eq!(name1, name2);
         assert_ne!(name1, name3);
@@ -428,9 +474,11 @@ mod tests {
 
     #[test]
     fn test_constant_equality() {
-        let const1 = Constant::new(ConstantId(42));
-        let const2 = Constant::new(ConstantId(42));
-        let const3 = Constant::new(ConstantId(99));
+        use crate::Database;
+        let db = Database::default();
+        let const1 = Constant::new(ConstantId::from_str(&db, "42"));
+        let const2 = Constant::new(ConstantId::from_str(&db, "42"));
+        let const3 = Constant::new(ConstantId::from_str(&db, "99"));
 
         assert_eq!(const1, const2);
         assert_ne!(const1, const3);
@@ -462,9 +510,11 @@ mod tests {
         let closure2 = Closure::new();
         assert_eq!(closure1, closure2);
 
-        let val1 = Syntax::constant_rc(ConstantId(42));
-        let val2 = Syntax::constant_rc(ConstantId(42));
-        let val3 = Syntax::constant_rc(ConstantId(99));
+        use crate::Database;
+        let db = Database::default();
+        let val1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let val2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let val3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
 
         let closure3 = Closure::with_values(vec![val1.clone()]);
         let closure4 = Closure::with_values(vec![val2.clone()]);
@@ -490,9 +540,11 @@ mod tests {
 
     #[test]
     fn test_application_equality() {
-        let fun1 = Syntax::constant_rc(ConstantId(42));
-        let fun2 = Syntax::constant_rc(ConstantId(42));
-        let fun3 = Syntax::constant_rc(ConstantId(99));
+        use crate::Database;
+        let db = Database::default();
+        let fun1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let fun2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let fun3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
 
         let arg1 = Syntax::variable_rc(Index(0));
         let arg2 = Syntax::variable_rc(Index(0));
@@ -534,9 +586,11 @@ mod tests {
         let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
         let ty3 = Syntax::universe_rc(UniverseLevel::new(1));
 
-        let term1 = Syntax::constant_rc(ConstantId(42));
-        let term2 = Syntax::constant_rc(ConstantId(42));
-        let term3 = Syntax::constant_rc(ConstantId(99));
+        use crate::Database;
+        let db = Database::default();
+        let term1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let term2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let term3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
 
         let check1 = Check::new(ty1.clone(), term1.clone());
         let check2 = Check::new(ty2.clone(), term2.clone());
@@ -570,9 +624,11 @@ mod tests {
 
     #[test]
     fn test_syntax_constant_equality() {
-        let syn1 = Syntax::constant(ConstantId(42));
-        let syn2 = Syntax::constant(ConstantId(42));
-        let syn3 = Syntax::constant(ConstantId(99));
+        use crate::Database;
+        let db = Database::default();
+        let syn1 = Syntax::constant(ConstantId::from_str(&db, "42"));
+        let syn2 = Syntax::constant(ConstantId::from_str(&db, "42"));
+        let syn3 = Syntax::constant(ConstantId::from_str(&db, "99"));
 
         assert_eq!(syn1, syn2);
         assert_ne!(syn1, syn3);
@@ -614,8 +670,10 @@ mod tests {
 
     #[test]
     fn test_syntax_application_equality() {
-        let fun1 = Syntax::constant_rc(ConstantId(42));
-        let fun2 = Syntax::constant_rc(ConstantId(42));
+        use crate::Database;
+        let db = Database::default();
+        let fun1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let fun2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
         let arg1 = Syntax::variable_rc(Index(0));
         let arg2 = Syntax::variable_rc(Index(0));
 
@@ -642,8 +700,10 @@ mod tests {
     fn test_syntax_check_equality() {
         let ty1 = Syntax::universe_rc(UniverseLevel::new(0));
         let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
-        let term1 = Syntax::constant_rc(ConstantId(42));
-        let term2 = Syntax::constant_rc(ConstantId(42));
+        use crate::Database;
+        let db = Database::default();
+        let term1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let term2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
 
         let syn1 = Syntax::check(ty1, term1);
         let syn2 = Syntax::check(ty2, term2);
@@ -669,7 +729,9 @@ mod tests {
 
     #[test]
     fn test_syntax_different_variants_not_equal() {
-        let constant = Syntax::constant(ConstantId(0));
+        use crate::Database;
+        let db = Database::default();
+        let constant = Syntax::constant(ConstantId::from_str(&db, "0"));
         let variable = Syntax::variable(Index(0));
         let universe = Syntax::universe(UniverseLevel::new(0));
 
@@ -684,18 +746,20 @@ mod tests {
         // (λ %0 → %0) @42
         let lambda_body1 = Syntax::variable_rc(Index(0));
         let lambda1 = Syntax::lambda_rc(lambda_body1);
-        let arg1 = Syntax::constant_rc(ConstantId(42));
+        use crate::Database;
+        let db = Database::default();
+        let arg1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
         let app1 = Syntax::application(lambda1.clone(), arg1.clone());
 
         let lambda_body2 = Syntax::variable_rc(Index(0));
         let lambda2 = Syntax::lambda_rc(lambda_body2);
-        let arg2 = Syntax::constant_rc(ConstantId(42));
+        let arg2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
         let app2 = Syntax::application(lambda2.clone(), arg2.clone());
 
         assert_eq!(app1, app2);
 
         // Different argument
-        let arg3 = Syntax::constant_rc(ConstantId(99));
+        let arg3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
         let app3 = Syntax::application(lambda1, arg3);
         assert_ne!(app1, app3);
     }
@@ -732,9 +796,11 @@ mod tests {
     #[test]
     fn test_rc_syntax_equality() {
         // Test that RcSyntax (Rc<Syntax>) compares by value, not by pointer
-        let rc1 = Syntax::constant_rc(ConstantId(42));
-        let rc2 = Syntax::constant_rc(ConstantId(42));
-        let rc3 = Syntax::constant_rc(ConstantId(99));
+        use crate::Database;
+        let db = Database::default();
+        let rc1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let rc2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let rc3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
 
         assert_eq!(rc1, rc2); // Different Rc pointers, same value
         assert_ne!(rc1, rc3);

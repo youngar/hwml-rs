@@ -3,21 +3,21 @@ use hwml_core::syn::Metavariable;
 use crate::Constraint;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Debug)]
-pub enum Blocker {
+pub enum Blocker<'db> {
     /// Unblock when the meta is solved.
-    Meta(Metavariable),
+    Meta(Metavariable<'db>),
     /// Unblock when the constraint is satisfied.
-    Constraint(Constraint),
+    Constraint(Constraint<'db>),
     /// Unblock when all are unblocked.
-    All(Vec<Blocker>),
+    All(Vec<Blocker<'db>>),
     /// Unblock when any are unblocked.
-    Any(Vec<Blocker>),
+    Any(Vec<Blocker<'db>>),
     /// Unblocked,
     None,
 }
 
-impl Blocker {
-    pub fn all(mut xs: Vec<Blocker>) -> Blocker {
+impl<'db> Blocker<'db> {
+    pub fn all(mut xs: Vec<Blocker<'db>>) -> Blocker<'db> {
         xs.retain(|x| x != &Blocker::None);
         if xs.is_empty() {
             return Blocker::None;
@@ -27,7 +27,7 @@ impl Blocker {
         Blocker::All(xs)
     }
 
-    pub fn all_and(mut xs: Vec<Blocker>, y: Blocker) -> Blocker {
+    pub fn all_and(mut xs: Vec<Blocker<'db>>, y: Blocker<'db>) -> Blocker<'db> {
         match y {
             Blocker::All(ys) => xs.extend(ys),
             y => xs.push(y),
@@ -35,7 +35,7 @@ impl Blocker {
         Blocker::all(xs)
     }
 
-    pub fn and(x: Blocker, y: Blocker) -> Blocker {
+    pub fn and(x: Blocker<'db>, y: Blocker<'db>) -> Blocker<'db> {
         if let Blocker::All(xs) = x {
             return Blocker::all_and(xs, y);
         }
@@ -46,7 +46,7 @@ impl Blocker {
         Blocker::all(vec![x, y])
     }
 
-    pub fn any(mut xs: Vec<Blocker>) -> Blocker {
+    pub fn any(mut xs: Vec<Blocker<'db>>) -> Blocker<'db> {
         if xs.iter().any(|x| x == &Blocker::None) {
             return Blocker::None;
         }
@@ -58,7 +58,7 @@ impl Blocker {
         Blocker::Any(xs)
     }
 
-    pub fn any_or(mut xs: Vec<Blocker>, y: Blocker) -> Blocker {
+    pub fn any_or(mut xs: Vec<Blocker<'db>>, y: Blocker<'db>) -> Blocker<'db> {
         match y {
             Blocker::Any(ys) => xs.extend(ys),
             y => xs.push(y),
@@ -66,7 +66,7 @@ impl Blocker {
         Blocker::any(xs)
     }
 
-    pub fn or(x: Blocker, y: Blocker) -> Blocker {
+    pub fn or(x: Blocker<'db>, y: Blocker<'db>) -> Blocker<'db> {
         if let Blocker::Any(xs) = x {
             return Blocker::any_or(xs, y);
         }
@@ -77,11 +77,11 @@ impl Blocker {
         Blocker::any(vec![x, y])
     }
 
-    pub fn meta(meta: Metavariable) -> Blocker {
+    pub fn meta(meta: Metavariable<'db>) -> Blocker<'db> {
         Blocker::Meta(meta)
     }
 
-    pub fn constraint(constaint: Constraint) -> Blocker {
+    pub fn constraint(constaint: Constraint<'db>) -> Blocker<'db> {
         Blocker::Constraint(constaint)
     }
 
@@ -100,7 +100,7 @@ impl Blocker {
     }
 
     /// Unblock a meta, by ID. If this blocker is now unblocked, return true.
-    pub fn unblock_meta(&mut self, meta: Metavariable) -> bool {
+    pub fn unblock_meta(&mut self, meta: Metavariable<'db>) -> bool {
         match self {
             Blocker::Meta(x) => {
                 if *x == meta {
@@ -130,7 +130,7 @@ impl Blocker {
     }
 
     /// Unblock a constraint. If this blocker is now unblocked, return true.
-    pub fn unblock_constraint(&mut self, constraint: &Constraint) -> bool {
+    pub fn unblock_constraint(&mut self, constraint: &Constraint<'db>) -> bool {
         match self {
             Blocker::Meta(_) => false,
             Blocker::Constraint(x) => {

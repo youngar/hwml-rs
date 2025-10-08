@@ -7,7 +7,10 @@ use hwml_core::syn as core;
 use hwml_core::syn::Metavariable;
 use hwml_surface::syntax as surface;
 
-pub fn infer_app(state: &mut State, app: surface::App) -> Result<(core::RcSyntax, core::RcSyntax)> {
+pub fn infer_app<'db>(
+    state: &mut State<'db>,
+    app: surface::App,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     assert!(app.elements.len() >= 1);
     // Get the elaborated head of the term.
     let (mut fun_etm, mut fun_ety) = infer_type(state, *app.elements[0].clone())?;
@@ -41,7 +44,10 @@ pub fn infer_app(state: &mut State, app: surface::App) -> Result<(core::RcSyntax
     Ok((eapp, fun_ety))
 }
 
-pub fn infer_fun(state: &mut State, fun: surface::Fun) -> Result<(core::RcSyntax, core::RcSyntax)> {
+pub fn infer_fun<'db>(
+    state: &mut State<'db>,
+    fun: surface::Fun,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     let depth = state.depth();
     // let mut types = Vec::new();
     // for group in fun.bindings.groups {
@@ -73,14 +79,17 @@ pub fn infer_fun(state: &mut State, fun: surface::Fun) -> Result<(core::RcSyntax
     Ok((etm, ety))
 }
 
-pub fn infer_paren(
-    state: &mut State,
+pub fn infer_paren<'db>(
+    state: &mut State<'db>,
     paren: surface::Paren,
-) -> Result<(core::RcSyntax, core::RcSyntax)> {
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     infer_type(state, *paren.expr)
 }
 
-pub fn infer_id(state: &mut State, id: surface::Id) -> Result<(core::RcSyntax, core::RcSyntax)> {
+pub fn infer_id<'db>(
+    state: &mut State<'db>,
+    id: surface::Id,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     println!("inferring id: {}", std::str::from_utf8(&id.value).unwrap());
     if *id.value == *b"Type" {
         return Ok((
@@ -97,10 +106,10 @@ pub fn infer_id(state: &mut State, id: surface::Id) -> Result<(core::RcSyntax, c
     todo!("global inference");
 }
 
-pub fn infer_type(
-    state: &mut State,
+pub fn infer_type<'db>(
+    state: &mut State<'db>,
     term: surface::Expression,
-) -> Result<(core::RcSyntax, core::RcSyntax)> {
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     println!("inferring type: {:?}", term);
     match term {
         surface::Expression::Fun(fun) => infer_fun(state, fun),
@@ -110,97 +119,105 @@ pub fn infer_type(
     }
 }
 
-pub fn check_pi(state: &mut State, pi: surface::Pi, ty: core::RcSyntax) -> Result<core::RcSyntax> {
+pub fn check_pi<'db>(
+    state: &mut State<'db>,
+    pi: surface::Pi,
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_arrow(
-    state: &mut State,
+pub fn check_arrow<'db>(
+    state: &mut State<'db>,
     arrow: surface::Arrow,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_fat_arrow(
-    state: &mut State,
+pub fn check_fat_arrow<'db>(
+    state: &mut State<'db>,
     fat_arrow: surface::FatArrow,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_app(
-    state: &mut State,
+pub fn check_app<'db>(
+    state: &mut State<'db>,
     app: surface::App,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     let (etm, ety) = infer_app(state, app)?;
     state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
-pub fn check_fun(
-    state: &mut State,
+pub fn check_fun<'db>(
+    state: &mut State<'db>,
     fun: surface::Fun,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     let (etm, ety) = infer_fun(state, fun)?;
     state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
-pub fn check_let_in(
-    state: &mut State,
+pub fn check_let_in<'db>(
+    state: &mut State<'db>,
     let_in: surface::LetIn,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_underscore(
-    state: &mut State,
+pub fn check_underscore<'db>(
+    state: &mut State<'db>,
     underscore: surface::Underscore,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_paren(
-    state: &mut State,
+pub fn check_paren<'db>(
+    state: &mut State<'db>,
     paren: surface::Paren,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     check_type(state, *paren.expr, ty)
 }
 
-pub fn check_num(
-    state: &mut State,
+pub fn check_num<'db>(
+    state: &mut State<'db>,
     num: surface::Num,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_str(
-    state: &mut State,
+pub fn check_str<'db>(
+    state: &mut State<'db>,
     str: surface::Str,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
-pub fn check_id(state: &mut State, id: surface::Id, ty: core::RcSyntax) -> Result<core::RcSyntax> {
+pub fn check_id<'db>(
+    state: &mut State<'db>,
+    id: surface::Id,
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     let (etm, ety) = infer_id(state, id)?;
     state.equality_constraint(ety, ty, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
-pub fn check_type(
-    state: &mut State,
+pub fn check_type<'db>(
+    state: &mut State<'db>,
     term: surface::Expression,
-    ty: core::RcSyntax,
-) -> Result<core::RcSyntax> {
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
     match term {
         surface::Expression::Pi(pi) => check_pi(state, pi, ty),
         surface::Expression::Arrow(arrow) => check_arrow(state, arrow, ty),
@@ -217,11 +234,14 @@ pub fn check_type(
     }
 }
 
-pub fn elab_type(state: &mut State, ty: surface::Expression) -> Result<core::RcSyntax> {
+pub fn elab_type<'db>(
+    state: &mut State<'db>,
+    ty: surface::Expression,
+) -> Result<core::RcSyntax<'db>> {
     check_type(state, ty, core::Syntax::universe_rc(UniverseLevel::new(0)))
 }
 
-pub fn elab_def(state: &mut State, def: surface::Def) -> Result<decl::Declaration> {
+pub fn elab_def<'db>(state: &mut State<'db>, def: surface::Def) -> Result<decl::Declaration<'db>> {
     let depth = state.depth();
     // A list of the elaborated types of all binders in scope.  This is used to
     // build the overall pi type of this definition.
@@ -269,7 +289,7 @@ pub fn elab_def(state: &mut State, def: surface::Def) -> Result<decl::Declaratio
     ))
 }
 
-pub fn go(program: surface::Program) -> Result<Vec<decl::Declaration>> {
+pub fn go<'db>(program: surface::Program) -> Result<Vec<decl::Declaration<'db>>> {
     let mut state = State::new();
 
     let mut declarations = Vec::new();

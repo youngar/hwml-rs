@@ -10,8 +10,8 @@ use hwml_core::*;
 /// when subsituting an argument under a binder, we need to raise the argument
 /// so that free variables remain free. The amount is the number of binders we are
 /// moving under.
-pub fn raise(tm: RcSyntax, amount: usize) -> RcSyntax {
-    fn r(tm: RcSyntax, depth: usize, amount: usize) -> RcSyntax {
+pub fn raise<'db>(tm: RcSyntax<'db>, amount: usize) -> RcSyntax<'db> {
+    fn r<'db>(tm: RcSyntax<'db>, depth: usize, amount: usize) -> RcSyntax<'db> {
         match &*tm {
             Syntax::Variable(var) if Into::<usize>::into(var.index) >= depth => {
                 Syntax::variable_rc(var.index.raise(amount))
@@ -37,7 +37,11 @@ pub fn raise(tm: RcSyntax, amount: usize) -> RcSyntax {
     r(tm, 0, amount)
 }
 
-pub fn subst_metavariable(meta: Metavariable, from: Index, to: RcSyntax) -> RcSyntax {
+pub fn subst_metavariable<'db>(
+    meta: Metavariable<'db>,
+    from: Index,
+    to: RcSyntax<'db>,
+) -> RcSyntax<'db> {
     // Rewrite the closure to substitute the variable.
     let values = meta
         .closure
@@ -49,7 +53,7 @@ pub fn subst_metavariable(meta: Metavariable, from: Index, to: RcSyntax) -> RcSy
     Syntax::metavariable_rc(meta.id, closure)
 }
 
-pub fn subst_variable(var: Variable, from: Index, to: RcSyntax) -> RcSyntax {
+pub fn subst_variable<'db>(var: Variable, from: Index, to: RcSyntax<'db>) -> RcSyntax<'db> {
     if var.index == from {
         to
     } else {
@@ -57,7 +61,7 @@ pub fn subst_variable(var: Variable, from: Index, to: RcSyntax) -> RcSyntax {
     }
 }
 
-pub fn subst(tm: RcSyntax, from: Index, to: RcSyntax) -> RcSyntax {
+pub fn subst<'db>(tm: RcSyntax<'db>, from: Index, to: RcSyntax<'db>) -> RcSyntax<'db> {
     match &*tm {
         Syntax::Metavariable(meta) => subst_metavariable(meta.clone(), from, to),
         Syntax::Variable(var) => subst_variable(var.clone(), from, to),
@@ -74,6 +78,6 @@ pub fn subst(tm: RcSyntax, from: Index, to: RcSyntax) -> RcSyntax {
 }
  */
 
-pub fn whnf(state: &mut State, tm: RcSyntax) -> RcSyntax {
+pub fn whnf<'db>(_state: &mut State<'db>, _tm: RcSyntax<'db>) -> RcSyntax<'db> {
     todo!()
 }

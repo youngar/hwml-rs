@@ -1,12 +1,12 @@
 use hwml_core::syn::*;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
-pub struct Constraint {
-    pub data: ConstraintData,
+pub struct Constraint<'db> {
+    pub data: ConstraintData<'db>,
 }
 
-impl Constraint {
-    pub fn new(data: ConstraintData) -> Self {
+impl<'db> Constraint<'db> {
+    pub fn new(data: ConstraintData<'db>) -> Self {
         Self { data }
     }
 
@@ -14,7 +14,12 @@ impl Constraint {
         Self::new(ConstraintData::EmptyConstraint)
     }
 
-    pub fn equality(lhs: RcSyntax, rhs: RcSyntax, ty: RcSyntax, meta: MetavariableId) -> Self {
+    pub fn equality(
+        lhs: RcSyntax<'db>,
+        rhs: RcSyntax<'db>,
+        ty: RcSyntax<'db>,
+        meta: MetavariableId,
+    ) -> Self {
         Self::new(ConstraintData::EqualityConstraint(EqualityConstraint {
             lhs,
             rhs,
@@ -25,15 +30,15 @@ impl Constraint {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub enum ConstraintData {
+pub enum ConstraintData<'db> {
     EmptyConstraint,
-    EqualityConstraint(EqualityConstraint),
+    EqualityConstraint(EqualityConstraint<'db>),
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub struct EqualityConstraint {
-    pub lhs: RcSyntax,
-    pub rhs: RcSyntax,
-    pub ty: RcSyntax,
+pub struct EqualityConstraint<'db> {
+    pub lhs: RcSyntax<'db>,
+    pub rhs: RcSyntax<'db>,
+    pub ty: RcSyntax<'db>,
     pub meta: MetavariableId,
 }

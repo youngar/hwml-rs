@@ -3,6 +3,7 @@ use crate::syn::{self, HSyntax, RcHSyntax};
 use crate::syn::{Closure, MetavariableId, RcSyntax, Syntax};
 use core::fmt::Debug;
 use logos::{Lexer, Logos};
+use salsa::Database;
 use std::fmt;
 use std::num::ParseIntError;
 use std::ops::Range;
@@ -85,8 +86,8 @@ pub enum Token {
     Comma,
     #[regex(r"𝒰[0-9]+", priority = 4, callback = |lex| lex.slice()["𝒰".len()..].parse())]
     Universe(usize),
-    #[regex(r"@[0-9]+", priority = 4, callback = |lex| lex.slice()["@".len()..].parse())]
-    Constant(u32),
+    #[regex(r"@(?&id)+", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
+    Constant(String),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
     Variable(String),
     #[regex(r"![0-9]+", priority = 4, callback = |lex| lex.slice().parse())]
@@ -154,6 +155,30 @@ impl<'input> State<'input> {
     /// Reset the name environment to a given depth.
     fn reset_names(&mut self, depth: usize) {
         self.names.truncate(depth);
+    }
+}
+
+/// Global state that contains the database and parsing state.
+/// This simplifies function signatures by bundling the database with the parsing state.
+struct GlobalState<'db> {
+    db: &'db dyn Database,
+    state: State<'db>,
+}
+
+impl<'db> GlobalState<'db> {
+    fn new(db: &'db dyn Database, input: &'db str) -> Self {
+        GlobalState {
+            db,
+            state: State::new(input),
+        }
+    }
+
+    fn db(&self) -> &'db dyn Database {
+        self.db
+    }
+
+    fn state(&mut self) -> &mut State<'db> {
+        &mut self.state
     }
 }
 
@@ -255,28 +280,28 @@ fn p_variable(state: &mut State) -> ParseResult<String> {
     }
 }
 
-fn p_pi_binder_opt(state: &mut State) -> ParseResult<Option<RcSyntax>> {
-    let Some(()) = p_lparen_opt(state)? else {
+fn p_pi_binder_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    let Some(()) = p_lparen_opt(global_state.state())? else {
         return Ok(None);
     };
-    let var = p_variable(state)?;
-    p_colon(state)?;
-    let ty = p_harrow(state)?;
-    p_rparen(state)?;
-    state.push_name(var);
+    let var = p_variable(global_state.state())?;
+    p_colon(global_state.state())?;
+    let ty = p_harrow(global_state)?;
+    p_rparen(global_state.state())?;
+    global_state.state().push_name(var);
     Ok(Some(ty))
 }
 
-fn p_closure_opt(state: &mut State) -> ParseResult<Option<Closure>> {
+fn p_closure_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Closure<'db>>> {
     let mut values = Vec::new();
-    let Some(()) = p_lbracket_opt(state)? else {
+    let Some(()) = p_lbracket_opt(global_state.state())? else {
         return Ok(None);
     };
     loop {
-        match p_term_opt(state) {
+        match p_term_opt(global_state) {
             Ok(Some(term)) => {
                 values.push(term);
-                match p_token_opt(state, Token::Comma) {
+                match p_token_opt(global_state.state(), Token::Comma) {
                     Ok(Some(())) => continue,
                     Ok(None) => break,
                     Err(err) => return Err(err),
@@ -286,38 +311,38 @@ fn p_closure_opt(state: &mut State) -> ParseResult<Option<Closure>> {
             Err(err) => return Err(err),
         }
     }
-    p_rbracket(state)?;
+    p_rbracket(global_state.state())?;
     return Ok(Some(crate::syn::Closure::with_values(values)));
 }
 
 // Parse an atomic term (no operators)
-fn p_hatom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSyntax>> {
-    match state.peek_token() {
+fn p_hatom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    match global_state.state().peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(token)) => match token {
             Token::LParen => {
-                state.advance_token();
-                let term = p_hterm(state)?;
-                p_rparen(state)?;
+                global_state.state().advance_token();
+                let term = p_hterm(global_state)?;
+                p_rparen(global_state.state())?;
                 Ok(Some(term))
             }
             Token::Lambda => {
-                state.advance_token();
-                let depth = state.names_depth();
+                global_state.state().advance_token();
+                let depth = global_state.state().names_depth();
                 let mut i = 0;
                 loop {
-                    match p_variable_opt(state) {
+                    match p_variable_opt(global_state.state()) {
                         Err(e) => return Err(e),
                         Ok(Some(var)) => {
                             i = i + 1;
-                            state.push_name(var)
+                            global_state.state().push_name(var)
                         }
                         Ok(None) => break,
                     }
                 }
-                p_arrow(state)?;
-                let body = p_happlication(state)?;
-                state.reset_names(depth);
+                p_arrow(global_state.state())?;
+                let body = p_happlication(global_state)?;
+                global_state.state().reset_names(depth);
                 // Build nested lambdas from right to left
                 let mut result = body;
                 for _ in 0..i {
@@ -326,26 +351,29 @@ fn p_hatom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSynta
                 Ok(Some(result))
             }
             Token::Variable(name) => {
-                state.advance_token();
+                global_state.state().advance_token();
                 // Otherwise, look it up in the environment
-                match state.find_name(&name) {
+                match global_state.state().find_name(&name) {
                     Some(index) => Ok(Some(HSyntax::hvariable_rc(index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
-                state.advance_token();
+                global_state.state().advance_token();
                 // Convert negative level to index: index = depth + negative_level
-                let index = negative_level.to_index(state.names_depth());
+                let index = negative_level.to_index(global_state.state().names_depth());
                 Ok(Some(HSyntax::hvariable_rc(index)))
             }
-            Token::Constant(id) => {
-                state.advance_token();
-                Ok(Some(HSyntax::hconstant_rc(syn::ConstantId(id))))
+            Token::Constant(name) => {
+                global_state.state().advance_token();
+                Ok(Some(HSyntax::hconstant_from_str_rc(
+                    global_state.db(),
+                    &name,
+                )))
             }
             Token::Splice => {
-                state.advance_token();
-                let tm = p_atom(state)?;
+                global_state.state().advance_token();
+                let tm = p_atom(global_state)?;
                 Ok(Some(HSyntax::splice_rc(tm)))
             }
             _ => Ok(None),
@@ -354,8 +382,8 @@ fn p_hatom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSynta
     }
 }
 
-fn p_hatom<'input>(state: &mut State<'input>) -> ParseResult<RcHSyntax> {
-    match p_hatom_opt(state) {
+fn p_hatom<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'db>> {
+    match p_hatom_opt(global_state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
@@ -363,8 +391,10 @@ fn p_hatom<'input>(state: &mut State<'input>) -> ParseResult<RcHSyntax> {
 }
 
 // Parse application (left-associative): a b c => (a b) c
-fn p_happlication_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSyntax>> {
-    let first = p_hatom_opt(state)?;
+fn p_happlication_opt<'db>(
+    global_state: &mut GlobalState<'db>,
+) -> ParseResult<Option<RcHSyntax<'db>>> {
+    let first = p_hatom_opt(global_state)?;
     if first.is_none() {
         return Ok(None);
     }
@@ -372,38 +402,38 @@ fn p_happlication_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<R
     let mut result = first.unwrap();
 
     // Keep parsing atoms and building left-associative applications
-    while let Some(arg) = p_hatom_opt(state)? {
+    while let Some(arg) = p_hatom_opt(global_state)? {
         result = HSyntax::happlication_rc(result, arg);
     }
 
     Ok(Some(result))
 }
 
-fn p_happlication<'input>(state: &mut State<'input>) -> ParseResult<RcHSyntax> {
-    match p_happlication_opt(state) {
+fn p_happlication<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'db>> {
+    match p_happlication_opt(global_state) {
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
         Err(err) => Err(err),
     }
 }
 
-fn p_hcheck_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSyntax>> {
-    let term = p_happlication(state)?;
+fn p_hcheck_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    let term = p_happlication(global_state)?;
 
     // Check if there's a colon
-    if let Some(()) = p_colon_opt(state)? {
-        Ok(Some(HSyntax::hcheck_rc(p_hterm(state)?, term)))
+    if let Some(()) = p_colon_opt(global_state.state())? {
+        Ok(Some(HSyntax::hcheck_rc(p_hterm(global_state)?, term)))
     } else {
         Ok(Some(term))
     }
 }
 
-fn p_hterm_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcHSyntax>> {
-    p_hcheck_opt(state)
+fn p_hterm_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    p_hcheck_opt(global_state)
 }
 
-fn p_hterm<'input>(state: &mut State<'input>) -> ParseResult<RcHSyntax> {
-    match p_hterm_opt(state) {
+fn p_hterm<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'db>> {
+    match p_hterm_opt(global_state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
@@ -411,33 +441,33 @@ fn p_hterm<'input>(state: &mut State<'input>) -> ParseResult<RcHSyntax> {
 }
 
 // Parse an atomic term (no operators)
-fn p_atom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    match state.peek_token() {
+fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    match global_state.state().peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(token)) => match token {
             Token::LParen => {
-                state.advance_token();
-                let term = p_term(state)?;
-                p_rparen(state)?;
+                global_state.state().advance_token();
+                let term = p_term(global_state)?;
+                p_rparen(global_state.state())?;
                 Ok(Some(term))
             }
             Token::Lambda => {
-                state.advance_token();
-                let depth = state.names_depth();
+                global_state.state().advance_token();
+                let depth = global_state.state().names_depth();
                 let mut i = 0;
                 loop {
-                    match p_variable_opt(state) {
+                    match p_variable_opt(global_state.state()) {
                         Err(e) => return Err(e),
                         Ok(Some(var)) => {
                             i = i + 1;
-                            state.push_name(var)
+                            global_state.state().push_name(var)
                         }
                         Ok(None) => break,
                     }
                 }
-                p_arrow(state)?;
-                let body = p_harrow(state)?;
-                state.reset_names(depth);
+                p_arrow(global_state.state())?;
+                let body = p_harrow(global_state)?;
+                global_state.state().reset_names(depth);
                 // Build nested lambdas from right to left
                 let mut result = body;
                 for _ in 0..i {
@@ -446,19 +476,19 @@ fn p_atom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>
                 Ok(Some(result))
             }
             Token::Pi => {
-                state.advance_token();
-                let depth = state.names_depth();
+                global_state.state().advance_token();
+                let depth = global_state.state().names_depth();
                 let mut tys = Vec::new();
                 loop {
-                    match p_pi_binder_opt(state) {
+                    match p_pi_binder_opt(global_state) {
                         Err(e) => return Err(e),
                         Ok(Some(ty)) => tys.push(ty),
                         Ok(None) => break,
                     }
                 }
-                p_arrow(state)?;
-                let target = p_harrow(state)?;
-                state.reset_names(depth);
+                p_arrow(global_state.state())?;
+                let target = p_harrow(global_state)?;
+                global_state.state().reset_names(depth);
                 let mut result = target;
                 for ty in tys.iter().rev() {
                     result = Syntax::pi_rc(ty.clone(), result);
@@ -466,32 +496,32 @@ fn p_atom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>
                 Ok(Some(result))
             }
             Token::Variable(name) => {
-                state.advance_token();
+                global_state.state().advance_token();
                 // Otherwise, look it up in the environment
-                match state.find_name(&name) {
+                match global_state.state().find_name(&name) {
                     Some(index) => Ok(Some(Syntax::variable_rc(index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
-                state.advance_token();
+                global_state.state().advance_token();
                 // Convert negative level to index: index = depth + negative_level
-                let index = negative_level.to_index(state.names_depth());
+                let index = negative_level.to_index(global_state.state().names_depth());
                 Ok(Some(Syntax::variable_rc(index)))
             }
             Token::Universe(level) => {
-                state.advance_token();
+                global_state.state().advance_token();
                 Ok(Some(Syntax::universe_rc(
                     crate::common::UniverseLevel::new(level),
                 )))
             }
-            Token::Constant(id) => {
-                state.advance_token();
-                Ok(Some(Syntax::constant_rc(syn::ConstantId(id))))
+            Token::Constant(name) => {
+                global_state.state().advance_token();
+                Ok(Some(Syntax::constant_from_str_rc(global_state.db(), &name)))
             }
             Token::Metavariable(id) => {
-                state.advance_token();
-                let closure = match p_closure_opt(state) {
+                global_state.state().advance_token();
+                let closure = match p_closure_opt(global_state) {
                     Ok(Some(closure)) => closure,
                     Ok(None) => Closure::new(),
                     Err(err) => return Err(err),
@@ -499,13 +529,13 @@ fn p_atom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>
                 Ok(Some(Syntax::metavariable_rc(MetavariableId(id), closure)))
             }
             Token::Lift => {
-                state.advance_token();
-                let tm = p_atom(state)?;
+                global_state.state().advance_token();
+                let tm = p_atom(global_state)?;
                 Ok(Some(Syntax::lift_rc(tm)))
             }
             Token::Quote => {
-                state.advance_token();
-                let tm = p_hatom(state)?;
+                global_state.state().advance_token();
+                let tm = p_hatom(global_state)?;
                 Ok(Some(Syntax::quote_rc(tm)))
             }
             _ => Ok(None),
@@ -514,8 +544,8 @@ fn p_atom_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>
     }
 }
 
-fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
-    match p_atom_opt(state) {
+fn p_atom<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>> {
+    match p_atom_opt(global_state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
@@ -523,8 +553,10 @@ fn p_atom<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
 }
 
 // Parse application (left-associative): a b c => (a b) c
-fn p_application_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    let first = p_atom_opt(state)?;
+fn p_application_opt<'db>(
+    global_state: &mut GlobalState<'db>,
+) -> ParseResult<Option<RcSyntax<'db>>> {
+    let first = p_atom_opt(global_state)?;
     if first.is_none() {
         return Ok(None);
     }
@@ -532,27 +564,27 @@ fn p_application_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<Rc
     let mut result = first.unwrap();
 
     // Keep parsing atoms and building left-associative applications
-    while let Some(arg) = p_atom_opt(state)? {
+    while let Some(arg) = p_atom_opt(global_state)? {
         result = Syntax::application_rc(result, arg);
     }
 
     Ok(Some(result))
 }
 
-fn p_harrow_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    let Some(term) = p_application_opt(state)? else {
+fn p_harrow_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    let Some(term) = p_application_opt(global_state)? else {
         return Ok(None);
     };
 
-    if let Some(()) = p_arrow_opt(state)? {
-        Ok(Some(Syntax::harrow_rc(term, p_harrow(state)?)))
+    if let Some(()) = p_arrow_opt(global_state.state())? {
+        Ok(Some(Syntax::harrow_rc(term, p_harrow(global_state)?)))
     } else {
         Ok(Some(term))
     }
 }
 
-fn p_harrow<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
-    match p_harrow_opt(state) {
+fn p_harrow<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>> {
+    match p_harrow_opt(global_state) {
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
         Err(err) => Err(err),
@@ -560,38 +592,42 @@ fn p_harrow<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
 }
 
 // Parse check (type annotation): term : type
-fn p_check_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    let Some(term) = p_harrow_opt(state)? else {
+fn p_check_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    let Some(term) = p_harrow_opt(global_state)? else {
         return Ok(None);
     };
 
     // Check if there's a colon.
-    if let Some(()) = p_colon_opt(state)? {
-        Ok(Some(Syntax::check_rc(p_term(state)?, term)))
+    if let Some(()) = p_colon_opt(global_state.state())? {
+        Ok(Some(Syntax::check_rc(p_term(global_state)?, term)))
     } else {
         Ok(Some(term))
     }
 }
 
-fn p_term_opt<'input>(state: &mut State<'input>) -> ParseResult<Option<RcSyntax>> {
-    p_check_opt(state)
+fn p_term_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    p_check_opt(global_state)
 }
 
-fn p_term<'input>(state: &mut State<'input>) -> ParseResult<RcSyntax> {
-    match p_term_opt(state) {
+fn p_term<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>> {
+    match p_term_opt(global_state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
     }
 }
 
-pub fn parse_syntax<'input>(input: &'input str) -> ParseResult<RcSyntax> {
-    p_term(&mut State::new(input))
+pub fn parse_syntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<RcSyntax<'db>> {
+    let mut global_state = GlobalState::new(db, input);
+    p_term(&mut global_state)
 }
 
-pub fn parse_hsyntax<'input>(input: &'input str) -> ParseResult<RcHSyntax> {
-    p_hterm(&mut State::new(input))
+pub fn parse_hsyntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<RcHSyntax<'db>> {
+    let mut global_state = GlobalState::new(db, input);
+    p_hterm(&mut global_state)
 }
+
+// TODO: Add database-aware parsing functions
 
 #[cfg(test)]
 mod tests {
@@ -602,8 +638,9 @@ mod tests {
     #[test]
     fn test_parse_lambda_single_var() {
         // Test parsing: λ %0 → %0
+        let db = crate::Database::new();
         let input = "λ %0 → %0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse lambda: {:?}", result);
 
@@ -620,8 +657,9 @@ mod tests {
         // Test parsing: λ %x %y → %x
         // This creates nested lambdas: λ %x → (λ %y → %x)
         // In the innermost body, %x has index 1 (skip over %y to reach %x)
+        let db = crate::Database::new();
         let input = "λ %x %y → %x";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse lambda: {:?}", result);
 
@@ -637,8 +675,9 @@ mod tests {
     #[test]
     fn test_parse_lambda_with_parens() {
         // Test parsing: (λ %0 → %0)
+        let db = crate::Database::new();
         let input = "(λ %0 → %0)";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -658,8 +697,9 @@ mod tests {
     fn test_parse_pi_simple() {
         // Test parsing: ∀(%x : 𝒰0) → 𝒰0
         // Pi binders require parentheses and a type annotation
+        let db = crate::Database::new();
         let input = "∀(%x : 𝒰0) → 𝒰0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse pi: {:?}", result);
 
@@ -677,8 +717,9 @@ mod tests {
     #[test]
     fn test_parse_universe() {
         // Test parsing: 𝒰0
+        let db = crate::Database::new();
         let input = "𝒰0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse universe: {:?}", result);
 
@@ -695,7 +736,8 @@ mod tests {
         // Test parsing: ∀(%x : 𝒰0) (%y : 𝒰0) → %x
         // This creates nested Pi types: ∀(%x : 𝒰0) → ∀(%y : 𝒰0) → %x
         let input = "∀(%x : 𝒰0) (%y : 𝒰0) → %x";
-        let result = parse_syntax(input);
+        let db = crate::Database::new();
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse pi: {:?}", result);
 
@@ -718,8 +760,9 @@ mod tests {
     fn test_parse_application_simple() {
         // Test parsing: λ %f %x → %f %x
         // We need variables to be bound, so we use a lambda expression
+        let db = crate::Database::new();
         let input = "λ %f %x → %f %x";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse application: {:?}", result);
 
@@ -740,8 +783,9 @@ mod tests {
         // Test parsing: λ %f %x %y → %f %x %y
         // This should parse as: λ %f → λ %x → λ %y → ((%f %x) %y)
         // Application is left-associative
+        let db = crate::Database::new();
         let input = "λ %f %x %y → %f %x %y";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse application: {:?}", result);
 
@@ -766,8 +810,9 @@ mod tests {
     fn test_parse_check() {
         // Test parsing: (λ %x → %x) : 𝒰0
         // We need a complete term to check, so we use a lambda
+        let db = crate::Database::new();
         let input = "(λ %x → %x) : 𝒰0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse check: {:?}", result);
 
@@ -786,8 +831,9 @@ mod tests {
     fn test_parse_check_with_application() {
         // Test parsing: (λ %f %x → %f %x) : 𝒰0
         // Should parse as Check(Lambda(Lambda(Application(%f, %x))), Universe(0))
+        let db = crate::Database::new();
         let input = "(λ %f %x → %f %x) : 𝒰0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -813,8 +859,9 @@ mod tests {
     fn test_parse_lambda_application() {
         // Test parsing: λ %x → (λ %y → %y) %x
         // This applies an inner lambda to a bound variable
+        let db = crate::Database::new();
         let input = "λ %x → (λ %y → %y) %x";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -836,8 +883,10 @@ mod tests {
     #[test]
     fn test_parse_metavariable_simple() {
         // Test parsing: ?x
+        use crate::Database;
+        let db = Database::default();
         let input = "?0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse metavariable: {:?}", result);
 
@@ -852,8 +901,10 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_multiple() {
+        use crate::Database;
+        let db = Database::default();
         let input = "?0 ?1 ?0";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -880,8 +931,10 @@ mod tests {
     #[test]
     fn test_parse_metavariable_in_lambda() {
         // Test parsing: λ %x → ?f %x
+        use crate::Database;
+        let db = Database::default();
         let input = "λ %x → ?0 %x";
-        let result = parse_syntax(input);
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -906,7 +959,9 @@ mod tests {
         // Test parsing: ?z ?a ?m
         // Should get IDs in order of discovery: ?z=0, ?a=1, ?m=2
         let input = "?0 ?1 ?2";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -933,7 +988,9 @@ mod tests {
     fn test_parse_metavariable_with_type() {
         // Test parsing: ?x : 𝒰0
         let input = "?0 : 𝒰0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -957,15 +1014,16 @@ mod tests {
     fn test_parse_constant_simple() {
         // Test parsing: @42
         let input = "@42";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse constant: {:?}", result);
 
         let parsed = result.unwrap();
 
-        // Build expected: @42
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId(42));
+        // Build expected: @42 using string interning
+        let expected = Syntax::constant_from_str_rc(&db, "42");
 
         assert_eq!(parsed, expected);
     }
@@ -974,15 +1032,16 @@ mod tests {
     fn test_parse_constant_zero() {
         // Test parsing: @0
         let input = "@0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse constant @0: {:?}", result);
 
         let parsed = result.unwrap();
 
-        // Build expected: @0
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId(0));
+        // Build expected: @0 using string interning
+        let expected = Syntax::constant_from_str_rc(&db, "0");
 
         assert_eq!(parsed, expected);
     }
@@ -991,7 +1050,9 @@ mod tests {
     fn test_parse_constant_large() {
         // Test parsing: @123456789
         let input = "@123456789";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1003,7 +1064,7 @@ mod tests {
 
         // Build expected: @123456789
         use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId(123456789));
+        let expected = Syntax::constant_rc(ConstantId::from_str(&db, "123456789"));
 
         assert_eq!(parsed, expected);
     }
@@ -1012,7 +1073,9 @@ mod tests {
     fn test_parse_constant_application() {
         // Test parsing: @42 @99
         let input = "@42 @99";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1025,8 +1088,8 @@ mod tests {
         // Build expected: @42 @99
         use crate::syn::ConstantId;
         let expected = Syntax::application_rc(
-            Syntax::constant_rc(ConstantId(42)),
-            Syntax::constant_rc(ConstantId(99)),
+            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_str(&db, "99")),
         );
 
         assert_eq!(parsed, expected);
@@ -1036,7 +1099,9 @@ mod tests {
     fn test_parse_constant_with_type() {
         // Test parsing: @42 : 𝒰0
         let input = "@42 : 𝒰0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1050,7 +1115,7 @@ mod tests {
         use crate::syn::ConstantId;
         let expected = Syntax::check_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
         );
 
         assert_eq!(parsed, expected);
@@ -1060,7 +1125,9 @@ mod tests {
     fn test_parse_constant_in_lambda() {
         // Test parsing: λ %x → @42 %x
         let input = "λ %x → @42 %x";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1073,7 +1140,7 @@ mod tests {
         // Build expected: λ %x → @42 %x
         use crate::syn::ConstantId;
         let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
             Syntax::variable_rc(Index(0)),
         ));
 
@@ -1084,7 +1151,9 @@ mod tests {
     fn test_parse_constant_in_pi() {
         // Test parsing: ∀(%x : @42) → 𝒰0
         let input = "∀(%x : @42) → 𝒰0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1097,7 +1166,7 @@ mod tests {
         // Build expected: ∀(%x : @42) → 𝒰0
         use crate::syn::ConstantId;
         let expected = Syntax::pi_rc(
-            Syntax::constant_rc(ConstantId(42)),
+            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
@@ -1107,7 +1176,9 @@ mod tests {
     #[test]
     fn test_parse_unbound_variable_simple() {
         let input = "!0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
         assert!(
             result.is_ok(),
             "Failed to parse unbound variable: {:?}",
@@ -1121,7 +1192,9 @@ mod tests {
     #[test]
     fn test_parse_unbound_variable_higher() {
         let input = "!4";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
         assert!(
             result.is_ok(),
             "Failed to parse unbound variable !5: {:?}",
@@ -1137,7 +1210,9 @@ mod tests {
         // Test parsing: λ %x → !0
         // At depth 1, !0 should become index 1
         let input = "λ %x → !0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1159,7 +1234,9 @@ mod tests {
         // Test parsing: λ %x %y → !0
         // At depth 2, !0 should become index 2
         let input = "λ %x %y → !0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1181,7 +1258,9 @@ mod tests {
         // Test parsing: λ %x %y → %y !0
         // %y is bound (index 0), !0 is unbound (index 2 at depth 2)
         let input = "λ %x %y → %y !0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1206,7 +1285,9 @@ mod tests {
         // Test parsing: ∀(%x : 𝒰0) → !0
         // At depth 1, !0 should become index 1
         let input = "∀(%x : 𝒰0) → !0";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1230,7 +1311,9 @@ mod tests {
     fn test_parse_unbound_variable_application() {
         // Test parsing: !0 !1
         let input = "!0 !1";
-        let result = parse_syntax(input);
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1285,8 +1368,10 @@ mod tests {
             ),
         ];
 
+        use crate::Database;
+        let db = Database::default();
         for (input, expected) in test_cases {
-            let parsed = parse_syntax(input).expect(&format!("Failed to parse: {}", input));
+            let parsed = parse_syntax(&db, input).expect(&format!("Failed to parse: {}", input));
             assert_eq!(
                 parsed, expected,
                 "Parse result mismatch for input: {}",
@@ -1294,7 +1379,7 @@ mod tests {
             );
 
             // Also verify that the printed form can be understood
-            let printed = print_syntax_to_string(&parsed);
+            let printed = print_syntax_to_string(&db, &parsed);
             // The printed form should contain !N for unbound variables
             if input.contains("!") {
                 assert!(
@@ -1311,9 +1396,11 @@ mod tests {
 
     #[test]
     fn test_parse_hconstant_simple() {
-        // Test parsing: @42
+        use crate::Database;
+        let db = Database::default(); // Test parsing: @42
+        let db = Database::default();
         let input = "@42";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse hconstant: {:?}", result);
 
@@ -1321,16 +1408,17 @@ mod tests {
 
         // Build expected: @42
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId(42));
+        let expected = HSyntax::hconstant_rc(ConstantId::from_str(&db, "42"));
 
         assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_hconstant_zero() {
-        // Test parsing: @0
+        use crate::Database;
+        let db = Database::default(); // Test parsing: @0
         let input = "@0";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse hconstant @0: {:?}", result);
 
@@ -1338,16 +1426,17 @@ mod tests {
 
         // Build expected: @0
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId(0));
+        let expected = HSyntax::hconstant_rc(ConstantId::from_str(&db, "0"));
 
         assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_hconstant_large() {
-        // Test parsing: @123456789
+        use crate::Database;
+        let db = Database::default(); // Test parsing: @123456789
         let input = "@123456789";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1359,16 +1448,17 @@ mod tests {
 
         // Build expected: @123456789
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId(123456789));
+        let expected = HSyntax::hconstant_rc(ConstantId::from_str(&db, "123456789"));
 
         assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_hvariable_bound() {
-        // Test parsing: λ %x → %x
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %x → %x
         let input = "λ %x → %x";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse hvariable: {:?}", result);
 
@@ -1382,9 +1472,10 @@ mod tests {
 
     #[test]
     fn test_parse_hvariable_unbound() {
-        // Test parsing: !0
+        use crate::Database;
+        let db = Database::default(); // Test parsing: !0
         let input = "!0";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1402,10 +1493,11 @@ mod tests {
 
     #[test]
     fn test_parse_hvariable_unbound_in_lambda() {
-        // Test parsing: λ %x → !0
-        // At depth 1, !0 should become index 1
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %x → !0
+                                      // At depth 1, !0 should become index 1
         let input = "λ %x → !0";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1424,9 +1516,10 @@ mod tests {
 
     #[test]
     fn test_parse_hlambda_single_var() {
-        // Test parsing: λ %x → %x
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %x → %x
         let input = "λ %x → %x";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse hlambda: {:?}", result);
 
@@ -1440,11 +1533,12 @@ mod tests {
 
     #[test]
     fn test_parse_hlambda_multiple_vars() {
-        // Test parsing: λ %x %y → %x
-        // This creates nested lambdas: λ %x → (λ %y → %x)
-        // In the innermost body, %x has index 1 (skip over %y to reach %x)
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %x %y → %x
+                                      // This creates nested lambdas: λ %x → (λ %y → %x)
+                                      // In the innermost body, %x has index 1 (skip over %y to reach %x)
         let input = "λ %x %y → %x";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse hlambda: {:?}", result);
 
@@ -1459,9 +1553,10 @@ mod tests {
 
     #[test]
     fn test_parse_hlambda_with_parens() {
-        // Test parsing: (λ %x → %x)
+        use crate::Database;
+        let db = Database::default(); // Test parsing: (λ %x → %x)
         let input = "(λ %x → %x)";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1479,10 +1574,11 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_simple() {
-        // Test parsing: λ %f %x → %f %x
-        // We need variables to be bound, so we use a lambda expression
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %f %x → %f %x
+                                      // We need variables to be bound, so we use a lambda expression
         let input = "λ %f %x → %f %x";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse happlication: {:?}", result);
 
@@ -1500,11 +1596,12 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_left_associative() {
-        // Test parsing: λ %f %x %y → %f %x %y
-        // This should parse as: λ %f → λ %x → λ %y → ((%f %x) %y)
-        // Application is left-associative
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %f %x %y → %f %x %y
+                                      // This should parse as: λ %f → λ %x → λ %y → ((%f %x) %y)
+                                      // Application is left-associative
         let input = "λ %f %x %y → %f %x %y";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse happlication: {:?}", result);
 
@@ -1527,9 +1624,10 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_constants() {
-        // Test parsing: @42 @99
+        use crate::Database;
+        let db = Database::default(); // Test parsing: @42 @99
         let input = "@42 @99";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1542,8 +1640,8 @@ mod tests {
         // Build expected: @42 @99
         use crate::syn::ConstantId;
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
-            HSyntax::hconstant_rc(ConstantId(99)),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
         );
 
         assert_eq!(parsed, expected);
@@ -1551,10 +1649,11 @@ mod tests {
 
     #[test]
     fn test_parse_hcheck_simple() {
-        // Test parsing: (λ %x → %x) : @42
-        // We need a complete hterm to check, so we use a lambda
+        use crate::Database;
+        let db = Database::default(); // Test parsing: (λ %x → %x) : @42
+                                      // We need a complete hterm to check, so we use a lambda
         let input = "(λ %x → %x) : @42";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse hcheck: {:?}", result);
 
@@ -1563,7 +1662,7 @@ mod tests {
         // Build expected: (λ %x → %x) : @42
         use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
             HSyntax::hlambda_rc(HSyntax::hvariable_rc(Index(0))),
         );
 
@@ -1572,9 +1671,10 @@ mod tests {
 
     #[test]
     fn test_parse_hcheck_with_application() {
-        // Test parsing: (@42 @99) : @100
+        use crate::Database;
+        let db = Database::default(); // Test parsing: (@42 @99) : @100
         let input = "(@42 @99) : @100";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1587,10 +1687,10 @@ mod tests {
         // Build expected: (@42 @99) : @100
         use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId(100)),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "100")),
             HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId(42)),
-                HSyntax::hconstant_rc(ConstantId(99)),
+                HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
+                HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
             ),
         );
 
@@ -1600,8 +1700,10 @@ mod tests {
     #[test]
     fn test_parse_splice_simple() {
         // Test parsing: ~@42
+        use crate::Database;
+        let db = Database::default();
         let input = "~@42";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse splice: {:?}", result);
 
@@ -1609,7 +1711,7 @@ mod tests {
 
         // Build expected: ~@42
         use crate::syn::ConstantId;
-        let expected = HSyntax::splice_rc(Syntax::constant_rc(ConstantId(42)));
+        let expected = HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_str(&db, "42")));
 
         assert_eq!(parsed, expected);
     }
@@ -1617,8 +1719,10 @@ mod tests {
     #[test]
     fn test_parse_splice_with_lambda() {
         // Test parsing: ~(λ %x → %x)
+        use crate::Database;
+        let db = Database::default();
         let input = "~(λ %x → %x)";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1637,8 +1741,10 @@ mod tests {
     #[test]
     fn test_parse_splice_with_universe() {
         // Test parsing: ~𝒰0
+        use crate::Database;
+        let db = Database::default();
         let input = "~𝒰0";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1656,10 +1762,11 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_complex_nested() {
-        // Test parsing: λ %f → (λ %x → %f %x) @42
-        // This applies an inner lambda to a constant
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %f → (λ %x → %f %x) @42
+                                      // This applies an inner lambda to a constant
         let input = "λ %f → (λ %x → %f %x) @42";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1676,7 +1783,7 @@ mod tests {
                 HSyntax::hvariable_rc(Index(1)), // %f
                 HSyntax::hvariable_rc(Index(0)), // %x
             )),
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
         ));
 
         assert_eq!(parsed, expected);
@@ -1684,10 +1791,11 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_mixed_bound_unbound() {
-        // Test parsing: λ %x %y → %y !0
-        // %y is bound (index 0), !0 is unbound (index 2 at depth 2)
+        use crate::Database;
+        let db = Database::default(); // Test parsing: λ %x %y → %y !0
+                                      // %y is bound (index 0), !0 is unbound (index 2 at depth 2)
         let input = "λ %x %y → %y !0";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1709,9 +1817,10 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_splice_in_application() {
-        // Test parsing: @42 ~𝒰0
+        use crate::Database;
+        let db = Database::default(); // Test parsing: @42 ~𝒰0
         let input = "@42 ~𝒰0";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1724,7 +1833,7 @@ mod tests {
         // Build expected: @42 ~𝒰0
         use crate::syn::ConstantId;
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
             HSyntax::splice_rc(Syntax::universe_rc(UniverseLevel::new(0))),
         );
 
@@ -1733,9 +1842,10 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_check_with_splice() {
-        // Test parsing: ~@42 : @99
+        use crate::Database;
+        let db = Database::default(); // Test parsing: ~@42 : @99
         let input = "~@42 : @99";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1748,8 +1858,8 @@ mod tests {
         // Build expected: ~@42 : @99
         use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId(99)),
-            HSyntax::splice_rc(Syntax::constant_rc(ConstantId(42))),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
+            HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_str(&db, "42"))),
         );
 
         assert_eq!(parsed, expected);
@@ -1757,9 +1867,10 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_unbound_variables_multiple() {
-        // Test parsing: !0 !1 !2
+        use crate::Database;
+        let db = Database::default(); // Test parsing: !0 !1 !2
         let input = "!0 !1 !2";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1784,10 +1895,11 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_parentheses_precedence() {
-        // Test parsing: @42 (@99 @100)
-        // Should parse as: @42 (@99 @100), not (@42 @99) @100
+        use crate::Database;
+        let db = Database::default(); // Test parsing: @42 (@99 @100)
+                                      // Should parse as: @42 (@99 @100), not (@42 @99) @100
         let input = "@42 (@99 @100)";
-        let result = parse_hsyntax(input);
+        let result = parse_hsyntax(&db, input);
 
         assert!(
             result.is_ok(),
@@ -1800,10 +1912,10 @@ mod tests {
         // Build expected: @42 (@99 @100)
         use crate::syn::ConstantId;
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId(42)),
+            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
             HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId(99)),
-                HSyntax::hconstant_rc(ConstantId(100)),
+                HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
+                HSyntax::hconstant_rc(ConstantId::from_str(&db, "100")),
             ),
         );
 
@@ -1813,6 +1925,8 @@ mod tests {
     #[test]
     fn test_parse_hterm_roundtrip_examples() {
         use crate::syn::print::print_hsyntax_to_string;
+        use crate::Database;
+        let db = Database::default();
 
         // Test that parsing and printing hterms works correctly
         let test_cases = vec![
@@ -1828,13 +1942,13 @@ mod tests {
         ];
 
         for input in test_cases {
-            let parsed = parse_hsyntax(input).expect(&format!("Failed to parse: {}", input));
+            let parsed = parse_hsyntax(&db, input).expect(&format!("Failed to parse: {}", input));
 
             // Also verify that the printed form can be understood
-            let printed = print_hsyntax_to_string(&parsed);
+            let printed = print_hsyntax_to_string(&db, &parsed);
 
             // The printed form should be parseable
-            let reparsed = parse_hsyntax(&printed);
+            let reparsed = parse_hsyntax(&db, &printed);
             assert!(
                 reparsed.is_ok(),
                 "Failed to reparse printed form of '{}': printed='{}', error={:?}",
@@ -1851,6 +1965,73 @@ mod tests {
                 input,
                 printed
             );
+        }
+    }
+
+    #[test]
+    fn test_parse_and_print_string_constant() {
+        // Test that parsing and printing string constants works correctly
+        use crate::Database;
+        let db = Database::default();
+        let input = "@hello";
+        let parsed = parse_syntax(&db, input).expect("Failed to parse @hello");
+
+        // Print it back to string
+        use crate::syn::print::print_syntax_to_string;
+        let printed = print_syntax_to_string(&db, &parsed);
+
+        // Should print back as @hello
+        assert_eq!(printed, "@hello");
+    }
+
+    #[test]
+    fn test_parse_and_print_numeric_constant() {
+        // Test that parsing and printing numeric constants works correctly
+        use crate::Database;
+        let db = Database::default();
+        let input = "@42";
+        let parsed = parse_syntax(&db, input).expect("Failed to parse @42");
+
+        // Print it back to string
+        use crate::syn::print::print_syntax_to_string;
+        let printed = print_syntax_to_string(&db, &parsed);
+
+        // Should print back as @42
+        assert_eq!(printed, "@42");
+    }
+
+    #[test]
+    fn test_string_interning_comprehensive() {
+        // Test that string interning works correctly with multiple constants
+        let test_cases = vec![
+            "@hello", "@world", "@foo", "@bar", "@hello", // Duplicate - should reuse same ID
+        ];
+
+        use crate::Database;
+        let db = Database::default();
+        let mut parsed_terms = Vec::new();
+        for input in &test_cases {
+            let parsed = parse_syntax(&db, input).expect(&format!("Failed to parse {}", input));
+            parsed_terms.push(parsed);
+        }
+
+        // Print them all back
+        use crate::syn::print::print_syntax_to_string;
+        for (i, term) in parsed_terms.iter().enumerate() {
+            let printed = print_syntax_to_string(&db, term);
+            assert_eq!(printed, test_cases[i]);
+        }
+
+        // Test that the first and last @hello have the same ConstantId (string interning working)
+        if let (Syntax::Constant(c1), Syntax::Constant(c5)) =
+            (parsed_terms[0].as_ref(), parsed_terms[4].as_ref())
+        {
+            assert_eq!(
+                c1.name, c5.name,
+                "String interning should reuse the same ID for '@hello'"
+            );
+        } else {
+            panic!("Expected constants");
         }
     }
 }

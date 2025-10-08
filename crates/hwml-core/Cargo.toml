@@ -17,6 +17,7 @@ arbitrary = { workspace = true, optional = true }
 elegance.workspace = true
 hwml_support.workspace = true
 logos.workspace = true
+salsa.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

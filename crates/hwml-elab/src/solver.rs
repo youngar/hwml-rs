@@ -2,7 +2,7 @@ use crate::*;
 use anyhow::{anyhow, Result};
 use hwml_core::{syn::Syntax, *};
 
-pub fn solve_equality(state: &mut State, cons: EqualityConstraint) -> Result<()> {
+pub fn solve_equality<'db>(state: &mut State<'db>, cons: EqualityConstraint<'db>) -> Result<()> {
     println!("solving equality: {:?}", cons);
     let lhs = cons.lhs;
     let rhs = cons.rhs;
@@ -54,14 +54,14 @@ pub fn solve_equality(state: &mut State, cons: EqualityConstraint) -> Result<()>
     Err(anyhow!("not implemented"))
 }
 
-pub fn solve_constraint(state: &mut State, cons: Constraint) -> Result<()> {
+pub fn solve_constraint<'db>(state: &mut State<'db>, cons: Constraint<'db>) -> Result<()> {
     match cons.data {
         ConstraintData::EmptyConstraint => Ok(()),
         ConstraintData::EqualityConstraint(cons) => solve_equality(state, cons),
     }
 }
 
-pub fn solve_all(state: &mut State) -> Result<()> {
+pub fn solve_all<'db>(state: &mut State<'db>) -> Result<()> {
     while let Some(constraint) = state.constraints.pop() {
         solve_constraint(state, constraint)?;
     }

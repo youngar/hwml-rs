@@ -517,6 +517,7 @@ dependencies = [
  "hwml_support",
  "insta",
  "logos",
+ "salsa",
  "serde",
 ]
 

@@ -7,16 +7,16 @@ use crate::val;
 use crate::val::Value;
 use std::rc::Rc;
 
-pub struct EnvironmentEntry {
-    pub value: Rc<Value>,
-    pub ty: Rc<Value>,
+pub struct EnvironmentEntry<'db> {
+    pub value: Rc<Value<'db>>,
+    pub ty: Rc<Value<'db>>,
 }
 
-pub type Environment = Vec<EnvironmentEntry>;
+pub type Environment<'db> = Vec<EnvironmentEntry<'db>>;
 
 /// Convert a typechecking environment to an environment in the semantic domain, by throwing
 /// away the types and just remembering the semanticvalues associated with each variable.
-fn semantic_env(env: &Environment) -> val::Environment {
+fn semantic_env<'db>(env: &Environment<'db>) -> val::Environment<'db> {
     let mut dom_env = val::Environment::new();
     for entry in env.iter() {
         dom_env.push(entry.value.clone());
@@ -25,18 +25,18 @@ fn semantic_env(env: &Environment) -> val::Environment {
 }
 
 /// Push a variable into the typechecking environment.
-fn var_push(env: &mut Environment, value: Rc<Value>, ty: Rc<Value>) {
+fn var_push<'db>(env: &mut Environment<'db>, value: Rc<Value<'db>>, ty: Rc<Value<'db>>) {
     env.push(EnvironmentEntry { value, ty });
 }
 
 /// Access the entry of a variable in the syntax.
-fn var_entry<'a>(env: &'a Environment, var: &stx::Variable) -> &'a EnvironmentEntry {
+fn var_entry<'a, 'db>(env: &'a Environment<'db>, var: &stx::Variable) -> &'a EnvironmentEntry<'db> {
     let i: usize = var.index.into();
     &env[i]
 }
 
 /// Access the type of a variable in the syntax.
-fn var_type<'a>(env: &'a Environment, var: &stx::Variable) -> &'a Rc<Value> {
+fn var_type<'a, 'db>(env: &'a Environment<'db>, var: &stx::Variable) -> &'a Rc<Value<'db>> {
     &var_entry(env, var).ty
 }
 
@@ -55,7 +55,7 @@ fn err<T>(message: &str) -> Result<T> {
 }
 
 /// Evaluate a syntactic term to a semantic value.
-fn eval(env: &Environment, term: &Syntax) -> Result<Rc<Value>> {
+fn eval<'db>(env: &Environment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
     let mut sem_env = semantic_env(env);
     match eval::eval(&mut sem_env, term) {
         Ok(value) => Ok(value),
@@ -64,9 +64,9 @@ fn eval(env: &Environment, term: &Syntax) -> Result<Rc<Value>> {
 }
 
 /// Adaptor for running a closure from the semantic domain.
-fn run_closure<T>(closure: &val::Closure, args: T) -> Result<Rc<Value>>
+fn run_closure<'db, T>(closure: &val::Closure<'db>, args: T) -> Result<Rc<Value<'db>>>
 where
-    T: IntoIterator<Item = Rc<Value>>,
+    T: IntoIterator<Item = Rc<Value<'db>>>,
 {
     match eval::run_closure(closure, args) {
         Ok(value) => Ok(value),
@@ -75,7 +75,7 @@ where
 }
 
 /// Synthesize (infer) types for variables and elimination forms.
-pub fn type_synth(env: &mut Environment, term: &Syntax) -> Result<Rc<Value>> {
+pub fn type_synth<'db>(env: &mut Environment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
     match term {
         Syntax::Variable(variable) => type_synth_variable(env, variable),
         Syntax::Application(application) => type_synth_application(env, application),
@@ -84,16 +84,19 @@ pub fn type_synth(env: &mut Environment, term: &Syntax) -> Result<Rc<Value>> {
 }
 
 /// Synthesize a type for a variable.
-pub fn type_synth_variable(env: &mut Environment, variable: &syn::Variable) -> Result<Rc<Value>> {
+pub fn type_synth_variable<'db>(
+    env: &mut Environment<'db>,
+    variable: &syn::Variable,
+) -> Result<Rc<Value<'db>>> {
     // Pull the type from the typing environment.
     Ok(var_type(env, variable).clone())
 }
 
 /// Synthesize the type of a function application.
-pub fn type_synth_application(
-    env: &mut Environment,
-    application: &syn::Application,
-) -> Result<Rc<Value>> {
+pub fn type_synth_application<'db>(
+    env: &mut Environment<'db>,
+    application: &syn::Application<'db>,
+) -> Result<Rc<Value<'db>>> {
     // First synthesize the type of the term being applied.
     let fun_ty = type_synth(env, &application.function)?;
 
@@ -111,7 +114,11 @@ pub fn type_synth_application(
 }
 
 /// Check types of terms against an expected type.
-pub fn type_check(env: &mut Environment, term: &Syntax, ty: &Value) -> Result<()> {
+pub fn type_check<'db>(
+    env: &mut Environment<'db>,
+    term: &Syntax<'db>,
+    ty: &Value<'db>,
+) -> Result<()> {
     match term {
         Syntax::Pi(pi) => type_check_pi(env, pi, ty),
         _ => type_check_synth_term(env, term, ty),
@@ -119,7 +126,11 @@ pub fn type_check(env: &mut Environment, term: &Syntax, ty: &Value) -> Result<()
 }
 
 /// Typecheck a pi term.
-fn type_check_pi(env: &mut Environment, pi: &syn::Pi, ty: &Value) -> Result<()> {
+fn type_check_pi<'db>(
+    env: &mut Environment<'db>,
+    pi: &syn::Pi<'db>,
+    ty: &Value<'db>,
+) -> Result<()> {
     // The expected type of a pi must be a universe.
     let Value::Universe(_) = ty else {
         return Err(Error::TypeMismatch);
@@ -145,18 +156,26 @@ fn type_check_pi(env: &mut Environment, pi: &syn::Pi, ty: &Value) -> Result<()> 
 }
 
 // Synthesize a type for the term, then check for equality against the expected type.
-pub fn type_check_synth_term(env: &mut Environment, term: &Syntax, ty1: &Value) -> Result<()> {
+pub fn type_check_synth_term<'db>(
+    env: &mut Environment<'db>,
+    term: &Syntax<'db>,
+    ty1: &Value<'db>,
+) -> Result<()> {
     let ty2 = type_synth(env, term)?;
     check_type_equal(env, ty1, &*ty2)
 }
 
 /// Check that two types are equal.
-pub fn check_type_equal(env: &Environment, a: &Value, b: &Value) -> Result<()> {
+pub fn check_type_equal<'db>(
+    _env: &Environment<'db>,
+    _a: &Value<'db>,
+    _b: &Value<'db>,
+) -> Result<()> {
     err("not implemented")
 }
 
 /// Check that the given term is a valid type.
-pub fn check_type(env: &mut Environment, term: &Syntax) -> Result<()> {
+pub fn check_type<'db>(env: &mut Environment<'db>, term: &Syntax<'db>) -> Result<()> {
     // If the term is a pi, then we just check that it is valid.
     if let Syntax::Pi(pi) = term {
         return check_pi_type(env, pi);
@@ -173,7 +192,7 @@ pub fn check_type(env: &mut Environment, term: &Syntax) -> Result<()> {
 }
 
 /// Check that a pi is a valid type.
-fn check_pi_type(env: &mut Environment, pi: &stx::Pi) -> Result<()> {
+fn check_pi_type<'db>(env: &mut Environment<'db>, pi: &stx::Pi<'db>) -> Result<()> {
     // First check that the source-type of the pi is a type.
     check_type(env, &pi.source)?;
 

@@ -1,6 +1,6 @@
-struct Symbol {
-    id: u32,
+/// Salsa-based interned string for the hwml-core AST.
+#[salsa::interned]
+pub struct InternedString {
+    #[return_ref]
+    pub text: String,
 }
-
-/// A thread-safe string interning utility.
-struct SymbolTable {}
