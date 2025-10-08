@@ -241,7 +241,11 @@ pub fn elab_type<'db>(
     check_type(state, ty, core::Syntax::universe_rc(UniverseLevel::new(0)))
 }
 
-pub fn elab_def<'db>(state: &mut State<'db>, def: surface::Def) -> Result<decl::Declaration<'db>> {
+pub fn elab_def<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    def: surface::Def,
+) -> Result<decl::Declaration<'db>> {
     let depth = state.depth();
     // A list of the elaborated types of all binders in scope.  This is used to
     // build the overall pi type of this definition.
@@ -282,20 +286,23 @@ pub fn elab_def<'db>(state: &mut State<'db>, def: surface::Def) -> Result<decl::
 
     // TODO: !!! EXTEND CONTEXT WITH THE GLOBAL DEFINTION
 
-    Ok(decl::Declaration::definition(
-        "placeholder".to_string(),
-        ety,
-        etm,
-    ))
+    // Convert the surface ID to a string and then to a ConstantId
+    let name_str = std::str::from_utf8(&def.id.value).unwrap();
+    let name_id = core::ConstantId::from_str(db, name_str);
+
+    Ok(decl::Declaration::constant(name_id, ety, etm))
 }
 
-pub fn go<'db>(program: surface::Program) -> Result<Vec<decl::Declaration<'db>>> {
+pub fn go<'db>(
+    db: &'db dyn salsa::Database,
+    program: surface::Program,
+) -> Result<Vec<decl::Declaration<'db>>> {
     let mut state = State::new();
 
     let mut declarations = Vec::new();
     for stmt in program.statements {
         match stmt {
-            surface::Statement::Def(def) => declarations.push(elab_def(&mut state, def)?),
+            surface::Statement::Def(def) => declarations.push(elab_def(db, &mut state, def)?),
             _ => {}
         }
     }

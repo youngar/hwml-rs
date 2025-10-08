@@ -499,6 +499,7 @@ name = "hwml"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hwml_core",
  "hwml_db",
  "hwml_elab",
  "hwml_surface",

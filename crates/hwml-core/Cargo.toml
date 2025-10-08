@@ -26,5 +26,13 @@ insta.workspace = true
 [features]
 arbitrary = ["dep:arbitrary"]
 
+[[example]]
+name = "datatype_declarations"
+path = "../../examples/datatype_declarations.rs"
+
+[[example]]
+name = "unified_declarations"
+path = "../../examples/unified_declarations.rs"
+
 [lints]
 workspace = true

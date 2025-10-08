@@ -30,7 +30,8 @@ fn main() {
         return;
     };
     println!("Program: {program:?}");
-    let elab_result = hwml_elab::go(program);
+    let db = hwml_core::Database::new();
+    let elab_result = hwml_elab::go(&db, program);
     let Ok(declarations) = elab_result else {
         println!("Failed to elaborate");
         return;
