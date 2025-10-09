@@ -88,6 +88,7 @@ pub enum Syntax<'db> {
     Lift(Lift<'db>),
     Quote(Quote<'db>),
     HArrow(HArrow<'db>),
+    Bit(Bit),
 }
 
 impl<'db> Syntax<'db> {
@@ -188,6 +189,14 @@ impl<'db> Syntax<'db> {
 
     pub fn harrow_rc(source: RcSyntax<'db>, target: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::harrow(source, target))
+    }
+
+    pub fn bit() -> Syntax<'db> {
+        Syntax::Bit(Bit::new())
+    }
+
+    pub fn bit_rc() -> RcSyntax<'db> {
+        Rc::new(Syntax::bit())
     }
 }
 
@@ -343,6 +352,9 @@ pub enum HSyntax<'db> {
     HLambda(HLambda<'db>),
     HApplication(HApplication<'db>),
     Splice(Splice<'db>),
+    Zero(Zero),
+    One(One),
+    Xor(Xor),
 }
 
 impl<'db> HSyntax<'db> {
@@ -403,6 +415,30 @@ impl<'db> HSyntax<'db> {
     pub fn splice_rc(term: RcSyntax<'db>) -> RcHSyntax<'db> {
         Rc::new(HSyntax::splice(term))
     }
+
+    pub fn zero() -> HSyntax<'db> {
+        HSyntax::Zero(Zero::new())
+    }
+
+    pub fn zero_rc() -> RcHSyntax<'db> {
+        Rc::new(HSyntax::zero())
+    }
+
+    pub fn one() -> HSyntax<'db> {
+        HSyntax::One(One::new())
+    }
+
+    pub fn one_rc() -> RcHSyntax<'db> {
+        Rc::new(HSyntax::one())
+    }
+
+    pub fn xor() -> HSyntax<'db> {
+        HSyntax::Xor(Xor::new())
+    }
+
+    pub fn xor_rc() -> RcHSyntax<'db> {
+        Rc::new(HSyntax::xor())
+    }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
@@ -452,6 +488,54 @@ pub struct Splice<'db> {
 impl<'db> Splice<'db> {
     pub fn new(term: RcSyntax<'db>) -> Splice<'db> {
         Splice { term }
+    }
+}
+
+/// The Bit type, representing the type of binary values.
+/// Prints as `$Bit`.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Bit;
+
+impl Bit {
+    pub fn new() -> Bit {
+        Bit
+    }
+}
+
+/// The Zero constant, representing the binary value 0.
+/// Prints as `0`.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Zero;
+
+impl Zero {
+    pub fn new() -> Zero {
+        Zero
+    }
+}
+
+/// The One constant, representing the binary value 1.
+/// Prints as `1`.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct One;
+
+impl One {
+    pub fn new() -> One {
+        One
+    }
+}
+
+/// The Xor hardware operation.
+/// Prints as `$xor`.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Xor;
+
+impl Xor {
+    pub fn new() -> Xor {
+        Xor
     }
 }
 

@@ -94,6 +94,14 @@ pub enum Token {
     UnboundVariable(NegativeLevel),
     #[regex(r"\?[0-9]+", priority = 4, callback = lex_metavariable_id)]
     Metavariable(usize),
+    #[token("$Bit", priority = 5)]
+    BitType,
+    #[token("0", priority = 5)]
+    Zero,
+    #[token("1", priority = 5)]
+    One,
+    #[token("$xor", priority = 5)]
+    Xor,
 }
 
 impl fmt::Display for Token {
@@ -376,6 +384,18 @@ fn p_hatom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<R
                 let tm = p_atom(global_state)?;
                 Ok(Some(HSyntax::splice_rc(tm)))
             }
+            Token::Zero => {
+                global_state.state().advance_token();
+                Ok(Some(HSyntax::zero_rc()))
+            }
+            Token::One => {
+                global_state.state().advance_token();
+                Ok(Some(HSyntax::one_rc()))
+            }
+            Token::Xor => {
+                global_state.state().advance_token();
+                Ok(Some(HSyntax::xor_rc()))
+            }
             _ => Ok(None),
         },
         None => Ok(None),
@@ -537,6 +557,10 @@ fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Rc
                 global_state.state().advance_token();
                 let tm = p_hatom(global_state)?;
                 Ok(Some(Syntax::quote_rc(tm)))
+            }
+            Token::BitType => {
+                global_state.state().advance_token();
+                Ok(Some(Syntax::bit_rc()))
             }
             _ => Ok(None),
         },
@@ -2033,5 +2057,99 @@ mod tests {
         } else {
             panic!("Expected constants");
         }
+    }
+
+    #[test]
+    fn test_parse_bit_type() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "$Bit";
+        let result = parse_syntax(&db, input);
+
+        assert!(result.is_ok(), "Failed to parse Bit type: {:?}", result);
+
+        let parsed = result.unwrap();
+        let expected = Syntax::bit_rc();
+
+        assert_eq!(parsed, expected, "Parsed Bit does not match expected");
+    }
+
+    #[test]
+    fn test_parse_zero_constant() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "0";
+        let result = parse_hsyntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse Zero constant: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+        let expected = HSyntax::zero_rc();
+
+        assert_eq!(parsed, expected, "Parsed Zero does not match expected");
+    }
+
+    #[test]
+    fn test_parse_one_constant() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "1";
+        let result = parse_hsyntax(&db, input);
+
+        assert!(result.is_ok(), "Failed to parse One constant: {:?}", result);
+
+        let parsed = result.unwrap();
+        let expected = HSyntax::one_rc();
+
+        assert_eq!(parsed, expected, "Parsed One does not match expected");
+    }
+
+    #[test]
+    fn test_parse_quoted_zero_one() {
+        use crate::Database;
+        let db = Database::default();
+
+        // Test quoted zero: '0
+        let input = "'0";
+        let result = parse_syntax(&db, input);
+        assert!(result.is_ok(), "Failed to parse quoted zero: {:?}", result);
+
+        let parsed = result.unwrap();
+        let expected = Syntax::quote_rc(HSyntax::zero_rc());
+        assert_eq!(
+            parsed, expected,
+            "Parsed quoted Zero does not match expected"
+        );
+
+        // Test quoted one: '1
+        let input = "'1";
+        let result = parse_syntax(&db, input);
+        assert!(result.is_ok(), "Failed to parse quoted one: {:?}", result);
+
+        let parsed = result.unwrap();
+        let expected = Syntax::quote_rc(HSyntax::one_rc());
+        assert_eq!(
+            parsed, expected,
+            "Parsed quoted One does not match expected"
+        );
+    }
+
+    #[test]
+    fn test_parse_xor() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "$xor";
+        let result = parse_hsyntax(&db, input);
+
+        assert!(result.is_ok(), "Failed to parse Xor: {:?}", result);
+
+        let parsed = result.unwrap();
+        let expected = HSyntax::xor_rc();
+
+        assert_eq!(parsed, expected, "Parsed Xor does not match expected");
     }
 }

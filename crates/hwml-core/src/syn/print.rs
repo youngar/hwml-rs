@@ -219,6 +219,7 @@ impl<'db> Print for Syntax<'db> {
             Syntax::Lift(lift) => lift.print(db, st, p),
             Syntax::Quote(quote) => quote.print(db, st, p),
             Syntax::HArrow(harrow) => harrow.print(db, st, p),
+            Syntax::Bit(bit) => bit.print(db, st, p),
         }
     }
 }
@@ -444,6 +445,9 @@ impl<'db> Print for HSyntax<'db> {
             HSyntax::HLambda(lambda) => lambda.print(db, st, p),
             HSyntax::HApplication(application) => application.print(db, st, p),
             HSyntax::Splice(splice) => splice.print(db, st, p),
+            HSyntax::Zero(zero) => zero.print(db, st, p),
+            HSyntax::One(one) => one.print(db, st, p),
+            HSyntax::Xor(xor) => xor.print(db, st, p),
         }
     }
 }
@@ -526,6 +530,50 @@ impl<'db> Print for Splice<'db> {
             p.text("~")?;
             print_right_subterm(db, st, p, &*self.term, SPLICE_RHS)
         })
+    }
+}
+
+impl Print for Bit {
+    fn print<R: Render>(
+        &self,
+        _db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        p.text("$Bit")
+    }
+}
+
+impl Print for Zero {
+    fn print<R: Render>(
+        &self,
+        _db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        p.text("0")
+    }
+}
+
+impl Print for One {
+    fn print<R: Render>(
+        &self,
+        _db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        p.text("1")
+    }
+}
+
+impl Print for Xor {
+    fn print<R: Render>(
+        &self,
+        _db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        p.text("$xor")
     }
 }
 
@@ -940,6 +988,37 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &lift_quote),
             @"^'@42"
+        );
+    }
+
+    #[test]
+    fn test_print_bit_zero_one() {
+        use crate::syn::{Bit, HSyntax, One, Syntax, Zero};
+        use crate::Database;
+        let db = Database::default();
+
+        // Test Bit type: $Bit
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::bit()),
+            @"$Bit"
+        );
+
+        // Test Zero constant: 0
+        assert_snapshot!(
+            print_hsyntax_to_string(&db, &HSyntax::zero()),
+            @"0"
+        );
+
+        // Test One constant: 1
+        assert_snapshot!(
+            print_hsyntax_to_string(&db, &HSyntax::one()),
+            @"1"
+        );
+
+        // Test Xor operation: $xor
+        assert_snapshot!(
+            print_hsyntax_to_string(&db, &HSyntax::xor()),
+            @"$xor"
         );
     }
 }
