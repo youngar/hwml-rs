@@ -115,6 +115,7 @@ pub fn infer_type<'db>(
         surface::Expression::Fun(fun) => infer_fun(state, fun),
         surface::Expression::Paren(paren) => infer_paren(state, paren),
         surface::Expression::Id(id) => infer_id(state, id),
+        surface::Expression::Match(match_expr) => infer_match(state, match_expr),
         _ => todo!(),
     }
 }
@@ -230,6 +231,7 @@ pub fn check_type<'db>(
         surface::Expression::Num(num) => check_num(state, num, ty),
         surface::Expression::Str(str) => check_str(state, str, ty),
         surface::Expression::Id(id) => check_id(state, id, ty),
+        surface::Expression::Match(match_expr) => check_match(state, match_expr, ty),
         _ => todo!(),
     }
 }
@@ -311,4 +313,32 @@ pub fn go<'db>(
         println!("constraint: {:?}", constraint);
     }
     Ok(declarations)
+}
+
+pub fn infer_match<'db>(
+    state: &mut State<'db>,
+    match_expr: surface::Match,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
+    // For now, just return a placeholder
+    // In a full implementation, we would:
+    // 1. Infer the type of the scrutinee
+    // 2. Check that all patterns are valid for that type
+    // 3. Infer the type of each clause body
+    // 4. Ensure all clause bodies have the same type
+    // 5. Return the elaborated match expression and its type
+    todo!("Pattern matching elaboration not yet implemented")
+}
+
+pub fn check_match<'db>(
+    state: &mut State<'db>,
+    match_expr: surface::Match,
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
+    // For now, just return a placeholder
+    // In a full implementation, we would:
+    // 1. Infer the type of the scrutinee
+    // 2. Check that all patterns are valid for that type
+    // 3. Check that each clause body has the expected type `ty`
+    // 4. Return the elaborated match expression
+    todo!("Pattern matching elaboration not yet implemented")
 }

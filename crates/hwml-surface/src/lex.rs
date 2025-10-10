@@ -58,6 +58,12 @@ pub enum Token {
     In,
     #[token("fun", priority = 4)]
     Fun,
+    #[token("match", priority = 4)]
+    Match,
+    #[token("with", priority = 4)]
+    With,
+    #[token("end", priority = 4)]
+    End,
     #[token("(", priority = 10)]
     LParen,
     #[token(")", priority = 10)]
@@ -74,6 +80,8 @@ pub enum Token {
     Arrow,
     #[token("=>", priority = 5)]
     FatArrow,
+    #[token("~>", priority = 5)]
+    SquigglyArrow,
     #[token(":=", priority = 5)]
     ColonEqual,
     #[token(",", priority = 4)]
@@ -84,6 +92,8 @@ pub enum Token {
     Colon,
     #[token(";", priority = 4)]
     Semicolon,
+    #[token("|", priority = 4)]
+    Pipe,
     #[token("_", priority = 4)]
     Underscore,
     #[regex("(?&vertical_whitespace)", priority = 4)]

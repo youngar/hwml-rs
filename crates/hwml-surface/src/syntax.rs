@@ -36,6 +36,7 @@ pub enum Expression {
     App(App),
     Fun(Fun),
     LetIn(LetIn),
+    Match(Match),
     Underscore(Underscore),
     Paren(Paren),
     Num(Num),
@@ -136,3 +137,15 @@ pub struct Str {
 }
 
 type Location = Range<usize>;
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Match {
+    pub scrutinee: Box<Expression>,
+    pub clauses: Vec<MatchClause>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct MatchClause {
+    pub pattern: Box<Expression>,
+    pub body: Box<Expression>,
+}

@@ -27,7 +27,7 @@ Def: Def = {
 };
 
 Expr0: Box<Expression> = {
-  #[precedence(level="0")] 
+  #[precedence(level="0")]
   <p:Pi> => Box::new(Expression::Pi(p)),
   <a:Arrow> => Box::new(Expression::Arrow(a)),
   <fa:FatArrow> => Box::new(Expression::FatArrow(fa)),
@@ -49,6 +49,7 @@ Expr1: Box<Expression> = {
 Expr2: Box<Expression> = {
   <f:Fun> => Box::new(Expression::Fun(f)),
   <li:LetIn> => Box::new(Expression::LetIn(li)),
+  <m:Match> => Box::new(Expression::Match(m)),
   Expr3,
 };
 
@@ -167,6 +168,36 @@ Id: Id = {
   }
 };
 
+Match: Match = {
+  "match" <scrutinee:Expr1> "with" <clauses:MatchClauses> "end" => {
+    Match::new(scrutinee, clauses)
+  }
+};
+
+MatchClauses: Vec<MatchClause> = {
+  <first:MatchClause?> <rest:MatchClauseRest*> => {
+    let mut clauses = Vec::new();
+    if let Some(first_clause) = first {
+      clauses.push(first_clause);
+    }
+    clauses.extend(rest);
+    clauses
+  }
+};
+
+MatchClause: MatchClause = {
+  <pattern:Expr1> "~>" <body:Expr0> => {
+    MatchClause::new(pattern, body)
+  }
+};
+
+
+MatchClauseRest: MatchClause = {
+  "|" <pattern:Expr1> "~>" <body:Expr0> => {
+    MatchClause::new(pattern, body)
+  }
+};
+
 extern {
   type Location = usize;
 
@@ -178,6 +209,10 @@ extern {
     "let" => Token::Let,
     "in" => Token::In,
     "fun" => Token::Fun,
+    "match" => Token::Match,
+    "with" => Token::With,
+    "end" => Token::End,
+    "|" => Token::Pipe,
     "(" => Token::LParen,
     ")" => Token::RParen,
     "{" => Token::LBrace,
@@ -186,6 +221,7 @@ extern {
     "]" => Token::RBrack,
     "->" => Token::Arrow,
     "=>" => Token::FatArrow,
+    "~>" => Token::SquigglyArrow,
     ":=" => Token::ColonEqual,
     "," => Token::Comma,
     "." => Token::Period,
