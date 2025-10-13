@@ -1,6 +1,6 @@
 use crate::syn as stx;
 use crate::syn;
-use crate::syn::Syntax;
+use crate::syn::{Case, Syntax};
 use crate::val as dom;
 use crate::val;
 use crate::val::{Closure, Environment, Neutral, Value};
@@ -21,6 +21,7 @@ pub fn eval<'db>(env: &mut Environment<'db>, stx: &Syntax<'db>) -> Result<Rc<Val
         Syntax::Application(app) => eval_application(env, &app),
         Syntax::Universe(uni) => eval_universe(env, &uni),
         Syntax::Metavariable(meta) => eval_metavariable(env, meta),
+        Syntax::Case(case) => eval_case(env, case),
         _ => todo!(),
     }
 }
@@ -73,6 +74,20 @@ fn eval_metavariable<'db>(
     meta: &syn::Metavariable<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     todo!()
+}
+
+fn eval_case<'db>(env: &mut Environment<'db>, case: &Case<'db>) -> Result<Rc<Value<'db>>, Error> {
+    // A case expression without a target evaluates to a function that takes the target
+    // For now, just return a placeholder value
+    // In a full implementation, we would:
+    // 1. Return a closure that captures the case branches
+    // 2. When applied to a target, pattern match on the target value
+    // 3. Find the matching branch and evaluate the branch body
+
+    // TODO: Implement proper case evaluation as a function
+    // For now, return a neutral value (metavariable)
+    let _ = case; // Use the case to avoid unused variable warning
+    todo!("Case evaluation not yet implemented")
 }
 
 fn eval_application<'db>(

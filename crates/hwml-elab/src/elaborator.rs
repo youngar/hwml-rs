@@ -8,12 +8,13 @@ use hwml_core::syn::Metavariable;
 use hwml_surface::syntax as surface;
 
 pub fn infer_app<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     app: surface::App,
 ) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     assert!(app.elements.len() >= 1);
     // Get the elaborated head of the term.
-    let (mut fun_etm, mut fun_ety) = infer_type(state, *app.elements[0].clone())?;
+    let (mut fun_etm, mut fun_ety) = infer_type(db, state, *app.elements[0].clone())?;
 
     for arg in &app.elements[1..] {
         let domain = state.fresh_metavariable();
@@ -29,7 +30,7 @@ pub fn infer_app<'db>(
         );
 
         // Check the type of the operand has the type of the domain.
-        let arg_etm = check_type(state, *arg.clone(), domain.clone())?;
+        let arg_etm = check_type(db, state, *arg.clone(), domain.clone())?;
 
         // Create the core application
         let app_etm = core::Syntax::application_rc(fun_etm, arg_etm.clone());
@@ -45,6 +46,7 @@ pub fn infer_app<'db>(
 }
 
 pub fn infer_fun<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     fun: surface::Fun,
 ) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
@@ -63,7 +65,7 @@ pub fn infer_fun<'db>(
     // }
 
     // Infer the type of the body under the extended context.
-    let (body, codomain) = infer_type(state, *fun.expr)?;
+    let (body, codomain) = infer_type(db, state, *fun.expr)?;
 
     // Reset the context.
     state.truncate_context(depth);
@@ -80,10 +82,11 @@ pub fn infer_fun<'db>(
 }
 
 pub fn infer_paren<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     paren: surface::Paren,
 ) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
-    infer_type(state, *paren.expr)
+    infer_type(db, state, *paren.expr)
 }
 
 pub fn infer_id<'db>(
@@ -107,104 +110,116 @@ pub fn infer_id<'db>(
 }
 
 pub fn infer_type<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     term: surface::Expression,
 ) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
     println!("inferring type: {:?}", term);
     match term {
-        surface::Expression::Fun(fun) => infer_fun(state, fun),
-        surface::Expression::Paren(paren) => infer_paren(state, paren),
+        surface::Expression::Fun(fun) => infer_fun(db, state, fun),
+        surface::Expression::Paren(paren) => infer_paren(db, state, paren),
         surface::Expression::Id(id) => infer_id(state, id),
-        surface::Expression::Match(match_expr) => infer_match(state, match_expr),
+        surface::Expression::Match(match_expr) => infer_match(db, state, match_expr),
         _ => todo!(),
     }
 }
 
 pub fn check_pi<'db>(
-    state: &mut State<'db>,
-    pi: surface::Pi,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _pi: surface::Pi,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_arrow<'db>(
-    state: &mut State<'db>,
-    arrow: surface::Arrow,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _arrow: surface::Arrow,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_fat_arrow<'db>(
-    state: &mut State<'db>,
-    fat_arrow: surface::FatArrow,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _fat_arrow: surface::FatArrow,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_app<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     app: surface::App,
     ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
-    let (etm, ety) = infer_app(state, app)?;
+    let (etm, ety) = infer_app(db, state, app)?;
     state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
 pub fn check_fun<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     fun: surface::Fun,
     ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
-    let (etm, ety) = infer_fun(state, fun)?;
+    let (etm, ety) = infer_fun(db, state, fun)?;
     state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
     Ok(etm)
 }
 
 pub fn check_let_in<'db>(
-    state: &mut State<'db>,
-    let_in: surface::LetIn,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _let_in: surface::LetIn,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_underscore<'db>(
-    state: &mut State<'db>,
-    underscore: surface::Underscore,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _underscore: surface::Underscore,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_paren<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     paren: surface::Paren,
     ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
-    check_type(state, *paren.expr, ty)
+    check_type(db, state, *paren.expr, ty)
 }
 
 pub fn check_num<'db>(
-    state: &mut State<'db>,
-    num: surface::Num,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _num: surface::Num,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_str<'db>(
-    state: &mut State<'db>,
-    str: surface::Str,
-    ty: core::RcSyntax<'db>,
+    _db: &'db dyn salsa::Database,
+    _state: &mut State<'db>,
+    _str: surface::Str,
+    _ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     todo!()
 }
 
 pub fn check_id<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     id: surface::Id,
     ty: core::RcSyntax<'db>,
@@ -215,32 +230,39 @@ pub fn check_id<'db>(
 }
 
 pub fn check_type<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     term: surface::Expression,
     ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
     match term {
-        surface::Expression::Pi(pi) => check_pi(state, pi, ty),
-        surface::Expression::Arrow(arrow) => check_arrow(state, arrow, ty),
-        surface::Expression::FatArrow(fat_arrow) => check_fat_arrow(state, fat_arrow, ty),
-        surface::Expression::App(app) => check_app(state, app, ty),
-        surface::Expression::Fun(fun) => check_fun(state, fun, ty),
-        surface::Expression::LetIn(let_in) => check_let_in(state, let_in, ty),
-        surface::Expression::Underscore(underscore) => check_underscore(state, underscore, ty),
-        surface::Expression::Paren(paren) => check_paren(state, paren, ty),
-        surface::Expression::Num(num) => check_num(state, num, ty),
-        surface::Expression::Str(str) => check_str(state, str, ty),
-        surface::Expression::Id(id) => check_id(state, id, ty),
-        surface::Expression::Match(match_expr) => check_match(state, match_expr, ty),
+        surface::Expression::Pi(pi) => check_pi(db, state, pi, ty),
+        surface::Expression::Arrow(arrow) => check_arrow(db, state, arrow, ty),
+        surface::Expression::FatArrow(fat_arrow) => check_fat_arrow(db, state, fat_arrow, ty),
+        surface::Expression::App(app) => check_app(db, state, app, ty),
+        surface::Expression::Fun(fun) => check_fun(db, state, fun, ty),
+        surface::Expression::LetIn(let_in) => check_let_in(db, state, let_in, ty),
+        surface::Expression::Underscore(underscore) => check_underscore(db, state, underscore, ty),
+        surface::Expression::Paren(paren) => check_paren(db, state, paren, ty),
+        surface::Expression::Num(num) => check_num(db, state, num, ty),
+        surface::Expression::Str(str) => check_str(db, state, str, ty),
+        surface::Expression::Id(id) => check_id(db, state, id, ty),
+        surface::Expression::Match(match_expr) => check_match(db, state, match_expr, ty),
         _ => todo!(),
     }
 }
 
 pub fn elab_type<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     ty: surface::Expression,
 ) -> Result<core::RcSyntax<'db>> {
-    check_type(state, ty, core::Syntax::universe_rc(UniverseLevel::new(0)))
+    check_type(
+        db,
+        state,
+        ty,
+        core::Syntax::universe_rc(UniverseLevel::new(0)),
+    )
 }
 
 pub fn elab_def<'db>(
@@ -267,7 +289,7 @@ pub fn elab_def<'db>(
     }
     // Elaborate the target type of the definition.
     let mut ety = match def.ty {
-        Some(ty) => elab_type(state, *ty)?,
+        Some(ty) => elab_type(db, state, *ty)?,
         None => {
             // If no type annotation is provided, we need to infer it
             // For now, we'll use a placeholder or error
@@ -275,7 +297,7 @@ pub fn elab_def<'db>(
         }
     };
     // Check the body of the definition.
-    let mut etm = check_type(state, *def.value, ety.clone())?;
+    let mut etm = check_type(db, state, *def.value, ety.clone())?;
 
     // Reset the context.
     state.truncate_context(depth);
@@ -316,29 +338,79 @@ pub fn go<'db>(
 }
 
 pub fn infer_match<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     match_expr: surface::Match,
 ) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
-    // For now, just return a placeholder
-    // In a full implementation, we would:
     // 1. Infer the type of the scrutinee
-    // 2. Check that all patterns are valid for that type
-    // 3. Infer the type of each clause body
-    // 4. Ensure all clause bodies have the same type
-    // 5. Return the elaborated match expression and its type
-    todo!("Pattern matching elaboration not yet implemented")
+    let (scrutinee, _scrutinee_type) = infer_type(db, state, *match_expr.scrutinee)?;
+
+    // 2. Elaborate each clause into a case branch
+    let mut branches: Vec<core::CaseBranch<'db>> = Vec::new();
+    let mut result_type = None;
+
+    for clause in match_expr.clauses {
+        // For now, just infer the type of the clause body
+        // In a full implementation, we would elaborate patterns properly
+        let (body, body_type) = infer_type(db, state, *clause.body)?;
+
+        // Check that all clause bodies have the same type
+        match &result_type {
+            None => result_type = Some(body_type),
+            Some(expected_type) => {
+                // In a full implementation, we would check type equality
+                // For now, just use the first type
+                let _ = expected_type;
+            }
+        }
+
+        // Create a placeholder branch with constructor pattern
+        // In a full implementation, we would elaborate the actual pattern
+        let placeholder_constructor = core::ConstantId::from_str(db, "placeholder");
+        branches.push(core::CaseBranch::new(placeholder_constructor, 0, body));
+    }
+
+    let result_type = result_type.unwrap_or_else(|| {
+        // If no clauses, use a placeholder type
+        core::Syntax::universe_rc(UniverseLevel::new(0))
+    });
+
+    // Create a case expression and apply it to the scrutinee
+    let case_function = core::Syntax::case_rc(branches);
+    let case_expr = core::Syntax::application_rc(case_function, scrutinee);
+    Ok((case_expr, result_type))
 }
 
 pub fn check_match<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut State<'db>,
     match_expr: surface::Match,
     ty: core::RcSyntax<'db>,
 ) -> Result<core::RcSyntax<'db>> {
-    // For now, just return a placeholder
-    // In a full implementation, we would:
     // 1. Infer the type of the scrutinee
-    // 2. Check that all patterns are valid for that type
-    // 3. Check that each clause body has the expected type `ty`
-    // 4. Return the elaborated match expression
-    todo!("Pattern matching elaboration not yet implemented")
+    let (scrutinee, _scrutinee_type) = infer_type(db, state, *match_expr.scrutinee)?;
+
+    // 2. Elaborate each clause into a case branch, checking against the expected type
+    let mut branches: Vec<core::CaseBranch<'db>> = Vec::new();
+
+    for clause in match_expr.clauses {
+        // Check the clause body against the expected type
+        let body = check_type(db, state, *clause.body, ty.clone())?;
+
+        // Create a placeholder branch with constructor pattern
+        // In a full implementation, we would elaborate the actual pattern
+        let placeholder_constructor = core::ConstantId::from_str(db, "placeholder");
+        branches.push(core::CaseBranch::new(placeholder_constructor, 0, body));
+    }
+
+    if branches.is_empty() {
+        // No clauses - return a placeholder
+        let meta = state.fresh_metavariable();
+        Ok(meta)
+    } else {
+        // Create a case expression and apply it to the scrutinee
+        let case_function = core::Syntax::case_rc(branches);
+        let case_expr = core::Syntax::application_rc(case_function, scrutinee);
+        Ok(case_expr)
+    }
 }
