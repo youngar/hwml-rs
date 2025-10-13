@@ -89,6 +89,7 @@ pub enum Syntax<'db> {
     Quote(Quote<'db>),
     HArrow(HArrow<'db>),
     Bit(Bit),
+    Case(Case<'db>),
 }
 
 impl<'db> Syntax<'db> {
@@ -197,6 +198,14 @@ impl<'db> Syntax<'db> {
 
     pub fn bit_rc() -> RcSyntax<'db> {
         Rc::new(Syntax::bit())
+    }
+
+    pub fn case(branches: Vec<CaseBranch<'db>>) -> Syntax<'db> {
+        Syntax::Case(Case::new(branches))
+    }
+
+    pub fn case_rc(branches: Vec<CaseBranch<'db>>) -> RcSyntax<'db> {
+        Rc::new(Syntax::case(branches))
     }
 }
 
@@ -500,6 +509,54 @@ pub struct Bit;
 impl Bit {
     pub fn new() -> Bit {
         Bit
+    }
+}
+
+/// A case tree for pattern matching.
+///
+/// Case trees are an intermediate representation between surface-level pattern matching
+/// and eliminators. They represent pattern matching as a tree structure.
+///
+/// A case expression is a function that takes a target to match on and returns the result
+/// of the appropriate branch. The case expression should be applied to its target:
+/// `(case { branches }) target`
+///
+/// Type annotations should be provided using the Check syntax node to wrap the case expression.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Case<'db> {
+    /// The branches of the case tree
+    pub branches: Vec<CaseBranch<'db>>,
+}
+
+impl<'db> Case<'db> {
+    pub fn new(branches: Vec<CaseBranch<'db>>) -> Case<'db> {
+        Case { branches }
+    }
+}
+
+/// A branch in a case tree.
+///
+/// Each branch represents a pattern and the corresponding body.
+/// The pattern can be a constructor pattern, variable pattern, or wildcard.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct CaseBranch<'db> {
+    /// The constructor name
+    pub constructor: ConstantId<'db>,
+    /// The number of arguments to bind
+    pub arity: usize,
+    /// The body expression for this branch
+    pub body: RcSyntax<'db>,
+}
+
+impl<'db> CaseBranch<'db> {
+    pub fn new(constructor: ConstantId<'db>, arity: usize, body: RcSyntax<'db>) -> CaseBranch<'db> {
+        CaseBranch {
+            constructor,
+            arity,
+            body,
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::common::{DBParseError, Index, Level, NegativeLevel};
 use crate::syn::{self, HSyntax, RcHSyntax};
-use crate::syn::{Closure, MetavariableId, RcSyntax, Syntax};
+use crate::syn::{CaseBranch, Closure, ConstantId, MetavariableId, RcSyntax, Syntax};
 use core::fmt::Debug;
 use logos::{Lexer, Logos};
 use salsa::Database;
@@ -102,6 +102,16 @@ pub enum Token {
     One,
     #[token("$xor", priority = 5)]
     Xor,
+    #[token("case", priority = 5)]
+    Case,
+    #[token("{", priority = 10)]
+    LBrace,
+    #[token("}", priority = 10)]
+    RBrace,
+    #[token(";", priority = 10)]
+    Semicolon,
+    #[token("=>", priority = 5)]
+    FatArrow,
 }
 
 impl fmt::Display for Token {
@@ -267,6 +277,41 @@ fn p_colon(state: &mut State) -> ParseResult<()> {
 
 fn p_colon_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Colon)
+}
+
+fn p_semicolon(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::Semicolon, Error::Other)
+}
+
+fn p_lparen(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::LParen, Error::Other)
+}
+
+fn p_lbrace(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::LBrace, Error::Other)
+}
+
+fn p_rbrace(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::RBrace, Error::Other)
+}
+
+fn p_semicolon_opt(state: &mut State) -> ParseResult<Option<()>> {
+    p_token_opt(state, Token::Semicolon)
+}
+
+fn p_fat_arrow(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::FatArrow, Error::Other)
+}
+
+fn p_constant_opt<'db>(state: &mut GlobalState<'db>) -> ParseResult<Option<ConstantId<'db>>> {
+    match state.state.peek_token() {
+        Some(Err(err)) => Err(err),
+        Some(Ok(Token::Constant(name))) => {
+            state.state.advance_token();
+            Ok(Some(ConstantId::from_str(state.db(), &name)))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn p_variable_opt(state: &mut State) -> ParseResult<Option<String>> {
@@ -515,6 +560,10 @@ fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Rc
                 }
                 Ok(Some(result))
             }
+            Token::Case => {
+                global_state.state().advance_token();
+                Ok(Some(Syntax::case_rc(p_case_branches(global_state)?)))
+            }
             Token::Variable(name) => {
                 global_state.state().advance_token();
                 // Otherwise, look it up in the environment
@@ -651,7 +700,46 @@ pub fn parse_hsyntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult
     p_hterm(&mut global_state)
 }
 
-// TODO: Add database-aware parsing functions
+/// Parse case expression: { @true => @1; @false => @0 }
+fn p_case_branches<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Vec<CaseBranch<'db>>> {
+    p_lbrace(global_state.state())?;
+    let mut branches = Vec::new();
+    while let Some(branch) = p_case_branch_opt(global_state)? {
+        branches.push(branch);
+    }
+    p_rbrace(global_state.state())?;
+    Ok(branches)
+}
+
+/// @Foo %0 %1 => body;
+fn p_case_branch_opt<'db>(
+    global_state: &mut GlobalState<'db>,
+) -> ParseResult<Option<CaseBranch<'db>>> {
+    let Some((constructor, arity)) = p_case_pattern_opt(global_state)? else {
+        return Ok(None);
+    };
+    p_fat_arrow(global_state.state())?;
+    let body = p_term(global_state)?;
+    global_state.state().reset_names(arity);
+    // Semicolon is optional (for the last branch)
+    let _ = p_semicolon_opt(global_state.state())?;
+    Ok(Some(CaseBranch::new(constructor, arity, body)))
+}
+
+/// @Foo %0 %1
+fn p_case_pattern_opt<'db>(
+    global_state: &mut GlobalState<'db>,
+) -> ParseResult<Option<(ConstantId<'db>, usize)>> {
+    let Some(constructor) = p_constant_opt(global_state)? else {
+        return Ok(None);
+    };
+    let mut arity = 0;
+    while let Some(name) = p_variable_opt(global_state.state())? {
+        arity += 1;
+        global_state.state().push_name(name)
+    }
+    Ok(Some((constructor, arity)))
+}
 
 #[cfg(test)]
 mod tests {
@@ -2151,5 +2239,129 @@ mod tests {
         let expected = HSyntax::xor_rc();
 
         assert_eq!(parsed, expected, "Parsed Xor does not match expected");
+    }
+
+    #[test]
+    fn test_parse_case_simple() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "case { @true => @1; @false => @0 }";
+
+        // Debug: let's see what tokens are being generated
+        use logos::Logos;
+        let mut lexer = Token::lexer(input);
+        println!("Tokens:");
+        while let Some(token) = lexer.next() {
+            println!("  {:?}", token);
+        }
+
+        // Debug: let's see what the error actually is
+        let parsed = match parse_syntax(&db, input) {
+            Ok(result) => result,
+            Err(e) => {
+                println!("Parse error: {:?}", e);
+                panic!("Failed to parse case expression: {:?}", e);
+            }
+        };
+
+        let expected = Syntax::case_rc(vec![
+            CaseBranch::new(
+                ConstantId::from_str(&db, "true"),
+                0,
+                Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+            ),
+            CaseBranch::new(
+                ConstantId::from_str(&db, "false"),
+                0,
+                Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+            ),
+        ]);
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_case_print_roundtrip() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "case { @true => @1; @false => @0 }";
+        let result = parse_syntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse case expression: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Test that we can print the case expression
+        use crate::syn::print::print_syntax_to_string;
+        let printed = print_syntax_to_string(&db, &parsed);
+
+        println!("Printed case expression: {}", printed);
+
+        // The printed version should contain the key elements
+        assert!(printed.contains("case"));
+        assert!(printed.contains("@true"));
+        assert!(printed.contains("@false"));
+        assert!(printed.contains("@1"));
+        assert!(printed.contains("@0"));
+        // Should NOT contain @x since there's no scrutinee in the case expression itself
+        assert!(!printed.contains("@x"));
+    }
+
+    #[test]
+    fn test_case_application() {
+        use crate::Database;
+        let db = Database::default();
+        // Test parsing a case expression applied to a target
+        let input = "(case { @true => @1; @false => @0 }) @x";
+
+        let parsed = parse_syntax(&db, input).expect("Failed to parse case application");
+
+        let expected = Syntax::application_rc(
+            Syntax::case_rc(vec![
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "true"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                ),
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "false"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                ),
+            ]),
+            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_constructor_only_patterns() {
+        use crate::Database;
+        let db = Database::default();
+
+        // Test that we can only parse constructor patterns, not variables or wildcards
+        let input = "case { @true => @1; @false => @0 }";
+
+        let parsed = parse_syntax(&db, input).expect("Failed to parse constructor-only case");
+
+        let expected = Syntax::case_rc(vec![
+            CaseBranch::new(
+                ConstantId::from_str(&db, "true"),
+                0,
+                Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+            ),
+            CaseBranch::new(
+                ConstantId::from_str(&db, "false"),
+                0,
+                Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+            ),
+        ]);
+
+        assert_eq!(parsed, expected);
     }
 }
