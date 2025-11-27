@@ -58,6 +58,9 @@ Expr3: Box<Expression> = {
   <u:Underscore> => Box::new(Expression::Underscore(u)),
   <p:Paren> => Box::new(Expression::Paren(p)),
   <n:Num> => Box::new(Expression::Num(n)),
+  <q:Quote> => Box::new(Expression::Quote(q)),
+  <s:Splice> => Box::new(Expression::Splice(s)),
+  <r:Raise> => Box::new(Expression::Raise(r)),
 };
 
 // (x1 .. xn : X) (y1 .. yn : Y) -> Z
@@ -174,6 +177,18 @@ Match: Match = {
   }
 };
 
+Quote: Quote = {
+  "'" <expr:Expr3> => Quote::new(expr)
+};
+
+Splice: Splice = {
+  "~" <expr:Expr3> => Splice::new(expr)
+};
+
+Raise: Raise = {
+  "^" <expr:Expr3> => Raise::new(expr)
+};
+
 MatchClauses: Vec<MatchClause> = {
   <first:MatchClause?> <rest:MatchClauseRest*> => {
     let mut clauses = Vec::new();
@@ -228,6 +243,9 @@ extern {
     ":" => Token::Colon,
     ";" => Token::Semicolon,
     "_" => Token::Underscore,
+    "'" => Token::Quote,
+    "~" => Token::Splice,
+    "^" => Token::Raise,
     "num" => Token::Number,
     "id" => Token::Ident,
     "error" => Token::Error,

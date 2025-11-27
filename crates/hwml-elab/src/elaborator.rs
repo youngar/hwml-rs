@@ -120,6 +120,13 @@ pub fn infer_type<'db>(
         surface::Expression::Paren(paren) => infer_paren(db, state, paren),
         surface::Expression::Id(id) => infer_id(state, id),
         surface::Expression::Match(match_expr) => infer_match(db, state, match_expr),
+        surface::Expression::Quote(quote) => infer_quote(db, state, quote),
+        surface::Expression::Splice(splice) => infer_splice(db, state, splice),
+        surface::Expression::Raise(raise) => infer_raise(db, state, raise),
+        surface::Expression::App(app) => {
+            let (etm, ety) = infer_app(db, state, app)?;
+            Ok((etm, ety))
+        }
         _ => todo!(),
     }
 }
@@ -248,7 +255,9 @@ pub fn check_type<'db>(
         surface::Expression::Str(str) => check_str(db, state, str, ty),
         surface::Expression::Id(id) => check_id(db, state, id, ty),
         surface::Expression::Match(match_expr) => check_match(db, state, match_expr, ty),
-        _ => todo!(),
+        surface::Expression::Quote(quote) => check_quote(db, state, quote, ty),
+        surface::Expression::Splice(splice) => check_splice(db, state, splice, ty),
+        surface::Expression::Raise(raise) => check_raise(db, state, raise, ty),
     }
 }
 
@@ -413,4 +422,95 @@ pub fn check_match<'db>(
         let case_expr = core::Syntax::application_rc(case_function, scrutinee);
         Ok(case_expr)
     }
+}
+
+pub fn infer_quote<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    quote: surface::Quote,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
+    // For now, we'll elaborate the inner expression as a hardware syntax term
+    // In a full implementation, we would need to elaborate to HSyntax
+    let (inner_term, _inner_type) = infer_type(db, state, *quote.expr)?;
+
+    // Create a placeholder HSyntax term by splicing the inner term
+    let hsyntax_term = core::HSyntax::splice_rc(inner_term);
+
+    // Create the quote expression
+    let quote_term = core::Syntax::quote_rc(hsyntax_term);
+
+    // The type of a quote is a hardware arrow type (placeholder for now)
+    // In a full implementation, this would be the proper hardware type
+    let quote_type = state.fresh_metavariable();
+
+    Ok((quote_term, quote_type))
+}
+
+pub fn check_quote<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    quote: surface::Quote,
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
+    let (etm, ety) = infer_quote(db, state, quote)?;
+    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
+    Ok(etm)
+}
+
+pub fn infer_splice<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    splice: surface::Splice,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
+    // Splice should only appear within quoted contexts
+    // For now, we'll elaborate the inner expression and create a splice
+    let (inner_term, inner_type) = infer_type(db, state, *splice.expr)?;
+
+    // Create a splice HSyntax term
+    let splice_hsyntax = core::HSyntax::splice_rc(inner_term);
+
+    // For now, we'll wrap it in a quote to make it a regular syntax term
+    // In a full implementation, this would be handled differently in quoted contexts
+    let splice_term = core::Syntax::quote_rc(splice_hsyntax);
+
+    Ok((splice_term, inner_type))
+}
+
+pub fn check_splice<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    splice: surface::Splice,
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
+    let (etm, ety) = infer_splice(db, state, splice)?;
+    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
+    Ok(etm)
+}
+
+pub fn infer_raise<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    raise: surface::Raise,
+) -> Result<(core::RcSyntax<'db>, core::RcSyntax<'db>)> {
+    // Raise (lift) takes a term and lifts it to the next stage
+    let (inner_term, inner_type) = infer_type(db, state, *raise.expr)?;
+
+    // Create a lift expression
+    let lift_term = core::Syntax::lift_rc(inner_term);
+
+    // The type of a lifted term is also lifted
+    let lift_type = core::Syntax::lift_rc(inner_type);
+
+    Ok((lift_term, lift_type))
+}
+
+pub fn check_raise<'db>(
+    db: &'db dyn salsa::Database,
+    state: &mut State<'db>,
+    raise: surface::Raise,
+    ty: core::RcSyntax<'db>,
+) -> Result<core::RcSyntax<'db>> {
+    let (etm, ety) = infer_raise(db, state, raise)?;
+    state.equality_constraint(ty, ety, core::Syntax::universe_rc(UniverseLevel::new(0)));
+    Ok(etm)
 }

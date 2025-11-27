@@ -84,6 +84,12 @@ pub enum Token {
     SquigglyArrow,
     #[token(":=", priority = 5)]
     ColonEqual,
+    #[token("'", priority = 5)]
+    Quote,
+    #[token("~", priority = 5)]
+    Splice,
+    #[token("^", priority = 5)]
+    Raise,
     #[token(",", priority = 4)]
     Comma,
     #[token(".", priority = 4)]
@@ -106,8 +112,8 @@ pub enum Token {
     BlockComment,
     #[regex(r"[0-9]+", priority = 3)]
     Number,
-    // Brackets, semicolons, commas, and periods should break up identifiers.
-    #[regex(r"[^\p{gc=Separator}\p{gc=Control}{}()\[\];,\.]+", priority = 2)]
+    // Brackets, semicolons, commas, periods, quote, splice, and raise should break up identifiers.
+    #[regex(r"[^\p{gc=Separator}\p{gc=Control}{}()\[\];,\.'~^]+", priority = 2)]
     Ident,
     // Any valid UTF-8 character is treated as some unknown kind of whitespace.
     // Equivalent to [\u{0}-\u{10FFFF}].

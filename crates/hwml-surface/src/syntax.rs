@@ -42,6 +42,9 @@ pub enum Expression {
     Num(Num),
     Str(Str),
     Id(Id),
+    Quote(Quote),
+    Splice(Splice),
+    Raise(Raise),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -148,4 +151,19 @@ pub struct Match {
 pub struct MatchClause {
     pub pattern: Box<Expression>,
     pub body: Box<Expression>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Quote {
+    pub expr: Box<Expression>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Splice {
+    pub expr: Box<Expression>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Raise {
+    pub expr: Box<Expression>,
 }
