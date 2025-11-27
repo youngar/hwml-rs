@@ -1,7 +1,6 @@
 use crate::syn::*;
-use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Expression<'db> {
     /// A regular constant/definition with a value
     Constant(RcSyntax<'db>),
@@ -11,7 +10,7 @@ pub enum Expression<'db> {
     DataConstructor {},
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Declaration<'db> {
     pub name: ConstantId<'db>,
     pub ty: RcSyntax<'db>,
@@ -85,39 +84,51 @@ pub enum Error<'db> {
     AlreadyDefined(ConstantId<'db>),
 }
 
-pub struct Environment<'db> {
-    declarations: HashMap<ConstantId<'db>, Declaration<'db>>,
+/// A module containing a list of declarations.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Module<'db> {
+    pub declarations: Vec<Declaration<'db>>,
 }
 
-impl<'db> Environment<'db> {
-    pub fn new() -> Environment<'db> {
-        Environment {
-            declarations: HashMap::new(),
+impl<'db> Module<'db> {
+    /// Create a new empty module.
+    pub fn new() -> Module<'db> {
+        Module {
+            declarations: Vec::new(),
         }
     }
 
+    /// Create a module from a vector of declarations.
+    pub fn from_declarations(declarations: Vec<Declaration<'db>>) -> Module<'db> {
+        Module { declarations }
+    }
+
+    /// Get all declarations in the module.
+    pub fn declarations(&self) -> &[Declaration<'db>] {
+        &self.declarations
+    }
+
+    /// Find a declaration by name.
+    pub fn find_declaration(&self, name: &ConstantId<'db>) -> Option<&Declaration<'db>> {
+        self.declarations.iter().find(|decl| &decl.name == name)
+    }
+
+    /// Check if a declaration with the given name exists.
     pub fn contains(&self, name: &ConstantId<'db>) -> bool {
-        self.declarations.contains_key(name)
+        self.find_declaration(name).is_some()
     }
 
-    pub fn get(&self, name: &ConstantId<'db>) -> Option<&Declaration<'db>> {
-        self.declarations.get(name)
-    }
-
-    fn check_name(&self, name: &ConstantId<'db>) -> Result<(), Error<'db>> {
-        if self.contains(name) {
-            return Err(Error::AlreadyDefined(*name));
-        } else {
-            Ok(())
-        }
-    }
-
+    /// Add a declaration to the module.
+    /// Returns an error if a declaration with the same name already exists.
     pub fn add_declaration(&mut self, declaration: Declaration<'db>) -> Result<(), Error<'db>> {
-        self.check_name(&declaration.name)?;
-        self.declarations.insert(declaration.name, declaration);
+        if self.contains(&declaration.name) {
+            return Err(Error::AlreadyDefined(declaration.name));
+        }
+        self.declarations.push(declaration);
         Ok(())
     }
 
+    /// Add a constant declaration to the module.
     pub fn add_constant(
         &mut self,
         name: ConstantId<'db>,
@@ -128,6 +139,7 @@ impl<'db> Environment<'db> {
         self.add_declaration(declaration)
     }
 
+    /// Add a type constructor declaration to the module.
     pub fn add_type_constructor(
         &mut self,
         name: ConstantId<'db>,
@@ -137,6 +149,7 @@ impl<'db> Environment<'db> {
         self.add_declaration(declaration)
     }
 
+    /// Add a data constructor declaration to the module.
     pub fn add_data_constructor(
         &mut self,
         name: ConstantId<'db>,

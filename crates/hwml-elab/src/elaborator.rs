@@ -329,7 +329,7 @@ pub fn elab_def<'db>(
 pub fn go<'db>(
     db: &'db dyn salsa::Database,
     program: surface::Program,
-) -> Result<Vec<decl::Declaration<'db>>> {
+) -> Result<decl::Module<'db>> {
     let mut state = State::new();
 
     let mut declarations = Vec::new();
@@ -343,7 +343,7 @@ pub fn go<'db>(
     for constraint in state.constraints {
         println!("constraint: {:?}", constraint);
     }
-    Ok(declarations)
+    Ok(decl::Module::from_declarations(declarations))
 }
 
 pub fn infer_match<'db>(

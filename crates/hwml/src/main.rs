@@ -32,12 +32,12 @@ fn main() {
     println!("Program: {program:?}");
     let db = hwml_core::Database::new();
     let elab_result = hwml_elab::go(&db, program);
-    let Ok(declarations) = elab_result else {
+    let Ok(module) = elab_result else {
         println!("Failed to elaborate");
         return;
     };
     println!("Elaborated:");
-    for decl in declarations {
+    for decl in module.declarations() {
         println!("{decl:?}");
     }
 
