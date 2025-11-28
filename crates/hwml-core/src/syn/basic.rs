@@ -4,7 +4,6 @@ use salsa::Database;
 use std::rc::Rc;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ConstantId<'db>(pub InternedString<'db>);
 
 impl<'db> ConstantId<'db> {
@@ -46,7 +45,6 @@ pub type Ty<'db> = Syntax<'db>;
 
 /// A captured environment.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Closure<'db> {
     /// The environment contains a vector of definitions.
     pub values: Vec<RcSyntax<'db>>,
@@ -75,7 +73,6 @@ impl<'db> Closure<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Syntax<'db> {
     Constant(Constant<'db>),
     Variable(Variable),
@@ -210,7 +207,6 @@ impl<'db> Syntax<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Constant<'db> {
     pub name: ConstantId<'db>,
 }
@@ -234,7 +230,6 @@ impl Variable {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Check<'db> {
     pub ty: RcSyntax<'db>,
     pub term: RcSyntax<'db>,
@@ -247,7 +242,6 @@ impl<'db> Check<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Pi<'db> {
     pub source: RcSyntax<'db>,
     pub target: RcSyntax<'db>,
@@ -260,7 +254,6 @@ impl<'db> Pi<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Lambda<'db> {
     pub body: RcSyntax<'db>,
 }
@@ -272,7 +265,6 @@ impl<'db> Lambda<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Application<'db> {
     pub function: RcSyntax<'db>,
     pub argument: RcSyntax<'db>,
@@ -298,7 +290,6 @@ impl Universe {
 
 // A reference to a metavariable. All metavariables have identity equality.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Metavariable<'db> {
     pub id: MetavariableId,
     pub closure: Closure<'db>,
@@ -311,7 +302,6 @@ impl<'db> Metavariable<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Lift<'db> {
     pub tm: RcSyntax<'db>,
 }
@@ -323,7 +313,6 @@ impl<'db> Lift<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Quote<'db> {
     pub tm: RcHSyntax<'db>,
 }
@@ -335,7 +324,6 @@ impl<'db> Quote<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HArrow<'db> {
     pub source: RcSyntax<'db>,
     pub target: RcSyntax<'db>,
@@ -353,7 +341,6 @@ pub type HTm<'db> = HSyntax<'db>;
 pub type HTy<'db> = HSyntax<'db>;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum HSyntax<'db> {
     HConstant(Constant<'db>),
     HVariable(Variable),
@@ -451,7 +438,6 @@ impl<'db> HSyntax<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HCheck<'db> {
     pub ty: RcHSyntax<'db>,
     pub term: RcHSyntax<'db>,
@@ -464,7 +450,6 @@ impl<'db> HCheck<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HLambda<'db> {
     pub body: RcHSyntax<'db>,
 }
@@ -476,7 +461,6 @@ impl<'db> HLambda<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HApplication<'db> {
     pub function: RcHSyntax<'db>,
     pub argument: RcHSyntax<'db>,
@@ -489,7 +473,6 @@ impl<'db> HApplication<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Splice<'db> {
     pub term: RcSyntax<'db>,
 }
@@ -523,7 +506,6 @@ impl Bit {
 ///
 /// Type annotations should be provided using the Check syntax node to wrap the case expression.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Case<'db> {
     /// The branches of the case tree
     pub branches: Vec<CaseBranch<'db>>,
@@ -540,7 +522,6 @@ impl<'db> Case<'db> {
 /// Each branch represents a pattern and the corresponding body.
 /// The pattern can be a constructor pattern, variable pattern, or wildcard.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct CaseBranch<'db> {
     /// The constructor name
     pub constructor: ConstantId<'db>,

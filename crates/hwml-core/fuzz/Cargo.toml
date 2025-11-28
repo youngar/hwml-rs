@@ -30,3 +30,17 @@ path = "fuzz_targets/fuzz_core_parser.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_module_generation"
+path = "fuzz_targets/fuzz_module_generation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_module_arbitrary"
+path = "fuzz_targets/fuzz_module_arbitrary.rs"
+test = false
+doc = false
+bench = false

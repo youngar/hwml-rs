@@ -14,6 +14,16 @@ This fuzzer tests the round-trip property of the Syntax printer and parser:
 
 These issues indicate that the printer and parser are not fully compatible, which is valuable information for improving the implementation.
 
+### `fuzz_module_generation` - Module Operations Testing
+
+This fuzzer tests the Module datatype and its operations:
+1. Generate modules with various types of declarations (constants, type constructors, data constructors)
+2. Test module operations like finding declarations by name
+3. Test module validation and consistency
+4. Test error handling for duplicate declarations
+
+The fuzzer uses manual test data generation based on input bytes to create different module configurations.
+
 ## Running the Fuzzer
 
 ### Prerequisites
@@ -26,12 +36,15 @@ These issues indicate that the printer and parser are not fully compatible, whic
 ```bash
 cd crates/hwml-core/fuzz
 cargo fuzz run fuzz_core_roundtrip
+# or
+cargo fuzz run fuzz_module_generation
 ```
 
 To run for a specific amount of time:
 
 ```bash
 cargo fuzz run fuzz_core_roundtrip -- -max_total_time=60
+cargo fuzz run fuzz_module_generation -- -max_total_time=60
 ```
 
 ## Building Without Running
