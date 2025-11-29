@@ -384,9 +384,8 @@ pub fn infer_match<'db>(
         core::Syntax::universe_rc(UniverseLevel::new(0))
     });
 
-    // Create a case expression and apply it to the scrutinee
-    let case_function = core::Syntax::case_rc(branches);
-    let case_expr = core::Syntax::application_rc(case_function, scrutinee);
+    // Create a case expression with the scrutinee
+    let case_expr = core::Syntax::case_rc(scrutinee, branches);
     Ok((case_expr, result_type))
 }
 
@@ -417,9 +416,8 @@ pub fn check_match<'db>(
         let meta = state.fresh_metavariable();
         Ok(meta)
     } else {
-        // Create a case expression and apply it to the scrutinee
-        let case_function = core::Syntax::case_rc(branches);
-        let case_expr = core::Syntax::application_rc(case_function, scrutinee);
+        // Create a case expression with the scrutinee
+        let case_expr = core::Syntax::case_rc(scrutinee, branches);
         Ok(case_expr)
     }
 }

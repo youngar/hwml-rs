@@ -562,7 +562,9 @@ fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Rc
             }
             Token::Case => {
                 global_state.state().advance_token();
-                Ok(Some(Syntax::case_rc(p_case_branches(global_state)?)))
+                let expr = p_term(global_state)?;
+                let branches = p_case_branches(global_state)?;
+                Ok(Some(Syntax::case_rc(expr, branches)))
             }
             Token::Variable(name) => {
                 global_state.state().advance_token();
@@ -2245,7 +2247,7 @@ mod tests {
     fn test_parse_case_simple() {
         use crate::Database;
         let db = Database::default();
-        let input = "case { @true => @1; @false => @0 }";
+        let input = "case @x { @true => @1; @false => @0 }";
 
         // Debug: let's see what tokens are being generated
         use logos::Logos;
@@ -2264,18 +2266,21 @@ mod tests {
             }
         };
 
-        let expected = Syntax::case_rc(vec![
-            CaseBranch::new(
-                ConstantId::from_str(&db, "true"),
-                0,
-                Syntax::constant_rc(ConstantId::from_str(&db, "1")),
-            ),
-            CaseBranch::new(
-                ConstantId::from_str(&db, "false"),
-                0,
-                Syntax::constant_rc(ConstantId::from_str(&db, "0")),
-            ),
-        ]);
+        let expected = Syntax::case_rc(
+            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            vec![
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "true"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                ),
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "false"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                ),
+            ],
+        );
 
         assert_eq!(parsed, expected);
     }
@@ -2284,7 +2289,7 @@ mod tests {
     fn test_case_print_roundtrip() {
         use crate::Database;
         let db = Database::default();
-        let input = "case { @true => @1; @false => @0 }";
+        let input = "case @x { @true => @1; @false => @0 }";
         let result = parse_syntax(&db, input);
 
         assert!(
@@ -2307,21 +2312,22 @@ mod tests {
         assert!(printed.contains("@false"));
         assert!(printed.contains("@1"));
         assert!(printed.contains("@0"));
-        // Should NOT contain @x since there's no scrutinee in the case expression itself
-        assert!(!printed.contains("@x"));
+        // Should contain @x since it's the scrutinee in the case expression
+        assert!(printed.contains("@x"));
     }
 
     #[test]
     fn test_case_application() {
         use crate::Database;
         let db = Database::default();
-        // Test parsing a case expression applied to a target
-        let input = "(case { @true => @1; @false => @0 }) @x";
+        // Test parsing a case expression with scrutinee
+        let input = "case @x { @true => @1; @false => @0 }";
 
-        let parsed = parse_syntax(&db, input).expect("Failed to parse case application");
+        let parsed = parse_syntax(&db, input).expect("Failed to parse case expression");
 
-        let expected = Syntax::application_rc(
-            Syntax::case_rc(vec![
+        let expected = Syntax::case_rc(
+            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            vec![
                 CaseBranch::new(
                     ConstantId::from_str(&db, "true"),
                     0,
@@ -2332,8 +2338,7 @@ mod tests {
                     0,
                     Syntax::constant_rc(ConstantId::from_str(&db, "0")),
                 ),
-            ]),
-            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            ],
         );
 
         assert_eq!(parsed, expected);
@@ -2345,22 +2350,25 @@ mod tests {
         let db = Database::default();
 
         // Test that we can only parse constructor patterns, not variables or wildcards
-        let input = "case { @true => @1; @false => @0 }";
+        let input = "case @x { @true => @1; @false => @0 }";
 
         let parsed = parse_syntax(&db, input).expect("Failed to parse constructor-only case");
 
-        let expected = Syntax::case_rc(vec![
-            CaseBranch::new(
-                ConstantId::from_str(&db, "true"),
-                0,
-                Syntax::constant_rc(ConstantId::from_str(&db, "1")),
-            ),
-            CaseBranch::new(
-                ConstantId::from_str(&db, "false"),
-                0,
-                Syntax::constant_rc(ConstantId::from_str(&db, "0")),
-            ),
-        ]);
+        let expected = Syntax::case_rc(
+            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            vec![
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "true"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                ),
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "false"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                ),
+            ],
+        );
 
         assert_eq!(parsed, expected);
     }

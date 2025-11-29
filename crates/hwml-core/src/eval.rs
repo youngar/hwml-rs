@@ -77,17 +77,18 @@ fn eval_metavariable<'db>(
 }
 
 fn eval_case<'db>(env: &mut Environment<'db>, case: &Case<'db>) -> Result<Rc<Value<'db>>, Error> {
-    // A case expression without a target evaluates to a function that takes the target
-    // For now, just return a placeholder value
-    // In a full implementation, we would:
-    // 1. Return a closure that captures the case branches
-    // 2. When applied to a target, pattern match on the target value
-    // 3. Find the matching branch and evaluate the branch body
+    // Evaluate the scrutinee expression
+    let scrutinee_value = eval(env, &case.expr)?;
 
-    // TODO: Implement proper case evaluation as a function
-    // For now, return a neutral value (metavariable)
-    let _ = case; // Use the case to avoid unused variable warning
-    todo!("Case evaluation not yet implemented")
+    // TODO: Implement proper pattern matching on the scrutinee value
+    // In a full implementation, we would:
+    // 1. Pattern match on the scrutinee value
+    // 2. Find the matching branch based on the constructor
+    // 3. Bind pattern variables and evaluate the branch body
+
+    // For now, return a placeholder value
+    let _ = (scrutinee_value, &case.branches); // Use the values to avoid unused variable warning
+    todo!("Case evaluation with pattern matching not yet implemented")
 }
 
 fn eval_application<'db>(

@@ -587,6 +587,8 @@ impl<'db> Print for Case<'db> {
     ) -> Result<(), R::Error> {
         p.text("case")?;
         p.space()?;
+        self.expr.print(db, st, p)?;
+        p.space()?;
         p.cgroup(0, |p| {
             p.text("{")?;
             for (i, branch) in self.branches.iter().enumerate() {
@@ -1079,157 +1081,11 @@ mod tests {
         use crate::Database;
         let db = Database::default();
 
-        // Simple case with zero-arity constructors: case { @true => @1; @false => @0 }
+        // Simple case with zero-arity constructors: case @x { @true => @1; @false => @0 }
         assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "true"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
-                ),
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "false"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
-                ),
-            ])),
-            @"case { @true => @1; @false => @0 }"
-        );
-
-        // Single branch case: case { @unit => @42 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "unit"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "42")),
-                ),
-            ])),
-            @"case { @unit => @42 }"
-        );
-
-        // Empty case (edge case): case {  }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![])),
-            @"case { }"
-        );
-    }
-
-    #[test]
-    fn test_print_case_with_arity() {
-        use crate::common::Index;
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
-
-        // Case with arity-1 constructor: case { @some %0 => %0; @none => @42 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "some"),
-                    1,
-                    Syntax::variable_rc(Index(0)), // bound by the pattern
-                ),
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "none"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "42")),
-                ),
-            ])),
-            @"case { @some %0 => %0; @none => @42 }"
-        );
-
-        // Case with arity-2 constructor: case { @pair %0 %1 => %1; @empty => @0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "pair"),
-                    2,
-                    Syntax::variable_rc(Index(0)), // second element of pair (innermost binder)
-                ),
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "empty"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
-                ),
-            ])),
-            @"case { @pair %0 %1 => %1; @empty => @0 }"
-        );
-
-        // Case with arity-3 constructor: case { @triple %0 %1 %2 => %2 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "triple"),
-                    3,
-                    Syntax::variable_rc(Index(0)), // third element (innermost binder)
-                ),
-            ])),
-            @"case { @triple %0 %1 %2 => %2 }"
-        );
-    }
-
-    #[test]
-    fn test_print_case_with_complex_bodies() {
-        use crate::common::{Index, UniverseLevel};
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
-
-        // Case with lambda body: case { @f => λ%0 → %0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "f"),
-                    0,
-                    Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-                ),
-            ])),
-            @"case { @f => λ %0 → %0 }"
-        );
-
-        // Case with application body: case { @app => @f @x }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "app"),
-                    0,
-                    Syntax::application_rc(
-                        Syntax::constant_rc(ConstantId::from_str(&db, "f")),
-                        Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                    ),
-                ),
-            ])),
-            @"case { @app => @f @x }"
-        );
-
-        // Case with check body: case { @check => @42 : 𝒰0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "check"),
-                    0,
-                    Syntax::check_rc(
-                        Syntax::universe_rc(UniverseLevel::new(0)),
-                        Syntax::constant_rc(ConstantId::from_str(&db, "42")),
-                    ),
-                ),
-            ])),
-            @"case { @check => @42 : 𝒰0 }"
-        );
-    }
-
-    #[test]
-    fn test_print_case_in_context() {
-        use crate::common::Index;
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
-
-        // Case applied to an argument: (case { @true => @1; @false => @0 }) @x
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::application(
-                Syntax::case_rc(vec![
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "true"),
                         0,
@@ -1240,47 +1096,229 @@ mod tests {
                         0,
                         Syntax::constant_rc(ConstantId::from_str(&db, "0")),
                     ),
-                ]),
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                ],
             )),
-            @"case { @true => @1; @false => @0 } @x"
+            @"case @x { @true => @1; @false => @0 }"
         );
 
-        // Nested case: case { @outer => case { @inner => @42 } }
+        // Single branch case: case @x { @unit => @42 }
         assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "outer"),
-                    0,
-                    Syntax::case_rc(vec![
-                        CaseBranch::new(
-                            ConstantId::from_str(&db, "inner"),
-                            0,
-                            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
-                        ),
-                    ]),
-                ),
-            ])),
-            @"case { @outer => case { @inner => @42 } }"
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "unit"),
+                        0,
+                        Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                    ),
+                ],
+            )),
+            @"case @x { @unit => @42 }"
         );
 
-        // Case in lambda: λ%0 → case { @some %1 => %1; @none => !1 }
+        // Empty case (edge case): case @x { }
         assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(
-                Syntax::case_rc(vec![
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![],
+            )),
+            @"case @x { }"
+        );
+    }
+
+    #[test]
+    fn test_print_case_with_arity() {
+        use crate::common::Index;
+        use crate::syn::{CaseBranch, ConstantId, Syntax};
+        use crate::Database;
+        let db = Database::default();
+
+        // Case with arity-1 constructor: case @x { @some %0 => %0; @none => @42 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "some"),
                         1,
-                        Syntax::variable_rc(Index(0)), // bound by pattern (innermost)
+                        Syntax::variable_rc(Index(0)), // bound by the pattern
                     ),
                     CaseBranch::new(
                         ConstantId::from_str(&db, "none"),
                         0,
-                        Syntax::variable_rc(Index(1)), // bound by lambda (outer scope)
+                        Syntax::constant_rc(ConstantId::from_str(&db, "42")),
                     ),
-                ]),
+                ],
             )),
-            @"λ %0 → case { @some %1 => %1; @none => !0 }"
+            @"case @x { @some %0 => %0; @none => @42 }"
+        );
+
+        // Case with arity-2 constructor: case @x { @pair %0 %1 => %1; @empty => @0 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "pair"),
+                        2,
+                        Syntax::variable_rc(Index(0)), // second element of pair (innermost binder)
+                    ),
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "empty"),
+                        0,
+                        Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                    ),
+                ],
+            )),
+            @"case @x { @pair %0 %1 => %1; @empty => @0 }"
+        );
+
+        // Case with arity-3 constructor: case @x { @triple %0 %1 %2 => %2 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "triple"),
+                        3,
+                        Syntax::variable_rc(Index(0)), // third element (innermost binder)
+                    ),
+                ],
+            )),
+            @"case @x { @triple %0 %1 %2 => %2 }"
+        );
+    }
+
+    #[test]
+    fn test_print_case_with_complex_bodies() {
+        use crate::common::{Index, UniverseLevel};
+        use crate::syn::{CaseBranch, ConstantId, Syntax};
+        use crate::Database;
+        let db = Database::default();
+
+        // Case with lambda body: case @x { @f => λ%0 → %0 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "f"),
+                        0,
+                        Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+                    ),
+                ],
+            )),
+            @"case @x { @f => λ %0 → %0 }"
+        );
+
+        // Case with application body: case @x { @app => @f @x }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "app"),
+                        0,
+                        Syntax::application_rc(
+                            Syntax::constant_rc(ConstantId::from_str(&db, "f")),
+                            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                        ),
+                    ),
+                ],
+            )),
+            @"case @x { @app => @f @x }"
+        );
+
+        // Case with check body: case @x { @check => @42 : 𝒰0 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "check"),
+                        0,
+                        Syntax::check_rc(
+                            Syntax::universe_rc(UniverseLevel::new(0)),
+                            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                        ),
+                    ),
+                ],
+            )),
+            @"case @x { @check => @42 : 𝒰0 }"
+        );
+    }
+
+    #[test]
+    fn test_print_case_in_context() {
+        use crate::common::Index;
+        use crate::syn::{CaseBranch, ConstantId, Syntax};
+        use crate::Database;
+        let db = Database::default();
+
+        // Case with scrutinee: case @y { @true => @1; @false => @0 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "y")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "true"),
+                        0,
+                        Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                    ),
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "false"),
+                        0,
+                        Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                    ),
+                ],
+            )),
+            @"case @y { @true => @1; @false => @0 }"
+        );
+
+        // Nested case: case @x { @outer => case @y { @inner => @42 } }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::case(
+                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                vec![
+                    CaseBranch::new(
+                        ConstantId::from_str(&db, "outer"),
+                        0,
+                        Syntax::case_rc(
+                            Syntax::constant_rc(ConstantId::from_str(&db, "y")),
+                            vec![
+                                CaseBranch::new(
+                                    ConstantId::from_str(&db, "inner"),
+                                    0,
+                                    Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            )),
+            @"case @x { @outer => case @y { @inner => @42 } }"
+        );
+
+        // Case in lambda: λ%0 → case @x { @some %1 => %1; @none => !1 }
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::lambda(
+                Syntax::case_rc(
+                    Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                    vec![
+                        CaseBranch::new(
+                            ConstantId::from_str(&db, "some"),
+                            1,
+                            Syntax::variable_rc(Index(0)), // bound by pattern (innermost)
+                        ),
+                        CaseBranch::new(
+                            ConstantId::from_str(&db, "none"),
+                            0,
+                            Syntax::variable_rc(Index(1)), // bound by lambda (outer scope)
+                        ),
+                    ],
+                ),
+            )),
+            @"λ %0 → case @x { @some %1 => %1; @none => !0 }"
         );
     }
 }

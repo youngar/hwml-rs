@@ -197,12 +197,12 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::bit())
     }
 
-    pub fn case(branches: Vec<CaseBranch<'db>>) -> Syntax<'db> {
-        Syntax::Case(Case::new(branches))
+    pub fn case(expr: RcSyntax<'db>, branches: Vec<CaseBranch<'db>>) -> Syntax<'db> {
+        Syntax::Case(Case::new(expr, branches))
     }
 
-    pub fn case_rc(branches: Vec<CaseBranch<'db>>) -> RcSyntax<'db> {
-        Rc::new(Syntax::case(branches))
+    pub fn case_rc(expr: RcSyntax<'db>, branches: Vec<CaseBranch<'db>>) -> RcSyntax<'db> {
+        Rc::new(Syntax::case(expr, branches))
     }
 }
 
@@ -497,23 +497,21 @@ impl Bit {
 
 /// A case tree for pattern matching.
 ///
-/// Case trees are an intermediate representation between surface-level pattern matching
-/// and eliminators. They represent pattern matching as a tree structure.
-///
-/// A case expression is a function that takes a target to match on and returns the result
-/// of the appropriate branch. The case expression should be applied to its target:
-/// `(case { branches }) target`
+/// A case expression contains both the expression being matched (scrutinee) and the branches
+/// that define the pattern matching behavior.
 ///
 /// Type annotations should be provided using the Check syntax node to wrap the case expression.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Case<'db> {
+    /// The expression being matched on (scrutinee)
+    pub expr: RcSyntax<'db>,
     /// The branches of the case tree
     pub branches: Vec<CaseBranch<'db>>,
 }
 
 impl<'db> Case<'db> {
-    pub fn new(branches: Vec<CaseBranch<'db>>) -> Case<'db> {
-        Case { branches }
+    pub fn new(expr: RcSyntax<'db>, branches: Vec<CaseBranch<'db>>) -> Case<'db> {
+        Case { expr, branches }
     }
 }
 
