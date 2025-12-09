@@ -3,6 +3,7 @@ pub mod common;
 pub mod declaration;
 pub mod environment;
 pub mod eval;
+pub mod examples;
 pub mod quote;
 pub mod symbol;
 pub mod syn;

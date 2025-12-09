@@ -82,11 +82,13 @@ pub enum Syntax<'db> {
     Application(Application<'db>),
     Universe(Universe),
     Metavariable(Metavariable<'db>),
+    TypeConstructor(TypeConstructor<'db>),
+    DataConstructor(DataConstructor<'db>),
+    Case(Case<'db>),
     Lift(Lift<'db>),
     Quote(Quote<'db>),
     HArrow(HArrow<'db>),
     Bit(Bit),
-    Case(Case<'db>),
 }
 
 impl<'db> Syntax<'db> {
@@ -197,12 +199,45 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::bit())
     }
 
-    pub fn case(expr: RcSyntax<'db>, branches: Vec<CaseBranch<'db>>) -> Syntax<'db> {
-        Syntax::Case(Case::new(expr, branches))
+    pub fn type_constructor(name: ConstantId<'db>, arguments: Vec<RcSyntax<'db>>) -> Syntax<'db> {
+        Syntax::TypeConstructor(TypeConstructor::new(name, arguments))
     }
 
-    pub fn case_rc(expr: RcSyntax<'db>, branches: Vec<CaseBranch<'db>>) -> RcSyntax<'db> {
-        Rc::new(Syntax::case(expr, branches))
+    pub fn type_constructor_rc(
+        name: ConstantId<'db>,
+        arguments: Vec<RcSyntax<'db>>,
+    ) -> RcSyntax<'db> {
+        Rc::new(Syntax::type_constructor(name, arguments))
+    }
+
+    pub fn data_constructor(
+        constructor: ConstantId<'db>,
+        arguments: Vec<RcSyntax<'db>>,
+    ) -> Syntax<'db> {
+        Syntax::DataConstructor(DataConstructor::new(constructor, arguments))
+    }
+
+    pub fn data_constructor_rc(
+        constructor: ConstantId<'db>,
+        arguments: Vec<RcSyntax<'db>>,
+    ) -> RcSyntax<'db> {
+        Rc::new(Syntax::data_constructor(constructor, arguments))
+    }
+
+    pub fn case(
+        expr: RcSyntax<'db>,
+        motive: RcSyntax<'db>,
+        branches: Vec<CaseBranch<'db>>,
+    ) -> Syntax<'db> {
+        Syntax::Case(Case::new(expr, motive, branches))
+    }
+
+    pub fn case_rc(
+        expr: RcSyntax<'db>,
+        motive: RcSyntax<'db>,
+        branches: Vec<CaseBranch<'db>>,
+    ) -> RcSyntax<'db> {
+        Rc::new(Syntax::case(expr, motive, branches))
     }
 }
 
@@ -495,6 +530,54 @@ impl Bit {
     }
 }
 
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+pub struct TypeConstructor<'db> {
+    pub constructor: ConstantId<'db>,
+    pub arguments: Vec<RcSyntax<'db>>,
+}
+
+impl<'db> TypeConstructor<'db> {
+    pub fn new(
+        constructor: ConstantId<'db>,
+        arguments: Vec<RcSyntax<'db>>,
+    ) -> TypeConstructor<'db> {
+        TypeConstructor {
+            constructor,
+            arguments,
+        }
+    }
+}
+
+/// A data constructor application in the syntax.
+///
+/// This represents the application of a data constructor to its arguments.
+/// For example, `Cons(x, xs)` would be represented as:
+/// ```ignore
+/// DataConstructor {
+///     constructor: ConstantId("Cons"),
+///     arguments: vec![x_syntax, xs_syntax]
+/// }
+/// ```
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+pub struct DataConstructor<'db> {
+    /// The constructor constant id
+    pub constructor: ConstantId<'db>,
+    /// The argument expressions for this constructor application
+    pub arguments: Vec<RcSyntax<'db>>,
+}
+
+impl<'db> DataConstructor<'db> {
+    pub fn new(
+        constructor: ConstantId<'db>,
+        arguments: Vec<RcSyntax<'db>>,
+    ) -> DataConstructor<'db> {
+        DataConstructor {
+            constructor,
+            arguments,
+        }
+    }
+}
+
 /// A case tree for pattern matching.
 ///
 /// A case expression contains both the expression being matched (scrutinee) and the branches
@@ -505,13 +588,23 @@ impl Bit {
 pub struct Case<'db> {
     /// The expression being matched on (scrutinee)
     pub expr: RcSyntax<'db>,
+    /// An expression which computes the resulting type of the case expression.
+    pub motive: RcSyntax<'db>,
     /// The branches of the case tree
     pub branches: Vec<CaseBranch<'db>>,
 }
 
 impl<'db> Case<'db> {
-    pub fn new(expr: RcSyntax<'db>, branches: Vec<CaseBranch<'db>>) -> Case<'db> {
-        Case { expr, branches }
+    pub fn new(
+        expr: RcSyntax<'db>,
+        motive: RcSyntax<'db>,
+        branches: Vec<CaseBranch<'db>>,
+    ) -> Case<'db> {
+        Case {
+            expr,
+            motive,
+            branches,
+        }
     }
 }
 

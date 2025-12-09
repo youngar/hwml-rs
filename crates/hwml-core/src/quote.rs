@@ -1,8 +1,8 @@
-use crate::common::{Index, Level};
+use crate::common::Level;
 use crate::eval;
-use crate::syn::{RcSyntax, Syntax};
+use crate::syn::{Case, CaseBranch, RcSyntax, Syntax};
 use crate::val;
-use crate::val::{Closure, Neutral, Normal, Value};
+use crate::val::{GlobalEnv, Neutral, Normal, Value};
 use std::rc::Rc;
 
 /// A quotation error.
@@ -11,7 +11,8 @@ pub enum Error {
     /// Something about the input was ill-typed, preventing quotation.
     IllTyped,
     /// Quotation can force evaluation, which may itself prevent an error.
-    Eval(eval::Error),
+    EvalError(eval::Error),
+    LookupError(val::LookupError),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -19,10 +20,11 @@ type Result<T> = std::result::Result<T, Error>;
 /// Read a normal (value * type) back into syntax. The resulting syntax is in normal form.
 pub fn quote_normal<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     normal: &Normal<'db>,
 ) -> Result<RcSyntax<'db>> {
-    quote(db, depth, &normal.ty, &normal.value)
+    quote(db, global, depth, &normal.ty, &normal.value)
 }
 
 /// Read a value back into syntax. The resulting syntax is in normal form.
@@ -30,14 +32,16 @@ pub fn quote_normal<'db>(
 /// semantic domain to a syntactic normal form.
 pub fn quote<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     ty: &Value<'db>,
     value: &Value<'db>,
 ) -> Result<RcSyntax<'db>> {
     match ty {
-        Value::Pi(pi) => quote_pi_instance(db, depth, pi, value),
-        Value::Universe(universe) => quote_universe_instance(db, depth, universe, value),
-        Value::Neutral(_, neutral) => quote_neutral_instance(db, depth, neutral, value),
+        Value::Pi(pi) => quote_pi_instance(db, global, depth, pi, value),
+        Value::Universe(universe) => quote_universe_instance(db, global, depth, universe, value),
+        Value::TypeConstructor(tc) => quote_type_constructor_instance(db, global, depth, tc, value),
+        Value::Neutral(_, neutral) => quote_neutral_instance(db, global, depth, neutral, value),
         _ => Err(Error::IllTyped),
     }
 }
@@ -45,6 +49,7 @@ pub fn quote<'db>(
 /// Read an instance of a pi type back to syntax.
 fn quote_pi_instance<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     ty: &val::Pi<'db>,
     value: &Value<'db>,
@@ -53,19 +58,19 @@ fn quote_pi_instance<'db>(
     let var = Rc::new(Value::variable(ty.source.clone(), Level::new(depth)));
 
     // Compute the body type by substituting the variable into the target type.
-    let body_ty = match eval::run_closure(&ty.target, [var.clone()]) {
+    let body_ty = match eval::run_closure(global, &ty.target, [var.clone()]) {
         Ok(body_ty) => body_ty,
-        Err(error) => return Err(Error::Eval(error)),
+        Err(error) => return Err(Error::EvalError(error)),
     };
 
     // Compute the body value. This will error if the value is not a lambda.
-    let body = match eval::run_application(value, var) {
+    let body = match eval::run_application(global, value, var) {
         Ok(body_ty) => body_ty,
-        Err(eval_error) => return Err(Error::Eval(eval_error)),
+        Err(eval_error) => return Err(Error::EvalError(eval_error)),
     };
 
     // Now quote the body back to syntax.
-    let body_stx = quote(db, depth + 1, &body_ty, &body)?;
+    let body_stx = quote(db, global, depth + 1, &body_ty, &body)?;
 
     // Build and return the lambda.
     let lam = Syntax::lambda(body_stx);
@@ -75,16 +80,35 @@ fn quote_pi_instance<'db>(
 /// Read an instance of a universe back to syntax.
 fn quote_universe_instance<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     _: &val::Universe,
     value: &Value<'db>,
 ) -> Result<RcSyntax<'db>> {
-    quote_type(db, depth, value)
+    quote_type(db, global, depth, value)
+}
+
+/// Read an instance of a datatype back to syntax.
+fn quote_type_constructor_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    ty: &val::TypeConstructor,
+    value: &Value<'db>,
+) -> Result<RcSyntax<'db>> {
+    match value {
+        Value::DataConstructor(data_constructor) => {
+            quote_data_constructor(db, global, depth, ty, data_constructor)
+        }
+        Value::Neutral(_, neutral) => quote_neutral(db, global, depth, neutral),
+        _ => Err(Error::IllTyped),
+    }
 }
 
 /// Read an instance of some neutral type back to syntax.
 fn quote_neutral_instance<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     _: &val::Neutral<'db>,
     value: &Value<'db>,
@@ -93,7 +117,7 @@ fn quote_neutral_instance<'db>(
     // then we would know the type. EG if the value was headed by a lambda, we could
     // know that the type was a pi.
     match value {
-        Value::Neutral(_ty, neutral) => quote_neutral(db, depth, neutral),
+        Value::Neutral(_ty, neutral) => quote_neutral(db, global, depth, neutral),
         _ => Err(Error::IllTyped),
     }
 }
@@ -101,13 +125,15 @@ fn quote_neutral_instance<'db>(
 /// Read back a type in the semantic domain into a syntactic type.
 pub fn quote_type<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
 ) -> Result<RcSyntax<'db>> {
     match value {
-        Value::Pi(pi) => quote_pi(db, depth, pi),
+        Value::Pi(pi) => quote_pi(db, global, depth, pi),
+        Value::TypeConstructor(tc) => quote_type_constructor(db, global, depth, tc),
         Value::Universe(universe) => quote_universe(db, depth, universe),
-        Value::Neutral(_ty, neutral) => quote_neutral(db, depth, neutral),
+        Value::Neutral(_ty, neutral) => quote_neutral(db, global, depth, neutral),
         _ => Err(Error::IllTyped),
     }
 }
@@ -115,24 +141,61 @@ pub fn quote_type<'db>(
 // Read a pi back to syntax.
 fn quote_pi<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     sem_pi: &val::Pi<'db>,
 ) -> Result<RcSyntax<'db>> {
     // Read back the source type.
     let sem_source_ty = &sem_pi.source;
-    let syn_source_ty = quote_type(db, depth, sem_source_ty)?;
+    let syn_source_ty = quote_type(db, global, depth, sem_source_ty)?;
 
     // Read back the target type.
     let var = Rc::new(Value::variable(sem_pi.source.clone(), Level::new(depth)));
-    let sem_target_ty = match eval::run_closure(&sem_pi.target, [var]) {
+    let sem_target_ty = match eval::run_closure(global, &sem_pi.target, [var]) {
         Ok(ty) => ty,
-        Err(error) => return Err(Error::Eval(error)),
+        Err(error) => return Err(Error::EvalError(error)),
     };
-    let syn_target_ty = quote_type(db, depth + 1, &sem_target_ty)?;
+    let syn_target_ty = quote_type(db, global, depth + 1, &sem_target_ty)?;
 
     // Return the syntactic pi.
     let syn_pi = Syntax::pi(syn_source_ty, syn_target_ty);
     Ok(Rc::new(syn_pi))
+}
+
+/// Read a data constructor instance back to syntax.
+fn quote_type_constructor<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    sem_tcon: &val::TypeConstructor<'db>,
+) -> Result<RcSyntax<'db>> {
+    // Start with the constructor constant
+    let constructor = sem_tcon.constructor;
+
+    // Look up the type info.
+    let type_info = global
+        .type_constructor(constructor)
+        .map_err(Error::LookupError)?
+        .clone();
+
+    // Quote each argument.
+    let mut arguments = Vec::new();
+    let mut current_ty = type_info.ty;
+    for sem_arg in &sem_tcon.arguments {
+        // Cast the current type into a pi. As long as we have more arguments, it should always be a pi.
+        let val::Value::Pi(current_pi) = current_ty.as_ref() else {
+            return Err(Error::IllTyped);
+        };
+
+        // Quote the current argument
+        let syn_arg = quote(db, global, depth, &current_pi.source, &sem_arg)?;
+        arguments.push(syn_arg);
+
+        // Compute the next type.
+        current_ty = eval::run_closure(global, &current_pi.target, [sem_arg.clone()])
+            .map_err(Error::EvalError)?;
+    }
+    Ok(Syntax::type_constructor_rc(constructor, arguments))
 }
 
 /// Read a universe back to syntax.
@@ -149,13 +212,51 @@ fn quote_universe<'db>(
 /// Read a neutral term back to syntax.
 fn quote_neutral<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     neutral: &val::Neutral<'db>,
 ) -> Result<RcSyntax<'db>> {
     match neutral {
         Neutral::Variable(var) => quote_variable(db, depth, var),
-        Neutral::Application(app) => quote_application(db, depth, app),
+        Neutral::Application(app) => quote_application(db, global, depth, app),
+        Neutral::Case(case) => quote_case(db, global, depth, case),
     }
+}
+
+/// Read a data constructor instance back to syntax.
+fn quote_data_constructor<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    _ty: &val::TypeConstructor,
+    sem_data: &val::DataConstructor<'db>,
+) -> Result<RcSyntax<'db>> {
+    // Start with the constructor constant
+    let constructor = sem_data.constructor;
+
+    // Look up the data constructor info.
+    let data_info = global
+        .data_constructor(constructor)
+        .map_err(Error::LookupError)?;
+
+    // Quote each argument.
+    let mut arguments = Vec::new();
+    let mut current_ty = data_info.ty.clone();
+    for sem_arg in &sem_data.arguments {
+        // Cast the current type into a pi. As long as we have more arguments, it should always be a pi.
+        let val::Value::Pi(current_pi) = current_ty.as_ref() else {
+            return Err(Error::IllTyped);
+        };
+
+        // Quote the current argument
+        let syn_arg = quote(db, global, depth, &current_pi.source, &sem_arg)?;
+        arguments.push(syn_arg);
+
+        // Compute the next type.
+        current_ty = eval::run_closure(global, &current_pi.target, [sem_arg.clone()])
+            .map_err(Error::EvalError)?;
+    }
+    Ok(Syntax::data_constructor_rc(constructor, arguments))
 }
 
 /// Read a variable back to syntax.
@@ -172,18 +273,43 @@ fn quote_variable<'db>(
 /// Read a stuck application back to syntax.
 fn quote_application<'db>(
     db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
     depth: usize,
     sem_app: &val::Application<'db>,
 ) -> Result<RcSyntax<'db>> {
     // Read back the function.
     let sem_fun = &sem_app.function;
-    let syn_fun = quote_neutral(db, depth, &sem_fun)?;
+    let syn_fun = quote_neutral(db, global, depth, &sem_fun)?;
 
     // Read back the argument.
     let sem_arg = &sem_app.argument;
-    let syn_arg = quote_normal(db, depth, &sem_arg)?;
+    let syn_arg = quote_normal(db, global, depth, &sem_arg)?;
 
     // Return the syntactic application.
     let syn_app = Syntax::application(syn_fun, syn_arg);
     Ok(Rc::new(syn_app))
+}
+
+fn quote_case<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    sem_case: &val::Case<'db>,
+) -> Result<RcSyntax<'db>> {
+    // Read back the scrutinee expression.
+    let sem_scrutinee = &sem_case.scrutinee;
+    let syn_scrutinee = quote_neutral(db, global, depth, &sem_scrutinee)?;
+
+    let sem_motive = &sem_case.motive;
+    let syn_motive = quote_type(db, global, depth + 1, &sem_motive)?;
+
+    let syn_branches = sem_case
+        .branches
+        .iter()
+        .map(|branch| {
+            quote_normal(db, global, depth + branch.arity, &branch.body)
+                .map(|body| CaseBranch::new(branch.constructor, branch.arity, body))
+        })
+        .collect::<Result<_>>()?;
+    Ok(Syntax::case_rc(syn_scrutinee, syn_motive, syn_branches))
 }

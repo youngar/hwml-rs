@@ -13,6 +13,12 @@ const LAMBDA_LHS: Option<usize> = NO_PREC;
 const LAMBDA_RHS: Option<usize> = Some(3);
 const APP_LHS: Option<usize> = Some(4);
 const APP_RHS: Option<usize> = Some(5);
+const TCON_APP_LHS: Option<usize> = APP_LHS;
+const TCON_APP_RHS: Option<usize> = APP_RHS;
+const DCON_APP_LHS: Option<usize> = APP_LHS;
+const DCON_APP_RHS: Option<usize> = APP_RHS;
+const CASE_LHS: Option<usize> = APP_LHS;
+const CASE_RHS: Option<usize> = NO_PREC;
 const LIFT_LHS: Option<usize> = NO_PREC;
 const LIFT_RHS: Option<usize> = Some(5);
 const QUOTE_LHS: Option<usize> = NO_PREC;
@@ -122,6 +128,19 @@ where
     x.print(db, st.set_lhs_prec(rhs_prec), p)
 }
 
+fn print_internal<F, R>(
+    db: &dyn salsa::Database,
+    st: State,
+    p: &mut Printer<R>,
+    f: F,
+) -> Result<(), R::Error>
+where
+    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    R: Render,
+{
+    f(st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)
+}
+
 fn print_internal_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
@@ -170,11 +189,63 @@ where
     }
 }
 
+impl<'db> Print for ConstantId<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        let name = self.name(db);
+        p.text_owned(&format!("@{}", name))
+    }
+}
+
 fn print_binder<R>(st: State, p: &mut Printer<R>) -> Result<(), R::Error>
 where
     R: Render,
 {
     p.text_owned(format!("%{}", st.depth))
+}
+
+fn print_binders<R>(st: State, p: &mut Printer<R>, n: usize) -> Result<(), R::Error>
+where
+    R: Render,
+{
+    if n == 0 {
+        return Ok(());
+    }
+    print_binder(st, p)?;
+    for _i in 0..n - 1 {
+        p.space()?;
+        print_binder(st, p)?;
+    }
+    Ok(())
+}
+
+fn print_case_branch<'db, R>(
+    db: &dyn salsa::Database,
+    st: State,
+    p: &mut Printer<R>,
+    branch: &CaseBranch<'db>,
+) -> Result<(), R::Error>
+where
+    R: Render,
+{
+    branch.constructor.print(db, st, p)?;
+
+    // Print the pattern variables and increment depth for each
+    let mut st = st;
+    for _i in 0..branch.arity {
+        p.space()?;
+        print_binder(st, p)?;
+        st = st.inc_depth();
+    }
+
+    p.space()?;
+    p.text("=>")?;
+    p.space()?;
+    print_internal_subterm(db, st, p, &*branch.body)
 }
 
 impl<'db> Print for Closure<'db> {
@@ -216,11 +287,13 @@ impl<'db> Print for Syntax<'db> {
             Syntax::Application(app) => app.print(db, st, p),
             Syntax::Universe(uni) => uni.print(db, st, p),
             Syntax::Metavariable(meta) => meta.print(db, st, p),
+            Syntax::TypeConstructor(type_constructor) => type_constructor.print(db, st, p),
+            Syntax::DataConstructor(data_constructor) => data_constructor.print(db, st, p),
+            Syntax::Case(case) => case.print(db, st, p),
             Syntax::Lift(lift) => lift.print(db, st, p),
             Syntax::Quote(quote) => quote.print(db, st, p),
             Syntax::HArrow(harrow) => harrow.print(db, st, p),
             Syntax::Bit(bit) => bit.print(db, st, p),
-            Syntax::Case(case) => case.print(db, st, p),
         }
     }
 }
@@ -229,11 +302,10 @@ impl<'db> Print for Constant<'db> {
     fn print<R: Render>(
         &self,
         db: &dyn salsa::Database,
-        _st: State,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        let name = self.name.name(db);
-        p.text_owned(&format!("@{}", name))
+        self.name.print(db, st, p)
     }
 }
 
@@ -585,20 +657,32 @@ impl<'db> Print for Case<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("case")?;
-        p.space()?;
-        self.expr.print(db, st, p)?;
-        p.space()?;
-        p.cgroup(0, |p| {
-            p.text("{")?;
-            for (i, branch) in self.branches.iter().enumerate() {
-                if i > 0 {
-                    p.text(";")?;
-                }
-                p.space()?;
-                branch.print(db, st, p)?;
-            }
+        with_prec(st, p, CASE_LHS, CASE_RHS, |st, p| {
+            print_left_subterm(db, st, p, &*self.expr, CASE_LHS)?;
             p.space()?;
+            p.text("case")?;
+            p.space()?;
+            print_binder(st, p)?;
+            p.space()?;
+            p.text("→")?;
+            p.space()?;
+            print_internal_subterm(db, st.inc_depth(), p, &*self.motive)?;
+            p.space()?;
+            p.text("{")?;
+            p.cgroup(0, |p| {
+                p.space()?;
+                if let Some((first, rest)) = self.branches.split_first() {
+                    print_case_branch(db, st, p, first)?;
+                    p.space()?;
+                    for branch in rest {
+                        p.text("|")?;
+                        p.space()?;
+                        print_case_branch(db, st, p, branch)?;
+                        p.space()?;
+                    }
+                }
+                Ok(())
+            })?;
             p.text("}")
         })
     }
@@ -611,22 +695,56 @@ impl<'db> Print for CaseBranch<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        // Print the constructor name
-        let name = self.constructor.name(db);
-        p.text_owned(&format!("@{}", name))?;
+        print_case_branch(db, st, p, self)
+    }
+}
 
-        // Print the pattern variables
-        let mut st = st;
-        for _i in 0..self.arity {
+fn print_constructor<'db, R: Render>(
+    db: &dyn salsa::Database,
+    st: State,
+    p: &mut Printer<R>,
+    sigil: &'static str,
+    constructor: ConstantId<'db>,
+    arguments: &[RcSyntax<'db>],
+) -> Result<(), R::Error> {
+    p.cgroup(0, |p| {
+        p.text(sigil)?;
+        p.text("[");
+        constructor.print(db, st, p)?;
+        if let Some((last, rest)) = arguments.split_last() {
+            let st = st.set_lhs_prec(DCON_APP_RHS);
+            let ist = st.set_rhs_prec(DCON_APP_LHS);
+            for arg in rest {
+                p.space()?;
+                arg.print(db, ist, p)?;
+            }
             p.space()?;
-            print_binder(st, p)?;
-            st = st.inc_depth();
+            last.print(db, st, p)?;
         }
+        p.text("]");
+        Ok(())
+    })
+}
 
-        p.space()?;
-        p.text("=>")?;
-        p.space()?;
-        print_internal_subterm(db, st, p, &*self.body)
+impl<'db> Print for TypeConstructor<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        print_constructor(db, st, p, "#", self.constructor, &self.arguments)
+    }
+}
+
+impl<'db> Print for DataConstructor<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        print_constructor(db, st, p, "", self.constructor, &self.arguments)
     }
 }
 
@@ -757,6 +875,36 @@ mod tests {
                 Syntax::metavariable_rc(MetavariableId(0), Closure::new())
             )),
             @"?0 ?0"
+        );
+
+        // Data constructor with no arguments: @Nil
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::data_constructor(
+                ConstantId::from_str(&db, "Nil"),
+                vec![]
+            )),
+            @"[@Nil]"
+        );
+
+        // Data constructor with one lambda argument.
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::data_constructor(
+                ConstantId::from_str(&db, "Nil"),
+                vec![Syntax::lambda_rc(Syntax::variable_rc(Index(0)))]
+            )),
+            @"[@Nil λ %0 → %0]"
+        );
+
+        // Data constructor with multiple lambda arguments.
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::data_constructor(
+                ConstantId::from_str(&db, "Cons"),
+                vec![
+                    Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+                    Syntax::lambda_rc(Syntax::variable_rc(Index(0)))
+                ]
+            )),
+            @"[@Cons (λ %0 → %0) λ %0 → %0]"
         );
 
         // Complex expression with three metavariables: (?0 ?1) ?2
@@ -1076,6 +1224,42 @@ mod tests {
     }
 
     #[test]
+    fn test_print_data_constructors() {
+        use crate::syn::{ConstantId, Syntax};
+        use crate::Database;
+        let db = Database::default();
+
+        // Data constructor with no arguments: @Nil
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::data_constructor(
+                ConstantId::from_str(&db, "Nil"),
+                vec![]
+            )),
+            @"[@Nil]"
+        );
+
+        // Data constructor with one argument: [@Nil (λ %0 → λ %0 → %0]
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::data_constructor(
+                ConstantId::from_str(&db, "Some"),
+                vec![Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(0))))]
+            )),
+            @"[@Some λ %0 %1 → %1]"
+        );
+
+        assert_snapshot!(
+            print_syntax_to_string(&db, &Syntax::data_constructor(
+                ConstantId::from_str(&db, "Pair"),
+                vec![
+                    Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+                    Syntax::lambda_rc(Syntax::variable_rc(Index(0)))
+                ]
+            )),
+            @"[@Pair (λ %0 → %0) λ %0 → %0]"
+        );
+    }
+
+    #[test]
     fn test_print_case_expressions() {
         use crate::syn::{CaseBranch, ConstantId, Syntax};
         use crate::Database;
@@ -1085,6 +1269,7 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            Syntax::constant_from_str_rc(&db, "Nat"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "true"),
@@ -1098,13 +1283,14 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @true => @1; @false => @0 }"
+            @"@x case %0 → @Nat { @true => @1 | @false => @0 }"
         );
 
         // Single branch case: case @x { @unit => @42 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Nat"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "unit"),
@@ -1113,16 +1299,17 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @unit => @42 }"
+            @"@x case %0 → @Nat { @unit => @42 }"
         );
 
         // Empty case (edge case): case @x { }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "False"),
                 vec![],
             )),
-            @"case @x { }"
+            @"@x case %0 → @False { }"
         );
     }
 
@@ -1137,6 +1324,7 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Nat"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "some"),
@@ -1150,13 +1338,14 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @some %0 => %0; @none => @42 }"
+            @"@x case %0 → @Nat { @some %0 => %0 | @none => @42 }"
         );
 
         // Case with arity-2 constructor: case @x { @pair %0 %1 => %1; @empty => @0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Nat"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "pair"),
@@ -1170,13 +1359,14 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @pair %0 %1 => %1; @empty => @0 }"
+            @"@x case %0 → @Nat { @pair %0 %1 => %1 | @empty => @0 }"
         );
 
         // Case with arity-3 constructor: case @x { @triple %0 %1 %2 => %2 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Nat"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "triple"),
@@ -1185,7 +1375,7 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @triple %0 %1 %2 => %2 }"
+            @"@x case %0 → @Nat { @triple %0 %1 %2 => %2 }"
         );
     }
 
@@ -1200,6 +1390,7 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Function"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "f"),
@@ -1208,13 +1399,14 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @f => λ %0 → %0 }"
+            @"@x case %0 → @Function { @f => λ %0 → %0 }"
         );
 
         // Case with application body: case @x { @app => @f @x }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Application"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "app"),
@@ -1226,13 +1418,14 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @app => @f @x }"
+            @"@x case %0 → @Application { @app => @f @x }"
         );
 
         // Case with check body: case @x { @check => @42 : 𝒰0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Check"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "check"),
@@ -1244,7 +1437,7 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @check => @42 : 𝒰0 }"
+            @"@x case %0 → @Check { @check => @42 : 𝒰0 }"
         );
     }
 
@@ -1259,6 +1452,7 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "y")),
+                Syntax::constant_from_str_rc(&db, "Bool"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "true"),
@@ -1272,19 +1466,21 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @y { @true => @1; @false => @0 }"
+            @"@y case %0 → @Bool { @true => @1 | @false => @0 }"
         );
 
         // Nested case: case @x { @outer => case @y { @inner => @42 } }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
                 Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                Syntax::constant_from_str_rc(&db, "Nat"),
                 vec![
                     CaseBranch::new(
                         ConstantId::from_str(&db, "outer"),
                         0,
                         Syntax::case_rc(
                             Syntax::constant_rc(ConstantId::from_str(&db, "y")),
+                            Syntax::constant_from_str_rc(&db, "Nat"),
                             vec![
                                 CaseBranch::new(
                                     ConstantId::from_str(&db, "inner"),
@@ -1296,7 +1492,7 @@ mod tests {
                     ),
                 ],
             )),
-            @"case @x { @outer => case @y { @inner => @42 } }"
+            @"@x case %0 → @Nat { @outer => @y case %0 → @Nat { @inner => @42 } }"
         );
 
         // Case in lambda: λ%0 → case @x { @some %1 => %1; @none => !1 }
@@ -1304,6 +1500,7 @@ mod tests {
             print_syntax_to_string(&db, &Syntax::lambda(
                 Syntax::case_rc(
                     Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                    Syntax::constant_from_str_rc(&db, "Option"),
                     vec![
                         CaseBranch::new(
                             ConstantId::from_str(&db, "some"),
@@ -1318,7 +1515,7 @@ mod tests {
                     ],
                 ),
             )),
-            @"λ %0 → case @x { @some %1 => %1; @none => !0 }"
+            @"λ %0 → @x case %1 → @Option { @some %1 => %1 | @none => !0 }"
         );
     }
 }

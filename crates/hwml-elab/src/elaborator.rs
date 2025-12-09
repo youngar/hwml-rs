@@ -385,8 +385,9 @@ pub fn infer_match<'db>(
     });
 
     // Create a case expression with the scrutinee
-    let case_expr = core::Syntax::case_rc(scrutinee, branches);
-    Ok((case_expr, result_type))
+    //let case_expr = core::Syntax::case_rc(scrutinee, branches);
+    //Ok((case_expr, result_type))
+    todo!()
 }
 
 pub fn check_match<'db>(
@@ -417,8 +418,9 @@ pub fn check_match<'db>(
         Ok(meta)
     } else {
         // Create a case expression with the scrutinee
-        let case_expr = core::Syntax::case_rc(scrutinee, branches);
-        Ok(case_expr)
+        //let case_expr = core::Syntax::case_rc(scrutinee, branches);
+        //Ok(case_expr)
+        todo!()
     }
 }
 

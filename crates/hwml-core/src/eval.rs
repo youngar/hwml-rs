@@ -1,14 +1,18 @@
-use crate::syn as stx;
+use crate::common::Level;
 use crate::syn;
+use crate::syn::{self as stx};
 use crate::syn::{Case, Syntax};
-use crate::val as dom;
-use crate::val;
-use crate::val::{Closure, Environment, Neutral, Value};
+use crate::val::{self as dom, DataConstructor};
+use crate::val::{self, Normal};
+use crate::val::{Closure, Environment, GlobalEnv, Neutral, Value};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub enum Error {
     BadApplication,
+    BadCase,
+    UnknownTypeConstructor,
+    UnknownDataConstructor,
 }
 
 pub fn eval<'db>(env: &mut Environment<'db>, stx: &Syntax<'db>) -> Result<Rc<Value<'db>>, Error> {
@@ -18,19 +22,21 @@ pub fn eval<'db>(env: &mut Environment<'db>, stx: &Syntax<'db>) -> Result<Rc<Val
         Syntax::Check(chk) => eval_check(env, chk),
         Syntax::Pi(pi) => eval_pi(env, pi),
         Syntax::Lambda(lam) => eval_lambda(env, lam),
+        Syntax::TypeConstructor(type_constructor) => eval_type_constructor(env, type_constructor),
+        Syntax::DataConstructor(data_constructor) => eval_data_constructor(env, data_constructor),
         Syntax::Application(app) => eval_application(env, &app),
+        Syntax::Case(case) => eval_case(env, case),
         Syntax::Universe(uni) => eval_universe(env, &uni),
         Syntax::Metavariable(meta) => eval_metavariable(env, meta),
-        Syntax::Case(case) => eval_case(env, case),
         _ => todo!(),
     }
 }
 
 fn eval_constant<'db>(
-    env: &mut Environment<'db>,
+    _env: &mut Environment<'db>,
     constant: &syn::Constant<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    todo!()
+    Ok(Rc::new(Value::Constant(constant.name)))
 }
 
 fn eval_variable<'db>(
@@ -47,9 +53,42 @@ fn eval_check<'db>(
     eval(env, &chk.term)
 }
 
+fn eval_type_constructor<'db>(
+    env: &mut Environment<'db>,
+    type_constructor: &syn::TypeConstructor<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Evaluate all the arguments
+    let mut evaluated_args = Vec::new();
+    for arg in &type_constructor.arguments {
+        let evaluated_arg = eval(env, arg)?;
+        evaluated_args.push(evaluated_arg);
+    }
+
+    // Create a TypeConstructor value with the constructor and evaluated arguments
+    let type_constructor_value =
+        Value::type_constructor(type_constructor.constructor, evaluated_args);
+    Ok(Rc::new(type_constructor_value))
+}
+
+fn eval_data_constructor<'db>(
+    env: &mut Environment<'db>,
+    data_constructor: &syn::DataConstructor<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Evaluate all the arguments
+    let mut evaluated_args = Vec::new();
+    for arg in &data_constructor.arguments {
+        let evaluated_arg = eval(env, arg)?;
+        evaluated_args.push(evaluated_arg);
+    }
+
+    // Create a DataConstructor value with the constructor and evaluated arguments
+    let data_value = Value::data_constructor(data_constructor.constructor, evaluated_args);
+    Ok(Rc::new(data_value))
+}
+
 fn eval_pi<'db>(env: &mut Environment<'db>, pi: &syn::Pi<'db>) -> Result<Rc<Value<'db>>, Error> {
     let source = eval(env, &pi.source)?;
-    let target = Closure::new(env.clone(), pi.target.clone());
+    let target = Closure::new(env.local.clone(), pi.target.clone());
     Ok(Rc::new(Value::pi(source, target)))
 }
 
@@ -58,7 +97,7 @@ fn eval_lambda<'db>(
     lambda: &syn::Lambda<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::Lambda(dom::Lambda {
-        body: Closure::new(env.clone(), lambda.body.clone()),
+        body: Closure::new(env.local.clone(), lambda.body.clone()),
     })))
 }
 
@@ -70,25 +109,10 @@ fn eval_universe<'db>(
 }
 
 fn eval_metavariable<'db>(
-    env: &mut Environment<'db>,
-    meta: &syn::Metavariable<'db>,
+    _env: &mut Environment<'db>,
+    _meta: &syn::Metavariable<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     todo!()
-}
-
-fn eval_case<'db>(env: &mut Environment<'db>, case: &Case<'db>) -> Result<Rc<Value<'db>>, Error> {
-    // Evaluate the scrutinee expression
-    let scrutinee_value = eval(env, &case.expr)?;
-
-    // TODO: Implement proper pattern matching on the scrutinee value
-    // In a full implementation, we would:
-    // 1. Pattern match on the scrutinee value
-    // 2. Find the matching branch based on the constructor
-    // 3. Bind pattern variables and evaluate the branch body
-
-    // For now, return a placeholder value
-    let _ = (scrutinee_value, &case.branches); // Use the values to avoid unused variable warning
-    todo!("Case evaluation with pattern matching not yet implemented")
 }
 
 fn eval_application<'db>(
@@ -98,31 +122,34 @@ fn eval_application<'db>(
     // Evaluate the function and argument to a value, then perform the substitution.
     let fun: Rc<Value> = eval(env, &application.function)?;
     let arg: Rc<Value> = eval(env, &application.argument)?;
-    run_application(&*fun, arg)
+    run_application(&env.global, &*fun, arg)
 }
 
 /// Perform an application.
 pub fn run_application<'db>(
+    global: &GlobalEnv<'db>,
     fun: &Value<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
     match fun {
-        Value::Lambda(lambda) => apply_lambda(lambda, arg),
-        Value::Neutral(ty, neutral) => apply_neutral(ty, neutral.clone(), arg),
+        Value::Lambda(lambda) => apply_lambda(global, lambda, arg),
+        Value::Neutral(ty, neutral) => apply_neutral(global, ty, neutral.clone(), arg),
         _ => Err(Error::BadApplication),
     }
 }
 
 /// Perform the application of a lambda to an argument.
 fn apply_lambda<'db>(
+    global: &GlobalEnv<'db>,
     lambda: &val::Lambda<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    run_closure(&lambda.body, [arg])
+    run_closure(global, &lambda.body, [arg])
 }
 
 /// Perform the application of a neutral term to an argument.
 fn apply_neutral<'db>(
+    global: &GlobalEnv<'db>,
     ty: &Value<'db>,
     neutral: Rc<Neutral<'db>>,
     arg: Rc<Value<'db>>,
@@ -134,19 +161,161 @@ fn apply_neutral<'db>(
 
     // Use the pi type of the neutral to compute typing information.
     let source_ty = pi.source.clone();
-    let target_ty = run_closure(&pi.target, [arg.clone()])?;
+    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
 
     // Build the new application.
     let app = Value::application(target_ty, neutral, source_ty, arg);
     Ok(Rc::new(app))
 }
 
-/// Perform a delayed substitution.
-pub fn run_closure<'db, T>(closure: &Closure<'db>, args: T) -> Result<Rc<Value<'db>>, Error>
+fn eval_case<'db>(
+    env: &mut Environment<'db>,
+    case: &stx::Case<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Evaluate the scrutinee expression
+    let scrutinee = eval(env, &case.expr)?;
+    run_case(env, scrutinee, case)
+}
+
+fn run_case<'db>(
+    env: &mut Environment<'db>,
+    scrutinee: Rc<Value<'db>>,
+    case: &Case<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    match scrutinee.as_ref() {
+        Value::DataConstructor(scrutinee) => run_case_on_data_constructor(env, scrutinee, case),
+        Value::Neutral(scrutinee_ty, scrutinee_ne) => {
+            run_case_on_neutral(env, scrutinee_ty, &scrutinee, scrutinee_ne, case)
+        }
+        _ => Err(Error::BadCase),
+    }
+}
+
+fn run_case_on_neutral<'db>(
+    env: &mut Environment<'db>,
+    scrutinee_ty: &Rc<Value<'db>>,
+    scrutinee_val: &Rc<Value<'db>>,
+    scrutinee_ne: &Rc<Neutral<'db>>,
+    case: &Case<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Check that the scrutinee type is a type constructor.
+    let Value::TypeConstructor(type_constructor) = scrutinee_ty.as_ref() else {
+        return Err(Error::BadCase);
+    };
+
+    // Create a closure wrapping the motive. This will be used to determine the type of each branch.
+    let motive_clos = Closure::new(env.local.clone(), case.motive.clone());
+
+    // Calculate the final type of the case expression by substituting the scrutinee into the motive.
+    let final_ty = run_closure(&env.global, &motive_clos, [scrutinee_val.clone()])?;
+
+    // Create a variable with the same type as the scrutinee.
+    let scrutinee_ty_var = Rc::new(Value::variable(
+        scrutinee_ty.clone(),
+        Level::new(env.depth()),
+    ));
+
+    // Normalize the motive by substituting a variable into the it.
+    let motive_sem = run_closure(&env.global, &motive_clos, [scrutinee_ty_var.clone()])?;
+
+    // Look up the scrutinee type information.
+    let type_info = env
+        .global
+        .type_constructor(type_constructor.constructor)
+        .map_err(|_| Error::UnknownTypeConstructor)?;
+
+    let mut branches = Vec::new();
+    for branch in &case.branches {
+        // Create a variable for each argument to this dataconstructor.
+        let constructor_info = env
+            .global
+            .data_constructor(branch.constructor)
+            .map_err(|_| Error::UnknownDataConstructor)?;
+
+        // Create an instance of this constructor.
+        let mut ty = constructor_info.ty.clone();
+        let mut branch_vars = vec![];
+        while let Value::Pi(pi) = ty.as_ref() {
+            let arg = Rc::new(Value::variable(pi.source.clone(), Level::new(env.depth())));
+            branch_vars.push(arg.clone());
+            ty = run_closure(&env.global, &pi.target, branch_vars.clone())?;
+        }
+
+        // Get the type of this branch by substituting the constructor instance into the motive.
+        let branch_scrut = Rc::new(Value::data_constructor(
+            branch.constructor,
+            branch_vars.clone(),
+        ));
+        let branch_type = run_closure(&env.global, &motive_clos, [branch_scrut])?;
+
+        // Evaluate the branch body.
+        let branch_body = Closure::new(env.local.clone(), branch.body.clone());
+        let branch_value = run_closure(&env.global, &branch_body, branch_vars)?;
+
+        let branch_norm = Normal::new(branch_type, branch_value);
+        branches.push(dom::CaseBranch::new(
+            branch.constructor,
+            branch.arity,
+            branch_norm,
+        ));
+    }
+
+    Ok(Rc::new(Value::case(
+        final_ty,
+        scrutinee_ne.clone(),
+        motive_sem.clone(),
+        branches,
+    )))
+}
+
+fn run_case_on_data_constructor<'db>(
+    env: &mut Environment<'db>,
+    scrutinee: &DataConstructor<'db>,
+    case: &Case<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Push the arguments onto the environment.
+    for data in &scrutinee.arguments {
+        env.push(data.clone());
+    }
+    // Find the matching branch.
+    for branch in &case.branches {
+        if branch.constructor == scrutinee.constructor {
+            return eval(env, &branch.body);
+        }
+    }
+    // If we didn't match any branches, we have a bad case.
+    Err(Error::BadCase)
+}
+
+pub fn run_with_args<'db, T>(
+    env: &Environment<'db>,
+    syntax: &Syntax<'db>,
+    args: T,
+) -> Result<Rc<Value<'db>>, Error>
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
-    let mut env = closure.environment.clone();
+    let mut env = env.clone();
     env.extend(args);
+    eval(&mut env, syntax)
+}
+
+/// Perform a delayed substitution.
+/// Takes only the local environment from the closure and extends it with the provided arguments.
+/// The global environment must be provided separately.
+pub fn run_closure<'db, T>(
+    global: &GlobalEnv<'db>,
+    closure: &Closure<'db>,
+    args: T,
+) -> Result<Rc<Value<'db>>, Error>
+where
+    T: IntoIterator<Item = Rc<Value<'db>>>,
+{
+    let mut local = closure.local.clone();
+    local.extend(args);
+    let mut env = Environment {
+        global: global.clone(),
+        local,
+    };
     eval(&mut env, &closure.term)
 }

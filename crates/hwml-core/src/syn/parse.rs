@@ -1,6 +1,6 @@
-use crate::common::{DBParseError, Index, Level, NegativeLevel};
-use crate::syn::{self, HSyntax, RcHSyntax};
+use crate::common::{DBParseError, Index, NegativeLevel};
 use crate::syn::{CaseBranch, Closure, ConstantId, MetavariableId, RcSyntax, Syntax};
+use crate::syn::{HSyntax, RcHSyntax};
 use core::fmt::Debug;
 use logos::{Lexer, Logos};
 use salsa::Database;
@@ -17,6 +17,7 @@ pub enum Error {
     MissingArrow,
     MissingVariable,
     MissingTerm,
+    MissingConstant,
     UnknownVariable(String),
     DBParseError(DBParseError),
     #[default]
@@ -84,6 +85,8 @@ pub enum Token {
     Colon,
     #[token(",", priority = 10)]
     Comma,
+    #[token("|", priority = 10)]
+    Pipe,
     #[regex(r"𝒰[0-9]+", priority = 4, callback = |lex| lex.slice()["𝒰".len()..].parse())]
     Universe(usize),
     #[regex(r"@(?&id)+", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
@@ -110,6 +113,8 @@ pub enum Token {
     RBrace,
     #[token(";", priority = 10)]
     Semicolon,
+    #[token("#[", priority = 10)]
+    LHashBracket,
     #[token("=>", priority = 5)]
     FatArrow,
 }
@@ -121,6 +126,8 @@ impl fmt::Display for Token {
 }
 
 struct State<'input> {
+    /// The database reference.
+    db: &'input dyn Database,
     /// The names in scope. Each new name is pushed on the end.
     names: Vec<String>,
     /// The main lexer.
@@ -130,14 +137,20 @@ struct State<'input> {
 }
 
 impl<'input> State<'input> {
-    fn new(input: &'input str) -> State<'input> {
+    fn new(db: &'input dyn Database, input: &'input str) -> State<'input> {
         let mut lexer = Token::lexer(input);
         let token = lexer.next();
         State {
+            db,
             names: Vec::new(),
             lexer,
             token,
         }
+    }
+
+    /// Get the database reference.
+    fn db(&self) -> &'input dyn Database {
+        self.db
     }
 
     /// Peek at the current token.
@@ -153,6 +166,13 @@ impl<'input> State<'input> {
     /// Push a name to the environment.
     fn push_name(&mut self, name: String) {
         self.names.push(name);
+    }
+
+    fn extend_names<T>(&mut self, names: T)
+    where
+        T: IntoIterator<Item = String>,
+    {
+        self.names.extend(names)
     }
 
     /// Find a name in the environment.
@@ -174,29 +194,18 @@ impl<'input> State<'input> {
     fn reset_names(&mut self, depth: usize) {
         self.names.truncate(depth);
     }
-}
 
-/// Global state that contains the database and parsing state.
-/// This simplifies function signatures by bundling the database with the parsing state.
-struct GlobalState<'db> {
-    db: &'db dyn Database,
-    state: State<'db>,
-}
-
-impl<'db> GlobalState<'db> {
-    fn new(db: &'db dyn Database, input: &'db str) -> Self {
-        GlobalState {
-            db,
-            state: State::new(input),
-        }
-    }
-
-    fn db(&self) -> &'db dyn Database {
-        self.db
-    }
-
-    fn state(&mut self) -> &mut State<'db> {
-        &mut self.state
+    /// Parse with additional variables in scope.
+    fn under_binders<T, F, R>(&mut self, names: T, block: F) -> R
+    where
+        T: IntoIterator<Item = String>,
+        F: FnOnce(&mut Self) -> R,
+    {
+        let depth = self.names_depth();
+        self.extend_names(names);
+        let r = block(self);
+        self.reset_names(depth);
+        r
     }
 }
 
@@ -271,6 +280,14 @@ fn p_arrow_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Arrow)
 }
 
+fn p_pipe(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::Pipe, Error::Other)
+}
+
+fn p_pipe_opt(state: &mut State) -> ParseResult<Option<()>> {
+    p_token_opt(state, Token::Pipe)
+}
+
 fn p_colon(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::Colon, Error::Other)
 }
@@ -303,14 +320,22 @@ fn p_fat_arrow(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::FatArrow, Error::Other)
 }
 
-fn p_constant_opt<'db>(state: &mut GlobalState<'db>) -> ParseResult<Option<ConstantId<'db>>> {
-    match state.state.peek_token() {
+fn p_constant_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<ConstantId<'db>>> {
+    match state.peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(Token::Constant(name))) => {
-            state.state.advance_token();
+            state.advance_token();
             Ok(Some(ConstantId::from_str(state.db(), &name)))
         }
         _ => Ok(None),
+    }
+}
+
+fn p_constant<'db>(state: &mut State<'db>) -> ParseResult<ConstantId<'db>> {
+    match p_constant_opt(state) {
+        Err(e) => Err(e),
+        Ok(Some(n)) => Ok(n),
+        Ok(None) => Err(Error::MissingConstant),
     }
 }
 
@@ -333,28 +358,28 @@ fn p_variable(state: &mut State) -> ParseResult<String> {
     }
 }
 
-fn p_pi_binder_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    let Some(()) = p_lparen_opt(global_state.state())? else {
+fn p_pi_binder_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    let Some(()) = p_lparen_opt(state)? else {
         return Ok(None);
     };
-    let var = p_variable(global_state.state())?;
-    p_colon(global_state.state())?;
-    let ty = p_harrow(global_state)?;
-    p_rparen(global_state.state())?;
-    global_state.state().push_name(var);
+    let var = p_variable(state)?;
+    p_colon(state)?;
+    let ty = p_harrow(state)?;
+    p_rparen(state)?;
+    state.push_name(var);
     Ok(Some(ty))
 }
 
-fn p_closure_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Closure<'db>>> {
+fn p_closure_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<Closure<'db>>> {
     let mut values = Vec::new();
-    let Some(()) = p_lbracket_opt(global_state.state())? else {
+    let Some(()) = p_lbracket_opt(state)? else {
         return Ok(None);
     };
     loop {
-        match p_term_opt(global_state) {
+        match p_term_opt(state) {
             Ok(Some(term)) => {
                 values.push(term);
-                match p_token_opt(global_state.state(), Token::Comma) {
+                match p_token_opt(state, Token::Comma) {
                     Ok(Some(())) => continue,
                     Ok(None) => break,
                     Err(err) => return Err(err),
@@ -364,38 +389,38 @@ fn p_closure_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option
             Err(err) => return Err(err),
         }
     }
-    p_rbracket(global_state.state())?;
+    p_rbracket(state)?;
     return Ok(Some(crate::syn::Closure::with_values(values)));
 }
 
 // Parse an atomic term (no operators)
-fn p_hatom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
-    match global_state.state().peek_token() {
+fn p_hatom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    match state.peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(token)) => match token {
             Token::LParen => {
-                global_state.state().advance_token();
-                let term = p_hterm(global_state)?;
-                p_rparen(global_state.state())?;
+                state.advance_token();
+                let term = p_hterm(state)?;
+                p_rparen(state)?;
                 Ok(Some(term))
             }
             Token::Lambda => {
-                global_state.state().advance_token();
-                let depth = global_state.state().names_depth();
+                state.advance_token();
+                let depth = state.names_depth();
                 let mut i = 0;
                 loop {
-                    match p_variable_opt(global_state.state()) {
+                    match p_variable_opt(state) {
                         Err(e) => return Err(e),
                         Ok(Some(var)) => {
                             i = i + 1;
-                            global_state.state().push_name(var)
+                            state.push_name(var)
                         }
                         Ok(None) => break,
                     }
                 }
-                p_arrow(global_state.state())?;
-                let body = p_happlication(global_state)?;
-                global_state.state().reset_names(depth);
+                p_arrow(state)?;
+                let body = p_happlication(state)?;
+                state.reset_names(depth);
                 // Build nested lambdas from right to left
                 let mut result = body;
                 for _ in 0..i {
@@ -404,41 +429,38 @@ fn p_hatom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<R
                 Ok(Some(result))
             }
             Token::Variable(name) => {
-                global_state.state().advance_token();
+                state.advance_token();
                 // Otherwise, look it up in the environment
-                match global_state.state().find_name(&name) {
+                match state.find_name(&name) {
                     Some(index) => Ok(Some(HSyntax::hvariable_rc(index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
-                global_state.state().advance_token();
+                state.advance_token();
                 // Convert negative level to index: index = depth + negative_level
-                let index = negative_level.to_index(global_state.state().names_depth());
+                let index = negative_level.to_index(state.names_depth());
                 Ok(Some(HSyntax::hvariable_rc(index)))
             }
             Token::Constant(name) => {
-                global_state.state().advance_token();
-                Ok(Some(HSyntax::hconstant_from_str_rc(
-                    global_state.db(),
-                    &name,
-                )))
+                state.advance_token();
+                Ok(Some(HSyntax::hconstant_from_str_rc(state.db(), &name)))
             }
             Token::Splice => {
-                global_state.state().advance_token();
-                let tm = p_atom(global_state)?;
+                state.advance_token();
+                let tm = p_atom(state)?;
                 Ok(Some(HSyntax::splice_rc(tm)))
             }
             Token::Zero => {
-                global_state.state().advance_token();
+                state.advance_token();
                 Ok(Some(HSyntax::zero_rc()))
             }
             Token::One => {
-                global_state.state().advance_token();
+                state.advance_token();
                 Ok(Some(HSyntax::one_rc()))
             }
             Token::Xor => {
-                global_state.state().advance_token();
+                state.advance_token();
                 Ok(Some(HSyntax::xor_rc()))
             }
             _ => Ok(None),
@@ -447,8 +469,8 @@ fn p_hatom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<R
     }
 }
 
-fn p_hatom<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'db>> {
-    match p_hatom_opt(global_state) {
+fn p_hatom<'db>(state: &mut State<'db>) -> ParseResult<RcHSyntax<'db>> {
+    match p_hatom_opt(state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
@@ -456,10 +478,8 @@ fn p_hatom<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'d
 }
 
 // Parse application (left-associative): a b c => (a b) c
-fn p_happlication_opt<'db>(
-    global_state: &mut GlobalState<'db>,
-) -> ParseResult<Option<RcHSyntax<'db>>> {
-    let first = p_hatom_opt(global_state)?;
+fn p_happlication_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    let first = p_hatom_opt(state)?;
     if first.is_none() {
         return Ok(None);
     }
@@ -467,38 +487,38 @@ fn p_happlication_opt<'db>(
     let mut result = first.unwrap();
 
     // Keep parsing atoms and building left-associative applications
-    while let Some(arg) = p_hatom_opt(global_state)? {
+    while let Some(arg) = p_hatom_opt(state)? {
         result = HSyntax::happlication_rc(result, arg);
     }
 
     Ok(Some(result))
 }
 
-fn p_happlication<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'db>> {
-    match p_happlication_opt(global_state) {
+fn p_happlication<'db>(state: &mut State<'db>) -> ParseResult<RcHSyntax<'db>> {
+    match p_happlication_opt(state) {
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
         Err(err) => Err(err),
     }
 }
 
-fn p_hcheck_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
-    let term = p_happlication(global_state)?;
+fn p_hcheck_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    let term = p_happlication(state)?;
 
     // Check if there's a colon
-    if let Some(()) = p_colon_opt(global_state.state())? {
-        Ok(Some(HSyntax::hcheck_rc(p_hterm(global_state)?, term)))
+    if let Some(()) = p_colon_opt(state)? {
+        Ok(Some(HSyntax::hcheck_rc(p_hterm(state)?, term)))
     } else {
         Ok(Some(term))
     }
 }
 
-fn p_hterm_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
-    p_hcheck_opt(global_state)
+fn p_hterm_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcHSyntax<'db>>> {
+    p_hcheck_opt(state)
 }
 
-fn p_hterm<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'db>> {
-    match p_hterm_opt(global_state) {
+fn p_hterm<'db>(state: &mut State<'db>) -> ParseResult<RcHSyntax<'db>> {
+    match p_hterm_opt(state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
@@ -506,33 +526,33 @@ fn p_hterm<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcHSyntax<'d
 }
 
 // Parse an atomic term (no operators)
-fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    match global_state.state().peek_token() {
+fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    match state.peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(token)) => match token {
             Token::LParen => {
-                global_state.state().advance_token();
-                let term = p_term(global_state)?;
-                p_rparen(global_state.state())?;
+                state.advance_token();
+                let term = p_term(state)?;
+                p_rparen(state)?;
                 Ok(Some(term))
             }
             Token::Lambda => {
-                global_state.state().advance_token();
-                let depth = global_state.state().names_depth();
+                state.advance_token();
+                let depth = state.names_depth();
                 let mut i = 0;
                 loop {
-                    match p_variable_opt(global_state.state()) {
+                    match p_variable_opt(state) {
                         Err(e) => return Err(e),
                         Ok(Some(var)) => {
                             i = i + 1;
-                            global_state.state().push_name(var)
+                            state.push_name(var)
                         }
                         Ok(None) => break,
                     }
                 }
-                p_arrow(global_state.state())?;
-                let body = p_harrow(global_state)?;
-                global_state.state().reset_names(depth);
+                p_arrow(state)?;
+                let body = p_harrow(state)?;
+                state.reset_names(depth);
                 // Build nested lambdas from right to left
                 let mut result = body;
                 for _ in 0..i {
@@ -541,58 +561,80 @@ fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Rc
                 Ok(Some(result))
             }
             Token::Pi => {
-                global_state.state().advance_token();
-                let depth = global_state.state().names_depth();
+                state.advance_token();
+                let depth = state.names_depth();
                 let mut tys = Vec::new();
                 loop {
-                    match p_pi_binder_opt(global_state) {
+                    match p_pi_binder_opt(state) {
                         Err(e) => return Err(e),
                         Ok(Some(ty)) => tys.push(ty),
                         Ok(None) => break,
                     }
                 }
-                p_arrow(global_state.state())?;
-                let target = p_harrow(global_state)?;
-                global_state.state().reset_names(depth);
+                p_arrow(state)?;
+                let target = p_harrow(state)?;
+                state.reset_names(depth);
                 let mut result = target;
                 for ty in tys.iter().rev() {
                     result = Syntax::pi_rc(ty.clone(), result);
                 }
                 Ok(Some(result))
             }
-            Token::Case => {
-                global_state.state().advance_token();
-                let expr = p_term(global_state)?;
-                let branches = p_case_branches(global_state)?;
-                Ok(Some(Syntax::case_rc(expr, branches)))
+            Token::LBracket => {
+                state.advance_token();
+                let constructor = p_constant(state)?;
+                let mut arguments = Vec::new();
+                loop {
+                    match p_atom_opt(state) {
+                        Err(e) => return Err(e),
+                        Ok(Some(term)) => arguments.push(term),
+                        Ok(None) => break,
+                    }
+                }
+                p_rbracket(state)?;
+                Ok(Some(Syntax::data_constructor_rc(constructor, arguments)))
+            }
+            Token::LHashBracket => {
+                state.advance_token();
+                let constructor = p_constant(state)?;
+                let mut arguments = Vec::new();
+                loop {
+                    match p_atom_opt(state) {
+                        Err(e) => return Err(e),
+                        Ok(Some(term)) => arguments.push(term),
+                        Ok(None) => break,
+                    }
+                }
+                p_rbracket(state)?;
+                Ok(Some(Syntax::type_constructor_rc(constructor, arguments)))
             }
             Token::Variable(name) => {
-                global_state.state().advance_token();
+                state.advance_token();
                 // Otherwise, look it up in the environment
-                match global_state.state().find_name(&name) {
+                match state.find_name(&name) {
                     Some(index) => Ok(Some(Syntax::variable_rc(index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
-                global_state.state().advance_token();
+                state.advance_token();
                 // Convert negative level to index: index = depth + negative_level
-                let index = negative_level.to_index(global_state.state().names_depth());
+                let index = negative_level.to_index(state.names_depth());
                 Ok(Some(Syntax::variable_rc(index)))
             }
             Token::Universe(level) => {
-                global_state.state().advance_token();
+                state.advance_token();
                 Ok(Some(Syntax::universe_rc(
                     crate::common::UniverseLevel::new(level),
                 )))
             }
             Token::Constant(name) => {
-                global_state.state().advance_token();
-                Ok(Some(Syntax::constant_from_str_rc(global_state.db(), &name)))
+                state.advance_token();
+                Ok(Some(Syntax::constant_from_str_rc(state.db(), &name)))
             }
             Token::Metavariable(id) => {
-                global_state.state().advance_token();
-                let closure = match p_closure_opt(global_state) {
+                state.advance_token();
+                let closure = match p_closure_opt(state) {
                     Ok(Some(closure)) => closure,
                     Ok(None) => Closure::new(),
                     Err(err) => return Err(err),
@@ -600,17 +642,17 @@ fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Rc
                 Ok(Some(Syntax::metavariable_rc(MetavariableId(id), closure)))
             }
             Token::Lift => {
-                global_state.state().advance_token();
-                let tm = p_atom(global_state)?;
+                state.advance_token();
+                let tm = p_atom(state)?;
                 Ok(Some(Syntax::lift_rc(tm)))
             }
             Token::Quote => {
-                global_state.state().advance_token();
-                let tm = p_hatom(global_state)?;
+                state.advance_token();
+                let tm = p_hatom(state)?;
                 Ok(Some(Syntax::quote_rc(tm)))
             }
             Token::BitType => {
-                global_state.state().advance_token();
+                state.advance_token();
                 Ok(Some(Syntax::bit_rc()))
             }
             _ => Ok(None),
@@ -619,47 +661,137 @@ fn p_atom_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<Rc
     }
 }
 
-fn p_atom<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>> {
-    match p_atom_opt(global_state) {
+fn p_atom<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
+    match p_atom_opt(state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
     }
 }
 
-// Parse application (left-associative): a b c => (a b) c
-fn p_application_opt<'db>(
-    global_state: &mut GlobalState<'db>,
-) -> ParseResult<Option<RcSyntax<'db>>> {
-    let first = p_atom_opt(global_state)?;
-    if first.is_none() {
-        return Ok(None);
-    }
+fn p_case_motive<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
+    // Parse the motive.
+    let depth = state.names_depth();
+    let var = p_variable(state)?;
+    p_arrow(state)?;
 
-    let mut result = first.unwrap();
+    state.push_name(var);
+    let result = p_harrow(state);
+    state.reset_names(depth);
 
-    // Keep parsing atoms and building left-associative applications
-    while let Some(arg) = p_atom_opt(global_state)? {
-        result = Syntax::application_rc(result, arg);
-    }
-
-    Ok(Some(result))
+    result
 }
 
-fn p_harrow_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    let Some(term) = p_application_opt(global_state)? else {
+/// @Foo %0 %1
+fn p_case_pattern_opt<'db>(
+    state: &mut State<'db>,
+) -> ParseResult<Option<(ConstantId<'db>, usize)>> {
+    let Some(constructor) = p_constant_opt(state)? else {
+        return Ok(None);
+    };
+    let mut arity = 0;
+    while let Some(name) = p_variable_opt(state)? {
+        arity += 1;
+        state.push_name(name)
+    }
+    Ok(Some((constructor, arity)))
+}
+
+/// @Foo %0 %1 => body;
+fn p_case_branch_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<CaseBranch<'db>>> {
+    let Some((constructor, arity)) = p_case_pattern_opt(state)? else {
+        return Ok(None);
+    };
+    p_fat_arrow(state)?;
+    let body = p_term(state)?;
+    state.reset_names(arity);
+    // Semicolon is optional (for the last branch)
+    let _ = p_semicolon_opt(state)?;
+    Ok(Some(CaseBranch::new(constructor, arity, body)))
+}
+
+fn p_case_branches<'db>(state: &mut State<'db>) -> ParseResult<Vec<CaseBranch<'db>>> {
+    p_lbrace(state)?;
+    let mut branches = Vec::new();
+    while let Some(branch) = p_case_branch_opt(state)? {
+        branches.push(branch);
+    }
+    p_rbrace(state)?;
+    Ok(branches)
+}
+
+fn p_trailing_case_opt<'db>(
+    state: &mut State<'db>,
+    lead: &RcSyntax<'db>,
+) -> ParseResult<Option<RcSyntax<'db>>> {
+    if p_token_opt(state, Token::Case)?.is_none() {
+        return Ok(None);
+    }
+    let motive = p_case_motive(state)?;
+    let branches = p_case_branches(state)?;
+    Ok(Some(Syntax::case_rc(lead.clone(), motive, branches)))
+}
+
+// Parse application (left-associative): a b c => (a b) c
+fn p_trailing_app_opt<'db>(
+    state: &mut State<'db>,
+    lead: &RcSyntax<'db>,
+) -> ParseResult<Option<RcSyntax<'db>>> {
+    match p_atom_opt(state)? {
+        None => Ok(None),
+        Some(arg) => Ok(Some(Syntax::application_rc(lead.clone(), arg))),
+    }
+}
+
+/// Parse a trailing eliminator.
+fn p_trailing_elim_opt<'db>(
+    state: &mut State<'db>,
+    lead: &RcSyntax<'db>,
+) -> ParseResult<Option<RcSyntax<'db>>> {
+    match p_trailing_case_opt(state, lead)? {
+        Some(term) => return Ok(Some(term)),
+        None => (),
+    }
+    match p_trailing_app_opt(state, lead)? {
+        Some(term) => return Ok(Some(term)),
+        None => (),
+    }
+    Ok(None)
+}
+
+/// Parse any eliminated term.
+fn p_elim_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    // Leading subexpression.
+    let mut term = match p_atom_opt(state) {
+        Ok(Some(x)) => x,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+
+    // Trailing eliminators.
+    loop {
+        term = match p_trailing_elim_opt(state, &term) {
+            Ok(Some(x)) => x,
+            Ok(None) => return Ok(Some(term)),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+fn p_harrow_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    let Some(term) = p_elim_opt(state)? else {
         return Ok(None);
     };
 
-    if let Some(()) = p_arrow_opt(global_state.state())? {
-        Ok(Some(Syntax::harrow_rc(term, p_harrow(global_state)?)))
+    if let Some(()) = p_arrow_opt(state)? {
+        Ok(Some(Syntax::harrow_rc(term, p_harrow(state)?)))
     } else {
         Ok(Some(term))
     }
 }
 
-fn p_harrow<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>> {
-    match p_harrow_opt(global_state) {
+fn p_harrow<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
+    match p_harrow_opt(state) {
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
         Err(err) => Err(err),
@@ -667,25 +799,25 @@ fn p_harrow<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'d
 }
 
 // Parse check (type annotation): term : type
-fn p_check_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    let Some(term) = p_harrow_opt(global_state)? else {
+fn p_check_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    let Some(term) = p_harrow_opt(state)? else {
         return Ok(None);
     };
 
     // Check if there's a colon.
-    if let Some(()) = p_colon_opt(global_state.state())? {
-        Ok(Some(Syntax::check_rc(p_term(global_state)?, term)))
+    if let Some(()) = p_colon_opt(state)? {
+        Ok(Some(Syntax::check_rc(p_term(state)?, term)))
     } else {
         Ok(Some(term))
     }
 }
 
-fn p_term_opt<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    p_check_opt(global_state)
+fn p_term_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
+    p_check_opt(state)
 }
 
-fn p_term<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>> {
-    match p_term_opt(global_state) {
+fn p_term<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
+    match p_term_opt(state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
         Ok(Some(term)) => Ok(term),
@@ -693,54 +825,13 @@ fn p_term<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<RcSyntax<'db>
 }
 
 pub fn parse_syntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<RcSyntax<'db>> {
-    let mut global_state = GlobalState::new(db, input);
-    p_term(&mut global_state)
+    let mut state = State::new(db, input);
+    p_term(&mut state)
 }
 
 pub fn parse_hsyntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<RcHSyntax<'db>> {
-    let mut global_state = GlobalState::new(db, input);
-    p_hterm(&mut global_state)
-}
-
-/// Parse case expression: { @true => @1; @false => @0 }
-fn p_case_branches<'db>(global_state: &mut GlobalState<'db>) -> ParseResult<Vec<CaseBranch<'db>>> {
-    p_lbrace(global_state.state())?;
-    let mut branches = Vec::new();
-    while let Some(branch) = p_case_branch_opt(global_state)? {
-        branches.push(branch);
-    }
-    p_rbrace(global_state.state())?;
-    Ok(branches)
-}
-
-/// @Foo %0 %1 => body;
-fn p_case_branch_opt<'db>(
-    global_state: &mut GlobalState<'db>,
-) -> ParseResult<Option<CaseBranch<'db>>> {
-    let Some((constructor, arity)) = p_case_pattern_opt(global_state)? else {
-        return Ok(None);
-    };
-    p_fat_arrow(global_state.state())?;
-    let body = p_term(global_state)?;
-    global_state.state().reset_names(arity);
-    // Semicolon is optional (for the last branch)
-    let _ = p_semicolon_opt(global_state.state())?;
-    Ok(Some(CaseBranch::new(constructor, arity, body)))
-}
-
-/// @Foo %0 %1
-fn p_case_pattern_opt<'db>(
-    global_state: &mut GlobalState<'db>,
-) -> ParseResult<Option<(ConstantId<'db>, usize)>> {
-    let Some(constructor) = p_constant_opt(global_state)? else {
-        return Ok(None);
-    };
-    let mut arity = 0;
-    while let Some(name) = p_variable_opt(global_state.state())? {
-        arity += 1;
-        global_state.state().push_name(name)
-    }
-    Ok(Some((constructor, arity)))
+    let mut state = State::new(db, input);
+    p_hterm(&mut state)
 }
 
 #[cfg(test)]
@@ -2244,76 +2335,105 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_case_simple() {
+    fn test_parse_data_constructor_nullary() {
         use crate::Database;
         let db = Database::default();
-        let input = "case @x { @true => @1; @false => @0 }";
-
-        // Debug: let's see what tokens are being generated
-        use logos::Logos;
-        let mut lexer = Token::lexer(input);
-        println!("Tokens:");
-        while let Some(token) = lexer.next() {
-            println!("  {:?}", token);
-        }
-
-        // Debug: let's see what the error actually is
-        let parsed = match parse_syntax(&db, input) {
-            Ok(result) => result,
-            Err(e) => {
-                println!("Parse error: {:?}", e);
-                panic!("Failed to parse case expression: {:?}", e);
-            }
-        };
-
-        let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-            vec![
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "true"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
-                ),
-                CaseBranch::new(
-                    ConstantId::from_str(&db, "false"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
-                ),
-            ],
-        );
-
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn test_case_print_roundtrip() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "case @x { @true => @1; @false => @0 }";
+        let input = "[@Nil]";
         let result = parse_syntax(&db, input);
 
         assert!(
             result.is_ok(),
-            "Failed to parse case expression: {:?}",
+            "Failed to parse data constructor: {:?}",
             result
         );
 
         let parsed = result.unwrap();
+        let expected = Syntax::data_constructor_rc(ConstantId::from_str(&db, "Nil"), vec![]);
 
-        // Test that we can print the case expression
-        use crate::syn::print::print_syntax_to_string;
-        let printed = print_syntax_to_string(&db, &parsed);
+        assert_eq!(
+            parsed, expected,
+            "Parsed data constructor does not match expected"
+        );
+    }
 
-        println!("Printed case expression: {}", printed);
+    #[test]
+    fn test_parse_data_constructor_unary_simple() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "[@Some @42]";
+        let result = parse_syntax(&db, input);
 
-        // The printed version should contain the key elements
-        assert!(printed.contains("case"));
-        assert!(printed.contains("@true"));
-        assert!(printed.contains("@false"));
-        assert!(printed.contains("@1"));
-        assert!(printed.contains("@0"));
-        // Should contain @x since it's the scrutinee in the case expression
-        assert!(printed.contains("@x"));
+        assert!(
+            result.is_ok(),
+            "Failed to parse data constructor: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+        let expected = Syntax::data_constructor_rc(
+            ConstantId::from_str(&db, "Some"),
+            vec![Syntax::constant_rc(ConstantId::from_str(&db, "42"))],
+        );
+
+        assert_eq!(
+            parsed, expected,
+            "Parsed data constructor does not match expected"
+        );
+    }
+
+    #[test]
+    fn test_parse_data_constructor_unary_lambda() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "[@Some λ %0 → λ %0 → %0]";
+        let result = parse_syntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse data constructor: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+        let expected = Syntax::data_constructor_rc(
+            ConstantId::from_str(&db, "Some"),
+            vec![Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(
+                Index(0),
+            )))],
+        );
+
+        assert_eq!(
+            parsed, expected,
+            "Parsed data constructor does not match expected"
+        );
+    }
+
+    #[test]
+    fn test_parse_data_constructor_binary_lambda() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "[@Pair (λ %0 → %0) λ %0 → %0]";
+        let result = parse_syntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse data constructor: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+        let expected = Syntax::data_constructor_rc(
+            ConstantId::from_str(&db, "Pair"),
+            vec![
+                Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+                Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+            ],
+        );
+
+        assert_eq!(
+            parsed, expected,
+            "Parsed data constructor does not match expected"
+        );
     }
 
     #[test]
@@ -2321,12 +2441,13 @@ mod tests {
         use crate::Database;
         let db = Database::default();
         // Test parsing a case expression with scrutinee
-        let input = "case @x { @true => @1; @false => @0 }";
+        let input = "@x case %0 → @Bool { @true => @1; @false => @0 }";
 
         let parsed = parse_syntax(&db, input).expect("Failed to parse case expression");
 
         let expected = Syntax::case_rc(
             Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            Syntax::constant_from_str_rc(&db, "Bool"),
             vec![
                 CaseBranch::new(
                     ConstantId::from_str(&db, "true"),
@@ -2350,12 +2471,89 @@ mod tests {
         let db = Database::default();
 
         // Test that we can only parse constructor patterns, not variables or wildcards
-        let input = "case @x { @true => @1; @false => @0 }";
+        let input = "@x case %0 → @Bool { @true => @1; @false => @0 }";
 
         let parsed = parse_syntax(&db, input).expect("Failed to parse constructor-only case");
 
         let expected = Syntax::case_rc(
             Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            Syntax::constant_from_str_rc(&db, "Bool"),
+            vec![
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "true"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                ),
+                CaseBranch::new(
+                    ConstantId::from_str(&db, "false"),
+                    0,
+                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                ),
+            ],
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_type_constructor_simple() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "#[@Bool]";
+        let result = parse_syntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse type constructor: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+        let expected = Syntax::type_constructor_rc(ConstantId::from_str(&db, "Bool"), vec![]);
+
+        assert_eq!(
+            parsed, expected,
+            "Parsed type constructor does not match expected"
+        );
+    }
+
+    #[test]
+    fn test_parse_type_constructor_with_args() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "#[@List 𝒰0]";
+        let result = parse_syntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse type constructor with args: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+        let expected = Syntax::type_constructor_rc(
+            ConstantId::from_str(&db, "List"),
+            vec![Syntax::universe_rc(crate::common::UniverseLevel::new(0))],
+        );
+
+        assert_eq!(
+            parsed, expected,
+            "Parsed type constructor does not match expected"
+        );
+    }
+
+    #[test]
+    fn test_parse_case_with_type_constructor_motive() {
+        use crate::Database;
+        let db = Database::default();
+        let input = "@x case %0 → #[@Bool] { @true => @1; @false => @0 }";
+
+        let parsed =
+            parse_syntax(&db, input).expect("Failed to parse case with type constructor motive");
+
+        let expected = Syntax::case_rc(
+            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+            Syntax::type_constructor_rc(ConstantId::from_str(&db, "Bool"), vec![]),
             vec![
                 CaseBranch::new(
                     ConstantId::from_str(&db, "true"),

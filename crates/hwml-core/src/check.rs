@@ -64,11 +64,15 @@ fn eval<'db>(env: &Environment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>
 }
 
 /// Adaptor for running a closure from the semantic domain.
-fn run_closure<'db, T>(closure: &val::Closure<'db>, args: T) -> Result<Rc<Value<'db>>>
+fn run_closure<'db, T>(
+    global: &val::GlobalEnv<'db>,
+    closure: &val::Closure<'db>,
+    args: T,
+) -> Result<Rc<Value<'db>>>
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
-    match eval::run_closure(closure, args) {
+    match eval::run_closure(global, closure, args) {
         Ok(value) => Ok(value),
         Err(error) => Err(Error::EvaluationFailure(error)),
     }
@@ -79,6 +83,9 @@ pub fn type_synth<'db>(env: &mut Environment<'db>, term: &Syntax<'db>) -> Result
     match term {
         Syntax::Variable(variable) => type_synth_variable(env, variable),
         Syntax::Application(application) => type_synth_application(env, application),
+        Syntax::DataConstructor(data_constructor) => {
+            type_synth_data_constructor(env, data_constructor)
+        }
         _ => Err(Error::TypeSynthesisFailure),
     }
 }
@@ -110,7 +117,24 @@ pub fn type_synth_application<'db>(
 
     // The overall type is determined by substituting the argument into the target type.
     let arg = eval(env, &application.argument)?;
-    run_closure(&pi.target, [arg])
+    let sem_env = semantic_env(env);
+    run_closure(&sem_env.global, &pi.target, [arg])
+}
+
+/// Synthesize the type of a data constructor application.
+pub fn type_synth_data_constructor<'db>(
+    env: &mut Environment<'db>,
+    data_constructor: &syn::DataConstructor<'db>,
+) -> Result<Rc<Value<'db>>> {
+    // TODO: For now, we'll return a placeholder type.
+    // In a full implementation, we would:
+    // 1. Look up the constructor's type signature from the global environment
+    // 2. Check that the arguments match the constructor's parameter types
+    // 3. Return the constructor's return type (the inductive type it constructs)
+
+    // For now, return a universe as a placeholder
+    let _ = (env, data_constructor); // Use the parameters to avoid unused variable warnings
+    todo!("Data constructor type synthesis not yet implemented")
 }
 
 /// Check types of terms against an expected type.
