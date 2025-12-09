@@ -18,6 +18,7 @@ pub enum Error {
     MissingVariable,
     MissingTerm,
     MissingConstant,
+    MissingCaseBranch,
     UnknownVariable(String),
     DBParseError(DBParseError),
     #[default]
@@ -705,17 +706,29 @@ fn p_case_branch_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<CaseBran
     p_fat_arrow(state)?;
     let body = p_term(state)?;
     state.reset_names(arity);
-    // Semicolon is optional (for the last branch)
-    let _ = p_semicolon_opt(state)?;
     Ok(Some(CaseBranch::new(constructor, arity, body)))
+}
+
+fn p_case_branch<'db>(state: &mut State<'db>) -> ParseResult<CaseBranch<'db>> {
+    match p_case_branch_opt(state) {
+        Err(err) => Err(err),
+        Ok(None) => Err(Error::MissingCaseBranch),
+        Ok(Some(term)) => Ok(term),
+    }
 }
 
 fn p_case_branches<'db>(state: &mut State<'db>) -> ParseResult<Vec<CaseBranch<'db>>> {
     p_lbrace(state)?;
     let mut branches = Vec::new();
-    while let Some(branch) = p_case_branch_opt(state)? {
+
+    if let Some(branch) = p_case_branch_opt(state)? {
         branches.push(branch);
     }
+
+    while let Some(()) = p_pipe_opt(state)? {
+        branches.push(p_case_branch(state)?);
+    }
+
     p_rbrace(state)?;
     Ok(branches)
 }
