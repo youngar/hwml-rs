@@ -31,16 +31,34 @@ impl<'db> ConstantId<'db> {
 /// A list of typed variable bindings where each type can depend on the previous variables.
 #[derive(Debug, Clone)]
 pub struct Telescope<'db> {
-    pub bindings: Vec<RcSyntax<'db>>,
+    pub bindings: Box<[RcSyntax<'db>]>,
 }
 
 impl<'db> Telescope<'db> {
-    pub fn new(bindings: Vec<RcSyntax<'db>>) -> Self {
+    pub fn new(bindings: Box<[RcSyntax<'db>]>) -> Self {
         Telescope { bindings }
     }
 
     pub fn len(&self) -> usize {
         self.bindings.len()
+    }
+}
+
+impl<'db> From<Box<[RcSyntax<'db>]>> for Telescope<'db> {
+    fn from(bindings: Box<[RcSyntax<'db>]>) -> Self {
+        Telescope::new(bindings)
+    }
+}
+
+impl<'db> From<Vec<RcSyntax<'db>>> for Telescope<'db> {
+    fn from(bindings: Vec<RcSyntax<'db>>) -> Self {
+        Telescope::new(bindings.into_boxed_slice())
+    }
+}
+
+impl<'db> FromIterator<RcSyntax<'db>> for Telescope<'db> {
+    fn from_iter<T: IntoIterator<Item = RcSyntax<'db>>>(iter: T) -> Self {
+        Vec::from_iter(iter).into()
     }
 }
 
