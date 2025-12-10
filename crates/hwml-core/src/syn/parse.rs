@@ -2454,7 +2454,7 @@ mod tests {
         use crate::Database;
         let db = Database::default();
         // Test parsing a case expression with scrutinee
-        let input = "@x case %0 → @Bool { @true => @1; @false => @0 }";
+        let input = "@x case %0 → @Bool { @true => @1 | @false => @0 }";
 
         let parsed = parse_syntax(&db, input).expect("Failed to parse case expression");
 
@@ -2484,7 +2484,7 @@ mod tests {
         let db = Database::default();
 
         // Test that we can only parse constructor patterns, not variables or wildcards
-        let input = "@x case %0 → @Bool { @true => @1; @false => @0 }";
+        let input = "@x case %0 → @Bool { @true => @1 | @false => @0 }";
 
         let parsed = parse_syntax(&db, input).expect("Failed to parse constructor-only case");
 
@@ -2559,7 +2559,7 @@ mod tests {
     fn test_parse_case_with_type_constructor_motive() {
         use crate::Database;
         let db = Database::default();
-        let input = "@x case %0 → #[@Bool] { @true => @1; @false => @0 }";
+        let input = "@x case %0 → #[@Bool] { @true => @1 | @false => @0 }";
 
         let parsed =
             parse_syntax(&db, input).expect("Failed to parse case with type constructor motive");

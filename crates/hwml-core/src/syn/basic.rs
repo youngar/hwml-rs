@@ -28,6 +28,22 @@ impl<'db> ConstantId<'db> {
     }
 }
 
+/// A list of typed variable bindings where each type can depend on the previous variables.
+#[derive(Debug, Clone)]
+pub struct Telescope<'db> {
+    pub bindings: Vec<RcSyntax<'db>>,
+}
+
+impl<'db> Telescope<'db> {
+    pub fn new(bindings: Vec<RcSyntax<'db>>) -> Self {
+        Telescope { bindings }
+    }
+
+    pub fn len(&self) -> usize {
+        self.bindings.len()
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MetavariableId(pub usize);

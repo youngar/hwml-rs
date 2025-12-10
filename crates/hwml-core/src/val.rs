@@ -1,5 +1,5 @@
 use crate::common::{Level, UniverseLevel};
-use crate::syn::{ConstantId, RcSyntax};
+use crate::syn::{ConstantId, RcSyntax, Telescope};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -373,6 +373,19 @@ impl<'db> Environment<'db> {
     pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
         self.local.push_var(ty)
     }
+
+    /// Extend the environment with multiple variables.
+    pub fn extend_vars<T>(&mut self, types: T)
+    where
+        T: IntoIterator<Item = Rc<Value<'db>>>,
+    {
+        self.local.extend_vars(types)
+    }
+
+    /// Truncate the local environment to the given depth.
+    pub fn truncate(&mut self, depth: usize) {
+        self.local.truncate(depth)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -505,6 +518,20 @@ impl<'db> LocalEnv<'db> {
     {
         self.locals.extend(values);
     }
+
+    /// Truncate the environment to the given depth.
+    pub fn truncate(&mut self, depth: usize) {
+        self.locals.truncate(depth);
+    }
+
+    pub fn extend_vars<T>(&mut self, types: T)
+    where
+        T: IntoIterator<Item = Rc<Value<'db>>>,
+    {
+        for ty in types {
+            self.push_var(ty);
+        }
+    }
 }
 
 impl<'db> Extend<Rc<Value<'db>>> for Environment<'db> {
@@ -518,22 +545,42 @@ impl<'db> Extend<Rc<Value<'db>>> for Environment<'db> {
 
 #[derive(Clone, Debug)]
 pub struct TypeConstructorInfo<'db> {
-    pub ty: Rc<Value<'db>>,
+    pub parameters: Telescope<'db>,
+    pub indices: Telescope<'db>,
+    pub level: UniverseLevel,
 }
 
 impl<'db> TypeConstructorInfo<'db> {
-    pub fn new(ty: Rc<Value<'db>>) -> Self {
-        TypeConstructorInfo { ty }
+    pub fn new(parameters: Telescope<'db>, indices: Telescope<'db>, level: UniverseLevel) -> Self {
+        TypeConstructorInfo {
+            parameters,
+            indices,
+            level,
+        }
+    }
+
+    pub fn num_parameters(&self) -> usize {
+        self.parameters.len()
+    }
+
+    pub fn num_indices(&self) -> usize {
+        self.indices.len()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct DataConstructorInfo<'db> {
+    pub arguments: Telescope<'db>,
     pub ty: Rc<Value<'db>>,
 }
 
 impl<'db> DataConstructorInfo<'db> {
-    pub fn new(ty: Rc<Value<'db>>) -> Self {
-        DataConstructorInfo { ty }
+    pub fn new(arguments: Telescope<'db>, ty: Rc<Value<'db>>) -> Self {
+        DataConstructorInfo { arguments, ty }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct SemTelescope<'db> {
+    pub types: Vec<Rc<Value<'db>>>,
 }

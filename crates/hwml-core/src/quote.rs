@@ -1,7 +1,7 @@
 use crate::common::Level;
 use crate::eval;
 use crate::syn::{Case, CaseBranch, RcSyntax, Syntax};
-use crate::val;
+use crate::val::{self, Environment, LocalEnv};
 use crate::val::{GlobalEnv, Neutral, Normal, Value};
 use std::rc::Rc;
 
@@ -93,7 +93,7 @@ fn quote_type_constructor_instance<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
-    ty: &val::TypeConstructor,
+    ty: &val::TypeConstructor<'db>,
     value: &Value<'db>,
 ) -> Result<RcSyntax<'db>> {
     match value {
@@ -169,7 +169,7 @@ fn quote_type_constructor<'db>(
     depth: usize,
     sem_tcon: &val::TypeConstructor<'db>,
 ) -> Result<RcSyntax<'db>> {
-    // Start with the constructor constant
+    // Get the constructor constant.
     let constructor = sem_tcon.constructor;
 
     // Look up the type info.
@@ -178,22 +178,33 @@ fn quote_type_constructor<'db>(
         .map_err(Error::LookupError)?
         .clone();
 
-    // Quote each argument.
-    let mut arguments = Vec::new();
-    let mut current_ty = type_info.ty;
-    for sem_arg in &sem_tcon.arguments {
-        // Cast the current type into a pi. As long as we have more arguments, it should always be a pi.
-        let val::Value::Pi(current_pi) = current_ty.as_ref() else {
-            return Err(Error::IllTyped);
-        };
+    // Create a new environment.
+    let mut env = Environment {
+        global: global.clone(),
+        local: LocalEnv::new(),
+    };
 
-        // Quote the current argument
-        let syn_arg = quote(db, global, depth, &current_pi.source, &sem_arg)?;
+    // The arguments vector contains parameters first, then indices.
+    let mut arguments = Vec::new();
+
+    // Combine parameters and indices into a single iterator.
+    let all_bindings = type_info
+        .parameters
+        .bindings
+        .iter()
+        .chain(type_info.indices.bindings.iter());
+
+    // Quote each argument (both parameters and indices).
+    for (sem_arg, syn_ty) in sem_tcon.arguments.iter().zip(all_bindings) {
+        // Evaluate the type of the current argument.
+        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
+
+        // Quote the current argument.
+        let syn_arg = quote(db, global, depth, &sem_ty, sem_arg)?;
         arguments.push(syn_arg);
 
-        // Compute the next type.
-        current_ty = eval::run_closure(global, &current_pi.target, [sem_arg.clone()])
-            .map_err(Error::EvalError)?;
+        // Push the semantic argument into the environment for subsequent iterations.
+        env.push(sem_arg.clone());
     }
     Ok(Syntax::type_constructor_rc(constructor, arguments))
 }
@@ -227,34 +238,56 @@ fn quote_neutral<'db>(
 fn quote_data_constructor<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
-    _ty: &val::TypeConstructor,
+    mut depth: usize,
+    type_constructor: &val::TypeConstructor<'db>,
     sem_data: &val::DataConstructor<'db>,
 ) -> Result<RcSyntax<'db>> {
-    // Start with the constructor constant
+    // Get the constructor constant.
     let constructor = sem_data.constructor;
+
+    // Look up the type constructor info (from the type, not the data constructor).
+    let type_info = global
+        .type_constructor(type_constructor.constructor)
+        .map_err(Error::LookupError)?
+        .clone();
 
     // Look up the data constructor info.
     let data_info = global
         .data_constructor(constructor)
-        .map_err(Error::LookupError)?;
+        .map_err(Error::LookupError)?
+        .clone();
+
+    // Find the number of parameters.
+    let num_parameters = type_info.num_parameters();
+
+    // Create an array of just the paremeters, leaving out indices.
+    let parameters = type_constructor
+        .arguments
+        .iter()
+        .take(num_parameters)
+        .cloned();
+
+    // Create an environment for evaluating the type of each argument, with
+    // parameters in the context.
+    let mut env = Environment {
+        global: global.clone(),
+        local: LocalEnv::new(),
+    };
+    env.extend(parameters);
+    depth = depth + num_parameters;
 
     // Quote each argument.
     let mut arguments = Vec::new();
-    let mut current_ty = data_info.ty.clone();
-    for sem_arg in &sem_data.arguments {
-        // Cast the current type into a pi. As long as we have more arguments, it should always be a pi.
-        let val::Value::Pi(current_pi) = current_ty.as_ref() else {
-            return Err(Error::IllTyped);
-        };
+    for (sem_arg, syn_ty) in sem_data.arguments.iter().zip(data_info.arguments.bindings) {
+        // Evaluate the type of the current argument.
+        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
 
         // Quote the current argument
-        let syn_arg = quote(db, global, depth, &current_pi.source, &sem_arg)?;
+        let syn_arg = quote(db, global, depth, &sem_ty, &sem_arg)?;
         arguments.push(syn_arg);
 
-        // Compute the next type.
-        current_ty = eval::run_closure(global, &current_pi.target, [sem_arg.clone()])
-            .map_err(Error::EvalError)?;
+        // Push the semantic argument into the environment for subsequent iterations.
+        env.push(sem_arg.clone());
     }
     Ok(Syntax::data_constructor_rc(constructor, arguments))
 }
