@@ -1,6 +1,6 @@
 use crate::*;
 use anyhow::{anyhow, Result};
-use hwml_core::{syn::Syntax, *};
+use hwml_core::syn::Syntax;
 
 pub fn solve_equality<'db>(state: &mut State<'db>, cons: EqualityConstraint<'db>) -> Result<()> {
     println!("solving equality: {:?}", cons);

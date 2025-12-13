@@ -5,7 +5,8 @@
 //! cargo run --package hwml_core --example eval_quote_demo
 //! ```
 
-use hwml_core::examples::*;
+mod examples;
+use examples::*;
 
 fn main() {
     println!("╔═══════════════════════════════════════════════════════════════╗");
@@ -17,12 +18,11 @@ fn main() {
     println!("  • Quote semantic values back to normalized syntax");
     println!("  • Perform normalization (eval + quote)");
     println!();
-    
+
     run_all_examples();
-    
+
     println!();
     println!("╔═══════════════════════════════════════════════════════════════╗");
     println!("║  Demo Complete!                                               ║");
     println!("╚═══════════════════════════════════════════════════════════════╝");
 }
-

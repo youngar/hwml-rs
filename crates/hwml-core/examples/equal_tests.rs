@@ -9,7 +9,8 @@ mod tests {
     use crate::equal::Convertible;
     use crate::syn::{ConstantId, Syntax};
     use crate::val::{
-        DataConstructorInfo, GlobalEnv, Normal, TypeConstructorInfo, Universe, Value,
+        Closure, DataConstructorInfo, GlobalEnv, LocalEnv, Normal, TypeConstructorInfo, Universe,
+        Value,
     };
     use crate::Database;
     use std::rc::Rc;
@@ -723,4 +724,10 @@ mod tests {
 
         assert!(case1.is_convertible(&global, 0, &case2).is_err());
     }
+}
+
+fn main() {
+    println!(
+        "This is a test file. Run with `cargo test --example equal_tests` to execute the tests."
+    );
 }

@@ -1,10 +1,7 @@
-use crate::common::Level;
 use crate::syn::{self as stx};
-use crate::syn::{self, Telescope};
-use crate::syn::{Case, Syntax};
+use crate::syn::{self, Syntax};
+use crate::val::{self, Closure, Environment, GlobalEnv, Neutral, Value};
 use crate::val::{self as dom, DataConstructor, LocalEnv, SemTelescope};
-use crate::val::{self, Normal};
-use crate::val::{Closure, Environment, GlobalEnv, Neutral, Value};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]

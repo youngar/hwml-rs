@@ -4,7 +4,6 @@ use anyhow::Result;
 use hwml_core::common::*;
 use hwml_core::declaration as decl;
 use hwml_core::syn as core;
-use hwml_core::syn::Metavariable;
 use hwml_surface::syntax as surface;
 
 pub fn infer_app<'db>(

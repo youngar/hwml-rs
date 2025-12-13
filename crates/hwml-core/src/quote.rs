@@ -1,7 +1,7 @@
 use crate::common::Level;
 use crate::eval::{self, eval_telescope};
-use crate::syn::{Case, CaseBranch, RcSyntax, Syntax};
-use crate::val::{self, Closure, Environment, LocalEnv, TypeConstructor};
+use crate::syn::{CaseBranch, RcSyntax, Syntax};
+use crate::val::{self, Closure, Environment, LocalEnv};
 use crate::val::{GlobalEnv, Neutral, Normal, Value};
 use std::rc::Rc;
 

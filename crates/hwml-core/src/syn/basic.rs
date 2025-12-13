@@ -1,4 +1,4 @@
-use crate::common::{Index, Level, UniverseLevel};
+use crate::common::{Index, UniverseLevel};
 use crate::symbol::InternedString;
 use salsa::Database;
 use std::rc::Rc;

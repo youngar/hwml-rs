@@ -1,13 +1,7 @@
 use clap::Parser;
 use hwml_core::{syn, val};
-use la_arena;
 use std::fs;
 use std::path::PathBuf;
-
-enum Mode {
-    Surface,
-    Core,
-}
 
 #[derive(Parser, Debug)]
 #[clap(author = "Andrew Young", version, about)]
@@ -88,11 +82,11 @@ fn run_core(args: Args) {
         println!("Parsed syntax: {:?}", syn_tm);
     }
 
-    let globals = Global::new();
+    let globals = val::GlobalEnv::new();
 
     let mut tc_env = hwml_core::check::TCEnvironment {
         globals: &globals,
-        values: val::Environment::new(),
+        values: val::Environment::new(&globals),
         types: Vec::new(),
     };
     let sem_ty = match hwml_core::check::type_synth(&mut tc_env, &syn_tm) {
@@ -107,10 +101,10 @@ fn run_core(args: Args) {
         println!("Sem Ty: {:?}", sem_ty);
     }
 
-    let mut env =     val::Environment {
-        global: & globals,
+    let mut env = val::Environment {
+        global: &globals,
         local: val::LocalEnv::new(),
-    }
+    };
     let sem_tm = match hwml_core::eval::eval(&mut env, &syn_tm) {
         Ok(s) => s,
         Err(e) => {

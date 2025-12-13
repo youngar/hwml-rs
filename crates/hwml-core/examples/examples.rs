@@ -30,8 +30,8 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
     Ok(syntax)
 }
 
-/// Create an environment with Bool type and True/False data constructors.
-fn bool_env<'db>(db: &'db Database, global: GlobalEnv<'db>) -> (Environment<'db>) {
+/// Create a GlobalEnv with Bool type and True/False data constructors.
+fn bool_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     let mut global = GlobalEnv::new();
 
     // Register Bool type constructor with type Type₀
@@ -63,15 +63,11 @@ fn bool_env<'db>(db: &'db Database, global: GlobalEnv<'db>) -> (Environment<'db>
     println!("False data_info: {:?}", false_data_info);
     global.add_data_constructor(false_id, false_data_info);
 
-    let env = Environment {
-        global: &global,
-        local: LocalEnv::new(),
-    };
-    (global, env)
+    global
 }
 
-/// Create an environment with Nat type and zero/succ data constructors.
-fn nat_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
+/// Create a GlobalEnv with Nat type and zero/succ data constructors.
+fn nat_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     let mut global = GlobalEnv::new();
 
     // Register Nat type constructor: #[@Nat] : 𝒰0
@@ -106,18 +102,14 @@ fn nat_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
     println!("succ data_info: {:?}", succ_data_info);
     global.add_data_constructor(succ_id, succ_data_info);
 
-    let env = Environment {
-        global: global.clone(),
-        local: LocalEnv::new(),
-    };
-    (global, env)
+    global
 }
 
-/// Create an environment with Option type and Some/None data constructors.
+/// Create a GlobalEnv with Option type and Some/None data constructors.
 /// Option is parameterized by a type: Option : 𝒰0 → 𝒰0
 /// None : ∀ (t : 𝒰0) → Option t
 /// Some : ∀ (t : 𝒰0) → t → Option t
-fn option_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
+fn option_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     let mut global = GlobalEnv::new();
 
     // Register Option type constructor: #[@Option] : 𝒰0 → 𝒰0
@@ -164,18 +156,14 @@ fn option_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
     println!("Some data_info: {:?}", some_data_info);
     global.add_data_constructor(some_id, some_data_info);
 
-    let env = Environment {
-        global: global.clone(),
-        local: LocalEnv::new(),
-    };
-    (global, env)
+    global
 }
 
-/// Create an environment with Vec type (indexed by length) and nil/cons data constructors.
+/// Create a GlobalEnv with Vec type (indexed by length) and nil/cons data constructors.
 /// Vec : ∀ (A : 𝒰0) (n : Nat) → 𝒰0
 /// nil : ∀ (A : 𝒰0) → Vec A zero
 /// cons : ∀ (A : 𝒰0) (n : Nat) (x : A) (xs : Vec A n) → Vec A (succ n)
-fn vec_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
+fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     let mut global = GlobalEnv::new();
 
     // First, register Bool type (for vector elements)
@@ -315,11 +303,7 @@ fn vec_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
     println!("cons data_info: {:?}", cons_data_info);
     global.add_data_constructor(cons_id, cons_data_info);
 
-    let env = Environment {
-        global: global.clone(),
-        local: LocalEnv::new(),
-    };
-    (global, env)
+    global
 }
 
 /// Evaluate syntax and print the result.
@@ -349,7 +333,7 @@ fn print_type<'db>(
 /// Quote a type value and print the result.
 fn quote_type_and_print<'db>(
     db: &'db Database,
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     depth: usize,
     value: &Rc<Value<'db>>,
 ) -> Result<RcSyntax<'db>, String> {
@@ -364,7 +348,7 @@ fn quote_type_and_print<'db>(
 /// Quote a value with a given type and print the result.
 fn quote_and_print<'db>(
     db: &'db Database,
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     depth: usize,
     ty: &Rc<Value<'db>>,
     value: &Rc<Value<'db>>,
@@ -451,7 +435,7 @@ pub fn example_application<'db>(db: &'db Database) -> Result<(), String> {
     let mut local = LocalEnv::new();
     local.push(var_value);
     let mut env = Environment {
-        global: global.clone(),
+        global: &global,
         local,
     };
 
@@ -516,7 +500,7 @@ pub fn example_data_constructor<'db>(db: &'db Database) -> Result<(), String> {
     let syntax = parse_and_print(db, "[@Pair [@True] [@False]]")?;
 
     // Create environment with Bool and Pair data constructors
-    let (mut global, mut env) = bool_env(db);
+    let mut global = bool_env(db);
 
     let pair_id = ConstantId::from_str(db, "Pair");
     let pair_type_id = ConstantId::from_str(db, "PairType");
@@ -544,8 +528,11 @@ pub fn example_data_constructor<'db>(db: &'db Database) -> Result<(), String> {
     println!("Pair data_info: {:?}", pair_data_info);
     global.add_data_constructor(pair_id, pair_data_info);
 
-    // Update env with the new global
-    env.global = global.clone();
+    // Create environment after all global setup is done
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     let value = eval_and_print(&mut env, &syntax)?;
 
@@ -687,7 +674,7 @@ pub fn example_normalization<'db>(db: &'db Database) -> Result<(), String> {
     local.push(var0);
     local.push(var1);
     let mut env = Environment {
-        global: global.clone(),
+        global: &global,
         local,
     };
 
@@ -717,9 +704,14 @@ pub fn example_case_neutral<'db>(db: &'db Database) -> Result<(), String> {
     let syntax = parse_and_print(db, "λ %x → %x case %0 → 𝒰0 { @True => 𝒰0 | @False => 𝒰0 }")?;
 
     // Set up environment with Bool type constructor and True/False data constructors
-    let (global, mut env) = bool_env(db);
+    let global = bool_env(db);
     let bool_id = ConstantId::from_str(db, "Bool");
     let bool_type = Rc::new(Value::type_constructor(bool_id, vec![]));
+
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     let value = eval_and_print(&mut env, &syntax)?;
 
@@ -746,7 +738,7 @@ pub fn example_case_reduces<'db>(db: &'db Database) -> Result<(), String> {
     )?;
 
     // Set up environment with Bool and Pair data constructors
-    let (mut global, mut env) = bool_env(db);
+    let mut global = bool_env(db);
 
     let pair_type_id = ConstantId::from_str(db, "PairType");
     let bool_id = ConstantId::from_str(db, "Bool");
@@ -773,8 +765,11 @@ pub fn example_case_reduces<'db>(db: &'db Database) -> Result<(), String> {
     println!("Pair data_info: {:?}", pair_data_info);
     global.add_data_constructor(pair_id, pair_data_info);
 
-    // Update env with the new global
-    env.global = global.clone();
+    // Create environment after all global setup is done
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     let value = eval_and_print(&mut env, &syntax)?;
 
@@ -793,7 +788,11 @@ pub fn example_nat_pattern_match<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 13: Natural Numbers with Pattern Matching ===");
 
     // Create environment with Nat type
-    let (global, mut env) = nat_env(db);
+    let global = nat_env(db);
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     // Create a natural number: [@succ [@succ [@zero]]] (represents 2)
     let two = parse_and_print(db, "[@succ [@succ [@zero]]]")?;
@@ -841,7 +840,7 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 14: Option Type with Dependent Pattern Matching ===");
 
     // We need Option, Nat, and Bool types
-    let (mut global, mut env) = option_env(db);
+    let mut global = option_env(db);
 
     // Add Nat type to the environment
     let nat_id = ConstantId::from_str(db, "Nat");
@@ -899,7 +898,11 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
         ),
     );
 
-    env.global = global.clone();
+    // Create environment after all global setup is done
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     // Dependent pattern matching with motive:
     // λ %t %x → %x case %0 → (%0 case %1 → 𝒰0 { @None %t => #[@Bool] | @Some %t %y => %t })
@@ -963,7 +966,11 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
 pub fn example_vec<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 15: Vec - Indexed Data Type ===");
 
-    let (global, mut env) = vec_env(db);
+    let global = vec_env(db);
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     // Get the IDs we need
     let vec_id = ConstantId::from_str(db, "Vec");
@@ -1271,4 +1278,8 @@ mod tests {
     fn test_run_all() {
         run_all_examples();
     }
+}
+
+fn main() {
+    run_all_examples();
 }

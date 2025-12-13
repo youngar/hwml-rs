@@ -30,14 +30,8 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
 }
 
 /// Create an empty environment (no global definitions, no local variables).
-fn empty_env<'db>() -> (GlobalEnv<'db>, Environment<'db>) {
-    let global = GlobalEnv::new();
-    let local = LocalEnv::new();
-    let env = Environment {
-        global: global.clone(),
-        local,
-    };
-    (global, env)
+fn empty_env<'db>() -> GlobalEnv<'db> {
+    GlobalEnv::new()
 }
 
 /// Evaluate a syntax term and print the result.
@@ -99,7 +93,11 @@ pub fn example_universe<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 1: Universe ===");
 
     let syntax = parse_and_print(db, "𝒰0")?;
-    let (global, mut env) = empty_env();
+    let global = empty_env();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     // Type of 𝒰0 is 𝒰1
     let ty = Rc::new(Value::universe(UniverseLevel::new(1)));
@@ -116,7 +114,11 @@ pub fn example_lambda<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 2: Lambda (Identity Function) ===");
 
     let syntax = parse_and_print(db, "λ %x → %x")?;
-    let (global, mut env) = empty_env();
+    let global = empty_env();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
     let value = eval_and_print(&mut env, &syntax)?;
 
     // To quote a lambda, we need its type (a Pi type: Type₀ → Type₀)
@@ -154,4 +156,3 @@ fn main() {
     println!();
     println!("✓ All examples completed successfully!");
 }
-
