@@ -1,7 +1,7 @@
 use crate::common::Level;
-use crate::eval;
+use crate::eval::{self, eval_telescope};
 use crate::syn::{Case, CaseBranch, RcSyntax, Syntax};
-use crate::val::{self, Environment, LocalEnv};
+use crate::val::{self, Closure, Environment, LocalEnv, TypeConstructor};
 use crate::val::{GlobalEnv, Neutral, Normal, Value};
 use std::rc::Rc;
 
@@ -13,6 +13,18 @@ pub enum Error {
     /// Quotation can force evaluation, which may itself prevent an error.
     EvalError(eval::Error),
     LookupError(val::LookupError),
+}
+
+impl From<eval::Error> for Error {
+    fn from(error: eval::Error) -> Self {
+        Error::EvalError(error)
+    }
+}
+
+impl From<val::LookupError> for Error {
+    fn from(error: val::LookupError) -> Self {
+        Error::LookupError(error)
+    }
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -173,7 +185,7 @@ fn quote_type_constructor<'db>(
     let constructor = sem_tcon.constructor;
 
     // Look up the type info.
-    let type_info = global
+    let type_info: val::TypeConstructorInfo<'db> = global
         .type_constructor(constructor)
         .map_err(Error::LookupError)?
         .clone();
@@ -187,15 +199,8 @@ fn quote_type_constructor<'db>(
     // The arguments vector contains parameters first, then indices.
     let mut arguments = Vec::new();
 
-    // Combine parameters and indices into a single iterator.
-    let all_bindings = type_info
-        .parameters
-        .bindings
-        .iter()
-        .chain(type_info.indices.bindings.iter());
-
     // Quote each argument (both parameters and indices).
-    for (sem_arg, syn_ty) in sem_tcon.arguments.iter().zip(all_bindings) {
+    for (sem_arg, syn_ty) in sem_tcon.iter().zip(type_info.arguments.iter()) {
         // Evaluate the type of the current argument.
         let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
 
@@ -261,11 +266,7 @@ fn quote_data_constructor<'db>(
     let num_parameters = type_info.num_parameters();
 
     // Create an array of just the paremeters, leaving out indices.
-    let parameters = type_constructor
-        .arguments
-        .iter()
-        .take(num_parameters)
-        .cloned();
+    let parameters = type_constructor.iter().take(num_parameters).cloned();
 
     // Create an environment for evaluating the type of each argument, with
     // parameters in the context.
@@ -278,7 +279,7 @@ fn quote_data_constructor<'db>(
 
     // Quote each argument.
     let mut arguments = Vec::new();
-    for (sem_arg, syn_ty) in sem_data.arguments.iter().zip(data_info.arguments.bindings) {
+    for (sem_arg, syn_ty) in sem_data.iter().zip(data_info.arguments.bindings) {
         // Evaluate the type of the current argument.
         let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
 
@@ -323,6 +324,7 @@ fn quote_application<'db>(
     Ok(Rc::new(syn_app))
 }
 
+/// Read a stuck case expression back to syntax.
 fn quote_case<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
@@ -333,16 +335,69 @@ fn quote_case<'db>(
     let sem_scrutinee = &sem_case.scrutinee;
     let syn_scrutinee = quote_neutral(db, global, depth, &sem_scrutinee)?;
 
-    let sem_motive = &sem_case.motive;
-    let syn_motive = quote_type(db, global, depth + 1, &sem_motive)?;
+    let type_info = global.type_constructor(sem_case.type_constructor)?;
+    let num_parameters = type_info.num_parameters();
 
-    let syn_branches = sem_case
-        .branches
-        .iter()
-        .map(|branch| {
-            quote_normal(db, global, depth + branch.arity, &branch.body)
-                .map(|body| CaseBranch::new(branch.constructor, branch.arity, body))
-        })
-        .collect::<Result<_>>()?;
-    Ok(Syntax::case_rc(syn_scrutinee, syn_motive, syn_branches))
+    let parameters = &sem_case.parameters;
+    let index_bindings = type_info.arguments.bindings[num_parameters..].to_vec();
+    let index_telescope = crate::syn::Telescope::from(index_bindings);
+    let index_tys = eval_telescope(global, parameters.clone(), &index_telescope)?;
+
+    let mut branches = Vec::new();
+    for branch in &sem_case.branches {
+        let data_info = global.data_constructor(branch.constructor)?;
+
+        // Create an instance of this data constructor.
+        let dcon_arg_tys = eval_telescope(global, parameters.clone(), &data_info.arguments)?;
+        let mut dcon_args = Vec::new();
+        for ty in dcon_arg_tys.types {
+            dcon_args.push(Rc::new(Value::variable(
+                ty,
+                Level::new(depth + dcon_args.len()),
+            )));
+        }
+        let mut dcon_env = LocalEnv::new();
+        dcon_env.extend(parameters.clone());
+        let dcon_ty_clos = Closure::new(dcon_env, data_info.ty.clone());
+        let dcon_ty = eval::run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
+        let Value::TypeConstructor(tcon) = &*dcon_ty else {
+            return Err(Error::IllTyped);
+        };
+        let dcon_val = Rc::new(Value::data_constructor(
+            branch.constructor,
+            dcon_args.clone(),
+        ));
+        // Create the arguments to the motive, by pulling the indices from the type constructor, and appending the data constructor.
+        let mut motive_args = tcon.arguments[type_info.num_parameters..].to_vec();
+        motive_args.push(dcon_val);
+        let branch_ty = eval::run_closure(global, &sem_case.motive, motive_args)?;
+        // Evaluate the branch body closure with the data constructor arguments
+        let branch_val = eval::run_closure(global, &branch.body, dcon_args)?;
+        let branch_syn = quote(db, global, depth + branch.arity, &*branch_ty, &*branch_val)?;
+        branches.push(CaseBranch::new(
+            branch.constructor,
+            branch.arity,
+            branch_syn,
+        ));
+    }
+
+    // Read back the motive by creating a variable for the scrutinee.
+    // Reconstruct the scrutinee type from the type constructor and parameters.
+    let mut motive_args = Vec::new();
+    for ty in index_tys.types {
+        motive_args.push(Rc::new(Value::variable(
+            ty,
+            Level::new(depth + motive_args.len()),
+        )));
+    }
+    let scrutinee_ty = Rc::new(Value::type_constructor(
+        sem_case.type_constructor,
+        sem_case.parameters.clone(),
+    ));
+    let scrutinee_var = Rc::new(Value::variable(scrutinee_ty, Level::new(depth)));
+    motive_args.push(scrutinee_var);
+    let motive_args_len = motive_args.len();
+    let sem_motive_result = eval::run_closure(global, &sem_case.motive, motive_args)?;
+    let syn_motive = quote_type(db, global, depth + 1 + motive_args_len, &sem_motive_result)?;
+    Ok(Syntax::case_rc(syn_scrutinee, syn_motive, branches))
 }

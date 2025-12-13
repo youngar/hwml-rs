@@ -4,40 +4,68 @@ use crate::syn as stx;
 use crate::syn;
 use crate::syn::Syntax;
 use crate::val;
+use crate::val::Closure;
 use crate::val::Value;
 use std::rc::Rc;
 
-pub struct EnvironmentEntry<'db> {
-    pub value: Rc<Value<'db>>,
-    pub ty: Rc<Value<'db>>,
+pub struct TCEnvironment<'db> {
+    pub values: val::Environment<'db>,
+    pub types: Vec<Rc<Value<'db>>>,
 }
 
-pub type Environment<'db> = Vec<EnvironmentEntry<'db>>;
-
-/// Convert a typechecking environment to an environment in the semantic domain, by throwing
-/// away the types and just remembering the semanticvalues associated with each variable.
-fn semantic_env<'db>(env: &Environment<'db>) -> val::Environment<'db> {
-    let mut dom_env = val::Environment::new();
-    for entry in env.iter() {
-        dom_env.push(entry.value.clone());
+impl<'db> TCEnvironment<'db> {
+    fn type_of(&self, level: Level) -> &Rc<Value<'db>> {
+        let index: usize = level.into();
+        &self.types[index]
     }
-    dom_env
-}
 
-/// Push a variable into the typechecking environment.
-fn var_push<'db>(env: &mut Environment<'db>, value: Rc<Value<'db>>, ty: Rc<Value<'db>>) {
-    env.push(EnvironmentEntry { value, ty });
-}
+    fn var_type(&self, var: &stx::Variable) -> &Rc<Value<'db>> {
+        let level = var.index.to_level(self.depth());
+        self.type_of(level)
+    }
 
-/// Access the entry of a variable in the syntax.
-fn var_entry<'a, 'db>(env: &'a Environment<'db>, var: &stx::Variable) -> &'a EnvironmentEntry<'db> {
-    let i: usize = var.index.into();
-    &env[i]
-}
+    fn value_of(&self, level: Level) -> &Rc<Value<'db>> {
+        self.values.get(level)
+    }
 
-/// Access the type of a variable in the syntax.
-fn var_type<'a, 'db>(env: &'a Environment<'db>, var: &stx::Variable) -> &'a Rc<Value<'db>> {
-    &var_entry(env, var).ty
+    fn var_value(&self, var: &stx::Variable) -> &Rc<Value<'db>> {
+        let level = var.index.to_level(self.depth());
+        self.value_of(level)
+    }
+
+    fn push(&mut self, value: Rc<Value<'db>>, ty: Rc<Value<'db>>) {
+        self.values.push(value);
+        self.types.push(ty);
+    }
+
+    fn push_var(&mut self, ty: Rc<Value<'db>>) {
+        let var = Rc::new(Value::variable(ty.clone(), Level::new(self.depth())));
+        self.push(var, ty);
+    }
+
+    fn pop(&mut self) {
+        self.values.pop();
+        self.types.pop();
+    }
+
+    fn truncate(&mut self, depth: usize) {
+        self.values.truncate(depth);
+        self.types.truncate(depth);
+    }
+
+    fn depth(&self) -> usize {
+        self.values.depth()
+    }
+
+    fn extend_vars<T>(&mut self, types: T)
+    where
+        T: IntoIterator<Item = Rc<Value<'db>>>,
+    {
+        for ty in types {
+            self.values.push_var(ty.clone());
+            self.types.push(ty);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +73,7 @@ pub enum Error {
     TypeSynthesisFailure,
     TypeMismatch,
     EvaluationFailure(eval::Error),
+    LookupError(val::LookupError),
     Misc(String),
 }
 
@@ -55,53 +84,64 @@ fn err<T>(message: &str) -> Result<T> {
 }
 
 /// Evaluate a syntactic term to a semantic value.
-fn eval<'db>(env: &Environment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
-    let mut sem_env = semantic_env(env);
-    match eval::eval(&mut sem_env, term) {
-        Ok(value) => Ok(value),
-        Err(error) => Err(Error::EvaluationFailure(error)),
-    }
+fn eval<'db>(env: &TCEnvironment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
+    let mut sem_env = env.values.clone();
+    eval::eval(&mut sem_env, term).map_err(Error::EvaluationFailure)
 }
 
 /// Adaptor for running a closure from the semantic domain.
 fn run_closure<'db, T>(
-    global: &val::GlobalEnv<'db>,
+    env: &TCEnvironment<'db>,
     closure: &val::Closure<'db>,
     args: T,
 ) -> Result<Rc<Value<'db>>>
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
-    match eval::run_closure(global, closure, args) {
-        Ok(value) => Ok(value),
-        Err(error) => Err(Error::EvaluationFailure(error)),
-    }
+    eval::run_closure(&env.values.global, closure, args).map_err(Error::EvaluationFailure)
+}
+
+fn eval_telescope<'db>(
+    env: &mut TCEnvironment<'db>,
+    args: impl IntoIterator<Item = Rc<Value<'db>>>,
+    telescope: &stx::Telescope<'db>,
+) -> Result<val::SemTelescope<'db>> {
+    eval::eval_telescope(&env.values.global, args, telescope).map_err(Error::EvaluationFailure)
 }
 
 /// Synthesize (infer) types for variables and elimination forms.
-pub fn type_synth<'db>(env: &mut Environment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
+pub fn type_synth<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
     match term {
         Syntax::Variable(variable) => type_synth_variable(env, variable),
+        Syntax::Check(check) => type_synth_check(env, check),
         Syntax::Application(application) => type_synth_application(env, application),
-        Syntax::DataConstructor(data_constructor) => {
-            type_synth_data_constructor(env, data_constructor)
-        }
+        Syntax::Case(case) => type_synth_case(env, case),
         _ => Err(Error::TypeSynthesisFailure),
     }
 }
 
 /// Synthesize a type for a variable.
 pub fn type_synth_variable<'db>(
-    env: &mut Environment<'db>,
+    env: &mut TCEnvironment<'db>,
     variable: &syn::Variable,
 ) -> Result<Rc<Value<'db>>> {
     // Pull the type from the typing environment.
-    Ok(var_type(env, variable).clone())
+    Ok(env.var_type(variable).clone())
+}
+
+/// Synthesize the type of a term annotated with a type.
+pub fn type_synth_check<'db>(
+    env: &mut TCEnvironment<'db>,
+    check: &syn::Check<'db>,
+) -> Result<Rc<Value<'db>>> {
+    let ty = eval(env, &check.ty)?;
+    type_check(env, &check.term, &ty)?;
+    Ok(ty)
 }
 
 /// Synthesize the type of a function application.
 pub fn type_synth_application<'db>(
-    env: &mut Environment<'db>,
+    env: &mut TCEnvironment<'db>,
     application: &syn::Application<'db>,
 ) -> Result<Rc<Value<'db>>> {
     // First synthesize the type of the term being applied.
@@ -117,29 +157,67 @@ pub fn type_synth_application<'db>(
 
     // The overall type is determined by substituting the argument into the target type.
     let arg = eval(env, &application.argument)?;
-    let sem_env = semantic_env(env);
-    run_closure(&sem_env.global, &pi.target, [arg])
+    run_closure(&env, &pi.target, [arg])
 }
 
-/// Synthesize the type of a data constructor application.
-pub fn type_synth_data_constructor<'db>(
-    env: &mut Environment<'db>,
-    data_constructor: &syn::DataConstructor<'db>,
+/// Synthesize the type of a case expression.
+pub fn type_synth_case<'db>(
+    env: &mut TCEnvironment<'db>,
+    case: &syn::Case<'db>,
 ) -> Result<Rc<Value<'db>>> {
-    // TODO: For now, we'll return a placeholder type.
-    // In a full implementation, we would:
-    // 1. Look up the constructor's type signature from the global environment
-    // 2. Check that the arguments match the constructor's parameter types
-    // 3. Return the constructor's return type (the inductive type it constructs)
+    // First synthesize the type of the scrutinee.
+    let scrutinee_ty = type_synth(env, &case.expr)?;
 
-    // For now, return a universe as a placeholder
-    let _ = (env, data_constructor); // Use the parameters to avoid unused variable warnings
-    todo!("Data constructor type synthesis not yet implemented")
+    let motive_clos = Closure::new(env.values.local.clone(), case.motive.clone());
+
+    // Ensure that the term being matched is a datatype.
+    let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
+        return Err(Error::TypeMismatch);
+    };
+
+    // Get the type constructor info.
+    let type_info = env
+        .values
+        .global
+        .type_constructor(type_constructor.constructor)
+        .map_err(Error::LookupError)?;
+
+    // Get the number of parameters.
+    let num_parameters = type_info.num_parameters();
+
+    // Create an array of parameters.
+    let parameters = type_constructor.iter().take(num_parameters).cloned();
+
+    // Check the types of the branches.
+    for branch in &case.branches {
+        let data_info = env
+            .values
+            .global
+            .data_constructor(branch.constructor)
+            .map_err(Error::LookupError)?;
+
+        //let arg_types = eval_telescope(env, parameters.clone(), &data_info.arguments)?;
+        //let args: Vec<Rc<Value<'_>>> = arg_types.map(|ty| env.push_var(ty));
+        //let branch_scrut = Rc::new(Value::data_constructor(branch.constructor, args));
+        //let branch_type = run_closure(env, &motive_clos, [branch_scrut.clone()])?;
+
+        //type_check(
+        //    env,
+        //    &branch.body,
+        //    &run_closure(env, motive, [branch_scrut])?,
+        //)?;
+    }
+
+    todo!();
+    // Evaluate the motive to a value.
+    let scrutinee = eval(env, &case.expr)?;
+    //let ty = run_closure(env, motive, [scrutinee]);
+    //Ok(ty)
 }
 
 /// Check types of terms against an expected type.
 pub fn type_check<'db>(
-    env: &mut Environment<'db>,
+    env: &mut TCEnvironment<'db>,
     term: &Syntax<'db>,
     ty: &Value<'db>,
 ) -> Result<()> {
@@ -151,7 +229,7 @@ pub fn type_check<'db>(
 
 /// Typecheck a pi term.
 fn type_check_pi<'db>(
-    env: &mut Environment<'db>,
+    env: &mut TCEnvironment<'db>,
     pi: &syn::Pi<'db>,
     ty: &Value<'db>,
 ) -> Result<()> {
@@ -166,14 +244,8 @@ fn type_check_pi<'db>(
     // Evaluate the source type to a value.
     let sem_source_ty = eval(env, &pi.source)?;
 
-    // Construct a variable of the source type.
-    let var = Rc::new(Value::variable(
-        sem_source_ty.clone(),
-        Level::new(env.len()),
-    ));
-
     // Check that the target type is of the same universe as the pi.
-    var_push(env, var, sem_source_ty);
+    env.push_var(sem_source_ty);
     let result = type_check(env, &pi.target, ty);
     env.pop();
     result
@@ -181,7 +253,7 @@ fn type_check_pi<'db>(
 
 // Synthesize a type for the term, then check for equality against the expected type.
 pub fn type_check_synth_term<'db>(
-    env: &mut Environment<'db>,
+    env: &mut TCEnvironment<'db>,
     term: &Syntax<'db>,
     ty1: &Value<'db>,
 ) -> Result<()> {
@@ -191,7 +263,7 @@ pub fn type_check_synth_term<'db>(
 
 /// Check that two types are equal.
 pub fn check_type_equal<'db>(
-    _env: &Environment<'db>,
+    _env: &TCEnvironment<'db>,
     _a: &Value<'db>,
     _b: &Value<'db>,
 ) -> Result<()> {
@@ -199,7 +271,7 @@ pub fn check_type_equal<'db>(
 }
 
 /// Check that the given term is a valid type.
-pub fn check_type<'db>(env: &mut Environment<'db>, term: &Syntax<'db>) -> Result<()> {
+pub fn check_type<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Result<()> {
     // If the term is a pi, then we just check that it is valid.
     if let Syntax::Pi(pi) = term {
         return check_pi_type(env, pi);
@@ -216,7 +288,7 @@ pub fn check_type<'db>(env: &mut Environment<'db>, term: &Syntax<'db>) -> Result
 }
 
 /// Check that a pi is a valid type.
-fn check_pi_type<'db>(env: &mut Environment<'db>, pi: &stx::Pi<'db>) -> Result<()> {
+fn check_pi_type<'db>(env: &mut TCEnvironment<'db>, pi: &stx::Pi<'db>) -> Result<()> {
     // First check that the source-type of the pi is a type.
     check_type(env, &pi.source)?;
 
@@ -225,8 +297,7 @@ fn check_pi_type<'db>(env: &mut Environment<'db>, pi: &stx::Pi<'db>) -> Result<(
 
     // Check the codomain under an environment extended with one additional
     // variable, of the domain type, representing the pi binder.
-    let tm = Rc::new(Value::variable(ty.clone(), Level::new(env.len())));
-    var_push(env, tm, ty);
+    env.push_var(ty);
     let result = check_type(env, &pi.target);
     env.pop();
     result

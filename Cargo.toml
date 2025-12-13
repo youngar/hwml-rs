@@ -33,6 +33,7 @@ derive-new = "0.7.0"
 elegance = "0.3.2"
 eyre = "0.6.12"
 insta = { version = "1.43.1", features = ["yaml"] }
+itertools = "0.13"
 la-arena = "0.3.1"
 lalrpop = { version = "0.22.1", features = ["unicode"] }
 lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }

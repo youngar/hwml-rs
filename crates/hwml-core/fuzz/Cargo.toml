@@ -44,3 +44,10 @@ path = "fuzz_targets/fuzz_module_arbitrary.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "run_examples"
+path = "fuzz_targets/run_examples.rs"
+test = false
+doc = false
+bench = false

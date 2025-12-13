@@ -98,10 +98,12 @@ impl<'db> Value<'db> {
     pub fn case(
         ty: Rc<Value<'db>>,
         scrutinee: Rc<Neutral<'db>>,
-        motive: Rc<Value<'db>>,
+        type_constructor: ConstantId<'db>,
+        parameters: Vec<Rc<Value<'db>>>,
+        motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Value<'db> {
-        let case = Neutral::case(scrutinee, motive, branches);
+        let case = Neutral::case(scrutinee, type_constructor, parameters, motive, branches);
         Value::neutral(ty, Rc::new(case))
     }
 }
@@ -169,6 +171,20 @@ impl<'db> TypeConstructor<'db> {
             arguments,
         }
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+        self.arguments.iter()
+    }
+}
+
+// Implement IntoIterator for &TypeConstructor to allow iteration by reference
+impl<'a, 'db> IntoIterator for &'a TypeConstructor<'db> {
+    type Item = &'a Rc<Value<'db>>;
+    type IntoIter = std::slice::Iter<'a, Rc<Value<'db>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.arguments.iter()
+    }
 }
 
 /// A data constructor instance with its arguments.
@@ -189,6 +205,20 @@ impl<'db> DataConstructor<'db> {
             constructor,
             arguments,
         }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+        self.arguments.iter()
+    }
+}
+
+// Implement IntoIterator for &DataConstructor to allow iteration by reference
+impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
+    type Item = &'a Rc<Value<'db>>;
+    type IntoIter = std::slice::Iter<'a, Rc<Value<'db>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.arguments.iter()
     }
 }
 
@@ -225,15 +255,23 @@ impl<'db> Neutral<'db> {
 
     pub fn case(
         scrutinee: Rc<Neutral<'db>>,
-        motive: Rc<Value<'db>>,
+        type_constructor: ConstantId<'db>,
+        parameters: Vec<Rc<Value<'db>>>,
+        motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Neutral<'db> {
-        Neutral::Case(Case::new(scrutinee, motive, branches))
+        Neutral::Case(Case::new(
+            scrutinee,
+            type_constructor,
+            parameters,
+            motive,
+            branches,
+        ))
     }
 }
 
 /// A free variable.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Variable {
     pub level: Level,
 }
@@ -260,18 +298,24 @@ impl<'db> Application<'db> {
 #[derive(Clone, Debug)]
 pub struct Case<'db> {
     pub scrutinee: Rc<Neutral<'db>>,
-    pub motive: Rc<Value<'db>>,
+    pub type_constructor: ConstantId<'db>,
+    pub parameters: Vec<Rc<Value<'db>>>,
+    pub motive: Closure<'db>,
     pub branches: Vec<CaseBranch<'db>>,
 }
 
 impl<'db> Case<'db> {
     pub fn new(
         scrutinee: Rc<Neutral<'db>>,
-        motive: Rc<Value<'db>>,
+        type_constructor: ConstantId<'db>,
+        parameters: Vec<Rc<Value<'db>>>,
+        motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Case<'db> {
         Case {
             scrutinee,
+            type_constructor,
+            parameters,
             motive,
             branches,
         }
@@ -282,11 +326,11 @@ impl<'db> Case<'db> {
 pub struct CaseBranch<'db> {
     pub constructor: ConstantId<'db>,
     pub arity: usize,
-    pub body: Normal<'db>,
+    pub body: Closure<'db>,
 }
 
 impl<'db> CaseBranch<'db> {
-    pub fn new(constructor: ConstantId<'db>, arity: usize, body: Normal<'db>) -> CaseBranch<'db> {
+    pub fn new(constructor: ConstantId<'db>, arity: usize, body: Closure<'db>) -> CaseBranch<'db> {
         CaseBranch {
             constructor,
             arity,
@@ -380,6 +424,16 @@ impl<'db> Environment<'db> {
         T: IntoIterator<Item = Rc<Value<'db>>>,
     {
         self.local.extend_vars(types)
+    }
+
+    /// Pop the last value from the local environment.
+    pub fn pop(&mut self) {
+        self.local.pop()
+    }
+
+    /// Get the length of the local environment.
+    pub fn len(&self) -> usize {
+        self.local.depth()
     }
 
     /// Truncate the local environment to the given depth.
@@ -545,37 +599,47 @@ impl<'db> Extend<Rc<Value<'db>>> for Environment<'db> {
 
 #[derive(Clone, Debug)]
 pub struct TypeConstructorInfo<'db> {
-    pub parameters: Telescope<'db>,
-    pub indices: Telescope<'db>,
+    pub arguments: Telescope<'db>,
+    pub num_parameters: usize,
     pub level: UniverseLevel,
 }
 
 impl<'db> TypeConstructorInfo<'db> {
-    pub fn new(parameters: Telescope<'db>, indices: Telescope<'db>, level: UniverseLevel) -> Self {
+    pub fn new(arguments: Telescope<'db>, num_parameters: usize, level: UniverseLevel) -> Self {
         TypeConstructorInfo {
-            parameters,
-            indices,
+            arguments,
+            num_parameters,
             level,
         }
     }
 
     pub fn num_parameters(&self) -> usize {
-        self.parameters.len()
+        self.num_parameters
     }
 
     pub fn num_indices(&self) -> usize {
-        self.indices.len()
+        self.arguments.len() - self.num_parameters
+    }
+
+    /// Get a slice of just the parameters.
+    pub fn parameters(&self) -> &[RcSyntax<'db>] {
+        &self.arguments.bindings[..self.num_parameters]
+    }
+
+    /// Get a slice of just the indices.
+    pub fn indices(&self) -> &[RcSyntax<'db>] {
+        &self.arguments.bindings[self.num_parameters..]
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct DataConstructorInfo<'db> {
     pub arguments: Telescope<'db>,
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcSyntax<'db>,
 }
 
 impl<'db> DataConstructorInfo<'db> {
-    pub fn new(arguments: Telescope<'db>, ty: Rc<Value<'db>>) -> Self {
+    pub fn new(arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
         DataConstructorInfo { arguments, ty }
     }
 }

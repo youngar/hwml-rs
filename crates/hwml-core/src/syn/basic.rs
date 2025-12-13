@@ -42,6 +42,10 @@ impl<'db> Telescope<'db> {
     pub fn len(&self) -> usize {
         self.bindings.len()
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, RcSyntax<'db>> {
+        self.bindings.iter()
+    }
 }
 
 impl<'db> From<Box<[RcSyntax<'db>]>> for Telescope<'db> {
@@ -59,6 +63,16 @@ impl<'db> From<Vec<RcSyntax<'db>>> for Telescope<'db> {
 impl<'db> FromIterator<RcSyntax<'db>> for Telescope<'db> {
     fn from_iter<T: IntoIterator<Item = RcSyntax<'db>>>(iter: T) -> Self {
         Vec::from_iter(iter).into()
+    }
+}
+
+// Implement IntoIterator for &Telescope to allow iteration by reference
+impl<'a, 'db> IntoIterator for &'a Telescope<'db> {
+    type Item = &'a RcSyntax<'db>;
+    type IntoIter = std::slice::Iter<'a, RcSyntax<'db>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.bindings.iter()
     }
 }
 
@@ -580,6 +594,20 @@ impl<'db> TypeConstructor<'db> {
             arguments,
         }
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, RcSyntax<'db>> {
+        self.arguments.iter()
+    }
+}
+
+// Implement IntoIterator for &TypeConstructor to allow iteration by reference
+impl<'a, 'db> IntoIterator for &'a TypeConstructor<'db> {
+    type Item = &'a RcSyntax<'db>;
+    type IntoIter = std::slice::Iter<'a, RcSyntax<'db>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.arguments.iter()
+    }
 }
 
 /// A data constructor application in the syntax.
@@ -609,6 +637,20 @@ impl<'db> DataConstructor<'db> {
             constructor,
             arguments,
         }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, RcSyntax<'db>> {
+        self.arguments.iter()
+    }
+}
+
+// Implement IntoIterator for &DataConstructor to allow iteration by reference
+impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
+    type Item = &'a RcSyntax<'db>;
+    type IntoIter = std::slice::Iter<'a, RcSyntax<'db>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.arguments.iter()
     }
 }
 

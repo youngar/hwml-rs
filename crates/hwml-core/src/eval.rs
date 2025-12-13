@@ -2,7 +2,7 @@ use crate::common::Level;
 use crate::syn::{self as stx};
 use crate::syn::{self, Telescope};
 use crate::syn::{Case, Syntax};
-use crate::val::{self as dom, DataConstructor, SemTelescope};
+use crate::val::{self as dom, DataConstructor, LocalEnv, SemTelescope};
 use crate::val::{self, Normal};
 use crate::val::{Closure, Environment, GlobalEnv, Neutral, Value};
 use std::rc::Rc;
@@ -59,7 +59,7 @@ fn eval_type_constructor<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments
     let mut evaluated_args = Vec::new();
-    for arg in &type_constructor.arguments {
+    for arg in type_constructor {
         let evaluated_arg = eval(env, arg)?;
         evaluated_args.push(evaluated_arg);
     }
@@ -76,7 +76,7 @@ fn eval_data_constructor<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments
     let mut evaluated_args = Vec::new();
-    for arg in &data_constructor.arguments {
+    for arg in data_constructor {
         let evaluated_arg = eval(env, arg)?;
         evaluated_args.push(evaluated_arg);
     }
@@ -174,36 +174,49 @@ fn eval_case<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the scrutinee expression
     let scrutinee = eval(env, &case.expr)?;
-    run_case(env, scrutinee, case)
+    let motive = Closure::new(env.local.clone(), case.motive.clone());
+    let branches = case
+        .branches
+        .iter()
+        .map(|branch| {
+            let body = Closure::new(env.local.clone(), branch.body.clone());
+            dom::CaseBranch::new(branch.constructor, branch.arity, body)
+        })
+        .collect();
+    run_case(&env.global, scrutinee, motive, branches)
 }
 
 fn run_case<'db>(
-    env: &mut Environment<'db>,
+    global: &GlobalEnv<'db>,
     scrutinee: Rc<Value<'db>>,
-    case: &Case<'db>,
+    motive: Closure<'db>,
+    branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
     match scrutinee.as_ref() {
-        Value::DataConstructor(scrutinee) => run_case_on_data_constructor(env, scrutinee, case),
-        Value::Neutral(scrutinee_ty, scrutinee_ne) => {
-            run_case_on_neutral(env, scrutinee_ty, &scrutinee, scrutinee_ne, case)
+        Value::DataConstructor(scrutinee) => {
+            run_case_on_data_constructor(global, scrutinee, branches)
         }
+        Value::Neutral(scrutinee_ty, scrutinee_ne) => run_case_on_neutral(
+            global,
+            scrutinee.clone(),
+            scrutinee_ty,
+            scrutinee_ne,
+            motive,
+            branches,
+        ),
         _ => Err(Error::BadCase),
     }
 }
 
 fn run_case_on_data_constructor<'db>(
-    env: &mut Environment<'db>,
+    global: &GlobalEnv<'db>,
     scrutinee: &DataConstructor<'db>,
-    case: &Case<'db>,
+    branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    // Push the arguments onto the environment.
-    for data in &scrutinee.arguments {
-        env.push(data.clone());
-    }
     // Find the matching branch.
-    for branch in &case.branches {
+    for branch in &branches {
         if branch.constructor == scrutinee.constructor {
-            return eval(env, &branch.body);
+            return run_closure(global, &branch.body, scrutinee.arguments.clone());
         }
     }
     // If we didn't match any branches, we have a bad case.
@@ -211,102 +224,43 @@ fn run_case_on_data_constructor<'db>(
 }
 
 fn run_case_on_neutral<'db>(
-    env: &mut Environment<'db>,
+    global: &GlobalEnv<'db>,
+    scrutinee: Rc<Value<'db>>,
     scrutinee_ty: &Rc<Value<'db>>,
-    scrutinee_val: &Rc<Value<'db>>,
     scrutinee_ne: &Rc<Neutral<'db>>,
-    case: &Case<'db>,
+    motive: Closure<'db>,
+    branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    // Check that the scrutinee type is a type constructor.
+    // Verity that the type is a type constructor.
     let Value::TypeConstructor(type_constructor) = scrutinee_ty.as_ref() else {
         return Err(Error::BadCase);
     };
+    let constructor = type_constructor.constructor;
 
-    // Create a closure wrapping the motive. This will be used to determine the type of each branch.
-    let motive_clos = Closure::new(env.local.clone(), case.motive.clone());
-
-    // Calculate the final type of the case expression by substituting the scrutinee into the motive.
-    let final_ty = run_closure(&env.global, &motive_clos, [scrutinee_val.clone()])?;
-
-    // Create a variable with the same type as the scrutinee.
-    let scrutinee_ty_var = Rc::new(Value::variable(
-        scrutinee_ty.clone(),
-        Level::new(env.depth()),
-    ));
-
-    // Normalize the motive by substituting a variable into the it.
-    let motive_sem = run_closure(&env.global, &motive_clos, [scrutinee_ty_var.clone()])?;
-
-    // Look up the scrutinee type information.
-    let type_info = env
-        .global
-        .type_constructor(type_constructor.constructor)
+    // Look up the type information from the global environment.
+    let type_info = global
+        .type_constructor(constructor)
         .map_err(|_| Error::UnknownTypeConstructor)?;
 
-    // Find the number of parameters.
+    // Get the parameters and indices off of the types.
     let num_parameters = type_info.num_parameters();
+    let parameters = &type_constructor.arguments[..num_parameters];
+    let indices = &type_constructor.arguments[num_parameters..];
 
-    // Create an array of parameters.
-    let parameters = type_constructor
-        .arguments
-        .iter()
-        .take(num_parameters)
-        .cloned();
+    // Calculatue the final type of the case statement,
+    let mut motive_args = indices.to_vec();
+    motive_args.push(scrutinee);
+    let final_ty = run_closure(&global, &motive, motive_args)?;
 
-    let mut branches = Vec::new();
-    for branch in &case.branches {
-        // Create a variable for each argument to this dataconstructor.
-        let constructor_info = env
-            .global
-            .data_constructor(branch.constructor)
-            .map_err(|_| Error::UnknownDataConstructor)?
-            .clone();
-
-        // Find the types of the constructor arguments.
-        let arg_types = eval_telescope(env, parameters.clone(), &constructor_info.arguments)?;
-
-        // Create a variable for each data constructor argument.
-        let mut arg_vars = vec![];
-        for ty in arg_types.types {
-            arg_vars.push(env.local.push_var(ty));
-        }
-
-        // Get the type of this branch by substituting the constructor instance into the motive.
-        let branch_scrut = Rc::new(Value::data_constructor(
-            branch.constructor,
-            arg_vars.clone(),
-        ));
-        let branch_type = run_closure(&env.global, &motive_clos, [branch_scrut])?;
-
-        // Evaluate the branch body and create a normal value for it.
-        let branch_value = eval(env, &branch.body)?;
-        let branch_norm = Normal::new(branch_type, branch_value);
-        branches.push(dom::CaseBranch::new(
-            branch.constructor,
-            branch.arity,
-            branch_norm,
-        ));
-    }
-
-    Ok(Rc::new(Value::case(
+    let case = Value::case(
         final_ty,
         scrutinee_ne.clone(),
-        motive_sem.clone(),
+        constructor,
+        parameters.to_vec(),
+        motive,
         branches,
-    )))
-}
-
-pub fn run_with_args<'db, T>(
-    env: &Environment<'db>,
-    syntax: &Syntax<'db>,
-    args: T,
-) -> Result<Rc<Value<'db>>, Error>
-where
-    T: IntoIterator<Item = Rc<Value<'db>>>,
-{
-    let mut env = env.clone();
-    env.extend(args);
-    eval(&mut env, syntax)
+    );
+    Ok(Rc::new(case))
 }
 
 /// Perform a delayed substitution.
@@ -329,26 +283,33 @@ where
     eval(&mut env, &closure.term)
 }
 
+/// Evaluate a telescope to a list of types.
 pub fn eval_telescope<'db, T>(
-    env: &mut Environment<'db>,
-    args: T,
-    telescope: &Telescope<'db>,
+    global: &GlobalEnv<'db>,
+    params: T,
+    telescope: &stx::Telescope<'db>,
 ) -> Result<SemTelescope<'db>, Error>
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
-    let depth = env.depth();
-    env.extend(args);
+    // We start with a fresh local environment since ypes are defined in the
+    // global environment.
+    let mut env = Environment {
+        global: global.clone(),
+        local: LocalEnv::new(),
+    };
+    // Extend the environment with the parameters.
+    env.extend(params);
     let mut types = Vec::new();
 
+    // Evaluate each binding in the telescope.
     for ty in &telescope.bindings {
         // Evaluate this type.
-        let ty = eval(env, ty)?;
+        let ty = eval(&mut env, ty)?;
         types.push(ty.clone());
         // Create a variable of this type.
         // TODO: only push the variable if there is another binding.
         env.push_var(ty);
     }
-    env.truncate(depth);
     Ok(SemTelescope { types })
 }

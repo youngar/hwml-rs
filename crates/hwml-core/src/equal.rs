@@ -1,0 +1,404 @@
+use std::rc::Rc;
+
+use itertools::izip;
+
+use crate::{
+    common::Level,
+    eval::{self, run_application, run_closure},
+    val::{
+        self, Application, Case, DataConstructor, Environment, GlobalEnv, LocalEnv, Neutral,
+        Normal, Pi, TypeConstructor, Universe, Value,
+    },
+};
+
+pub enum Error {
+    NotConvertible,
+    LookupError(val::LookupError),
+    EvalError(eval::Error),
+}
+
+impl From<eval::Error> for Error {
+    fn from(err: eval::Error) -> Self {
+        Error::EvalError(err)
+    }
+}
+
+type Result = std::result::Result<(), Error>;
+
+pub trait Convertible<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result;
+}
+
+impl<'db> Convertible<'db> for Level {
+    fn is_convertible(&self, _global: &GlobalEnv<'db>, _depth: usize, other: &Self) -> Result {
+        if self == other {
+            Ok(())
+        } else {
+            Err(Error::NotConvertible)
+        }
+    }
+}
+
+impl Convertible<'_> for Universe {
+    fn is_convertible(&self, _global: &GlobalEnv<'_>, _depth: usize, other: &Self) -> Result {
+        if self.level == other.level {
+            Ok(())
+        } else {
+            Err(Error::NotConvertible)
+        }
+    }
+}
+
+impl<'db> Convertible<'db> for Normal<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result {
+        match (&*self.ty, &*other.ty) {
+            (Value::Pi(lhs), Value::Pi(rhs)) => {
+                let arg = Rc::new(Value::variable(lhs.source.clone(), Level::new(depth)));
+                let lnf = Normal::new(
+                    run_closure(global, &lhs.target, [arg.clone()])?,
+                    run_application(global, &self.value, arg.clone())?,
+                );
+                let rnf = Normal::new(
+                    run_closure(global, &rhs.target, [arg.clone()])?,
+                    run_application(global, &other.value, arg)?,
+                );
+                lnf.is_convertible(global, depth + 1, &rnf)
+            }
+            (Value::Universe(_), Value::Universe(_)) => {
+                is_type_convertible(global, depth, &self.value, &other.value)
+            }
+            (Value::TypeConstructor(lhs), Value::TypeConstructor(rhs)) => {
+                is_type_constructor_instance_convertible(
+                    global,
+                    depth,
+                    lhs.clone(),
+                    &self.value,
+                    &other.value,
+                )
+            }
+            (Value::Neutral(_, lne), Value::Neutral(_, rne)) => {
+                lne.is_convertible(global, depth, rne)
+            }
+            _ => Err(Error::NotConvertible),
+        }
+    }
+}
+
+pub fn is_type_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+) -> Result {
+    match (lhs, rhs) {
+        (Value::Pi(lhs), Value::Pi(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::TypeConstructor(lhs), Value::TypeConstructor(rhs)) => {
+            lhs.is_convertible(global, depth, rhs)
+        }
+        (Value::Universe(lhs), Value::Universe(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Neutral(_, lhs), Value::Neutral(_, rhs)) => lhs.is_convertible(global, depth, rhs),
+        _ => Err(Error::NotConvertible),
+    }
+}
+
+impl<'db> Convertible<'db> for Pi<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result {
+        is_type_convertible(global, depth, &self.source, &other.source)?;
+        let arg = Rc::new(Value::variable(self.source.clone(), Level::new(depth)));
+        let self_target = run_closure(global, &self.target, [arg.clone()])?;
+        let other_target = run_closure(global, &other.target, [arg])?;
+        is_type_convertible(global, depth + 1, &self_target, &other_target)
+    }
+}
+
+impl<'db> Convertible<'db> for TypeConstructor<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result {
+        // Check that the constructor is the same.
+        let constructor = self.constructor;
+        if constructor != other.constructor {
+            return Err(Error::NotConvertible);
+        }
+
+        // Look up the type info.
+        let type_info = global
+            .type_constructor(constructor)
+            .map_err(Error::LookupError)?
+            .clone();
+
+        // Create a new environment.
+        let mut env = Environment {
+            global: global.clone(),
+            local: LocalEnv::new(),
+        };
+
+        // Compare each argument.
+        for (larg, rarg, syn_ty) in izip!(self.iter(), other.iter(), type_info.arguments.iter()) {
+            // Evaluate the type of the current argument.
+            let sem_ty = eval::eval(&mut env, &syn_ty)?;
+
+            // Check that the arguments are convertible.
+            Normal::new(sem_ty.clone(), larg.clone()).is_convertible(
+                global,
+                depth,
+                &Normal::new(sem_ty, rarg.clone()),
+            )?;
+
+            // Push the semantic argument into the environment for subsequent iterations.
+            env.push(larg.clone());
+        }
+        Ok(())
+    }
+}
+
+impl<'db> Convertible<'db> for Neutral<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result {
+        match (self, other) {
+            (Neutral::Variable(lhs), Neutral::Variable(rhs)) => {
+                lhs.level.is_convertible(global, depth, &rhs.level)
+            }
+            (Neutral::Application(lhs), Neutral::Application(rhs)) => {
+                lhs.is_convertible(global, depth, rhs)
+            }
+            (Neutral::Case(lhs), Neutral::Case(rhs)) => lhs.is_convertible(global, depth, rhs),
+            _ => Err(Error::NotConvertible),
+        }
+    }
+}
+
+impl<'db> Convertible<'db> for Application<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result {
+        // Check that the arguments are convertible.
+        self.argument
+            .is_convertible(global, depth, &other.argument)?;
+        // Check that the functions are convertible.
+        self.function.is_convertible(global, depth, &other.function)
+    }
+}
+
+impl<'db> Convertible<'db> for Case<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result {
+        // Check that the type constructors are the same.
+        if self.type_constructor != other.type_constructor {
+            return Err(Error::NotConvertible);
+        }
+
+        // Check that the scrutinees are convertible.
+        self.scrutinee
+            .is_convertible(global, depth, &other.scrutinee)?;
+
+        // Look up the type constructor info.
+        let type_info = global
+            .type_constructor(self.type_constructor)
+            .map_err(Error::LookupError)?
+            .clone();
+
+        // Check that the parameters are convertible.
+        // Create an environment for evaluating the type of each parameter.
+        let mut env = Environment {
+            global: global.clone(),
+            local: LocalEnv::new(),
+        };
+
+        for (lparam, rparam, syn_ty) in izip!(
+            self.parameters.iter(),
+            other.parameters.iter(),
+            type_info.parameters().iter()
+        ) {
+            // Evaluate the type of the current parameter.
+            let sem_ty = eval::eval(&mut env, syn_ty).map_err(Error::EvalError)?;
+
+            // Check that the parameters are convertible.
+            Normal::new(sem_ty.clone(), lparam.clone()).is_convertible(
+                global,
+                depth,
+                &Normal::new(sem_ty, rparam.clone()),
+            )?;
+
+            // Push the semantic parameter into the environment for subsequent iterations.
+            env.push(lparam.clone());
+        }
+
+        // Check that the motives are convertible by applying them to fresh variables.
+        // First, create variables for the indices.
+        let index_bindings = type_info.indices().to_vec();
+        let index_telescope = crate::syn::Telescope::from(index_bindings);
+        let index_tys = eval::eval_telescope(global, self.parameters.clone(), &index_telescope)?;
+
+        let mut motive_args = Vec::new();
+        for ty in index_tys.types {
+            motive_args.push(Rc::new(Value::variable(
+                ty,
+                Level::new(depth + motive_args.len()),
+            )));
+        }
+
+        // Create a variable for the scrutinee.
+        let scrutinee_ty = Rc::new(Value::type_constructor(
+            self.type_constructor,
+            self.parameters.clone(),
+        ));
+        let scrutinee_var = Rc::new(Value::variable(scrutinee_ty, Level::new(depth)));
+        motive_args.push(scrutinee_var);
+
+        // Apply both motives to the same arguments.
+        let motive_args_len = motive_args.len();
+        let self_motive_result = eval::run_closure(global, &self.motive, motive_args.clone())?;
+        let other_motive_result = eval::run_closure(global, &other.motive, motive_args)?;
+
+        // Check that the motive results are convertible as types.
+        is_type_convertible(
+            global,
+            depth + motive_args_len,
+            &self_motive_result,
+            &other_motive_result,
+        )?;
+
+        // Check that the branches are convertible.
+        // First, check that we have the same number of branches.
+        if self.branches.len() != other.branches.len() {
+            return Err(Error::NotConvertible);
+        }
+
+        // Check each branch.
+        for (lbranch, rbranch) in izip!(self.branches.iter(), other.branches.iter()) {
+            // Check that the constructors are the same.
+            if lbranch.constructor != rbranch.constructor {
+                return Err(Error::NotConvertible);
+            }
+
+            // Check that the arities are the same.
+            if lbranch.arity != rbranch.arity {
+                return Err(Error::NotConvertible);
+            }
+
+            // Look up the data constructor info.
+            let data_info = global
+                .data_constructor(lbranch.constructor)
+                .map_err(Error::LookupError)?
+                .clone();
+
+            // Create fresh variables for the data constructor arguments.
+            let dcon_arg_tys =
+                eval::eval_telescope(global, self.parameters.clone(), &data_info.arguments)?;
+            let mut dcon_args = Vec::new();
+            for ty in dcon_arg_tys.types {
+                dcon_args.push(Rc::new(Value::variable(
+                    ty,
+                    Level::new(depth + dcon_args.len()),
+                )));
+            }
+
+            // Evaluate the type of the data constructor to get the type constructor instance.
+            let mut dcon_env = LocalEnv::new();
+            dcon_env.extend(self.parameters.clone());
+            let dcon_ty_clos = val::Closure::new(dcon_env, data_info.ty.clone());
+            let dcon_ty = eval::run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
+            let Value::TypeConstructor(tcon) = &*dcon_ty else {
+                return Err(Error::NotConvertible);
+            };
+
+            // Create the data constructor value.
+            let dcon_val = Rc::new(Value::data_constructor(
+                lbranch.constructor,
+                dcon_args.clone(),
+            ));
+
+            // Create the arguments to the motive for this branch.
+            let mut branch_motive_args = tcon.arguments[type_info.num_parameters()..].to_vec();
+            branch_motive_args.push(dcon_val);
+
+            // Evaluate the motive to get the type of the branch body.
+            let branch_ty = eval::run_closure(global, &self.motive, branch_motive_args)?;
+
+            // Apply both branch bodies to the same data constructor arguments.
+            let lbranch_val = eval::run_closure(global, &lbranch.body, dcon_args.clone())?;
+            let rbranch_val = eval::run_closure(global, &rbranch.body, dcon_args)?;
+
+            // Check that the branch values are convertible.
+            Normal::new(branch_ty.clone(), lbranch_val).is_convertible(
+                global,
+                depth + lbranch.arity,
+                &Normal::new(branch_ty, rbranch_val),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+fn is_data_constructor_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    mut depth: usize,
+    ty: TypeConstructor<'db>,
+    lhs: &DataConstructor<'db>,
+    rhs: &DataConstructor<'db>,
+) -> Result {
+    // Get the constructor constant.
+    let constructor = lhs.constructor;
+    if constructor != rhs.constructor {
+        return Err(Error::NotConvertible);
+    }
+
+    // Look up the type constructor info (from the type, not the data constructor).
+    let type_info = global
+        .type_constructor(ty.constructor)
+        .map_err(Error::LookupError)?
+        .clone();
+
+    // Look up the data constructor info.
+    let data_info = global
+        .data_constructor(constructor)
+        .map_err(Error::LookupError)?
+        .clone();
+
+    // Find the number of parameters.
+    let num_parameters = type_info.num_parameters();
+
+    // Create an array of just the parameters, leaving out indices.
+    let parameters = ty.iter().take(num_parameters).cloned();
+
+    // Create an environment for evaluating the type of each argument, with
+    // parameters in the context.
+    let mut env = Environment {
+        global: global.clone(),
+        local: LocalEnv::new(),
+    };
+    env.extend(parameters);
+    depth = depth + num_parameters;
+
+    // Quote each argument.
+    for (larg, rarg, syn_ty) in izip!(lhs.iter(), rhs.iter(), data_info.arguments.iter()) {
+        // Evaluate the type of the current argument.
+        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
+
+        // TODO: substitute the second val into the second type and assert that the values
+        // are the exact same. This should not be necessary for conversion checking.
+
+        Normal::new(sem_ty.clone(), larg.clone()).is_convertible(
+            global,
+            depth,
+            &Normal::new(sem_ty, rarg.clone()),
+        )?;
+
+        // Push the semantic argument into the environment for subsequent iterations.
+        env.push(larg.clone());
+    }
+    Ok(())
+}
+
+// Check that the arguments are convertible.
+pub fn is_type_constructor_instance_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    ty: TypeConstructor<'db>,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+) -> Result {
+    match (lhs, rhs) {
+        (Value::DataConstructor(lhs), Value::DataConstructor(rhs)) => {
+            is_data_constructor_convertible(global, depth, ty, lhs, rhs)
+        }
+        (Value::Neutral(_, lhs), Value::Neutral(_, rhs)) => lhs.is_convertible(global, depth, rhs),
+        _ => Err(Error::NotConvertible),
+    }
+}
