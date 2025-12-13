@@ -341,34 +341,34 @@ impl<'db> CaseBranch<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Environment<'db> {
-    pub global: GlobalEnv<'db>,
+    pub global: &'db GlobalEnv<'db>,
     pub local: LocalEnv<'db>,
 }
 
 impl<'db> Environment<'db> {
-    pub fn new() -> Self {
+    pub fn new(global: &'db GlobalEnv) -> Self {
         Self {
-            global: GlobalEnv::new(),
+            global,
             local: LocalEnv::new(),
         }
     }
 
     // Forwarding methods to GlobalEnv
 
-    /// Lookup a global constant by name.
-    pub fn lookup(&self, name: ConstantId<'db>) -> Result<&Global<'db>, LookupError> {
-        self.global.lookup(name)
-    }
+    // /// Lookup a global constant by name.
+    // pub fn lookup(&self, name: ConstantId<'db>) -> Result<&Global<'db>, LookupError> {
+    //     self.global.lookup(name)
+    // }
 
-    /// Lookup a global definition by name.
-    pub fn definition(&self, name: ConstantId<'db>) -> Result<&Rc<Value<'db>>, LookupError> {
-        self.global.definition(name)
-    }
+    // /// Lookup a global definition by name.
+    // pub fn definition(&self, name: ConstantId<'db>) -> Result<&Rc<Value<'db>>, LookupError> {
+    //     self.global.definition(name)
+    // }
 
-    /// Add a definition to the global environment.
-    pub fn add_definition(&mut self, name: ConstantId<'db>, value: Rc<Value<'db>>) {
-        self.global.add_definition(name, value)
-    }
+    // /// Add a definition to the global environment.
+    // pub fn add_definition(&mut self, name: ConstantId<'db>, value: Rc<Value<'db>>) {
+    //     self.global.add_definition(name, value)
+    // }
 
     /// Lookup a type constructor by name.
     pub fn type_constructor(
@@ -379,9 +379,9 @@ impl<'db> Environment<'db> {
     }
 
     /// Add a type constructor to the global environment.
-    pub fn add_type_constructor(&mut self, name: ConstantId<'db>, info: TypeConstructorInfo<'db>) {
-        self.global.add_type_constructor(name, info)
-    }
+    // pub fn add_type_constructor(&mut self, name: ConstantId<'db>, info: TypeConstructorInfo<'db>) {
+    //     self.global.add_type_constructor(name, info)
+    // }
 
     /// Lookup a data constructor by name.
     pub fn data_constructor(
@@ -392,9 +392,9 @@ impl<'db> Environment<'db> {
     }
 
     /// Add a data constructor to the global environment.
-    pub fn add_data_constructor(&mut self, name: ConstantId<'db>, info: DataConstructorInfo<'db>) {
-        self.global.add_data_constructor(name, info)
-    }
+    // pub fn add_data_constructor(&mut self, name: ConstantId<'db>, info: DataConstructorInfo<'db>) {
+    //     self.global.add_data_constructor(name, info)
+    // }
 
     // Forwarding methods to LocalEnv
 

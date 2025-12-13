@@ -30,19 +30,8 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
     Ok(syntax)
 }
 
-/// Create an empty environment (no global definitions, no local variables).
-fn empty_env<'db>() -> (GlobalEnv<'db>, Environment<'db>) {
-    let global = GlobalEnv::new();
-    let local = LocalEnv::new();
-    let env = Environment {
-        global: global.clone(),
-        local,
-    };
-    (global, env)
-}
-
 /// Create an environment with Bool type and True/False data constructors.
-fn bool_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
+fn bool_env<'db>(db: &'db Database, global: GlobalEnv<'db>) -> (Environment<'db>) {
     let mut global = GlobalEnv::new();
 
     // Register Bool type constructor with type Type₀
@@ -75,7 +64,7 @@ fn bool_env<'db>(db: &'db Database) -> (GlobalEnv<'db>, Environment<'db>) {
     global.add_data_constructor(false_id, false_data_info);
 
     let env = Environment {
-        global: global.clone(),
+        global: &global,
         local: LocalEnv::new(),
     };
     (global, env)
@@ -405,7 +394,11 @@ pub fn example_universe<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 1: Universe ===");
 
     let syntax = parse_and_print(db, "𝒰0")?;
-    let (global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     // Type of 𝒰0 is 𝒰1
     let ty = Rc::new(Value::universe(UniverseLevel::new(1)));
@@ -424,7 +417,12 @@ pub fn example_lambda<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 2: Lambda (Identity Function) ===");
 
     let syntax = parse_and_print(db, "λ %x → %x")?;
-    let (global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
+
     let value = eval_and_print(&mut env, &syntax)?;
 
     // To quote a lambda, we need its type (a Pi type: Type₀ → Type₀)
@@ -475,7 +473,12 @@ pub fn example_constant<'db>(db: &'db Database) -> Result<(), String> {
 
     let syntax = parse_and_print(db, "@myConst")?;
     println!("Type: (unknown - constant not defined in environment)");
-    let (_global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
+
     eval_and_print(&mut env, &syntax)?;
 
     Ok(())
@@ -488,7 +491,11 @@ pub fn example_pi_type<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 5: Pi Type ===");
 
     let syntax = parse_and_print(db, "∀ (%0 : 𝒰0) → 𝒰0")?;
-    let (global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
 
     // Type of a Pi type is a universe (𝒰1 since it contains 𝒰0)
     let ty = Rc::new(Value::universe(UniverseLevel::new(1)));
@@ -557,7 +564,12 @@ pub fn example_lambda_app_reduces<'db>(db: &'db Database) -> Result<(), String> 
     println!("\n=== Example 7: Application inside Lambda (Reduces) ===");
 
     let syntax = parse_and_print(db, "λ %x → (λ %y → %y) %x")?;
-    let (global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
+
     let value = eval_and_print(&mut env, &syntax)?;
 
     // To quote a lambda, we need its type (Type₀ → Type₀)
@@ -583,7 +595,12 @@ pub fn example_lambda_app_no_reduce<'db>(db: &'db Database) -> Result<(), String
 
     // Type: (A → B) → A → B for some types A and B
     // We'll use (𝒰0 → 𝒰0) → 𝒰0 → 𝒰0 as a concrete example
-    let (global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
+
     let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
     let inner_pi = Rc::new(Value::pi(
         universe.clone(),
@@ -619,7 +636,12 @@ pub fn example_eta_expansion<'db>(db: &'db Database) -> Result<(), String> {
 
     // Type: (𝒰0 → 𝒰0) → 𝒰0 → 𝒰0
     // The identity function, but at a higher-order type
-    let (global, mut env) = empty_env();
+    let global = GlobalEnv::new();
+    let mut env = Environment {
+        global: &global,
+        local: LocalEnv::new(),
+    };
+
     let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
 
     // Inner Pi: 𝒰0 → 𝒰0

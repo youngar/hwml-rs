@@ -63,8 +63,10 @@ fn lex_metavariable_id(lex: &mut logos::Lexer<Token>) -> Result<usize, ParseIntE
 #[logos(subpattern id = r"[^\p{gc=Separator}\p{gc=Control}():;,\[\]!\?\%]+")]
 pub enum Token {
     #[token("∀", priority = 4)]
+    #[token("forall", priority = 4)]
     Pi,
     #[token("λ", priority = 4)]
+    #[token("\\", priority = 4)]
     Lambda,
     #[token("'", priority = 4)]
     Quote,
@@ -81,6 +83,7 @@ pub enum Token {
     #[token("]", priority = 10)]
     RBracket,
     #[token("→", priority = 5)]
+    #[token("->", priority = 5)]
     Arrow,
     #[token(":", priority = 4)]
     Colon,

@@ -9,6 +9,7 @@ use crate::val::Value;
 use std::rc::Rc;
 
 pub struct TCEnvironment<'db> {
+    pub globals: &'db val::GlobalEnv<'db>,
     pub values: val::Environment<'db>,
     pub types: Vec<Rc<Value<'db>>>,
 }
@@ -38,9 +39,10 @@ impl<'db> TCEnvironment<'db> {
         self.types.push(ty);
     }
 
-    fn push_var(&mut self, ty: Rc<Value<'db>>) {
+    fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
         let var = Rc::new(Value::variable(ty.clone(), Level::new(self.depth())));
-        self.push(var, ty);
+        self.push(var.clone(), ty);
+        var
     }
 
     fn pop(&mut self) {
@@ -69,22 +71,35 @@ impl<'db> TCEnvironment<'db> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Error {
-    TypeSynthesisFailure,
-    TypeMismatch,
+pub enum Error<'db> {
+    /// Cannot synthesize a type.
+    BadSynth {
+        tm: Rc<Syntax<'db>>,
+    },
+    /// Bad elimination.
+    BadElim {
+        tm: Rc<Syntax<'db>>,
+        ty_got: Rc<Value<'db>>,
+    },
+    /// Bad constructor.
+    BadCtor {
+        tm: Rc<Syntax<'db>>,
+        ty_exp: Rc<Value<'db>>,
+    },
+    /// Inferred a type that did not match the expected type.
+    BadCheck {
+        tm: Rc<Syntax<'db>>,
+        ty_exp: Rc<Value<'db>>,
+        ty_got: Rc<Value<'db>>,
+    },
     EvaluationFailure(eval::Error),
     LookupError(val::LookupError),
-    Misc(String),
 }
 
-type Result<T> = std::result::Result<T, Error>;
-
-fn err<T>(message: &str) -> Result<T> {
-    Err(Error::Misc(String::from(message)))
-}
+use std::result::Result;
 
 /// Evaluate a syntactic term to a semantic value.
-fn eval<'db>(env: &TCEnvironment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
+fn eval<'db>(env: &TCEnvironment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>, Error<'db>> {
     let mut sem_env = env.values.clone();
     eval::eval(&mut sem_env, term).map_err(Error::EvaluationFailure)
 }
@@ -94,7 +109,7 @@ fn run_closure<'db, T>(
     env: &TCEnvironment<'db>,
     closure: &val::Closure<'db>,
     args: T,
-) -> Result<Rc<Value<'db>>>
+) -> Result<Rc<Value<'db>>, Error<'db>>
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
@@ -105,18 +120,23 @@ fn eval_telescope<'db>(
     env: &mut TCEnvironment<'db>,
     args: impl IntoIterator<Item = Rc<Value<'db>>>,
     telescope: &stx::Telescope<'db>,
-) -> Result<val::SemTelescope<'db>> {
+) -> Result<val::SemTelescope<'db>, Error<'db>> {
     eval::eval_telescope(&env.values.global, args, telescope).map_err(Error::EvaluationFailure)
 }
 
 /// Synthesize (infer) types for variables and elimination forms.
-pub fn type_synth<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Result<Rc<Value<'db>>> {
+pub fn type_synth<'db>(
+    env: &mut TCEnvironment<'db>,
+    term: &Syntax<'db>,
+) -> Result<Rc<Value<'db>>, Error<'db>> {
     match term {
         Syntax::Variable(variable) => type_synth_variable(env, variable),
         Syntax::Check(check) => type_synth_check(env, check),
         Syntax::Application(application) => type_synth_application(env, application),
         Syntax::Case(case) => type_synth_case(env, case),
-        _ => Err(Error::TypeSynthesisFailure),
+        _ => Err(Error::BadSynth {
+            tm: Rc::new(term.clone()),
+        }),
     }
 }
 
@@ -124,7 +144,7 @@ pub fn type_synth<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Resu
 pub fn type_synth_variable<'db>(
     env: &mut TCEnvironment<'db>,
     variable: &syn::Variable,
-) -> Result<Rc<Value<'db>>> {
+) -> Result<Rc<Value<'db>>, Error<'db>> {
     // Pull the type from the typing environment.
     Ok(env.var_type(variable).clone())
 }
@@ -133,7 +153,7 @@ pub fn type_synth_variable<'db>(
 pub fn type_synth_check<'db>(
     env: &mut TCEnvironment<'db>,
     check: &syn::Check<'db>,
-) -> Result<Rc<Value<'db>>> {
+) -> Result<Rc<Value<'db>>, Error<'db>> {
     let ty = eval(env, &check.ty)?;
     type_check(env, &check.term, &ty)?;
     Ok(ty)
@@ -143,13 +163,16 @@ pub fn type_synth_check<'db>(
 pub fn type_synth_application<'db>(
     env: &mut TCEnvironment<'db>,
     application: &syn::Application<'db>,
-) -> Result<Rc<Value<'db>>> {
+) -> Result<Rc<Value<'db>>, Error<'db>> {
     // First synthesize the type of the term being applied.
     let fun_ty = type_synth(env, &application.function)?;
 
     // Ensure that the applied term is a function `(x : src) -> tgt(x)`.
     let Value::Pi(pi) = &*fun_ty else {
-        return Err(Error::TypeMismatch);
+        return Err(Error::BadElim {
+            tm: Rc::new(Syntax::Application(application.clone())),
+            ty_got: fun_ty,
+        });
     };
 
     // Check the argument against the source type of the function.
@@ -164,7 +187,7 @@ pub fn type_synth_application<'db>(
 pub fn type_synth_case<'db>(
     env: &mut TCEnvironment<'db>,
     case: &syn::Case<'db>,
-) -> Result<Rc<Value<'db>>> {
+) -> Result<Rc<Value<'db>>, Error<'db>> {
     // First synthesize the type of the scrutinee.
     let scrutinee_ty = type_synth(env, &case.expr)?;
 
@@ -172,7 +195,10 @@ pub fn type_synth_case<'db>(
 
     // Ensure that the term being matched is a datatype.
     let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
-        return Err(Error::TypeMismatch);
+        return Err(Error::BadElim {
+            tm: Rc::new(Syntax::Case(case.clone())),
+            ty_got: scrutinee_ty,
+        });
     };
 
     // Get the type constructor info.
@@ -220,9 +246,10 @@ pub fn type_check<'db>(
     env: &mut TCEnvironment<'db>,
     term: &Syntax<'db>,
     ty: &Value<'db>,
-) -> Result<()> {
+) -> Result<(), Error<'db>> {
     match term {
         Syntax::Pi(pi) => type_check_pi(env, pi, ty),
+        Syntax::Lambda(lam) => type_check_lambda(env, lam, ty),
         _ => type_check_synth_term(env, term, ty),
     }
 }
@@ -232,10 +259,13 @@ fn type_check_pi<'db>(
     env: &mut TCEnvironment<'db>,
     pi: &syn::Pi<'db>,
     ty: &Value<'db>,
-) -> Result<()> {
+) -> Result<(), Error<'db>> {
     // The expected type of a pi must be a universe.
     let Value::Universe(_) = ty else {
-        return Err(Error::TypeMismatch);
+        return Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Pi(pi.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        });
     };
 
     // Check that the source type is valid.
@@ -251,27 +281,49 @@ fn type_check_pi<'db>(
     result
 }
 
+fn type_check_lambda<'db>(
+    env: &mut TCEnvironment<'db>,
+    lam: &syn::Lambda<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    match ty {
+        Value::Pi(val::Pi {
+            source,
+            target: target_closure,
+        }) => {
+            let var = Rc::new(Value::variable(source.clone(), Level::new(env.depth())));
+            let target = run_closure(env, target_closure, [var.clone()])?;
+            env.push(var, source.clone());
+            let r = type_check(env, &lam.body, &target);
+            env.pop();
+            r
+        }
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Lambda(lam.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
 // Synthesize a type for the term, then check for equality against the expected type.
 pub fn type_check_synth_term<'db>(
     env: &mut TCEnvironment<'db>,
     term: &Syntax<'db>,
     ty1: &Value<'db>,
-) -> Result<()> {
+) -> Result<(), Error<'db>> {
     let ty2 = type_synth(env, term)?;
-    check_type_equal(env, ty1, &*ty2)
-}
-
-/// Check that two types are equal.
-pub fn check_type_equal<'db>(
-    _env: &TCEnvironment<'db>,
-    _a: &Value<'db>,
-    _b: &Value<'db>,
-) -> Result<()> {
-    err("not implemented")
+    match crate::equal::is_type_convertible(env.globals, env.depth(), ty1, &ty2) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(Error::BadCheck {
+            tm: Rc::new(term.clone()),
+            ty_got: ty2,
+            ty_exp: Rc::new(ty1.clone()),
+        }),
+    }
 }
 
 /// Check that the given term is a valid type.
-pub fn check_type<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Result<()> {
+pub fn check_type<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Result<(), Error<'db>> {
     // If the term is a pi, then we just check that it is valid.
     if let Syntax::Pi(pi) = term {
         return check_pi_type(env, pi);
@@ -284,11 +336,13 @@ pub fn check_type<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Resu
     }
 
     // Otherwise return failure: this is not a type.
-    Err(Error::TypeMismatch)
+    Err(Error::BadSynth {
+        tm: Rc::new(term.clone()),
+    })
 }
 
 /// Check that a pi is a valid type.
-fn check_pi_type<'db>(env: &mut TCEnvironment<'db>, pi: &stx::Pi<'db>) -> Result<()> {
+fn check_pi_type<'db>(env: &mut TCEnvironment<'db>, pi: &stx::Pi<'db>) -> Result<(), Error<'db>> {
     // First check that the source-type of the pi is a type.
     check_type(env, &pi.source)?;
 

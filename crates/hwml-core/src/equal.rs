@@ -25,6 +25,15 @@ impl From<eval::Error> for Error {
 
 type Result = std::result::Result<(), Error>;
 
+pub fn convertible<'db, T: Convertible<'db>>(
+    globals: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &T,
+    rhs: &T,
+) -> Result {
+    lhs.is_convertible(globals, depth, rhs)
+}
+
 pub trait Convertible<'db> {
     fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result;
 }
@@ -127,7 +136,7 @@ impl<'db> Convertible<'db> for TypeConstructor<'db> {
 
         // Create a new environment.
         let mut env = Environment {
-            global: global.clone(),
+            global: &global,
             local: LocalEnv::new(),
         };
 
@@ -195,7 +204,7 @@ impl<'db> Convertible<'db> for Case<'db> {
         // Check that the parameters are convertible.
         // Create an environment for evaluating the type of each parameter.
         let mut env = Environment {
-            global: global.clone(),
+            global: global,
             local: LocalEnv::new(),
         };
 
@@ -360,7 +369,7 @@ fn is_data_constructor_convertible<'db>(
     // Create an environment for evaluating the type of each argument, with
     // parameters in the context.
     let mut env = Environment {
-        global: global.clone(),
+        global: global,
         local: LocalEnv::new(),
     };
     env.extend(parameters);

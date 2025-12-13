@@ -28,7 +28,9 @@ pub fn eval<'db>(env: &mut Environment<'db>, stx: &Syntax<'db>) -> Result<Rc<Val
         Syntax::Case(case) => eval_case(env, case),
         Syntax::Universe(uni) => eval_universe(env, &uni),
         Syntax::Metavariable(meta) => eval_metavariable(env, meta),
-        _ => todo!(),
+        Syntax::Bit(_) | Syntax::Lift(_) | Syntax::Quote(_) | Syntax::HArrow(_) => {
+            todo!("sorry, not evaluatable yet");
+        }
     }
 }
 
@@ -127,7 +129,7 @@ fn eval_application<'db>(
 
 /// Perform an application.
 pub fn run_application<'db>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     fun: &Value<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
@@ -140,7 +142,7 @@ pub fn run_application<'db>(
 
 /// Perform the application of a lambda to an argument.
 fn apply_lambda<'db>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     lambda: &val::Lambda<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
@@ -149,7 +151,7 @@ fn apply_lambda<'db>(
 
 /// Perform the application of a neutral term to an argument.
 fn apply_neutral<'db>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     ty: &Value<'db>,
     neutral: Rc<Neutral<'db>>,
     arg: Rc<Value<'db>>,
@@ -187,7 +189,7 @@ fn eval_case<'db>(
 }
 
 fn run_case<'db>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     scrutinee: Rc<Value<'db>>,
     motive: Closure<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
@@ -209,7 +211,7 @@ fn run_case<'db>(
 }
 
 fn run_case_on_data_constructor<'db>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     scrutinee: &DataConstructor<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
@@ -224,7 +226,7 @@ fn run_case_on_data_constructor<'db>(
 }
 
 fn run_case_on_neutral<'db>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     scrutinee: Rc<Value<'db>>,
     scrutinee_ty: &Rc<Value<'db>>,
     scrutinee_ne: &Rc<Neutral<'db>>,
@@ -267,7 +269,7 @@ fn run_case_on_neutral<'db>(
 /// Takes only the local environment from the closure and extends it with the provided arguments.
 /// The global environment must be provided separately.
 pub fn run_closure<'db, T>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     closure: &Closure<'db>,
     args: T,
 ) -> Result<Rc<Value<'db>>, Error>
@@ -276,16 +278,13 @@ where
 {
     let mut local = closure.local.clone();
     local.extend(args);
-    let mut env = Environment {
-        global: global.clone(),
-        local,
-    };
+    let mut env = Environment { global, local };
     eval(&mut env, &closure.term)
 }
 
 /// Evaluate a telescope to a list of types.
 pub fn eval_telescope<'db, T>(
-    global: &GlobalEnv<'db>,
+    global: &'db GlobalEnv<'db>,
     params: T,
     telescope: &stx::Telescope<'db>,
 ) -> Result<SemTelescope<'db>, Error>
@@ -295,7 +294,7 @@ where
     // We start with a fresh local environment since ypes are defined in the
     // global environment.
     let mut env = Environment {
-        global: global.clone(),
+        global: global,
         local: LocalEnv::new(),
     };
     // Extend the environment with the parameters.
