@@ -1,5 +1,6 @@
 use crate::syn::*;
 use elegance::{Io, Printer, Render};
+use hwml_support::FromWithDb;
 
 const INDENT: isize = 2;
 const COLUMNS: usize = 80;
@@ -761,7 +762,7 @@ mod tests {
 
         // Simple constant: @42
         assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::constant(ConstantId::from_str(&db, "42"))),
+            print_syntax_to_string(&db, &Syntax::constant_from(&db, "42")),
             @"@42"
         );
 
@@ -780,8 +781,8 @@ mod tests {
         // Application: @42 @99
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::application(
-                Syntax::constant_rc(ConstantId::from_str(&db, "42")),
-                Syntax::constant_rc(ConstantId::from_str(&db, "99"))
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "99"))
             )),
             @"@42 @99"
         );
@@ -811,7 +812,7 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::check(
                 Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::constant_rc(ConstantId::from_str(&db, "42"))
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))
             )),
             @"@42 : 𝒰0"
         );
@@ -819,7 +820,7 @@ mod tests {
         // Lambda with application: λ%0 → @999 %0
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::lambda(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId::from_str(&db, "999")),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "999")),
                 Syntax::variable_rc(Index(0))
             ))),
             @"λ %0 → @999 %0"
@@ -880,7 +881,7 @@ mod tests {
         // Data constructor with no arguments: @Nil
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_str(&db, "Nil"),
+                ConstantId::from_with_db(&db, "Nil"),
                 vec![]
             )),
             @"[@Nil]"
@@ -889,7 +890,7 @@ mod tests {
         // Data constructor with one lambda argument.
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_str(&db, "Nil"),
+                ConstantId::from_with_db(&db, "Nil"),
                 vec![Syntax::lambda_rc(Syntax::variable_rc(Index(0)))]
             )),
             @"[@Nil λ %0 → %0]"
@@ -898,7 +899,7 @@ mod tests {
         // Data constructor with multiple lambda arguments.
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_str(&db, "Cons"),
+                ConstantId::from_with_db(&db, "Cons"),
                 vec![
                     Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
                     Syntax::lambda_rc(Syntax::variable_rc(Index(0)))
@@ -987,7 +988,7 @@ mod tests {
 
         // Simple HConstant: @42
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::HConstant(Constant::new(ConstantId::from_str(&db, "42")))),
+            print_hsyntax_to_string(&db, &HSyntax::HConstant(Constant::new(ConstantId::from_with_db(&db, "42")))),
             @"@42"
         );
 
@@ -1007,10 +1008,10 @@ mod tests {
 
         // HCheck: @42 : @99
         let hcheck = HSyntax::HCheck(HCheck::new(
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                 &db, "99",
             )))),
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                 &db, "42",
             )))),
         ));
@@ -1030,10 +1031,10 @@ mod tests {
 
         // HApplication: @42 @99
         let happ = HSyntax::HApplication(HApplication::new(
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                 &db, "42",
             )))),
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                 &db, "99",
             )))),
         ));
@@ -1043,7 +1044,7 @@ mod tests {
         );
 
         // Splice: ~@42
-        let splice = HSyntax::Splice(Splice::new(Syntax::constant_rc(ConstantId::from_str(
+        let splice = HSyntax::Splice(Splice::new(Syntax::constant_rc(ConstantId::from_with_db(
             &db, "42",
         ))));
         assert_snapshot!(
@@ -1074,10 +1075,10 @@ mod tests {
         // HLambda with HCheck: λ%0 → (@42 : @99)
         let hlambda_with_check =
             HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HCheck(HCheck::new(
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                     &db, "99",
                 )))),
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                     &db, "42",
                 )))),
             )))));
@@ -1091,7 +1092,7 @@ mod tests {
             Rc::new(HSyntax::HLambda(HLambda::new(Rc::new(HSyntax::HVariable(
                 Variable::new(Index(0)),
             ))))),
-            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+            Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                 &db, "42",
             )))),
         ));
@@ -1103,7 +1104,7 @@ mod tests {
         // Splice with complex term: ~λ %0 → @42 %0
         let splice_complex =
             HSyntax::Splice(Splice::new(Syntax::lambda_rc(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
                 Syntax::variable_rc(Index(0)),
             ))));
         assert_snapshot!(
@@ -1141,7 +1142,7 @@ mod tests {
 
         // Quote with HConstant: '@42
         let quote_hconst = Syntax::Quote(Quote::new(Rc::new(HSyntax::HConstant(Constant::new(
-            ConstantId::from_str(&db, "42"),
+            ConstantId::from_with_db(&db, "42"),
         )))));
         assert_snapshot!(
             print_syntax_to_string(&db, &quote_hconst),
@@ -1160,10 +1161,10 @@ mod tests {
         // Quote with HApplication: '@42 @99
         let quote_happ = Syntax::Quote(Quote::new(Rc::new(HSyntax::HApplication(
             HApplication::new(
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                     &db, "42",
                 )))),
-                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_str(
+                Rc::new(HSyntax::HConstant(Constant::new(ConstantId::from_with_db(
                     &db, "99",
                 )))),
             ),
@@ -1175,7 +1176,7 @@ mod tests {
 
         // Quote with Splice: '~@42
         let quote_splice = Syntax::Quote(Quote::new(Rc::new(HSyntax::Splice(Splice::new(
-            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
         )))));
         assert_snapshot!(
             print_syntax_to_string(&db, &quote_splice),
@@ -1184,7 +1185,7 @@ mod tests {
 
         // Lift with Quote: ^'@42
         let lift_quote = Syntax::Lift(Lift::new(Syntax::quote_rc(Rc::new(HSyntax::HConstant(
-            Constant::new(ConstantId::from_str(&db, "42")),
+            Constant::new(ConstantId::from_with_db(&db, "42")),
         )))));
         assert_snapshot!(
             print_syntax_to_string(&db, &lift_quote),
@@ -1232,7 +1233,7 @@ mod tests {
         // Data constructor with no arguments: @Nil
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_str(&db, "Nil"),
+                ConstantId::from_with_db(&db, "Nil"),
                 vec![]
             )),
             @"[@Nil]"
@@ -1241,7 +1242,7 @@ mod tests {
         // Data constructor with one argument: [@Nil (λ %0 → λ %0 → %0]
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_str(&db, "Some"),
+                ConstantId::from_with_db(&db, "Some"),
                 vec![Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(0))))]
             )),
             @"[@Some λ %0 %1 → %1]"
@@ -1249,7 +1250,7 @@ mod tests {
 
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_str(&db, "Pair"),
+                ConstantId::from_with_db(&db, "Pair"),
                 vec![
                     Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
                     Syntax::lambda_rc(Syntax::variable_rc(Index(0)))
@@ -1268,18 +1269,18 @@ mod tests {
         // Simple case with zero-arity constructors: case @x { @true => @1; @false => @0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-            Syntax::constant_from_str_rc(&db, "Nat"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+            Syntax::constant_rc_from(&db, "Nat"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "true"),
+                        ConstantId::from_with_db(&db, "true"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
                     ),
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "false"),
+                        ConstantId::from_with_db(&db, "false"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
                     ),
                 ],
             )),
@@ -1289,13 +1290,13 @@ mod tests {
         // Single branch case: case @x { @unit => @42 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Nat"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Nat"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "unit"),
+                        ConstantId::from_with_db(&db, "unit"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
                     ),
                 ],
             )),
@@ -1305,8 +1306,8 @@ mod tests {
         // Empty case (edge case): case @x { }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "False"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "False"),
                 vec![],
             )),
             @"@x case %0 → @False { }"
@@ -1323,18 +1324,18 @@ mod tests {
         // Case with arity-1 constructor: case @x { @some %0 => %0; @none => @42 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Nat"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Nat"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "some"),
+                        ConstantId::from_with_db(&db, "some"),
                         1,
                         Syntax::variable_rc(Index(0)), // bound by the pattern
                     ),
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "none"),
+                        ConstantId::from_with_db(&db, "none"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
                     ),
                 ],
             )),
@@ -1344,18 +1345,18 @@ mod tests {
         // Case with arity-2 constructor: case @x { @pair %0 %1 => %1; @empty => @0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Nat"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Nat"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "pair"),
+                        ConstantId::from_with_db(&db, "pair"),
                         2,
                         Syntax::variable_rc(Index(0)), // second element of pair (innermost binder)
                     ),
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "empty"),
+                        ConstantId::from_with_db(&db, "empty"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
                     ),
                 ],
             )),
@@ -1365,11 +1366,11 @@ mod tests {
         // Case with arity-3 constructor: case @x { @triple %0 %1 %2 => %2 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Nat"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Nat"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "triple"),
+                        ConstantId::from_with_db(&db, "triple"),
                         3,
                         Syntax::variable_rc(Index(0)), // third element (innermost binder)
                     ),
@@ -1389,11 +1390,11 @@ mod tests {
         // Case with lambda body: case @x { @f => λ%0 → %0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Function"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Function"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "f"),
+                        ConstantId::from_with_db(&db, "f"),
                         0,
                         Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
                     ),
@@ -1405,15 +1406,15 @@ mod tests {
         // Case with application body: case @x { @app => @f @x }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Application"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Application"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "app"),
+                        ConstantId::from_with_db(&db, "app"),
                         0,
                         Syntax::application_rc(
-                            Syntax::constant_rc(ConstantId::from_str(&db, "f")),
-                            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
+                            Syntax::constant_rc(ConstantId::from_with_db(&db, "f")),
+                            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
                         ),
                     ),
                 ],
@@ -1424,15 +1425,15 @@ mod tests {
         // Case with check body: case @x { @check => @42 : 𝒰0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Check"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Check"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "check"),
+                        ConstantId::from_with_db(&db, "check"),
                         0,
                         Syntax::check_rc(
                             Syntax::universe_rc(UniverseLevel::new(0)),
-                            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
                         ),
                     ),
                 ],
@@ -1451,18 +1452,18 @@ mod tests {
         // Case with scrutinee: case @y { @true => @1; @false => @0 }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "y")),
-                Syntax::constant_from_str_rc(&db, "Bool"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "y")),
+                Syntax::constant_rc_from(&db, "Bool"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "true"),
+                        ConstantId::from_with_db(&db, "true"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
                     ),
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "false"),
+                        ConstantId::from_with_db(&db, "false"),
                         0,
-                        Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                        Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
                     ),
                 ],
             )),
@@ -1472,20 +1473,20 @@ mod tests {
         // Nested case: case @x { @outer => case @y { @inner => @42 } }
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                Syntax::constant_from_str_rc(&db, "Nat"),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc_from(&db, "Nat"),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_str(&db, "outer"),
+                        ConstantId::from_with_db(&db, "outer"),
                         0,
                         Syntax::case_rc(
-                            Syntax::constant_rc(ConstantId::from_str(&db, "y")),
-                            Syntax::constant_from_str_rc(&db, "Nat"),
+                            Syntax::constant_rc(ConstantId::from_with_db(&db, "y")),
+                            Syntax::constant_rc_from(&db, "Nat"),
                             vec![
                                 CaseBranch::new(
-                                    ConstantId::from_str(&db, "inner"),
+                                    ConstantId::from_with_db(&db, "inner"),
                                     0,
-                                    Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+                                    Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
                                 ),
                             ],
                         ),
@@ -1499,16 +1500,16 @@ mod tests {
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::lambda(
                 Syntax::case_rc(
-                    Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-                    Syntax::constant_from_str_rc(&db, "Option"),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                    Syntax::constant_rc_from(&db, "Option"),
                     vec![
                         CaseBranch::new(
-                            ConstantId::from_str(&db, "some"),
+                            ConstantId::from_with_db(&db, "some"),
                             1,
                             Syntax::variable_rc(Index(0)), // bound by pattern (innermost)
                         ),
                         CaseBranch::new(
-                            ConstantId::from_str(&db, "none"),
+                            ConstantId::from_with_db(&db, "none"),
                             0,
                             Syntax::variable_rc(Index(1)), // bound by lambda (outer scope)
                         ),

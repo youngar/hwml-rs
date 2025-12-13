@@ -549,6 +549,7 @@ dependencies = [
  "clap",
  "derive-new",
  "hwml_core",
+ "hwml_support",
  "hwml_surface",
  "salsa",
 ]
@@ -573,6 +574,7 @@ name = "hwml_support"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "salsa",
 ]
 
 [[package]]

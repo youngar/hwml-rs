@@ -76,6 +76,10 @@ pub enum Error<'db> {
     BadSynth {
         tm: Rc<Syntax<'db>>,
     },
+    /// Bad type.
+    BadType {
+        tm: Rc<Syntax<'db>>,
+    },
     /// Bad elimination.
     BadElim {
         tm: Rc<Syntax<'db>>,
@@ -250,6 +254,8 @@ pub fn type_check<'db>(
     match term {
         Syntax::Pi(pi) => type_check_pi(env, pi, ty),
         Syntax::Lambda(lam) => type_check_lambda(env, lam, ty),
+        Syntax::TypeConstructor(tc) => type_check_type_constructor(env, tc, ty),
+        Syntax::DataConstructor(dc) => type_check_data_constructor(env, dc, ty),
         _ => type_check_synth_term(env, term, ty),
     }
 }
@@ -305,6 +311,57 @@ fn type_check_lambda<'db>(
     }
 }
 
+fn type_check_type_constructor<'db>(
+    env: &mut TCEnvironment<'db>,
+    tc: &syn::TypeConstructor<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    match ty {
+        Value::Universe(u) => {
+            todo!();
+        }
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::TypeConstructor(tc.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
+fn type_check_data_constructor<'db>(
+    env: &mut TCEnvironment<'db>,
+    dc: &syn::DataConstructor<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    match ty {
+        Value::TypeConstructor(tc) => {
+            let tc_info = env
+                .globals
+                .type_constructor(tc.constructor)
+                .map_err(Error::LookupError)?;
+            let dc_info = env
+                .globals
+                .data_constructor(dc.constructor)
+                .map_err(Error::LookupError)?;
+
+            let mut env = val::Environment {
+                global: env.globals,
+                local: val::LocalEnv::new(),
+            }
+            .extend(tc.iter().take(tc_info.num_parameters).cloned());
+
+            // pull type parameters off tc.
+            // pull data arguments off dc.
+            // use to build actual type.
+            // check
+            todo!();
+        }
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::DataConstructor(dc.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
 // Synthesize a type for the term, then check for equality against the expected type.
 pub fn type_check_synth_term<'db>(
     env: &mut TCEnvironment<'db>,
@@ -314,7 +371,7 @@ pub fn type_check_synth_term<'db>(
     let ty2 = type_synth(env, term)?;
     match crate::equal::is_type_convertible(env.globals, env.depth(), ty1, &ty2) {
         Ok(()) => Ok(()),
-        Err(e) => Err(Error::BadCheck {
+        Err(_) => Err(Error::BadCheck {
             tm: Rc::new(term.clone()),
             ty_got: ty2,
             ty_exp: Rc::new(ty1.clone()),
@@ -336,7 +393,7 @@ pub fn check_type<'db>(env: &mut TCEnvironment<'db>, term: &Syntax<'db>) -> Resu
     }
 
     // Otherwise return failure: this is not a type.
-    Err(Error::BadSynth {
+    Err(Error::BadType {
         tm: Rc::new(term.clone()),
     })
 }

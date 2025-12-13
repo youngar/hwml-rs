@@ -16,6 +16,7 @@ use hwml_core::val::{
     TypeConstructorInfo, Value,
 };
 use hwml_core::Database;
+use hwml_support::FromWithDb;
 use std::rc::Rc;
 
 // ============================================================================
@@ -30,81 +31,6 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
     Ok(syntax)
 }
 
-/// Create a GlobalEnv with Bool type and True/False data constructors.
-fn bool_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
-    let mut global = GlobalEnv::new();
-
-    // Register Bool type constructor with type Type₀
-    let bool_id = ConstantId::from_str(db, "Bool");
-    let bool_type_info = TypeConstructorInfo::new(
-        vec![].into(),         // no arguments (0 parameters, 0 indices)
-        0,                     // num_parameters
-        UniverseLevel::new(0), // lives in Type₀
-    );
-    println!("Bool type_info: {:?}", bool_type_info);
-    global.add_type_constructor(bool_id, bool_type_info);
-
-    // Register True data constructor with type Bool
-    let true_id = ConstantId::from_str(db, "True");
-    let bool_type_syn = Syntax::type_constructor_rc(bool_id, vec![]);
-    let true_data_info = DataConstructorInfo::new(
-        vec![].into(), // no arguments
-        bool_type_syn.clone(),
-    );
-    println!("True data_info: {:?}", true_data_info);
-    global.add_data_constructor(true_id, true_data_info);
-
-    // Register False data constructor with type Bool
-    let false_id = ConstantId::from_str(db, "False");
-    let false_data_info = DataConstructorInfo::new(
-        vec![].into(), // no arguments
-        bool_type_syn.clone(),
-    );
-    println!("False data_info: {:?}", false_data_info);
-    global.add_data_constructor(false_id, false_data_info);
-
-    global
-}
-
-/// Create a GlobalEnv with Nat type and zero/succ data constructors.
-fn nat_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
-    let mut global = GlobalEnv::new();
-
-    // Register Nat type constructor: #[@Nat] : 𝒰0
-    let nat_id = ConstantId::from_str(db, "Nat");
-    let nat_type_info = TypeConstructorInfo::new(
-        vec![].into(),         // no arguments (0 parameters, 0 indices)
-        0,                     // num_parameters
-        UniverseLevel::new(0), // lives in Type₀
-    );
-    println!("Nat type_info: {:?}", nat_type_info);
-    global.add_type_constructor(nat_id, nat_type_info);
-
-    // The Nat type constructor syntax (for use in data constructor types)
-    let nat_type_syn = Syntax::type_constructor_rc(nat_id, vec![]);
-
-    // Register zero data constructor: [@zero] : #[@Nat]
-    let zero_id = ConstantId::from_str(db, "zero");
-    let zero_data_info = DataConstructorInfo::new(
-        vec![].into(), // no arguments
-        nat_type_syn.clone(),
-    );
-    println!("zero data_info: {:?}", zero_data_info);
-    global.add_data_constructor(zero_id, zero_data_info);
-
-    // Register succ data constructor: [@succ %0] : Nat → Nat
-    // Succ has one argument (the predecessor of type Nat)
-    let succ_id = ConstantId::from_str(db, "succ");
-    let succ_data_info = DataConstructorInfo::new(
-        vec![Syntax::type_constructor_rc(nat_id, vec![])].into(), // one argument of type Nat
-        nat_type_syn.clone(),
-    );
-    println!("succ data_info: {:?}", succ_data_info);
-    global.add_data_constructor(succ_id, succ_data_info);
-
-    global
-}
-
 /// Create a GlobalEnv with Option type and Some/None data constructors.
 /// Option is parameterized by a type: Option : 𝒰0 → 𝒰0
 /// None : ∀ (t : 𝒰0) → Option t
@@ -114,7 +40,7 @@ fn option_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
 
     // Register Option type constructor: #[@Option] : 𝒰0 → 𝒰0
     // Option has one parameter (the element type)
-    let option_id = ConstantId::from_str(db, "Option");
+    let option_id = ConstantId::from_with_db(db, "Option");
 
     // Option type: ∀ (%0 : 𝒰0) → 𝒰0
     let option_type_info = TypeConstructorInfo::new(
@@ -127,7 +53,7 @@ fn option_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
 
     // Register None data constructor: [@None] : Option %0
     // None has no arguments (the type parameter is implicit from the type constructor)
-    let none_id = ConstantId::from_str(db, "None");
+    let none_id = ConstantId::from_with_db(db, "None");
     // The result type is Option applied to the parameter (variable 0)
     let none_result_type_syn = Syntax::type_constructor_rc(
         option_id,
@@ -142,7 +68,7 @@ fn option_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
 
     // Register Some data constructor: [@Some] : t → Option t
     // Some has one argument (the value of type t, where t is the type parameter)
-    let some_id = ConstantId::from_str(db, "Some");
+    let some_id = ConstantId::from_with_db(db, "Some");
     // The argument type is the type parameter (variable 0)
     // The result type is Option applied to the parameter (variable 0, but now at index 1 after binding the argument)
     let some_result_type_syn = Syntax::type_constructor_rc(
@@ -167,7 +93,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     let mut global = GlobalEnv::new();
 
     // First, register Bool type (for vector elements)
-    let bool_id = ConstantId::from_str(db, "Bool");
+    let bool_id = ConstantId::from_with_db(db, "Bool");
     let bool_type_info = TypeConstructorInfo::new(
         vec![].into(),         // no arguments (0 parameters, 0 indices)
         0,                     // num_parameters
@@ -177,7 +103,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     global.add_type_constructor(bool_id, bool_type_info);
 
     // Register True data constructor
-    let true_id = ConstantId::from_str(db, "True");
+    let true_id = ConstantId::from_with_db(db, "True");
     let bool_type_syn = Syntax::type_constructor_rc(bool_id, vec![]);
     let true_data_info = DataConstructorInfo::new(
         vec![].into(), // no arguments
@@ -187,7 +113,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     global.add_data_constructor(true_id, true_data_info);
 
     // Register False data constructor
-    let false_id = ConstantId::from_str(db, "False");
+    let false_id = ConstantId::from_with_db(db, "False");
     let false_data_info = DataConstructorInfo::new(
         vec![].into(), // no arguments
         bool_type_syn.clone(),
@@ -196,7 +122,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     global.add_data_constructor(false_id, false_data_info);
 
     // Register Nat type (needed for the index)
-    let nat_id = ConstantId::from_str(db, "Nat");
+    let nat_id = ConstantId::from_with_db(db, "Nat");
     let nat_type_info = TypeConstructorInfo::new(
         vec![].into(),         // no arguments (0 parameters, 0 indices)
         0,                     // num_parameters
@@ -208,7 +134,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     let nat_type_syn = Syntax::type_constructor_rc(nat_id, vec![]);
 
     // Register zero data constructor
-    let zero_id = ConstantId::from_str(db, "zero");
+    let zero_id = ConstantId::from_with_db(db, "zero");
     let zero_data_info = DataConstructorInfo::new(
         vec![].into(), // no arguments
         nat_type_syn.clone(),
@@ -217,7 +143,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     global.add_data_constructor(zero_id, zero_data_info);
 
     // Register succ data constructor
-    let succ_id = ConstantId::from_str(db, "succ");
+    let succ_id = ConstantId::from_with_db(db, "succ");
     let succ_data_info = DataConstructorInfo::new(
         vec![Syntax::type_constructor_rc(nat_id, vec![])].into(), // one argument of type Nat
         nat_type_syn.clone(),
@@ -227,7 +153,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
 
     // Register Vec type constructor: Vec : 𝒰0 → Nat → 𝒰0
     // Vec has one parameter (element type A) and one index (length n)
-    let vec_id = ConstantId::from_str(db, "Vec");
+    let vec_id = ConstantId::from_with_db(db, "Vec");
     let vec_type_info = TypeConstructorInfo::new(
         vec![
             Syntax::universe_rc(UniverseLevel::new(0)), // parameter: Type₀ (element type)
@@ -243,7 +169,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     // Register nil data constructor: nil : ∀ (A : 𝒰0) → Vec A zero
     // nil has no arguments (the type parameter A is implicit)
     // The result type is Vec A zero
-    let nil_id = ConstantId::from_str(db, "nil");
+    let nil_id = ConstantId::from_with_db(db, "nil");
     let nil_result_type_syn = Syntax::type_constructor_rc(
         vec_id,
         vec![
@@ -267,7 +193,7 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
     //   - xs : Vec A n (the tail vector)
     // The result type is Vec A (succ n)
     // Note: n is an implicit argument that must be provided explicitly in the syntax
-    let cons_id = ConstantId::from_str(db, "cons");
+    let cons_id = ConstantId::from_with_db(db, "cons");
 
     // Build the result type: Vec A (succ n)
     // where A is at index 3 (the parameter) and n is at index 2 (first argument)
@@ -500,11 +426,12 @@ pub fn example_data_constructor<'db>(db: &'db Database) -> Result<(), String> {
     let syntax = parse_and_print(db, "[@Pair [@True] [@False]]")?;
 
     // Create environment with Bool and Pair data constructors
-    let mut global = bool_env(db);
+    let mut global = GlobalEnv::new();
+    hwml_core::prelude::def_bool(db, &mut global);
 
-    let pair_id = ConstantId::from_str(db, "Pair");
-    let pair_type_id = ConstantId::from_str(db, "PairType");
-    let bool_id = ConstantId::from_str(db, "Bool");
+    let pair_id = ConstantId::from_with_db(db, "Pair");
+    let pair_type_id = ConstantId::from_with_db(db, "PairType");
+    let bool_id = ConstantId::from_with_db(db, "Bool");
 
     // Register PairType type constructor with type Type₀
     let pair_type_info = TypeConstructorInfo::new(
@@ -512,7 +439,7 @@ pub fn example_data_constructor<'db>(db: &'db Database) -> Result<(), String> {
         0,                     // num_parameters
         UniverseLevel::new(0), // lives in Type₀
     );
-    println!("PairType type_info: {:?}", pair_type_info);
+    println!("PairType type_info: {:#?}", pair_type_info);
     global.add_type_constructor(pair_type_id, pair_type_info);
 
     // Pair has two arguments (both of type Bool)
@@ -525,7 +452,7 @@ pub fn example_data_constructor<'db>(db: &'db Database) -> Result<(), String> {
         .into(),
         pair_result_type_syn.clone(),
     );
-    println!("Pair data_info: {:?}", pair_data_info);
+    println!("Pair data_info: {:#?}", pair_data_info);
     global.add_data_constructor(pair_id, pair_data_info);
 
     // Create environment after all global setup is done
@@ -704,8 +631,10 @@ pub fn example_case_neutral<'db>(db: &'db Database) -> Result<(), String> {
     let syntax = parse_and_print(db, "λ %x → %x case %0 → 𝒰0 { @True => 𝒰0 | @False => 𝒰0 }")?;
 
     // Set up environment with Bool type constructor and True/False data constructors
-    let global = bool_env(db);
-    let bool_id = ConstantId::from_str(db, "Bool");
+    let mut global = GlobalEnv::new();
+    hwml_core::prelude::def_bool(db, &mut global);
+
+    let bool_id = ConstantId::from_with_db(db, "Bool");
     let bool_type = Rc::new(Value::type_constructor(bool_id, vec![]));
 
     let mut env = Environment {
@@ -738,10 +667,11 @@ pub fn example_case_reduces<'db>(db: &'db Database) -> Result<(), String> {
     )?;
 
     // Set up environment with Bool and Pair data constructors
-    let mut global = bool_env(db);
+    let mut global = GlobalEnv::new();
+    hwml_core::prelude::def_bool(db, &mut global);
 
-    let pair_type_id = ConstantId::from_str(db, "PairType");
-    let bool_id = ConstantId::from_str(db, "Bool");
+    let pair_type_id = ConstantId::from_with_db(db, "PairType");
+    let bool_id = ConstantId::from_with_db(db, "Bool");
     let bool_type = Rc::new(Value::type_constructor(bool_id, vec![]));
 
     let pair_type_info = TypeConstructorInfo::new(
@@ -752,7 +682,7 @@ pub fn example_case_reduces<'db>(db: &'db Database) -> Result<(), String> {
     println!("PairType type_info: {:?}", pair_type_info);
     global.add_type_constructor(pair_type_id, pair_type_info);
 
-    let pair_id = ConstantId::from_str(db, "Pair");
+    let pair_id = ConstantId::from_with_db(db, "Pair");
     let pair_result_type_syn = Syntax::type_constructor_rc(pair_type_id, vec![]);
     let pair_data_info = DataConstructorInfo::new(
         vec![
@@ -788,7 +718,9 @@ pub fn example_nat_pattern_match<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 13: Natural Numbers with Pattern Matching ===");
 
     // Create environment with Nat type
-    let global = nat_env(db);
+    let mut global = GlobalEnv::new();
+    hwml_core::prelude::def_nat(db, &mut global);
+
     let mut env = Environment {
         global: &global,
         local: LocalEnv::new(),
@@ -802,7 +734,7 @@ pub fn example_nat_pattern_match<'db>(db: &'db Database) -> Result<(), String> {
 
     // Get the Nat type for quoting
     let nat_type = Rc::new(Value::TypeConstructor(TypeConstructor {
-        constructor: ConstantId::from_str(db, "Nat"),
+        constructor: ConstantId::from_with_db(db, "Nat"),
         arguments: vec![],
     }));
 
@@ -843,7 +775,7 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
     let mut global = option_env(db);
 
     // Add Nat type to the environment
-    let nat_id = ConstantId::from_str(db, "Nat");
+    let nat_id = ConstantId::from_with_db(db, "Nat");
     global.add_type_constructor(
         nat_id,
         TypeConstructorInfo::new(
@@ -856,7 +788,7 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
     // The Nat type constructor syntax (for use in data constructor types)
     let nat_type_syn = Syntax::type_constructor_rc(nat_id, vec![]);
 
-    let zero_id = ConstantId::from_str(db, "zero");
+    let zero_id = ConstantId::from_with_db(db, "zero");
     global.add_data_constructor(
         zero_id,
         DataConstructorInfo::new(
@@ -865,7 +797,7 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
         ),
     );
 
-    let succ_id = ConstantId::from_str(db, "succ");
+    let succ_id = ConstantId::from_with_db(db, "succ");
     global.add_data_constructor(
         succ_id,
         DataConstructorInfo::new(
@@ -875,7 +807,7 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
     );
 
     // Add Bool type to the environment
-    let bool_id = ConstantId::from_str(db, "Bool");
+    let bool_id = ConstantId::from_with_db(db, "Bool");
     global.add_type_constructor(
         bool_id,
         TypeConstructorInfo::new(
@@ -889,7 +821,7 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
     let bool_type = Rc::new(Value::type_constructor(bool_id, vec![]));
     let nat_type = Rc::new(Value::type_constructor(nat_id, vec![]));
 
-    let false_id = ConstantId::from_str(db, "False");
+    let false_id = ConstantId::from_with_db(db, "False");
     global.add_data_constructor(
         false_id,
         DataConstructorInfo::new(
@@ -973,11 +905,11 @@ pub fn example_vec<'db>(db: &'db Database) -> Result<(), String> {
     };
 
     // Get the IDs we need
-    let vec_id = ConstantId::from_str(db, "Vec");
-    let bool_id = ConstantId::from_str(db, "Bool");
-    let nat_id = ConstantId::from_str(db, "Nat");
-    let zero_id = ConstantId::from_str(db, "zero");
-    let succ_id = ConstantId::from_str(db, "succ");
+    let vec_id = ConstantId::from_with_db(db, "Vec");
+    let bool_id = ConstantId::from_with_db(db, "Bool");
+    let nat_id = ConstantId::from_with_db(db, "Nat");
+    let zero_id = ConstantId::from_with_db(db, "zero");
+    let succ_id = ConstantId::from_with_db(db, "succ");
 
     let bool_type = Rc::new(Value::type_constructor(bool_id, vec![]));
     let nat_type = Rc::new(Value::type_constructor(nat_id, vec![]));

@@ -37,8 +37,8 @@ impl<'db> Declaration<'db> {
     pub fn data_constructor(
         name: ConstantId<'db>,
         ty: RcSyntax<'db>,
-        inductive_type: ConstantId<'db>,
-        constructor_index: usize,
+        _inductive_type: ConstantId<'db>,
+        _constructor_index: usize,
     ) -> Self {
         Declaration {
             name,

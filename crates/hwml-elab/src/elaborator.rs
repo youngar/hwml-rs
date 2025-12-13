@@ -4,6 +4,7 @@ use anyhow::Result;
 use hwml_core::common::*;
 use hwml_core::declaration as decl;
 use hwml_core::syn as core;
+use hwml_support::FromWithDb;
 use hwml_surface::syntax as surface;
 
 pub fn infer_app<'db>(
@@ -320,7 +321,7 @@ pub fn elab_def<'db>(
 
     // Convert the surface ID to a string and then to a ConstantId
     let name_str = std::str::from_utf8(&def.id.value).unwrap();
-    let name_id = core::ConstantId::from_str(db, name_str);
+    let name_id = core::ConstantId::from_with_db(db, name_str);
 
     Ok(decl::Declaration::constant(name_id, ety, etm))
 }
@@ -374,7 +375,7 @@ pub fn infer_match<'db>(
 
         // Create a placeholder branch with constructor pattern
         // In a full implementation, we would elaborate the actual pattern
-        let placeholder_constructor = core::ConstantId::from_str(db, "placeholder");
+        let placeholder_constructor = core::ConstantId::from_with_db(db, "placeholder");
         branches.push(core::CaseBranch::new(placeholder_constructor, 0, body));
     }
 
@@ -407,7 +408,7 @@ pub fn check_match<'db>(
 
         // Create a placeholder branch with constructor pattern
         // In a full implementation, we would elaborate the actual pattern
-        let placeholder_constructor = core::ConstantId::from_str(db, "placeholder");
+        let placeholder_constructor = core::ConstantId::from_with_db(db, "placeholder");
         branches.push(core::CaseBranch::new(placeholder_constructor, 0, body));
     }
 

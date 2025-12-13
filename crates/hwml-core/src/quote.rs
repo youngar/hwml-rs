@@ -265,7 +265,7 @@ fn quote_data_constructor<'db>(
     // Find the number of parameters.
     let num_parameters = type_info.num_parameters();
 
-    // Create an array of just the paremeters, leaving out indices.
+    // Create an array of just the parameters, leaving out indices.
     let parameters = type_constructor.iter().take(num_parameters).cloned();
 
     // Create an environment for evaluating the type of each argument, with

@@ -1,5 +1,6 @@
 use crate::common::{Index, UniverseLevel};
 use crate::symbol::InternedString;
+use hwml_support::{FromWithDb, IntoWithDb};
 use salsa::Database;
 use std::rc::Rc;
 
@@ -12,11 +13,6 @@ impl<'db> ConstantId<'db> {
         ConstantId(interned)
     }
 
-    /// Create a new ConstantId from a string, interning it in the database.
-    pub fn from_str(db: &'db dyn Database, name: &str) -> Self {
-        ConstantId(InternedString::new(db, name.to_string()))
-    }
-
     /// Get the interned string for this constant.
     pub fn interned(&self) -> InternedString<'db> {
         self.0
@@ -25,6 +21,18 @@ impl<'db> ConstantId<'db> {
     /// Get the string name for this constant.
     pub fn name(&self, db: &'db dyn Database) -> &str {
         self.0.text(db)
+    }
+}
+
+impl<'db, T> FromWithDb<'db, T> for ConstantId<'db>
+where
+    T: IntoWithDb<'db, InternedString<'db>>,
+{
+    fn from_with_db<Db>(db: &'db Db, value: T) -> Self
+    where
+        Db: salsa::Database + ?Sized,
+    {
+        ConstantId::new(value.into_with_db(db))
     }
 }
 
@@ -149,13 +157,21 @@ impl<'db> Syntax<'db> {
     }
 
     /// Create a constant from a string name, interning it in the database.
-    pub fn constant_from_str(db: &'db dyn Database, name: &str) -> Syntax<'db> {
-        Syntax::constant(ConstantId::from_str(db, name))
+    pub fn constant_from<T, Db>(db: &'db Db, name: T) -> Syntax<'db>
+    where
+        T: IntoWithDb<'db, ConstantId<'db>>,
+        Db: salsa::Database + ?Sized,
+    {
+        Syntax::constant(name.into_with_db(db))
     }
 
-    /// Create a constant RC from a string name, interning it in the database.
-    pub fn constant_from_str_rc(db: &'db dyn Database, name: &str) -> RcSyntax<'db> {
-        Rc::new(Syntax::constant_from_str(db, name))
+    /// Create a constant from a string name, interning it in the database.
+    pub fn constant_rc_from<T, Db>(db: &'db Db, name: T) -> Rc<Syntax<'db>>
+    where
+        T: IntoWithDb<'db, ConstantId<'db>>,
+        Db: salsa::Database + ?Sized,
+    {
+        Syntax::constant_rc(name.into_with_db(db))
     }
 
     pub fn variable(index: Index) -> Syntax<'db> {
@@ -446,13 +462,21 @@ impl<'db> HSyntax<'db> {
     }
 
     /// Create an hconstant from a string name, interning it in the database.
-    pub fn hconstant_from_str(db: &'db dyn Database, name: &str) -> HSyntax<'db> {
-        HSyntax::hconstant(ConstantId::from_str(db, name))
+    pub fn hconstant_from<T, Db>(db: &'db Db, name: T) -> HSyntax<'db>
+    where
+        T: IntoWithDb<'db, ConstantId<'db>>,
+        Db: salsa::Database + ?Sized,
+    {
+        HSyntax::hconstant(name.into_with_db(db))
     }
 
     /// Create an hconstant RC from a string name, interning it in the database.
-    pub fn hconstant_from_str_rc(db: &'db dyn Database, name: &str) -> RcHSyntax<'db> {
-        Rc::new(HSyntax::hconstant_from_str(db, name))
+    pub fn hconstant_rc_from<T, Db>(db: &'db Db, name: T) -> RcHSyntax<'db>
+    where
+        T: IntoWithDb<'db, ConstantId<'db>>,
+        Db: salsa::Database + ?Sized,
+    {
+        HSyntax::hconstant_rc(name.into_with_db(db))
     }
 
     pub fn hvariable(index: Index) -> HSyntax<'db> {
@@ -753,9 +777,9 @@ mod tests {
     fn test_name_id_equality() {
         use crate::Database;
         let db = Database::default();
-        let name1 = ConstantId::from_str(&db, "42");
-        let name2 = ConstantId::from_str(&db, "42");
-        let name3 = ConstantId::from_str(&db, "99");
+        let name1 = ConstantId::from_with_db(&db, "42");
+        let name2 = ConstantId::from_with_db(&db, "42");
+        let name3 = ConstantId::from_with_db(&db, "99");
 
         assert_eq!(name1, name2);
         assert_ne!(name1, name3);
@@ -765,9 +789,9 @@ mod tests {
     fn test_constant_equality() {
         use crate::Database;
         let db = Database::default();
-        let const1 = Constant::new(ConstantId::from_str(&db, "42"));
-        let const2 = Constant::new(ConstantId::from_str(&db, "42"));
-        let const3 = Constant::new(ConstantId::from_str(&db, "99"));
+        let const1 = Constant::new(ConstantId::from_with_db(&db, "42"));
+        let const2 = Constant::new(ConstantId::from_with_db(&db, "42"));
+        let const3 = Constant::new(ConstantId::from_with_db(&db, "99"));
 
         assert_eq!(const1, const2);
         assert_ne!(const1, const3);
@@ -801,9 +825,9 @@ mod tests {
 
         use crate::Database;
         let db = Database::default();
-        let val1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let val2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let val3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
+        let val1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let val2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let val3 = Syntax::constant_rc(ConstantId::from_with_db(&db, "99"));
 
         let closure3 = Closure::with_values(vec![val1.clone()]);
         let closure4 = Closure::with_values(vec![val2.clone()]);
@@ -831,9 +855,9 @@ mod tests {
     fn test_application_equality() {
         use crate::Database;
         let db = Database::default();
-        let fun1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let fun2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let fun3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
+        let fun1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let fun2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let fun3 = Syntax::constant_rc(ConstantId::from_with_db(&db, "99"));
 
         let arg1 = Syntax::variable_rc(Index(0));
         let arg2 = Syntax::variable_rc(Index(0));
@@ -877,9 +901,9 @@ mod tests {
 
         use crate::Database;
         let db = Database::default();
-        let term1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let term2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let term3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
+        let term1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let term2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let term3 = Syntax::constant_rc(ConstantId::from_with_db(&db, "99"));
 
         let check1 = Check::new(ty1.clone(), term1.clone());
         let check2 = Check::new(ty2.clone(), term2.clone());
@@ -915,9 +939,9 @@ mod tests {
     fn test_syntax_constant_equality() {
         use crate::Database;
         let db = Database::default();
-        let syn1 = Syntax::constant(ConstantId::from_str(&db, "42"));
-        let syn2 = Syntax::constant(ConstantId::from_str(&db, "42"));
-        let syn3 = Syntax::constant(ConstantId::from_str(&db, "99"));
+        let syn1 = Syntax::constant(ConstantId::from_with_db(&db, "42"));
+        let syn2 = Syntax::constant(ConstantId::from_with_db(&db, "42"));
+        let syn3 = Syntax::constant(ConstantId::from_with_db(&db, "99"));
 
         assert_eq!(syn1, syn2);
         assert_ne!(syn1, syn3);
@@ -961,8 +985,8 @@ mod tests {
     fn test_syntax_application_equality() {
         use crate::Database;
         let db = Database::default();
-        let fun1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let fun2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let fun1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let fun2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
         let arg1 = Syntax::variable_rc(Index(0));
         let arg2 = Syntax::variable_rc(Index(0));
 
@@ -991,8 +1015,8 @@ mod tests {
         let ty2 = Syntax::universe_rc(UniverseLevel::new(0));
         use crate::Database;
         let db = Database::default();
-        let term1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let term2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let term1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let term2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
 
         let syn1 = Syntax::check(ty1, term1);
         let syn2 = Syntax::check(ty2, term2);
@@ -1020,7 +1044,7 @@ mod tests {
     fn test_syntax_different_variants_not_equal() {
         use crate::Database;
         let db = Database::default();
-        let constant = Syntax::constant(ConstantId::from_str(&db, "0"));
+        let constant = Syntax::constant(ConstantId::from_with_db(&db, "0"));
         let variable = Syntax::variable(Index(0));
         let universe = Syntax::universe(UniverseLevel::new(0));
 
@@ -1037,18 +1061,18 @@ mod tests {
         let lambda1 = Syntax::lambda_rc(lambda_body1);
         use crate::Database;
         let db = Database::default();
-        let arg1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let arg1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
         let app1 = Syntax::application(lambda1.clone(), arg1.clone());
 
         let lambda_body2 = Syntax::variable_rc(Index(0));
         let lambda2 = Syntax::lambda_rc(lambda_body2);
-        let arg2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
+        let arg2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
         let app2 = Syntax::application(lambda2.clone(), arg2.clone());
 
         assert_eq!(app1, app2);
 
         // Different argument
-        let arg3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
+        let arg3 = Syntax::constant_rc(ConstantId::from_with_db(&db, "99"));
         let app3 = Syntax::application(lambda1, arg3);
         assert_ne!(app1, app3);
     }
@@ -1087,9 +1111,9 @@ mod tests {
         // Test that RcSyntax (Rc<Syntax>) compares by value, not by pointer
         use crate::Database;
         let db = Database::default();
-        let rc1 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let rc2 = Syntax::constant_rc(ConstantId::from_str(&db, "42"));
-        let rc3 = Syntax::constant_rc(ConstantId::from_str(&db, "99"));
+        let rc1 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let rc2 = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
+        let rc3 = Syntax::constant_rc(ConstantId::from_with_db(&db, "99"));
 
         assert_eq!(rc1, rc2); // Different Rc pointers, same value
         assert_ne!(rc1, rc3);

@@ -2,6 +2,7 @@ use crate::common::{DBParseError, Index, NegativeLevel};
 use crate::syn::{CaseBranch, Closure, ConstantId, MetavariableId, RcSyntax, Syntax};
 use crate::syn::{HSyntax, RcHSyntax};
 use core::fmt::Debug;
+use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
 use salsa::Database;
 use std::fmt;
@@ -329,7 +330,7 @@ fn p_constant_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<ConstantId<
         Some(Err(err)) => Err(err),
         Some(Ok(Token::Constant(name))) => {
             state.advance_token();
-            Ok(Some(ConstantId::from_str(state.db(), &name)))
+            Ok(Some(ConstantId::from_with_db(state.db(), &name)))
         }
         _ => Ok(None),
     }
@@ -448,7 +449,7 @@ fn p_hatom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcHSyntax<'db>
             }
             Token::Constant(name) => {
                 state.advance_token();
-                Ok(Some(HSyntax::hconstant_from_str_rc(state.db(), &name)))
+                Ok(Some(HSyntax::hconstant_rc_from(state.db(), &name)))
             }
             Token::Splice => {
                 state.advance_token();
@@ -634,7 +635,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             }
             Token::Constant(name) => {
                 state.advance_token();
-                Ok(Some(Syntax::constant_from_str_rc(state.db(), &name)))
+                Ok(Some(Syntax::constant_rc_from(state.db(), &name)))
             }
             Token::Metavariable(id) => {
                 state.advance_token();
@@ -1244,7 +1245,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @42 using string interning
-        let expected = Syntax::constant_from_str_rc(&db, "42");
+        let expected = Syntax::constant_rc_from(&db, "42");
 
         assert_eq!(parsed, expected);
     }
@@ -1262,7 +1263,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: @0 using string interning
-        let expected = Syntax::constant_from_str_rc(&db, "0");
+        let expected = Syntax::constant_rc_from(&db, "0");
 
         assert_eq!(parsed, expected);
     }
@@ -1285,7 +1286,7 @@ mod tests {
 
         // Build expected: @123456789
         use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId::from_str(&db, "123456789"));
+        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "123456789"));
 
         assert_eq!(parsed, expected);
     }
@@ -1309,8 +1310,8 @@ mod tests {
         // Build expected: @42 @99
         use crate::syn::ConstantId;
         let expected = Syntax::application_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
-            Syntax::constant_rc(ConstantId::from_str(&db, "99")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
         );
 
         assert_eq!(parsed, expected);
@@ -1336,7 +1337,7 @@ mod tests {
         use crate::syn::ConstantId;
         let expected = Syntax::check_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
         );
 
         assert_eq!(parsed, expected);
@@ -1361,7 +1362,7 @@ mod tests {
         // Build expected: λ %x → @42 %x
         use crate::syn::ConstantId;
         let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
             Syntax::variable_rc(Index(0)),
         ));
 
@@ -1387,7 +1388,7 @@ mod tests {
         // Build expected: ∀(%x : @42) → 𝒰0
         use crate::syn::ConstantId;
         let expected = Syntax::pi_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
@@ -1629,7 +1630,7 @@ mod tests {
 
         // Build expected: @42
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId::from_str(&db, "42"));
+        let expected = HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42"));
 
         assert_eq!(parsed, expected);
     }
@@ -1647,7 +1648,7 @@ mod tests {
 
         // Build expected: @0
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId::from_str(&db, "0"));
+        let expected = HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "0"));
 
         assert_eq!(parsed, expected);
     }
@@ -1669,7 +1670,7 @@ mod tests {
 
         // Build expected: @123456789
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId::from_str(&db, "123456789"));
+        let expected = HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "123456789"));
 
         assert_eq!(parsed, expected);
     }
@@ -1861,8 +1862,8 @@ mod tests {
         // Build expected: @42 @99
         use crate::syn::ConstantId;
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
         );
 
         assert_eq!(parsed, expected);
@@ -1883,7 +1884,7 @@ mod tests {
         // Build expected: (λ %x → %x) : @42
         use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
             HSyntax::hlambda_rc(HSyntax::hvariable_rc(Index(0))),
         );
 
@@ -1908,10 +1909,10 @@ mod tests {
         // Build expected: (@42 @99) : @100
         use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "100")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "100")),
             HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
-                HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
+                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
+                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
             ),
         );
 
@@ -1932,7 +1933,7 @@ mod tests {
 
         // Build expected: ~@42
         use crate::syn::ConstantId;
-        let expected = HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_str(&db, "42")));
+        let expected = HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_with_db(&db, "42")));
 
         assert_eq!(parsed, expected);
     }
@@ -2004,7 +2005,7 @@ mod tests {
                 HSyntax::hvariable_rc(Index(1)), // %f
                 HSyntax::hvariable_rc(Index(0)), // %x
             )),
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
         ));
 
         assert_eq!(parsed, expected);
@@ -2054,7 +2055,7 @@ mod tests {
         // Build expected: @42 ~𝒰0
         use crate::syn::ConstantId;
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
             HSyntax::splice_rc(Syntax::universe_rc(UniverseLevel::new(0))),
         );
 
@@ -2079,8 +2080,8 @@ mod tests {
         // Build expected: ~@42 : @99
         use crate::syn::ConstantId;
         let expected = HSyntax::hcheck_rc(
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
-            HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_str(&db, "42"))),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
+            HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))),
         );
 
         assert_eq!(parsed, expected);
@@ -2133,10 +2134,10 @@ mod tests {
         // Build expected: @42 (@99 @100)
         use crate::syn::ConstantId;
         let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId::from_str(&db, "42")),
+            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
             HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId::from_str(&db, "99")),
-                HSyntax::hconstant_rc(ConstantId::from_str(&db, "100")),
+                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
+                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "100")),
             ),
         );
 
@@ -2364,7 +2365,7 @@ mod tests {
         );
 
         let parsed = result.unwrap();
-        let expected = Syntax::data_constructor_rc(ConstantId::from_str(&db, "Nil"), vec![]);
+        let expected = Syntax::data_constructor_rc(ConstantId::from_with_db(&db, "Nil"), vec![]);
 
         assert_eq!(
             parsed, expected,
@@ -2387,8 +2388,8 @@ mod tests {
 
         let parsed = result.unwrap();
         let expected = Syntax::data_constructor_rc(
-            ConstantId::from_str(&db, "Some"),
-            vec![Syntax::constant_rc(ConstantId::from_str(&db, "42"))],
+            ConstantId::from_with_db(&db, "Some"),
+            vec![Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))],
         );
 
         assert_eq!(
@@ -2412,7 +2413,7 @@ mod tests {
 
         let parsed = result.unwrap();
         let expected = Syntax::data_constructor_rc(
-            ConstantId::from_str(&db, "Some"),
+            ConstantId::from_with_db(&db, "Some"),
             vec![Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(
                 Index(0),
             )))],
@@ -2439,7 +2440,7 @@ mod tests {
 
         let parsed = result.unwrap();
         let expected = Syntax::data_constructor_rc(
-            ConstantId::from_str(&db, "Pair"),
+            ConstantId::from_with_db(&db, "Pair"),
             vec![
                 Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
                 Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
@@ -2462,18 +2463,18 @@ mod tests {
         let parsed = parse_syntax(&db, input).expect("Failed to parse case expression");
 
         let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-            Syntax::constant_from_str_rc(&db, "Bool"),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+            Syntax::constant_rc_from(&db, "Bool"),
             vec![
                 CaseBranch::new(
-                    ConstantId::from_str(&db, "true"),
+                    ConstantId::from_with_db(&db, "true"),
                     0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
                 ),
                 CaseBranch::new(
-                    ConstantId::from_str(&db, "false"),
+                    ConstantId::from_with_db(&db, "false"),
                     0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
                 ),
             ],
         );
@@ -2492,18 +2493,18 @@ mod tests {
         let parsed = parse_syntax(&db, input).expect("Failed to parse constructor-only case");
 
         let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-            Syntax::constant_from_str_rc(&db, "Bool"),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+            Syntax::constant_rc_from(&db, "Bool"),
             vec![
                 CaseBranch::new(
-                    ConstantId::from_str(&db, "true"),
+                    ConstantId::from_with_db(&db, "true"),
                     0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
                 ),
                 CaseBranch::new(
-                    ConstantId::from_str(&db, "false"),
+                    ConstantId::from_with_db(&db, "false"),
                     0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
                 ),
             ],
         );
@@ -2525,7 +2526,7 @@ mod tests {
         );
 
         let parsed = result.unwrap();
-        let expected = Syntax::type_constructor_rc(ConstantId::from_str(&db, "Bool"), vec![]);
+        let expected = Syntax::type_constructor_rc(ConstantId::from_with_db(&db, "Bool"), vec![]);
 
         assert_eq!(
             parsed, expected,
@@ -2548,7 +2549,7 @@ mod tests {
 
         let parsed = result.unwrap();
         let expected = Syntax::type_constructor_rc(
-            ConstantId::from_str(&db, "List"),
+            ConstantId::from_with_db(&db, "List"),
             vec![Syntax::universe_rc(crate::common::UniverseLevel::new(0))],
         );
 
@@ -2568,18 +2569,18 @@ mod tests {
             parse_syntax(&db, input).expect("Failed to parse case with type constructor motive");
 
         let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_str(&db, "x")),
-            Syntax::type_constructor_rc(ConstantId::from_str(&db, "Bool"), vec![]),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+            Syntax::type_constructor_rc(ConstantId::from_with_db(&db, "Bool"), vec![]),
             vec![
                 CaseBranch::new(
-                    ConstantId::from_str(&db, "true"),
+                    ConstantId::from_with_db(&db, "true"),
                     0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "1")),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
                 ),
                 CaseBranch::new(
-                    ConstantId::from_str(&db, "false"),
+                    ConstantId::from_with_db(&db, "false"),
                     0,
-                    Syntax::constant_rc(ConstantId::from_str(&db, "0")),
+                    Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
                 ),
             ],
         );

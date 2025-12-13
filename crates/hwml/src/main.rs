@@ -82,7 +82,9 @@ fn run_core(args: Args) {
         println!("Parsed syntax: {:?}", syn_tm);
     }
 
-    let globals = val::GlobalEnv::new();
+    let mut globals = val::GlobalEnv::new();
+    hwml_core::prelude::def_bool(&db, &mut globals);
+    hwml_core::prelude::def_nat(&db, &mut globals);
 
     let mut tc_env = hwml_core::check::TCEnvironment {
         globals: &globals,
