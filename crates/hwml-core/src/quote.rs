@@ -7,27 +7,27 @@ use std::rc::Rc;
 
 /// A quotation error.
 #[derive(Debug, Clone)]
-pub enum Error {
+pub enum Error<'db> {
     /// Something about the input was ill-typed, preventing quotation.
     IllTyped,
     /// Quotation can force evaluation, which may itself prevent an error.
     EvalError(eval::Error),
-    LookupError(val::LookupError),
+    LookupError(val::LookupError<'db>),
 }
 
-impl From<eval::Error> for Error {
+impl<'db> From<eval::Error> for Error<'db> {
     fn from(error: eval::Error) -> Self {
         Error::EvalError(error)
     }
 }
 
-impl From<val::LookupError> for Error {
-    fn from(error: val::LookupError) -> Self {
+impl<'db> From<val::LookupError<'db>> for Error<'db> {
+    fn from(error: val::LookupError<'db>) -> Self {
         Error::LookupError(error)
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<'db, T> = std::result::Result<T, Error<'db>>;
 
 /// Read a normal (value * type) back into syntax. The resulting syntax is in normal form.
 pub fn quote_normal<'db>(
@@ -35,7 +35,7 @@ pub fn quote_normal<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     normal: &Normal<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     quote(db, global, depth, &normal.ty, &normal.value)
 }
 
@@ -48,7 +48,7 @@ pub fn quote<'db>(
     depth: usize,
     ty: &Value<'db>,
     value: &Value<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     match ty {
         Value::Pi(pi) => quote_pi_instance(db, global, depth, pi, value),
         Value::Universe(universe) => quote_universe_instance(db, global, depth, universe, value),
@@ -65,7 +65,7 @@ fn quote_pi_instance<'db>(
     depth: usize,
     ty: &val::Pi<'db>,
     value: &Value<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Build a variable representing the lambda's argument.
     let var = Rc::new(Value::variable(ty.source.clone(), Level::new(depth)));
 
@@ -96,7 +96,7 @@ fn quote_universe_instance<'db>(
     depth: usize,
     _: &val::Universe,
     value: &Value<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     quote_type(db, global, depth, value)
 }
 
@@ -107,7 +107,7 @@ fn quote_type_constructor_instance<'db>(
     depth: usize,
     ty: &val::TypeConstructor<'db>,
     value: &Value<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::DataConstructor(data_constructor) => {
             quote_data_constructor(db, global, depth, ty, data_constructor)
@@ -124,7 +124,7 @@ fn quote_neutral_instance<'db>(
     depth: usize,
     _: &val::Neutral<'db>,
     value: &Value<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // The type is unknown, so we proceed by syntax. If the value was not a neutral,
     // then we would know the type. EG if the value was headed by a lambda, we could
     // know that the type was a pi.
@@ -140,7 +140,7 @@ pub fn quote_type<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Pi(pi) => quote_pi(db, global, depth, pi),
         Value::TypeConstructor(tc) => quote_type_constructor(db, global, depth, tc),
@@ -156,7 +156,7 @@ fn quote_pi<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     sem_pi: &val::Pi<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Read back the source type.
     let sem_source_ty = &sem_pi.source;
     let syn_source_ty = quote_type(db, global, depth, sem_source_ty)?;
@@ -180,7 +180,7 @@ fn quote_type_constructor<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     sem_tcon: &val::TypeConstructor<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Get the constructor constant.
     let constructor = sem_tcon.constructor;
 
@@ -219,7 +219,7 @@ fn quote_universe<'db>(
     _db: &'db dyn salsa::Database,
     _depth: usize,
     sem_universe: &val::Universe,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Return a syntactic universe at the same universe level.
     let syn_universe = Syntax::universe(sem_universe.level);
     Ok(Rc::new(syn_universe))
@@ -231,7 +231,7 @@ fn quote_neutral<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     neutral: &val::Neutral<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     match neutral {
         Neutral::Variable(var) => quote_variable(db, depth, var),
         Neutral::Application(app) => quote_application(db, global, depth, app),
@@ -246,7 +246,7 @@ fn quote_data_constructor<'db>(
     mut depth: usize,
     type_constructor: &val::TypeConstructor<'db>,
     sem_data: &val::DataConstructor<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Get the constructor constant.
     let constructor = sem_data.constructor;
 
@@ -298,7 +298,7 @@ fn quote_variable<'db>(
     _db: &'db dyn salsa::Database,
     depth: usize,
     sem_var: &val::Variable,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Convert the DB level to an index, and return the syntactic variable.
     let syn_var = Syntax::variable(sem_var.level.to_index(depth));
     Ok(Rc::new(syn_var))
@@ -310,7 +310,7 @@ fn quote_application<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     sem_app: &val::Application<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Read back the function.
     let sem_fun = &sem_app.function;
     let syn_fun = quote_neutral(db, global, depth, &sem_fun)?;
@@ -330,7 +330,7 @@ fn quote_case<'db>(
     global: &'db GlobalEnv<'db>,
     depth: usize,
     sem_case: &val::Case<'db>,
-) -> Result<RcSyntax<'db>> {
+) -> Result<'db, RcSyntax<'db>> {
     // Read back the scrutinee expression.
     let sem_scrutinee = &sem_case.scrutinee;
     let syn_scrutinee = quote_neutral(db, global, depth, &sem_scrutinee)?;

@@ -12,7 +12,10 @@ pub enum Error {
     UnknownDataConstructor,
 }
 
-pub fn eval<'db>(env: &mut Environment<'db>, stx: &Syntax<'db>) -> Result<Rc<Value<'db>>, Error> {
+pub fn eval<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
+    stx: &Syntax<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
     match stx {
         Syntax::Constant(constant) => eval_constant(env, &constant),
         Syntax::Variable(var) => eval_variable(env, &var),
@@ -31,29 +34,29 @@ pub fn eval<'db>(env: &mut Environment<'db>, stx: &Syntax<'db>) -> Result<Rc<Val
     }
 }
 
-fn eval_constant<'db>(
-    _env: &mut Environment<'db>,
+fn eval_constant<'g, 'db>(
+    _env: &mut Environment<'g, 'db>,
     constant: &syn::Constant<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::Constant(constant.name)))
 }
 
-fn eval_variable<'db>(
-    env: &mut Environment<'db>,
+fn eval_variable<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     var: &syn::Variable,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(env.get(var.index.to_level(env.depth())).clone())
 }
 
-fn eval_check<'db>(
-    env: &mut Environment<'db>,
+fn eval_check<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     chk: &syn::Check<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     eval(env, &chk.term)
 }
 
-fn eval_type_constructor<'db>(
-    env: &mut Environment<'db>,
+fn eval_type_constructor<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     type_constructor: &syn::TypeConstructor<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments
@@ -69,8 +72,8 @@ fn eval_type_constructor<'db>(
     Ok(Rc::new(type_constructor_value))
 }
 
-fn eval_data_constructor<'db>(
-    env: &mut Environment<'db>,
+fn eval_data_constructor<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     data_constructor: &syn::DataConstructor<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments
@@ -85,14 +88,17 @@ fn eval_data_constructor<'db>(
     Ok(Rc::new(data_value))
 }
 
-fn eval_pi<'db>(env: &mut Environment<'db>, pi: &syn::Pi<'db>) -> Result<Rc<Value<'db>>, Error> {
+fn eval_pi<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
+    pi: &syn::Pi<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
     let source = eval(env, &pi.source)?;
     let target = Closure::new(env.local.clone(), pi.target.clone());
     Ok(Rc::new(Value::pi(source, target)))
 }
 
-fn eval_lambda<'db>(
-    env: &mut Environment<'db>,
+fn eval_lambda<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     lambda: &syn::Lambda<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::Lambda(dom::Lambda {
@@ -100,22 +106,22 @@ fn eval_lambda<'db>(
     })))
 }
 
-fn eval_universe<'db>(
-    _: &mut Environment<'db>,
+fn eval_universe<'g, 'db>(
+    _: &mut Environment<'g, 'db>,
     universe: &syn::Universe,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::universe(universe.level)))
 }
 
-fn eval_metavariable<'db>(
-    _env: &mut Environment<'db>,
+fn eval_metavariable<'g, 'db>(
+    _env: &mut Environment<'g, 'db>,
     _meta: &syn::Metavariable<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     todo!()
 }
 
-fn eval_application<'db>(
-    env: &mut Environment<'db>,
+fn eval_application<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     application: &stx::Application<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the function and argument to a value, then perform the substitution.
@@ -126,7 +132,7 @@ fn eval_application<'db>(
 
 /// Perform an application.
 pub fn run_application<'db>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     fun: &Value<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
@@ -139,7 +145,7 @@ pub fn run_application<'db>(
 
 /// Perform the application of a lambda to an argument.
 fn apply_lambda<'db>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     lambda: &val::Lambda<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
@@ -148,7 +154,7 @@ fn apply_lambda<'db>(
 
 /// Perform the application of a neutral term to an argument.
 fn apply_neutral<'db>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     ty: &Value<'db>,
     neutral: Rc<Neutral<'db>>,
     arg: Rc<Value<'db>>,
@@ -167,8 +173,8 @@ fn apply_neutral<'db>(
     Ok(Rc::new(app))
 }
 
-fn eval_case<'db>(
-    env: &mut Environment<'db>,
+fn eval_case<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     case: &stx::Case<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the scrutinee expression
@@ -186,7 +192,7 @@ fn eval_case<'db>(
 }
 
 fn run_case<'db>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     scrutinee: Rc<Value<'db>>,
     motive: Closure<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
@@ -208,7 +214,7 @@ fn run_case<'db>(
 }
 
 fn run_case_on_data_constructor<'db>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     scrutinee: &DataConstructor<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
@@ -223,7 +229,7 @@ fn run_case_on_data_constructor<'db>(
 }
 
 fn run_case_on_neutral<'db>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     scrutinee: Rc<Value<'db>>,
     scrutinee_ty: &Rc<Value<'db>>,
     scrutinee_ne: &Rc<Neutral<'db>>,
@@ -266,7 +272,7 @@ fn run_case_on_neutral<'db>(
 /// Takes only the local environment from the closure and extends it with the provided arguments.
 /// The global environment must be provided separately.
 pub fn run_closure<'db, T>(
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     closure: &Closure<'db>,
     args: T,
 ) -> Result<Rc<Value<'db>>, Error>
@@ -280,8 +286,8 @@ where
 }
 
 /// Evaluate a telescope to a list of types.
-pub fn eval_telescope<'db, T>(
-    global: &'db GlobalEnv<'db>,
+pub fn eval_telescope<'g, 'db, T>(
+    global: &'g GlobalEnv<'db>,
     params: T,
     telescope: &stx::Telescope<'db>,
 ) -> Result<SemTelescope<'db>, Error>

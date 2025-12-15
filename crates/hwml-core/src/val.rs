@@ -340,13 +340,13 @@ impl<'db> CaseBranch<'db> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Environment<'db> {
-    pub global: &'db GlobalEnv<'db>,
+pub struct Environment<'g, 'db> {
+    pub global: &'g GlobalEnv<'db>,
     pub local: LocalEnv<'db>,
 }
 
-impl<'db> Environment<'db> {
-    pub fn new(global: &'db GlobalEnv) -> Self {
+impl<'g, 'db> Environment<'g, 'db> {
+    pub fn new(global: &'g GlobalEnv<'db>) -> Self {
         Self {
             global,
             local: LocalEnv::new(),
@@ -443,11 +443,17 @@ impl<'db> Environment<'db> {
 }
 
 #[derive(Debug, Clone)]
-pub enum LookupError {
+pub enum LookupErrorKind {
     UnknownConstant,
     NotDefinition,
     NotTypeConstructor,
     NotDataConstructor,
+}
+
+#[derive(Debug, Clone)]
+pub struct LookupError<'db> {
+    kind: LookupErrorKind,
+    id: ConstantId<'db>,
 }
 
 #[derive(Clone, Debug)]
@@ -471,18 +477,21 @@ impl<'db> GlobalEnv<'db> {
     }
 
     /// Lookup a global constant by name.
-    pub fn lookup(&self, name: ConstantId<'db>) -> Result<&Global<'db>, LookupError> {
-        self.constants
-            .get(&name)
-            .ok_or(LookupError::UnknownConstant)
+    pub fn lookup(&self, name: ConstantId<'db>) -> Result<&Global<'db>, LookupError<'db>> {
+        self.constants.get(&name).ok_or(LookupError {
+            kind: LookupErrorKind::UnknownConstant,
+            id: name,
+        })
     }
 
     /// Lookup a global definition by name.
-    pub fn definition(&self, name: ConstantId<'db>) -> Result<&Rc<Value<'db>>, LookupError> {
-        match self.constants.get(&name) {
-            Some(Global::Definition(value)) => Ok(value),
-            Some(_) => Err(LookupError::NotDefinition),
-            None => Err(LookupError::UnknownConstant),
+    pub fn definition(&self, name: ConstantId<'db>) -> Result<&Rc<Value<'db>>, LookupError<'db>> {
+        match self.lookup(name)? {
+            Global::Definition(value) => Ok(value),
+            _ => Err(LookupError {
+                kind: LookupErrorKind::NotDefinition,
+                id: name,
+            }),
         }
     }
 
@@ -495,11 +504,13 @@ impl<'db> GlobalEnv<'db> {
     pub fn type_constructor(
         &self,
         name: ConstantId<'db>,
-    ) -> Result<&TypeConstructorInfo<'db>, LookupError> {
-        match self.constants.get(&name) {
-            Some(Global::TypeConstructor(info)) => Ok(info),
-            Some(_) => Err(LookupError::NotTypeConstructor),
-            None => Err(LookupError::UnknownConstant),
+    ) -> Result<&TypeConstructorInfo<'db>, LookupError<'db>> {
+        match self.lookup(name)? {
+            Global::TypeConstructor(info) => Ok(info),
+            _ => Err(LookupError {
+                kind: LookupErrorKind::NotTypeConstructor,
+                id: name,
+            }),
         }
     }
 
@@ -512,11 +523,13 @@ impl<'db> GlobalEnv<'db> {
     pub fn data_constructor(
         &self,
         name: ConstantId<'db>,
-    ) -> Result<&DataConstructorInfo<'db>, LookupError> {
-        match self.constants.get(&name) {
-            Some(Global::DataConstructor(info)) => Ok(info),
-            Some(_) => Err(LookupError::NotDataConstructor),
-            None => Err(LookupError::UnknownConstant),
+    ) -> Result<&DataConstructorInfo<'db>, LookupError<'db>> {
+        match self.lookup(name)? {
+            Global::DataConstructor(info) => Ok(info),
+            _ => Err(LookupError {
+                kind: LookupErrorKind::NotDataConstructor,
+                id: name,
+            }),
         }
     }
 
@@ -588,7 +601,7 @@ impl<'db> LocalEnv<'db> {
     }
 }
 
-impl<'db> Extend<Rc<Value<'db>>> for Environment<'db> {
+impl<'g, 'db> Extend<Rc<Value<'db>>> for Environment<'g, 'db> {
     fn extend<T>(&mut self, iter: T)
     where
         T: IntoIterator<Item = Rc<Value<'db>>>,

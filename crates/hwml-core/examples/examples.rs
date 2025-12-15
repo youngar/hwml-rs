@@ -233,8 +233,8 @@ fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
 }
 
 /// Evaluate syntax and print the result.
-fn eval_and_print<'db>(
-    env: &mut Environment<'db>,
+fn eval_and_print<'g, 'db>(
+    env: &mut Environment<'g, 'db>,
     syntax: &RcSyntax<'db>,
 ) -> Result<Rc<Value<'db>>, String> {
     let value = eval::eval(env, syntax).map_err(|e| format!("Eval error: {:?}", e))?;
