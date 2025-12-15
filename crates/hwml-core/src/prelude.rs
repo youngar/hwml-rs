@@ -30,14 +30,14 @@ pub fn def_nat<'db, 'a, Db: salsa::Database>(db: &'db Db, g: &'a mut GlobalEnv<'
         TypeConstructorInfo::new(vec![].into(), 0, UniverseLevel::new(0)),
     );
     g.add_data_constructor(
-        "Z".into_with_db(db),
+        "Zero".into_with_db(db),
         DataConstructorInfo::new(
             vec![].into(), // no arguments
             nat.clone(),
         ),
     );
     g.add_data_constructor(
-        "S".into_with_db(db),
+        "Succ".into_with_db(db),
         DataConstructorInfo::new(vec![nat.clone()].into(), nat.clone()),
     );
 }

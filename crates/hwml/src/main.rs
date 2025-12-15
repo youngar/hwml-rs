@@ -73,13 +73,13 @@ fn run_core(args: Args) {
     let syn_tm = match hwml_core::syn::parse_syntax(&db, &input) {
         Ok(s) => s,
         Err(e) => {
-            println!("parse error: {:?}", e);
+            println!("parse error: {:#?}", e);
             return;
         }
     };
 
     if args.verbose {
-        println!("Parsed syntax: {:?}", syn_tm);
+        println!("Parsed syntax: {:#?}", syn_tm);
     }
 
     let mut globals = val::GlobalEnv::new();
@@ -94,13 +94,13 @@ fn run_core(args: Args) {
     let sem_ty = match hwml_core::check::type_synth(&mut tc_env, &syn_tm) {
         Ok(ty) => ty,
         Err(e) => {
-            println!("check error: {:?}", e);
+            println!("check error: {:#?}", e);
             return;
         }
     };
 
     if args.verbose {
-        println!("Sem Ty: {:?}", sem_ty);
+        println!("Sem Ty: {:#?}", sem_ty);
     }
 
     let mut env = val::Environment {
@@ -110,19 +110,19 @@ fn run_core(args: Args) {
     let sem_tm = match hwml_core::eval::eval(&mut env, &syn_tm) {
         Ok(s) => s,
         Err(e) => {
-            println!("eval error: {:?}", e);
+            println!("eval error: {:#?}", e);
             return;
         }
     };
 
     if args.verbose {
-        println!("Evaluated to: {:?}", sem_tm);
+        println!("Evaluated to: {:#?}", sem_tm);
     }
 
     let syn_ty = match hwml_core::quote::quote_type(&db, &env.global, 0, &sem_ty) {
         Ok(s) => s,
         Err(e) => {
-            println!("error quoting type: {:?}", e);
+            println!("error quoting type: {:#?}", e);
             return;
         }
     };
@@ -140,7 +140,7 @@ fn run_core(args: Args) {
     ) {
         Ok(s) => s,
         Err(e) => {
-            println!("error quoting term: {:?}", e);
+            println!("error quoting term: {:#?}", e);
             return;
         }
     };
