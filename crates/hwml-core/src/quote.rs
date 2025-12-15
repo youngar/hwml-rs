@@ -32,7 +32,7 @@ type Result<'db, T> = std::result::Result<T, Error<'db>>;
 /// Read a normal (value * type) back into syntax. The resulting syntax is in normal form.
 pub fn quote_normal<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     normal: &Normal<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
@@ -44,7 +44,7 @@ pub fn quote_normal<'db>(
 /// semantic domain to a syntactic normal form.
 pub fn quote<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     ty: &Value<'db>,
     value: &Value<'db>,
@@ -61,7 +61,7 @@ pub fn quote<'db>(
 /// Read an instance of a pi type back to syntax.
 fn quote_pi_instance<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     ty: &val::Pi<'db>,
     value: &Value<'db>,
@@ -92,7 +92,7 @@ fn quote_pi_instance<'db>(
 /// Read an instance of a universe back to syntax.
 fn quote_universe_instance<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     _: &val::Universe,
     value: &Value<'db>,
@@ -103,7 +103,7 @@ fn quote_universe_instance<'db>(
 /// Read an instance of a datatype back to syntax.
 fn quote_type_constructor_instance<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     ty: &val::TypeConstructor<'db>,
     value: &Value<'db>,
@@ -120,7 +120,7 @@ fn quote_type_constructor_instance<'db>(
 /// Read an instance of some neutral type back to syntax.
 fn quote_neutral_instance<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     _: &val::Neutral<'db>,
     value: &Value<'db>,
@@ -137,7 +137,7 @@ fn quote_neutral_instance<'db>(
 /// Read back a type in the semantic domain into a syntactic type.
 pub fn quote_type<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
@@ -153,7 +153,7 @@ pub fn quote_type<'db>(
 // Read a pi back to syntax.
 fn quote_pi<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     sem_pi: &val::Pi<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
@@ -177,7 +177,7 @@ fn quote_pi<'db>(
 /// Read a data constructor instance back to syntax.
 fn quote_type_constructor<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     sem_tcon: &val::TypeConstructor<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
@@ -228,7 +228,7 @@ fn quote_universe<'db>(
 /// Read a neutral term back to syntax.
 fn quote_neutral<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     neutral: &val::Neutral<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
@@ -242,7 +242,7 @@ fn quote_neutral<'db>(
 /// Read a data constructor instance back to syntax.
 fn quote_data_constructor<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     mut depth: usize,
     type_constructor: &val::TypeConstructor<'db>,
     sem_data: &val::DataConstructor<'db>,
@@ -307,7 +307,7 @@ fn quote_variable<'db>(
 /// Read a stuck application back to syntax.
 fn quote_application<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     sem_app: &val::Application<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
@@ -327,7 +327,7 @@ fn quote_application<'db>(
 /// Read a stuck case expression back to syntax.
 fn quote_case<'db>(
     db: &'db dyn salsa::Database,
-    global: &'db GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     depth: usize,
     sem_case: &val::Case<'db>,
 ) -> Result<'db, RcSyntax<'db>> {

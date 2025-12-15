@@ -452,8 +452,8 @@ pub enum LookupErrorKind {
 
 #[derive(Debug, Clone)]
 pub struct LookupError<'db> {
-    kind: LookupErrorKind,
-    id: ConstantId<'db>,
+    pub kind: LookupErrorKind,
+    pub id: ConstantId<'db>,
 }
 
 #[derive(Clone, Debug)]
@@ -618,9 +618,12 @@ pub struct TypeConstructorInfo<'db> {
 }
 
 impl<'db> TypeConstructorInfo<'db> {
-    pub fn new(arguments: Telescope<'db>, num_parameters: usize, level: UniverseLevel) -> Self {
+    pub fn new<Args>(args: Args, num_parameters: usize, level: UniverseLevel) -> Self
+    where
+        Args: Into<Telescope<'db>>,
+    {
         TypeConstructorInfo {
-            arguments,
+            arguments: args.into(),
             num_parameters,
             level,
         }
@@ -652,8 +655,14 @@ pub struct DataConstructorInfo<'db> {
 }
 
 impl<'db> DataConstructorInfo<'db> {
-    pub fn new(arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
-        DataConstructorInfo { arguments, ty }
+    pub fn new<Args>(args: Args, ty: RcSyntax<'db>) -> Self
+    where
+        Args: Into<Telescope<'db>>,
+    {
+        DataConstructorInfo {
+            arguments: args.into(),
+            ty,
+        }
     }
 }
 

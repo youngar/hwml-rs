@@ -43,8 +43,13 @@ pub struct Telescope<'db> {
 }
 
 impl<'db> Telescope<'db> {
-    pub fn new(bindings: Box<[RcSyntax<'db>]>) -> Self {
-        Telescope { bindings }
+    pub fn new<T>(bindings: T) -> Self
+    where
+        T: Into<Box<[RcSyntax<'db>]>>,
+    {
+        Telescope {
+            bindings: bindings.into(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -56,15 +61,12 @@ impl<'db> Telescope<'db> {
     }
 }
 
-impl<'db> From<Box<[RcSyntax<'db>]>> for Telescope<'db> {
-    fn from(bindings: Box<[RcSyntax<'db>]>) -> Self {
-        Telescope::new(bindings)
-    }
-}
-
-impl<'db> From<Vec<RcSyntax<'db>>> for Telescope<'db> {
-    fn from(bindings: Vec<RcSyntax<'db>>) -> Self {
-        Telescope::new(bindings.into_boxed_slice())
+impl<'db, T> From<T> for Telescope<'db>
+where
+    T: Into<Box<[RcSyntax<'db>]>>,
+{
+    fn from(bindings: T) -> Self {
+        Telescope::new(bindings.into())
     }
 }
 

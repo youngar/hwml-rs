@@ -26,12 +26,7 @@ impl<'db> From<eval::Error> for Error<'db> {
 
 type Result<'db> = std::result::Result<(), Error<'db>>;
 
-pub fn convertible<'g, 'db, T>(
-    globals: &'g GlobalEnv<'db>,
-    depth: usize,
-    lhs: &T,
-    rhs: &T,
-) -> Result<'db>
+pub fn convertible<'db, T>(globals: &GlobalEnv<'db>, depth: usize, lhs: &T, rhs: &T) -> Result<'db>
 where
     T: Convertible<'db>,
 {
@@ -135,8 +130,7 @@ impl<'db> Convertible<'db> for Pi<'db> {
         let arg = Rc::new(Value::variable(self.source.clone(), Level::new(depth)));
         let self_target = run_closure(global, &self.target, [arg.clone()])?;
         let other_target = run_closure(global, &other.target, [arg])?;
-        Ok(())
-        // is_type_convertible(global, depth + 1, &self_target, &other_target)
+        is_type_convertible(global, depth + 1, &self_target, &other_target)
     }
 }
 

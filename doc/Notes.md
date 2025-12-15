@@ -1,6 +1,9 @@
 # Notes
 
 ## To Do
+- Move the definition of Nat from examples to prelude
+- Syntax (and probably values): the vector of arguments for a type constructor or data constructor should be a boxed slice, not a vector.
+  - We can also probably add some helpful .into calls for the arguments passed into type_constructor_rc
 - Case branch verification
     - verify that the branches have the right number of constructor arguments
     - verify that all cases are handled

@@ -83,8 +83,7 @@ fn run_core(args: Args) {
     }
 
     let mut globals = val::GlobalEnv::new();
-    hwml_core::prelude::def_bool(&db, &mut globals);
-    hwml_core::prelude::def_nat(&db, &mut globals);
+    hwml_core::prelude::load(&db, &mut globals);
 
     let mut tc_env = hwml_core::check::TCEnvironment {
         globals: &globals,

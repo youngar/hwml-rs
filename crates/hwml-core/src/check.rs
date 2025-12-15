@@ -9,7 +9,7 @@ use crate::val::Value;
 use std::rc::Rc;
 
 pub struct TCEnvironment<'g, 'db> {
-    pub globals: &'db val::GlobalEnv<'db>,
+    pub globals: &'g val::GlobalEnv<'db>,
     pub values: val::Environment<'g, 'db>,
     pub types: Vec<Rc<Value<'db>>>,
 }
@@ -337,15 +337,14 @@ fn type_check_data_constructor<'g, 'db>(
 ) -> Result<(), Error<'db>> {
     match ty {
         Value::TypeConstructor(tc) => {
-            let tc_info = env
-                .globals
-                .type_constructor(tc.constructor)
-                .map_err(Error::LookupError)?;
             let dc_info = env
                 .globals
                 .data_constructor(dc.constructor)
                 .map_err(Error::LookupError)?;
-
+            let tc_info = env
+                .globals
+                .type_constructor(tc.constructor)
+                .map_err(Error::LookupError)?;
             let mut env = val::Environment {
                 global: env.globals,
                 local: val::LocalEnv::new(),
