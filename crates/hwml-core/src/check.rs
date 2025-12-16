@@ -1,4 +1,7 @@
+use itertools::DedupWithCount;
+
 use crate::common::Level;
+use crate::equal;
 use crate::eval;
 use crate::syn as stx;
 use crate::syn;
@@ -98,6 +101,12 @@ pub enum Error<'db> {
     },
     EvaluationFailure(eval::Error),
     LookupError(val::LookupError<'db>),
+}
+
+impl<'db> From<eval::Error> for Error<'db> {
+    fn from(e: eval::Error) -> Self {
+        Error::EvaluationFailure(e)
+    }
 }
 
 use std::result::Result;
@@ -333,9 +342,9 @@ fn type_check_type_constructor<'g, 'db>(
 fn type_check_data_constructor<'g, 'db>(
     env: &mut TCEnvironment<'g, 'db>,
     dc: &syn::DataConstructor<'db>,
-    ty: &Value<'db>,
+    ty_exp: &Value<'db>,
 ) -> Result<(), Error<'db>> {
-    match ty {
+    match ty_exp {
         Value::TypeConstructor(tc) => {
             let dc_info = env
                 .globals
@@ -345,21 +354,35 @@ fn type_check_data_constructor<'g, 'db>(
                 .globals
                 .type_constructor(tc.constructor)
                 .map_err(Error::LookupError)?;
-            let mut env = val::Environment {
+
+            let mut ty_env = val::Environment {
                 global: env.globals,
                 local: val::LocalEnv::new(),
-            }
-            .extend(tc.iter().take(tc_info.num_parameters).cloned());
+            };
 
-            // pull type parameters off tc.
-            // pull data arguments off dc.
-            // use to build actual type.
-            // check
-            todo!();
+            let ps = tc.arguments[..tc_info.num_parameters].iter().cloned();
+            ty_env.extend(ps);
+
+            for (arg, arg_ty) in dc.arguments.iter().zip(&dc_info.arguments) {
+                let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
+                type_check(env, arg, &sem_arg_ty)?;
+                let sem_arg = eval::eval(&mut env.values, arg)?;
+                ty_env.push(sem_arg);
+            }
+
+            let ty_got = eval::eval(&mut ty_env, &dc_info.ty)?;
+            match equal::is_type_convertible(env.globals, env.depth(), ty_exp, &ty_got) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(Error::BadCheck {
+                    tm: Rc::new(Syntax::DataConstructor(dc.clone())),
+                    ty_exp: Rc::new(ty_exp.clone()),
+                    ty_got,
+                }),
+            }
         }
         _ => Err(Error::BadCtor {
             tm: Rc::new(Syntax::DataConstructor(dc.clone())),
-            ty_exp: Rc::new(ty.clone()),
+            ty_exp: Rc::new(ty_exp.clone()),
         }),
     }
 }

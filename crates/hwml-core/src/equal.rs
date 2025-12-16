@@ -1,3 +1,4 @@
+use crate::syn::ConstantId;
 use std::rc::Rc;
 
 use itertools::izip;
@@ -35,6 +36,21 @@ where
 
 pub trait Convertible<'db> {
     fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db>;
+}
+
+impl<'db> Convertible<'db> for ConstantId<'db> {
+    fn is_convertible(
+        &self,
+        _global: &GlobalEnv<'db>,
+        _depth: usize,
+        other: &ConstantId<'db>,
+    ) -> Result<'db> {
+        if self == other {
+            Ok(())
+        } else {
+            Err(Error::NotConvertible)
+        }
+    }
 }
 
 impl<'db> Convertible<'db> for Level {
@@ -385,9 +401,12 @@ fn is_data_constructor_convertible<'db>(
         local: LocalEnv::new(),
     };
     env.extend(parameters);
-    depth = depth + num_parameters;
 
-    // Quote each argument.
+    // TODO: We are not adding the parameters to the binding depth, which is used
+    // to check if two terms are convertible. The environment only extends for the
+    // types.
+    // depth = depth + num_parameters;
+
     for (larg, rarg, syn_ty) in izip!(lhs.iter(), rhs.iter(), data_info.arguments.iter()) {
         // Evaluate the type of the current argument.
         let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;

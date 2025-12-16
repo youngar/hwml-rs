@@ -1,6 +1,7 @@
 # Notes
 
 ## To Do
+- Stupid environemtns
 - Move the definition of Nat from examples to prelude
 - Syntax (and probably values): the vector of arguments for a type constructor or data constructor should be a boxed slice, not a vector.
   - We can also probably add some helpful .into calls for the arguments passed into type_constructor_rc

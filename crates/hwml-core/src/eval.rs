@@ -294,7 +294,7 @@ pub fn eval_telescope<'g, 'db, T>(
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
-    // We start with a fresh local environment since ypes are defined in the
+    // We start with a fresh local environment since types are defined in the
     // global environment.
     let mut env = Environment {
         global: global,
