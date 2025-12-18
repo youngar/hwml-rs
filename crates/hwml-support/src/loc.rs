@@ -5,10 +5,10 @@ pub struct LinePosition {
     /// The line number.
     pub line: usize,
     /// The byte-offset, from the start of the line.
-    pub line_local_offset: usize,
+    pub column: usize,
 }
 
-/// The
+/// The source of a piece of code.
 pub enum Source {
     Path(PathBuf),
     Temp(String),

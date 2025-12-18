@@ -7,6 +7,7 @@
 
 use hwml_core::common::{Level, UniverseLevel};
 use hwml_core::eval;
+use hwml_core::prelude;
 use hwml_core::quote;
 use hwml_core::syn::parse::parse_syntax;
 use hwml_core::syn::print::dump_syntax;
@@ -29,60 +30,6 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
     let syntax = parse_syntax(db, input).map_err(|e| format!("Parse error: {:?}", e))?;
     println!("Parsed syntax: {:?}", syntax);
     Ok(syntax)
-}
-
-/// Create a GlobalEnv with Option type and Some/None data constructors.
-/// Option is parameterized by a type: Option : 𝒰0 → 𝒰0
-/// None : ∀ (t : 𝒰0) → Option t
-/// Some : ∀ (t : 𝒰0) → t → Option t
-fn option_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
-    let mut global = GlobalEnv::new();
-
-    // Register Option type constructor: #[@Option] : 𝒰0 → 𝒰0
-    // Option has one parameter (the element type)
-    let option_id = ConstantId::from_with_db(db, "Option");
-
-    // Option type: ∀ (%0 : 𝒰0) → 𝒰0
-    let option_type_info = TypeConstructorInfo::new(
-        [Syntax::universe_rc(UniverseLevel::new(0))], // one argument: parameter (Type₀)
-        1,                                            // num_parameters (1 parameter, 0 indices)
-        UniverseLevel::new(0),                        // lives in Type₀
-    );
-    println!("Option type_info: {:?}", option_type_info);
-    global.add_type_constructor(option_id, option_type_info);
-
-    // Register None data constructor: [@None] : Option %0
-    // None has no arguments (the type parameter is implicit from the type constructor)
-    let none_id = ConstantId::from_with_db(db, "None");
-    // The result type is Option applied to the parameter (variable 0)
-    let none_result_type_syn = Syntax::type_constructor_rc(
-        option_id,
-        vec![Syntax::variable_rc(hwml_core::common::Index(0))],
-    );
-    let none_data_info = DataConstructorInfo::new(
-        [], // no arguments
-        none_result_type_syn,
-    );
-    println!("None data_info: {:?}", none_data_info);
-    global.add_data_constructor(none_id, none_data_info);
-
-    // Register Some data constructor: [@Some] : t → Option t
-    // Some has one argument (the value of type t, where t is the type parameter)
-    let some_id = ConstantId::from_with_db(db, "Some");
-    // The argument type is the type parameter (variable 0)
-    // The result type is Option applied to the parameter (variable 0, but now at index 1 after binding the argument)
-    let some_result_type_syn = Syntax::type_constructor_rc(
-        option_id,
-        vec![Syntax::variable_rc(hwml_core::common::Index(1))],
-    );
-    let some_data_info = DataConstructorInfo::new(
-        [Syntax::variable_rc(hwml_core::common::Index(0))], // one argument of type %0 (the type parameter)
-        some_result_type_syn,
-    );
-    println!("Some data_info: {:?}", some_data_info);
-    global.add_data_constructor(some_id, some_data_info);
-
-    global
 }
 
 /// Create a GlobalEnv with Vec type (indexed by length) and nil/cons data constructors.
@@ -425,7 +372,7 @@ pub fn example_data_constructor<'db>(db: &'db Database) -> Result<(), String> {
 
     // Create environment with Bool and Pair data constructors
     let mut global = GlobalEnv::new();
-    hwml_core::prelude::def_bool(db, &mut global);
+    prelude::def_bool(db, &mut global);
 
     let pair_id = ConstantId::from_with_db(db, "Pair");
     let pair_type_id = ConstantId::from_with_db(db, "PairType");
@@ -629,7 +576,7 @@ pub fn example_case_neutral<'db>(db: &'db Database) -> Result<(), String> {
 
     // Set up environment with Bool type constructor and True/False data constructors
     let mut global = GlobalEnv::new();
-    hwml_core::prelude::def_bool(db, &mut global);
+    prelude::def_bool(db, &mut global);
 
     let bool_id = ConstantId::from_with_db(db, "Bool");
     let bool_type = Rc::new(Value::type_constructor(bool_id, vec![]));
@@ -665,7 +612,7 @@ pub fn example_case_reduces<'db>(db: &'db Database) -> Result<(), String> {
 
     // Set up environment with Bool and Pair data constructors
     let mut global = GlobalEnv::new();
-    hwml_core::prelude::def_bool(db, &mut global);
+    prelude::def_bool(db, &mut global);
 
     let pair_type_id = ConstantId::from_with_db(db, "PairType");
     let bool_id = ConstantId::from_with_db(db, "Bool");
@@ -715,7 +662,7 @@ pub fn example_nat_pattern_match<'db>(db: &'db Database) -> Result<(), String> {
 
     // Create environment with Nat type
     let mut global = GlobalEnv::new();
-    hwml_core::prelude::def_nat(db, &mut global);
+    prelude::def_nat(db, &mut global);
 
     let mut env = Environment {
         global: &global,
@@ -768,7 +715,10 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 14: Option Type with Dependent Pattern Matching ===");
 
     // We need Option, Nat, and Bool types
-    let mut global = option_env(db);
+    let mut global = GlobalEnv::new();
+    prelude::def_bool(db, &mut global);
+    prelude::def_nat(db, &mut global);
+    prelude::def_option(db, &mut global);
 
     // Add Nat type to the environment
     let nat_id = ConstantId::from_with_db(db, "Nat");
