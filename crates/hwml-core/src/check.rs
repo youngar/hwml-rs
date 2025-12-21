@@ -133,14 +133,6 @@ where
     eval::run_closure(&env.values.global, closure, args).map_err(Error::EvaluationFailure)
 }
 
-fn eval_telescope<'g, 'db>(
-    env: &mut TCEnvironment<'g, 'db>,
-    args: impl IntoIterator<Item = Rc<Value<'db>>>,
-    telescope: &stx::Telescope<'db>,
-) -> Result<val::SemTelescope<'db>, Error<'db>> {
-    eval::eval_telescope(&env.values.global, args, telescope).map_err(Error::EvaluationFailure)
-}
-
 /// Synthesize (infer) types for variables and elimination forms.
 pub fn type_synth<'g, 'db>(
     env: &mut TCEnvironment<'g, 'db>,
