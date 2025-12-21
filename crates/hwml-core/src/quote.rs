@@ -275,6 +275,8 @@ fn quote_data_constructor<'db>(
         local: LocalEnv::new(),
     };
     env.extend(parameters);
+    // TODO: i don't think we should be adding the parameters to the depth here...
+    // we use the depth for quoting the arguments
     depth = depth + num_parameters;
 
     // Quote each argument.

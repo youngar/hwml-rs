@@ -272,6 +272,7 @@ impl<'db> Convertible<'db> for Case<'db> {
         // Create a variable for the scrutinee.
         let scrutinee_ty = Rc::new(Value::type_constructor(
             self.type_constructor,
+            // TODO: shouldn't this include the indices?
             self.parameters.clone(),
         ));
         let scrutinee_var = Rc::new(Value::variable(scrutinee_ty, Level::new(depth)));
