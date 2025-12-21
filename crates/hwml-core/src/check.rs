@@ -101,6 +101,7 @@ pub enum Error<'db> {
     },
     EvaluationFailure(eval::Error),
     LookupError(val::LookupError<'db>),
+    MatchOnNonDatatype(Rc<Value<'db>>),
 }
 
 impl<'db> From<eval::Error> for Error<'db> {
@@ -170,6 +171,7 @@ pub fn type_synth_check<'g, 'db>(
     env: &mut TCEnvironment<'g, 'db>,
     check: &syn::Check<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
+    check_type(env, &check.ty)?;
     let ty = eval(env, &check.ty)?;
     type_check(env, &check.term, &ty)?;
     Ok(ty)
@@ -216,6 +218,7 @@ pub fn type_synth_case<'g, 'db>(
             ty_got: scrutinee_ty,
         });
     };
+    let constructor = type_constructor.constructor;
 
     // Get the type constructor info.
     let type_info = env
@@ -228,7 +231,42 @@ pub fn type_synth_case<'g, 'db>(
     let num_parameters = type_info.num_parameters();
 
     // Create an array of parameters.
-    let parameters = type_constructor.iter().take(num_parameters).cloned();
+    let parameters = type_constructor
+        .iter()
+        .take(num_parameters)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // First, create variables for the indices.
+    let index_bindings = type_info.indices().to_vec();
+    let index_telescope = crate::syn::Telescope::from(index_bindings);
+    let index_tys = eval::eval_telescope(env.values.global, parameters.clone(), &index_telescope)?;
+
+    // Check that the motive returns a type.
+    // TODO: we really need to check the arity of the motive.
+    {
+        // Push each index in to the environment, while building up
+        let depth = env.depth();
+        let mut scrutinee_ty_args = parameters.clone();
+        let mut motive_args = Vec::new();
+        for ty in index_tys.types {
+            let var = env.push_var(ty);
+            scrutinee_ty_args.push(var.clone());
+            motive_args.push(var);
+        }
+
+        // Create a variable for the scrutinee.
+        let scrutinee_ty = Rc::new(Value::type_constructor(
+            type_constructor.constructor,
+            scrutinee_ty_args,
+        ));
+        let scrutinee_var = env.push_var(scrutinee_ty);
+        motive_args.push(scrutinee_var);
+
+        // Check that the motive returns a type.
+        check_type(env, &case.motive)?;
+        env.truncate(depth);
+    }
 
     // Check the types of the branches.
     for branch in &case.branches {
@@ -238,23 +276,46 @@ pub fn type_synth_case<'g, 'db>(
             .data_constructor(branch.constructor)
             .map_err(Error::LookupError)?;
 
-        //let arg_types = eval_telescope(env, parameters.clone(), &data_info.arguments)?;
-        //let args: Vec<Rc<Value<'_>>> = arg_types.map(|ty| env.push_var(ty));
-        //let branch_scrut = Rc::new(Value::data_constructor(branch.constructor, args));
-        //let branch_type = run_closure(env, &motive_clos, [branch_scrut.clone()])?;
+        let depth = env.depth();
 
-        //type_check(
-        //    env,
-        //    &branch.body,
-        //    &run_closure(env, motive, [branch_scrut])?,
-        //)?;
+        // Create fresh variables for the data constructor arguments.
+        let dcon_arg_tys =
+            eval::eval_telescope(env.values.global, parameters.clone(), &data_info.arguments)?;
+        let mut dcon_args: Vec<Rc<Value<'_>>> = Vec::new();
+        for ty in dcon_arg_tys.types {
+            let var = env.push_var(ty);
+            dcon_args.push(var);
+        }
+
+        // Create the data constructor value.
+        let dcon_val = Rc::new(Value::data_constructor(constructor, dcon_args.clone()));
+        let mut branch_motive_args =
+            type_constructor.arguments[type_info.num_parameters()..].to_vec();
+        branch_motive_args.push(dcon_val);
+
+        // Evaluate the motive to get the type of the branch body.
+        let branch_ty = eval::run_closure(env.values.global, &motive_clos, branch_motive_args)?;
+
+        // Check the branch body against the motive.
+        type_check(env, &branch.body, &branch_ty)?;
+
+        // Reset the environment.
+        env.truncate(depth);
     }
 
-    todo!();
-    // Evaluate the motive to a value.
+    // Check that the scrutinee is the right type.
+    //let scrutinee_ty = type_synth(env, &case.expr)?;
+    let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
+        return Err(Error::MatchOnNonDatatype(scrutinee_ty));
+    };
+
+    // We will evaluate the motive, reading the indices off of the type of the
+    // scrutinee, and finally passing in the scrutinee itself.
     let scrutinee = eval(env, &case.expr)?;
-    //let ty = run_closure(env, motive, [scrutinee]);
-    //Ok(ty)
+    let mut motive_args = type_constructor.arguments[type_info.num_parameters()..].to_vec();
+    motive_args.push(scrutinee);
+    let ty = eval::run_closure(env.values.global, &motive_clos, motive_args)?;
+    Ok(ty)
 }
 
 /// Check types of terms against an expected type.
@@ -325,15 +386,41 @@ fn type_check_lambda<'g, 'db>(
 
 fn type_check_type_constructor<'g, 'db>(
     env: &mut TCEnvironment<'g, 'db>,
-    tc: &syn::TypeConstructor<'db>,
+    tcon: &syn::TypeConstructor<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     match ty {
         Value::Universe(u) => {
-            todo!();
+            // Lookup the type constructor info.
+            let tcon_info = env
+                .values
+                .global
+                .type_constructor(tcon.constructor)
+                .map_err(Error::LookupError)?;
+
+            // Check that the number of arguments matches the number of parameters.
+            if tcon.arguments.len() != tcon_info.arguments.len() {
+                return Err(Error::BadType {
+                    tm: Rc::new(Syntax::TypeConstructor(tcon.clone())),
+                });
+            }
+
+            let mut ty_env = val::Environment {
+                global: env.values.global,
+                local: val::LocalEnv::new(),
+            };
+
+            for (arg, arg_ty) in tcon.arguments.iter().zip(&tcon_info.arguments) {
+                let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
+                type_check(env, arg, &sem_arg_ty)?;
+                let sem_arg = eval::eval(&mut env.values, arg)?;
+                ty_env.push(sem_arg);
+            }
+            // TODO: we need to check that we are actually in the right universe.
+            Ok(())
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::TypeConstructor(tc.clone())),
+            tm: Rc::new(Syntax::TypeConstructor(tcon.clone())),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -362,6 +449,8 @@ fn type_check_data_constructor<'g, 'db>(
 
             let ps = tc.arguments[..tc_info.num_parameters].iter().cloned();
             ty_env.extend(ps);
+
+            // TODO: check that we have the correct number of arguments.
 
             for (arg, arg_ty) in dc.arguments.iter().zip(&dc_info.arguments) {
                 let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
@@ -414,6 +503,10 @@ pub fn check_type<'g, 'db>(
         return check_pi_type(env, pi);
     }
 
+    if let Syntax::TypeConstructor(tc) = term {
+        return check_type_constructor_type(env, tc);
+    }
+
     // Otherwise, synthesize a type for the term, which must be a universe.
     let ty = type_synth(env, term)?;
     if let Value::Universe(_) = &*ty {
@@ -443,4 +536,36 @@ fn check_pi_type<'g, 'db>(
     let result = check_type(env, &pi.target);
     env.pop();
     result
+}
+
+fn check_type_constructor_type<'g, 'db>(
+    env: &mut TCEnvironment<'g, 'db>,
+    tcon: &stx::TypeConstructor<'db>,
+) -> Result<(), Error<'db>> {
+    // Lookup the type constructor info.
+    let tcon_info = env
+        .values
+        .global
+        .type_constructor(tcon.constructor)
+        .map_err(Error::LookupError)?;
+
+    // Check that the number of arguments matches the number of parameters.
+    if tcon.arguments.len() != tcon_info.arguments.len() {
+        return Err(Error::BadType {
+            tm: Rc::new(Syntax::TypeConstructor(tcon.clone())),
+        });
+    }
+
+    let mut ty_env = val::Environment {
+        global: env.values.global,
+        local: val::LocalEnv::new(),
+    };
+
+    for (arg, arg_ty) in tcon.arguments.iter().zip(&tcon_info.arguments) {
+        let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
+        type_check(env, arg, &sem_arg_ty)?;
+        let sem_arg = eval::eval(&mut env.values, arg)?;
+        ty_env.push(sem_arg);
+    }
+    Ok(())
 }
