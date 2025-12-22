@@ -32,151 +32,6 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
     Ok(syntax)
 }
 
-/// Create a GlobalEnv with Vec type (indexed by length) and nil/cons data constructors.
-/// Vec : ∀ (A : 𝒰0) (n : Nat) → 𝒰0
-/// nil : ∀ (A : 𝒰0) → Vec A zero
-/// cons : ∀ (A : 𝒰0) (n : Nat) (x : A) (xs : Vec A n) → Vec A (succ n)
-fn vec_env<'db>(db: &'db Database) -> GlobalEnv<'db> {
-    let mut global = GlobalEnv::new();
-
-    // First, register Bool type (for vector elements)
-    let bool_id = ConstantId::from_with_db(db, "Bool");
-    let bool_type_info = TypeConstructorInfo::new(
-        [],                    // no arguments (0 parameters, 0 indices)
-        0,                     // num_parameters
-        UniverseLevel::new(0), // lives in Type₀
-    );
-    println!("Bool type_info: {:?}", bool_type_info);
-    global.add_type_constructor(bool_id, bool_type_info);
-
-    // Register True data constructor
-    let true_id = ConstantId::from_with_db(db, "True");
-    let bool_type_syn = Syntax::type_constructor_rc(bool_id, vec![]);
-    let true_data_info = DataConstructorInfo::new(
-        [], // no arguments
-        bool_type_syn.clone(),
-    );
-    println!("True data_info: {:?}", true_data_info);
-    global.add_data_constructor(true_id, true_data_info);
-
-    // Register False data constructor
-    let false_id = ConstantId::from_with_db(db, "False");
-    let false_data_info = DataConstructorInfo::new(
-        [], // no arguments
-        bool_type_syn.clone(),
-    );
-    println!("False data_info: {:?}", false_data_info);
-    global.add_data_constructor(false_id, false_data_info);
-
-    // Register Nat type (needed for the index)
-    let nat_id = ConstantId::from_with_db(db, "Nat");
-    let nat_type_info = TypeConstructorInfo::new(
-        [],                    // no arguments (0 parameters, 0 indices)
-        0,                     // num_parameters
-        UniverseLevel::new(0), // lives in Type₀
-    );
-    println!("Nat type_info: {:?}", nat_type_info);
-    global.add_type_constructor(nat_id, nat_type_info);
-
-    let nat_type_syn = Syntax::type_constructor_rc(nat_id, vec![]);
-
-    // Register zero data constructor
-    let zero_id = ConstantId::from_with_db(db, "zero");
-    let zero_data_info = DataConstructorInfo::new(
-        [], // no arguments
-        nat_type_syn.clone(),
-    );
-    println!("zero data_info: {:?}", zero_data_info);
-    global.add_data_constructor(zero_id, zero_data_info);
-
-    // Register succ data constructor
-    let succ_id = ConstantId::from_with_db(db, "succ");
-    let succ_data_info = DataConstructorInfo::new(
-        vec![Syntax::type_constructor_rc(nat_id, vec![])], // one argument of type Nat
-        nat_type_syn.clone(),
-    );
-    println!("succ data_info: {:?}", succ_data_info);
-    global.add_data_constructor(succ_id, succ_data_info);
-
-    // Register Vec type constructor: Vec : 𝒰0 → Nat → 𝒰0
-    // Vec has one parameter (element type A) and one index (length n)
-    let vec_id = ConstantId::from_with_db(db, "Vec");
-    let vec_type_info = TypeConstructorInfo::new(
-        [
-            Syntax::universe_rc(UniverseLevel::new(0)), // parameter: Type₀ (element type)
-            Syntax::type_constructor_rc(nat_id, vec![]), // index: Nat (length)
-        ],
-        1,                     // num_parameters (1 parameter, 1 index)
-        UniverseLevel::new(0), // lives in Type₀
-    );
-    println!("Vec type_info: {:?}", vec_type_info);
-    global.add_type_constructor(vec_id, vec_type_info);
-
-    // Register nil data constructor: nil : ∀ (A : 𝒰0) → Vec A zero
-    // nil has no arguments (the type parameter A is implicit)
-    // The result type is Vec A zero
-    let nil_id = ConstantId::from_with_db(db, "nil");
-    let nil_result_type_syn = Syntax::type_constructor_rc(
-        vec_id,
-        vec![
-            // Parameter: A (variable at index 0)
-            Syntax::variable_rc(hwml_core::common::Index(0)),
-            // Index: zero
-            Syntax::data_constructor_rc(zero_id, vec![]),
-        ],
-    );
-    let nil_data_info = DataConstructorInfo::new(
-        [], // no arguments
-        nil_result_type_syn,
-    );
-    println!("nil data_info: {:?}", nil_data_info);
-    global.add_data_constructor(nil_id, nil_data_info);
-
-    // Register cons data constructor: cons : ∀ (A : 𝒰0) {n : Nat} (x : A) (xs : Vec A n) → Vec A (succ n)
-    // cons has three arguments under the parameters:
-    //   - n : Nat (implicit, the length of the tail)
-    //   - x : A (the head element)
-    //   - xs : Vec A n (the tail vector)
-    // The result type is Vec A (succ n)
-    // Note: n is an implicit argument that must be provided explicitly in the syntax
-    let cons_id = ConstantId::from_with_db(db, "cons");
-
-    // Build the result type: Vec A (succ n)
-    // where A is at index 3 (the parameter) and n is at index 2 (first argument)
-    let cons_result_type_syn = Syntax::type_constructor_rc(
-        vec_id,
-        vec![
-            // Parameter: A (variable at index 3)
-            Syntax::variable_rc(hwml_core::common::Index(3)),
-            // Index: succ n (where n is at index 2)
-            Syntax::data_constructor_rc(
-                succ_id,
-                vec![Syntax::variable_rc(hwml_core::common::Index(2))],
-            ),
-        ],
-    );
-
-    let cons_data_info = DataConstructorInfo::new(
-        vec![
-            Syntax::type_constructor_rc(nat_id, vec![]), // n : Nat (implicit)
-            Syntax::variable_rc(hwml_core::common::Index(1)), // x : A (A is at index 1, the parameter)
-            // xs : Vec A n (where A is at index 2 and n is at index 0)
-            Syntax::type_constructor_rc(
-                vec_id,
-                vec![
-                    Syntax::variable_rc(hwml_core::common::Index(2)), // A (parameter)
-                    Syntax::variable_rc(hwml_core::common::Index(0)), // n (index)
-                ],
-            ),
-        ],
-        cons_result_type_syn,
-    );
-    println!("cons data_info: {:?}", cons_data_info);
-    global.add_data_constructor(cons_id, cons_data_info);
-
-    global
-}
-
 /// Evaluate syntax and print the result.
 fn eval_and_print<'g, 'db>(
     env: &mut Environment<'g, 'db>,
@@ -844,7 +699,9 @@ pub fn example_option_unwrap<'db>(db: &'db Database) -> Result<(), String> {
 pub fn example_vec<'db>(db: &'db Database) -> Result<(), String> {
     println!("\n=== Example 15: Vec - Indexed Data Type ===");
 
-    let global = vec_env(db);
+    let mut global = GlobalEnv::new();
+    prelude::load(db, &mut global);
+
     let mut env = Environment {
         global: &global,
         local: LocalEnv::new(),
