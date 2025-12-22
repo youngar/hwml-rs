@@ -1,6 +1,6 @@
 use crate::syn::{self as stx};
 use crate::syn::{self, Syntax};
-use crate::val::{self, Closure, Environment, GlobalEnv, Neutral, Value};
+use crate::val::{self, Closure, Eliminator, Environment, Flex, GlobalEnv, Normal, Rigid, Value};
 use crate::val::{self as dom, DataConstructor, LocalEnv, SemTelescope};
 use std::rc::Rc;
 
@@ -138,7 +138,8 @@ pub fn run_application<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     match fun {
         Value::Lambda(lambda) => apply_lambda(global, lambda, arg),
-        Value::Neutral(ty, neutral) => apply_neutral(global, ty, neutral.clone(), arg),
+        Value::Rigid(rigid) => apply_rigid(global, rigid, arg),
+        Value::Flex(flex) => apply_flex(global, flex, arg),
         _ => Err(Error::BadApplication),
     }
 }
@@ -152,15 +153,14 @@ fn apply_lambda<'db>(
     run_closure(global, &lambda.body, [arg])
 }
 
-/// Perform the application of a neutral term to an argument.
-fn apply_neutral<'db>(
+/// Perform the application of a rigid neutral to an argument.
+fn apply_rigid<'db>(
     global: &GlobalEnv<'db>,
-    ty: &Value<'db>,
-    neutral: Rc<Neutral<'db>>,
+    rigid: &Rigid<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // If the operator is not pi-typed, bail.
-    let Value::Pi(pi) = ty else {
+    let Value::Pi(pi) = rigid.ty.as_ref() else {
         return Err(Error::BadApplication);
     };
 
@@ -168,9 +168,41 @@ fn apply_neutral<'db>(
     let source_ty = pi.source.clone();
     let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
 
-    // Build the new application.
-    let app = Value::application(target_ty, neutral, source_ty, arg);
-    Ok(Rc::new(app))
+    // Build the application eliminator.
+    let arg_normal = Normal::new(source_ty, arg);
+    let eliminator = Eliminator::application(arg_normal);
+
+    // Extend the spine with the application.
+    let new_rigid = Rigid::new(rigid.head, rigid.spine.clone(), rigid.ty.clone())
+        .apply_eliminator(eliminator, target_ty.clone());
+
+    Ok(Rc::new(Value::Rigid(new_rigid)))
+}
+
+/// Perform the application of a flexible neutral to an argument.
+fn apply_flex<'db>(
+    global: &GlobalEnv<'db>,
+    flex: &Flex<'db>,
+    arg: Rc<Value<'db>>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // If the operator is not pi-typed, bail.
+    let Value::Pi(pi) = flex.ty.as_ref() else {
+        return Err(Error::BadApplication);
+    };
+
+    // Use the pi type of the neutral to compute typing information.
+    let source_ty = pi.source.clone();
+    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
+
+    // Build the application eliminator.
+    let arg_normal = Normal::new(source_ty, arg);
+    let eliminator = Eliminator::application(arg_normal);
+
+    // Extend the spine with the application.
+    let new_flex = Flex::new(flex.head.clone(), flex.spine.clone(), flex.ty.clone())
+        .apply_eliminator(eliminator, target_ty.clone());
+
+    Ok(Rc::new(Value::Flex(new_flex)))
 }
 
 fn eval_case<'g, 'db>(
@@ -201,14 +233,10 @@ fn run_case<'db>(
         Value::DataConstructor(scrutinee) => {
             run_case_on_data_constructor(global, scrutinee, branches)
         }
-        Value::Neutral(scrutinee_ty, scrutinee_ne) => run_case_on_neutral(
-            global,
-            scrutinee.clone(),
-            scrutinee_ty,
-            scrutinee_ne,
-            motive,
-            branches,
-        ),
+        Value::Rigid(rigid) => {
+            run_case_on_rigid(global, scrutinee.clone(), rigid, motive, branches)
+        }
+        Value::Flex(flex) => run_case_on_flex(global, scrutinee.clone(), flex, motive, branches),
         _ => Err(Error::BadCase),
     }
 }
@@ -228,16 +256,15 @@ fn run_case_on_data_constructor<'db>(
     Err(Error::BadCase)
 }
 
-fn run_case_on_neutral<'db>(
+fn run_case_on_rigid<'db>(
     global: &GlobalEnv<'db>,
     scrutinee: Rc<Value<'db>>,
-    scrutinee_ty: &Rc<Value<'db>>,
-    scrutinee_ne: &Rc<Neutral<'db>>,
+    rigid: &Rigid<'db>,
     motive: Closure<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    // Verity that the type is a type constructor.
-    let Value::TypeConstructor(type_constructor) = scrutinee_ty.as_ref() else {
+    // Verify that the type is a type constructor.
+    let Value::TypeConstructor(type_constructor) = rigid.ty.as_ref() else {
         return Err(Error::BadCase);
     };
     let constructor = type_constructor.constructor;
@@ -252,20 +279,57 @@ fn run_case_on_neutral<'db>(
     let parameters = &type_constructor.arguments[..num_parameters];
     let indices = &type_constructor.arguments[num_parameters..];
 
-    // Calculatue the final type of the case statement,
+    // Calculate the final type of the case statement.
     let mut motive_args = indices.to_vec();
     motive_args.push(scrutinee);
     let final_ty = run_closure(&global, &motive, motive_args)?;
 
-    let case = Value::case(
-        final_ty,
-        scrutinee_ne.clone(),
-        constructor,
-        parameters.to_vec(),
-        motive,
-        branches,
-    );
-    Ok(Rc::new(case))
+    // Build the case eliminator.
+    let eliminator = Eliminator::case(constructor, parameters.to_vec(), motive, branches);
+
+    // Extend the spine with the case.
+    let new_rigid = Rigid::new(rigid.head, rigid.spine.clone(), rigid.ty.clone())
+        .apply_eliminator(eliminator, final_ty.clone());
+
+    Ok(Rc::new(Value::Rigid(new_rigid)))
+}
+
+fn run_case_on_flex<'db>(
+    global: &GlobalEnv<'db>,
+    scrutinee: Rc<Value<'db>>,
+    flex: &Flex<'db>,
+    motive: Closure<'db>,
+    branches: Vec<dom::CaseBranch<'db>>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Verify that the type is a type constructor.
+    let Value::TypeConstructor(type_constructor) = flex.ty.as_ref() else {
+        return Err(Error::BadCase);
+    };
+    let constructor = type_constructor.constructor;
+
+    // Look up the type information from the global environment.
+    let type_info = global
+        .type_constructor(constructor)
+        .map_err(|_| Error::UnknownTypeConstructor)?;
+
+    // Get the parameters and indices off of the types.
+    let num_parameters = type_info.num_parameters();
+    let parameters = &type_constructor.arguments[..num_parameters];
+    let indices = &type_constructor.arguments[num_parameters..];
+
+    // Calculate the final type of the case statement.
+    let mut motive_args = indices.to_vec();
+    motive_args.push(scrutinee);
+    let final_ty = run_closure(&global, &motive, motive_args)?;
+
+    // Build the case eliminator.
+    let eliminator = Eliminator::case(constructor, parameters.to_vec(), motive, branches);
+
+    // Extend the spine with the case.
+    let new_flex = Flex::new(flex.head.clone(), flex.spine.clone(), flex.ty.clone())
+        .apply_eliminator(eliminator, final_ty.clone());
+
+    Ok(Rc::new(Value::Flex(new_flex)))
 }
 
 /// Perform a delayed substitution.

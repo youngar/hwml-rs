@@ -1,8 +1,8 @@
 use crate::common::Level;
 use crate::eval::{self, eval_telescope};
 use crate::syn::{CaseBranch, RcSyntax, Syntax};
-use crate::val::{self, Closure, Environment, LocalEnv};
-use crate::val::{GlobalEnv, Neutral, Normal, Value};
+use crate::val::{self, Closure, Eliminator, Environment, Flex, LocalEnv, Rigid};
+use crate::val::{GlobalEnv, Normal, Value};
 use std::rc::Rc;
 
 /// A quotation error.
@@ -53,7 +53,8 @@ pub fn quote<'db>(
         Value::Pi(pi) => quote_pi_instance(db, global, depth, pi, value),
         Value::Universe(universe) => quote_universe_instance(db, global, depth, universe, value),
         Value::TypeConstructor(tc) => quote_type_constructor_instance(db, global, depth, tc, value),
-        Value::Neutral(_, neutral) => quote_neutral_instance(db, global, depth, neutral, value),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped),
     }
 }
@@ -112,24 +113,8 @@ fn quote_type_constructor_instance<'db>(
         Value::DataConstructor(data_constructor) => {
             quote_data_constructor(db, global, depth, ty, data_constructor)
         }
-        Value::Neutral(_, neutral) => quote_neutral(db, global, depth, neutral),
-        _ => Err(Error::IllTyped),
-    }
-}
-
-/// Read an instance of some neutral type back to syntax.
-fn quote_neutral_instance<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    _: &val::Neutral<'db>,
-    value: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // The type is unknown, so we proceed by syntax. If the value was not a neutral,
-    // then we would know the type. EG if the value was headed by a lambda, we could
-    // know that the type was a pi.
-    match value {
-        Value::Neutral(_ty, neutral) => quote_neutral(db, global, depth, neutral),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped),
     }
 }
@@ -145,7 +130,8 @@ pub fn quote_type<'db>(
         Value::Pi(pi) => quote_pi(db, global, depth, pi),
         Value::TypeConstructor(tc) => quote_type_constructor(db, global, depth, tc),
         Value::Universe(universe) => quote_universe(db, depth, universe),
-        Value::Neutral(_ty, neutral) => quote_neutral(db, global, depth, neutral),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped),
     }
 }
@@ -225,17 +211,62 @@ fn quote_universe<'db>(
     Ok(Rc::new(syn_universe))
 }
 
-/// Read a neutral term back to syntax.
-fn quote_neutral<'db>(
+/// Read a rigid neutral back to syntax by quoting the head and traversing the spine.
+fn quote_rigid<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
-    neutral: &val::Neutral<'db>,
+    rigid: &Rigid<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    match neutral {
-        Neutral::Variable(var) => quote_variable(db, depth, var),
-        Neutral::Application(app) => quote_application(db, global, depth, app),
-        Neutral::Case(case) => quote_case(db, global, depth, case),
+    // Start with the variable at the head.
+    let mut result = quote_variable(db, depth, &rigid.head)?;
+
+    // Traverse the spine, applying each eliminator.
+    for eliminator in rigid.spine.iter() {
+        result = quote_eliminator(db, global, depth, result, eliminator)?;
+    }
+
+    Ok(result)
+}
+
+/// Read a flexible neutral back to syntax by quoting the head and traversing the spine.
+fn quote_flex<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    flex: &Flex<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    // Quote the metavariable head by converting its local environment to a closure.
+    let mut result = quote_metavariable(db, global, depth, &flex.head)?;
+
+    // Traverse the spine, applying each eliminator.
+    for eliminator in flex.spine.iter() {
+        result = quote_eliminator(db, global, depth, result, eliminator)?;
+    }
+
+    Ok(result)
+}
+
+/// Quote an eliminator applied to a term.
+fn quote_eliminator<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    head: RcSyntax<'db>,
+    eliminator: &Eliminator<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match eliminator {
+        Eliminator::Application(app) => {
+            // Quote the argument.
+            let syn_arg = quote_normal(db, global, depth, &app.argument)?;
+            // Build the application.
+            let syn_app = Syntax::application(head, syn_arg);
+            Ok(Rc::new(syn_app))
+        }
+        Eliminator::Case(case) => {
+            // Quote the case eliminator.
+            quote_case_eliminator(db, global, depth, head, case)
+        }
     }
 }
 
@@ -306,37 +337,44 @@ fn quote_variable<'db>(
     Ok(Rc::new(syn_var))
 }
 
-/// Read a stuck application back to syntax.
-fn quote_application<'db>(
+/// Read a metavariable back to syntax.
+/// Expands to applications for each element of its local environment.
+/// For example, `meta[x, y]` becomes `app(app(meta, x), y)`.
+fn quote_metavariable<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
-    sem_app: &val::Application<'db>,
+    sem_meta: &val::MetaVariable<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    // Read back the function.
-    let sem_fun = &sem_app.function;
-    let syn_fun = quote_neutral(db, global, depth, &sem_fun)?;
+    // Quote each value in the local environment to build the closure.
+    let mut closure_values = Vec::new();
+    for value in sem_meta.local.iter() {
+        // We need to quote each value. Since we don't have type information,
+        // we'll use Universe(0) as a placeholder type for now.
+        // In a more complete implementation, we'd track types for the local environment.
+        let universe_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+        let quoted = quote(db, global, depth, &universe_ty, value)?;
+        closure_values.push(quoted);
+    }
 
-    // Read back the argument.
-    let sem_arg = &sem_app.argument;
-    let syn_arg = quote_normal(db, global, depth, &sem_arg)?;
+    // Create the closure from the quoted values.
+    let closure = crate::syn::Closure::with_values(closure_values);
 
-    // Return the syntactic application.
-    let syn_app = Syntax::application(syn_fun, syn_arg);
-    Ok(Rc::new(syn_app))
+    // Create the metavariable syntax node.
+    let meta_syntax = Syntax::metavariable(crate::syn::MetavariableId(sem_meta.id.0), closure);
+
+    Ok(Rc::new(meta_syntax))
 }
 
 /// Read a stuck case expression back to syntax.
-fn quote_case<'db>(
+/// The scrutinee is already quoted and passed as `syn_scrutinee`.
+fn quote_case_eliminator<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
+    syn_scrutinee: RcSyntax<'db>,
     sem_case: &val::Case<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    // Read back the scrutinee expression.
-    let sem_scrutinee = &sem_case.scrutinee;
-    let syn_scrutinee = quote_neutral(db, global, depth, &sem_scrutinee)?;
-
     let type_info = global.type_constructor(sem_case.type_constructor)?;
     let num_parameters = type_info.num_parameters();
 

@@ -7,8 +7,8 @@ use crate::{
     common::Level,
     eval::{self, run_application, run_closure},
     val::{
-        self, Application, Case, DataConstructor, Environment, GlobalEnv, LocalEnv, Neutral,
-        Normal, Pi, TypeConstructor, Universe, Value,
+        self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv,
+        LocalEnv, MetaVariableId, Normal, Pi, Rigid, Spine, TypeConstructor, Universe, Value,
     },
 };
 
@@ -44,6 +44,21 @@ impl<'db> Convertible<'db> for ConstantId<'db> {
         _global: &GlobalEnv<'db>,
         _depth: usize,
         other: &ConstantId<'db>,
+    ) -> Result<'db> {
+        if self == other {
+            Ok(())
+        } else {
+            Err(Error::NotConvertible)
+        }
+    }
+}
+
+impl<'db> Convertible<'db> for MetaVariableId {
+    fn is_convertible(
+        &self,
+        _global: &GlobalEnv<'db>,
+        _depth: usize,
+        other: &MetaVariableId,
     ) -> Result<'db> {
         if self == other {
             Ok(())
@@ -110,9 +125,8 @@ impl<'db> Convertible<'db> for Normal<'db> {
                     &other.value,
                 )
             }
-            (Value::Neutral(_, lne), Value::Neutral(_, rne)) => {
-                lne.is_convertible(global, depth, rne)
-            }
+            (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
+            (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
             _ => Err(Error::NotConvertible),
         }
     }
@@ -130,7 +144,8 @@ pub fn is_type_convertible<'a, 'db: 'a>(
             lhs.is_convertible(global, depth, rhs)
         }
         (Value::Universe(lhs), Value::Universe(rhs)) => lhs.is_convertible(global, depth, rhs),
-        (Value::Neutral(_, lhs), Value::Neutral(_, rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
         _ => Err(Error::NotConvertible),
     }
 }
@@ -189,16 +204,53 @@ impl<'db> Convertible<'db> for TypeConstructor<'db> {
     }
 }
 
-impl<'db> Convertible<'db> for Neutral<'db> {
+impl<'db> Convertible<'db> for Rigid<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db> {
+        // Check that the heads are the same variable.
+        self.head
+            .level
+            .is_convertible(global, depth, &other.head.level)?;
+
+        // Check that the spines are convertible.
+        self.spine.is_convertible(global, depth, &other.spine)
+    }
+}
+
+impl<'db> Convertible<'db> for Flex<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db> {
+        // Check that the heads are the same metavariable.
+        self.head.id.is_convertible(global, depth, &other.head.id)?;
+
+        // Check that the spines are convertible.
+        self.spine.is_convertible(global, depth, &other.spine)
+    }
+}
+
+impl<'db> Convertible<'db> for Spine<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db> {
+        // Check that the spines have the same length.
+        if self.len() != other.len() {
+            return Err(Error::NotConvertible);
+        }
+
+        // Check that each eliminator is convertible.
+        for (lhs, rhs) in self.iter().zip(other.iter()) {
+            lhs.is_convertible(global, depth, rhs)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<'db> Convertible<'db> for Eliminator<'db> {
     fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db> {
         match (self, other) {
-            (Neutral::Variable(lhs), Neutral::Variable(rhs)) => {
-                lhs.level.is_convertible(global, depth, &rhs.level)
-            }
-            (Neutral::Application(lhs), Neutral::Application(rhs)) => {
+            (Eliminator::Application(lhs), Eliminator::Application(rhs)) => {
                 lhs.is_convertible(global, depth, rhs)
             }
-            (Neutral::Case(lhs), Neutral::Case(rhs)) => lhs.is_convertible(global, depth, rhs),
+            (Eliminator::Case(lhs), Eliminator::Case(rhs)) => {
+                lhs.is_convertible(global, depth, rhs)
+            }
             _ => Err(Error::NotConvertible),
         }
     }
@@ -207,10 +259,7 @@ impl<'db> Convertible<'db> for Neutral<'db> {
 impl<'db> Convertible<'db> for Application<'db> {
     fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db> {
         // Check that the arguments are convertible.
-        self.argument
-            .is_convertible(global, depth, &other.argument)?;
-        // Check that the functions are convertible.
-        self.function.is_convertible(global, depth, &other.function)
+        self.argument.is_convertible(global, depth, &other.argument)
     }
 }
 
@@ -220,10 +269,6 @@ impl<'db> Convertible<'db> for Case<'db> {
         if self.type_constructor != other.type_constructor {
             return Err(Error::NotConvertible);
         }
-
-        // Check that the scrutinees are convertible.
-        self.scrutinee
-            .is_convertible(global, depth, &other.scrutinee)?;
 
         // Look up the type constructor info.
         let type_info = global
@@ -437,7 +482,8 @@ pub fn is_type_constructor_instance_convertible<'db>(
         (Value::DataConstructor(lhs), Value::DataConstructor(rhs)) => {
             is_data_constructor_convertible(global, depth, ty, lhs, rhs)
         }
-        (Value::Neutral(_, lhs), Value::Neutral(_, rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
         _ => Err(Error::NotConvertible),
     }
 }

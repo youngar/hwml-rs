@@ -43,7 +43,10 @@ pub enum Value<'db> {
     Universe(Universe),
     TypeConstructor(TypeConstructor<'db>),
     DataConstructor(DataConstructor<'db>),
-    Neutral(Rc<Value<'db>>, Rc<Neutral<'db>>),
+    /// Neutral headed by a metavariable.
+    Flex(Flex<'db>),
+    /// Neutral headed by a variable.
+    Rigid(Rigid<'db>),
 }
 
 impl<'db> Value<'db> {
@@ -77,34 +80,24 @@ impl<'db> Value<'db> {
         Value::DataConstructor(DataConstructor::new(constructor, arguments))
     }
 
-    pub fn neutral(ty: Rc<Value<'db>>, neutral: Rc<Neutral<'db>>) -> Value<'db> {
-        Value::Neutral(ty, neutral)
+    pub fn rigid(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::Rigid(Rigid { head, spine, ty })
+    }
+
+    pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::Flex(Flex { head, spine, ty })
     }
 
     pub fn variable(ty: Rc<Value<'db>>, level: Level) -> Value<'db> {
-        Value::neutral(ty, Rc::new(Neutral::variable(level)))
+        Value::rigid(Variable::new(level), Spine::empty(), ty)
     }
 
-    pub fn application(
-        ty: Rc<Value<'db>>,
-        function: Rc<Neutral<'db>>,
-        argument_ty: Rc<Value<'db>>,
-        argument: Rc<Value<'db>>,
-    ) -> Value<'db> {
-        let app = Neutral::application(function, argument_ty, argument);
-        Value::neutral(ty, Rc::new(app))
-    }
-
-    pub fn case(
-        ty: Rc<Value<'db>>,
-        scrutinee: Rc<Neutral<'db>>,
-        type_constructor: ConstantId<'db>,
-        parameters: Vec<Rc<Value<'db>>>,
-        motive: Closure<'db>,
-        branches: Vec<CaseBranch<'db>>,
-    ) -> Value<'db> {
-        let case = Neutral::case(scrutinee, type_constructor, parameters, motive, branches);
-        Value::neutral(ty, Rc::new(case))
+    pub fn metavariable(id: MetaVariableId, local: LocalEnv<'db>) -> Value<'db> {
+        Value::flex(
+            MetaVariable::new(id, local),
+            Spine::empty(),
+            Rc::new(Value::universe(UniverseLevel::new(0))),
+        )
     }
 }
 
@@ -230,43 +223,100 @@ impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
 ///
 /// The structure of the neutral ensures that the prima.
 #[derive(Clone, Debug)]
-pub enum Neutral<'db> {
-    Variable(Variable),
+pub struct Flex<'db> {
+    pub head: MetaVariable<'db>,
+    pub spine: Spine<'db>,
+    pub ty: Rc<Value<'db>>,
+}
+
+impl<'db> Flex<'db> {
+    pub fn new(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Flex<'db> {
+        Flex { head, spine, ty }
+    }
+
+    /// Apply an eliminator to this flexible neutral, extending the spine.
+    pub fn apply_eliminator(
+        mut self,
+        eliminator: Eliminator<'db>,
+        ty: Rc<Value<'db>>,
+    ) -> Flex<'db> {
+        self.spine.push(eliminator);
+        self.ty = ty;
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Rigid<'db> {
+    pub head: Variable,
+    pub spine: Spine<'db>,
+    pub ty: Rc<Value<'db>>,
+}
+
+impl<'db> Rigid<'db> {
+    pub fn new(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Rigid<'db> {
+        Rigid { head, spine, ty }
+    }
+
+    /// Apply an eliminator to this rigid neutral, extending the spine.
+    pub fn apply_eliminator(
+        mut self,
+        eliminator: Eliminator<'db>,
+        ty: Rc<Value<'db>>,
+    ) -> Rigid<'db> {
+        self.spine.push(eliminator);
+        self.ty = ty;
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Spine<'db>(Vec<Eliminator<'db>>);
+
+impl<'db> Spine<'db> {
+    pub fn empty() -> Spine<'db> {
+        Spine(Vec::new())
+    }
+
+    pub fn new(eliminators: Vec<Eliminator<'db>>) -> Spine<'db> {
+        Spine(eliminators)
+    }
+
+    pub fn push(&mut self, eliminator: Eliminator<'db>) {
+        self.0.push(eliminator);
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Eliminator<'db>> {
+        self.0.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Eliminator<'db> {
     Application(Application<'db>),
     Case(Case<'db>),
 }
 
-impl<'db> Neutral<'db> {
-    pub fn variable(level: Level) -> Neutral<'db> {
-        let var: Variable = Variable::new(level);
-        Neutral::Variable(var)
-    }
-
-    pub fn application(
-        function: Rc<Neutral<'db>>,
-        argument_ty: Rc<Value<'db>>,
-        argument: Rc<Value<'db>>,
-    ) -> Neutral<'db> {
-        Neutral::Application(Application::new(
-            function,
-            Normal::new(argument_ty, argument),
-        ))
+impl<'db> Eliminator<'db> {
+    pub fn application(argument: Normal<'db>) -> Eliminator<'db> {
+        Eliminator::Application(Application::new(argument))
     }
 
     pub fn case(
-        scrutinee: Rc<Neutral<'db>>,
         type_constructor: ConstantId<'db>,
         parameters: Vec<Rc<Value<'db>>>,
         motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
-    ) -> Neutral<'db> {
-        Neutral::Case(Case::new(
-            scrutinee,
-            type_constructor,
-            parameters,
-            motive,
-            branches,
-        ))
+    ) -> Eliminator<'db> {
+        Eliminator::Case(Case::new(type_constructor, parameters, motive, branches))
     }
 }
 
@@ -282,22 +332,49 @@ impl Variable {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct MetaVariable<'db> {
+    pub id: MetaVariableId,
+    pub local: LocalEnv<'db>,
+}
+
+impl<'db> PartialEq for MetaVariable<'db> {
+    fn eq(&self, other: &Self) -> bool {
+        // Two metavariables are equal if they have the same ID.
+        // We ignore the local environment for equality comparison.
+        self.id == other.id
+    }
+}
+
+impl<'db> MetaVariable<'db> {
+    pub fn new(id: MetaVariableId, local: LocalEnv<'db>) -> MetaVariable {
+        MetaVariable { id, local }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MetaVariableId(pub usize);
+
+impl MetaVariableId {
+    pub fn new(id: usize) -> MetaVariableId {
+        MetaVariableId(id)
+    }
+}
+
 /// Function application.
 #[derive(Clone, Debug)]
 pub struct Application<'db> {
-    pub function: Rc<Neutral<'db>>,
     pub argument: Normal<'db>,
 }
 
 impl<'db> Application<'db> {
-    pub fn new(function: Rc<Neutral<'db>>, argument: Normal<'db>) -> Application<'db> {
-        Application { function, argument }
+    pub fn new(argument: Normal<'db>) -> Application<'db> {
+        Application { argument }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Case<'db> {
-    pub scrutinee: Rc<Neutral<'db>>,
     pub type_constructor: ConstantId<'db>,
     pub parameters: Vec<Rc<Value<'db>>>,
     pub motive: Closure<'db>,
@@ -306,14 +383,12 @@ pub struct Case<'db> {
 
 impl<'db> Case<'db> {
     pub fn new(
-        scrutinee: Rc<Neutral<'db>>,
         type_constructor: ConstantId<'db>,
         parameters: Vec<Rc<Value<'db>>>,
         motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Case<'db> {
         Case {
-            scrutinee,
             type_constructor,
             parameters,
             motive,
@@ -559,6 +634,11 @@ impl<'db> LocalEnv<'db> {
     /// The number of bound variables in scope.
     pub fn depth(&self) -> usize {
         self.locals.len() as usize
+    }
+
+    /// Get an iterator over the values in the environment.
+    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+        self.locals.iter()
     }
 
     /// Extend the environment by pushing a definition onto the end.
