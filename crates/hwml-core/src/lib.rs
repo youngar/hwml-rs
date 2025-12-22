@@ -8,6 +8,7 @@ pub mod prelude;
 pub mod quote;
 pub mod symbol;
 pub mod syn;
+pub mod unify;
 pub mod val;
 
 pub use common::*;

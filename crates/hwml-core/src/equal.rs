@@ -1,16 +1,14 @@
-use crate::syn::ConstantId;
-use std::rc::Rc;
-
-use itertools::izip;
-
 use crate::{
-    common::Level,
+    common::{Level, MetaVariableId},
     eval::{self, run_application, run_closure},
+    syn::ConstantId,
     val::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv,
-        LocalEnv, MetaVariableId, Normal, Pi, Rigid, Spine, TypeConstructor, Universe, Value,
+        LocalEnv, Normal, Pi, Rigid, Spine, TypeConstructor, Universe, Value,
     },
 };
+use itertools::izip;
+use std::rc::Rc;
 
 #[deny(elided_lifetimes_in_paths)]
 pub enum Error<'db> {

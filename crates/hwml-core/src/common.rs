@@ -213,3 +213,12 @@ impl From<usize> for UniverseLevel {
         UniverseLevel(x)
     }
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MetaVariableId(pub usize);
+
+impl MetaVariableId {
+    pub fn new(id: usize) -> MetaVariableId {
+        MetaVariableId(id)
+    }
+}

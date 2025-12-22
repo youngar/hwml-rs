@@ -332,6 +332,30 @@ fn run_case_on_flex<'db>(
     Ok(Rc::new(Value::Flex(new_flex)))
 }
 
+pub fn run_spine<'db>(
+    global: &GlobalEnv<'db>,
+    mut eliminatee: Rc<Value<'db>>,
+    spine: &val::Spine<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    for eliminator in spine.iter() {
+        match eliminator {
+            Eliminator::Application(application) => {
+                eliminatee =
+                    run_application(global, &eliminatee, application.argument.value.clone())?;
+            }
+            Eliminator::Case(case) => {
+                eliminatee = run_case(
+                    global,
+                    eliminatee,
+                    case.motive.clone(),
+                    case.branches.clone(),
+                )?;
+            }
+        }
+    }
+    Ok(eliminatee)
+}
+
 /// Perform a delayed substitution.
 /// Takes only the local environment from the closure and extends it with the provided arguments.
 /// The global environment must be provided separately.

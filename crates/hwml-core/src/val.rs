@@ -1,4 +1,4 @@
-use crate::common::{Level, UniverseLevel};
+use crate::common::{Level, MetaVariableId, UniverseLevel};
 use crate::syn::{ConstantId, RcSyntax, Telescope};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -271,7 +271,7 @@ impl<'db> Rigid<'db> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Spine<'db>(Vec<Eliminator<'db>>);
+pub struct Spine<'db>(pub Vec<Eliminator<'db>>);
 
 impl<'db> Spine<'db> {
     pub fn empty() -> Spine<'db> {
@@ -349,15 +349,6 @@ impl<'db> PartialEq for MetaVariable<'db> {
 impl<'db> MetaVariable<'db> {
     pub fn new(id: MetaVariableId, local: LocalEnv<'db>) -> MetaVariable {
         MetaVariable { id, local }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct MetaVariableId(pub usize);
-
-impl MetaVariableId {
-    pub fn new(id: usize) -> MetaVariableId {
-        MetaVariableId(id)
     }
 }
 
