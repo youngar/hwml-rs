@@ -45,6 +45,7 @@ salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
 thiserror = "2"
+pretty = "0.12.5"
 
 [profile.dev.package]
 insta.opt-level = 3

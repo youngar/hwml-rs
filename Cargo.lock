@@ -115,6 +115,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
 
 [[package]]
+name = "arrayvec"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
+
+[[package]]
 name = "ascii-canvas"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -574,6 +580,7 @@ name = "hwml_support"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "pretty",
  "salsa",
 ]
 
@@ -947,6 +954,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
+name = "pretty"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d22152487193190344590e4f30e219cf3fe140d9e7a3fdb683d82aa2c5f4156"
+dependencies = [
+ "arrayvec",
+ "typed-arena",
+ "unicode-width",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1270,6 +1288,12 @@ checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 dependencies = [
  "once_cell",
 ]
+
+[[package]]
+name = "typed-arena"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"

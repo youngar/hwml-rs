@@ -1,3 +1,4 @@
+pub mod diagnostics;
 pub mod line_info;
 pub mod loc;
 pub mod salsa;

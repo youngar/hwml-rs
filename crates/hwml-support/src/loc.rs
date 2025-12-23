@@ -1,10 +1,12 @@
 use std::{ops::Range, path::PathBuf};
 
 /// A line-and-byte-offset pair.
-pub struct LinePosition {
+pub struct Position {
+    /// The position, in bytes.
+    pub offset: usize,
     /// The line number.
     pub line: usize,
-    /// The byte-offset, from the start of the line.
+    /// The offset from the start of the line, in bytes.
     pub column: usize,
 }
 
@@ -48,4 +50,9 @@ where
     fn range(&self) -> Range<usize> {
         self.source_range().range
     }
+}
+
+struct Located<T> {
+    value: T,
+    range: Option<SourceRange>,
 }
