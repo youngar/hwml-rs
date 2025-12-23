@@ -5,11 +5,12 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 rust-version = "1.80"
-homepage = ""
+homepage = "hardware.land"
 documentation = ""
-repository = ""
-authors = []
-license = ""
+repository = "github.com/youngar/hwml-rs"
+authors = ["Andrew Young", "Robert Young"]
+license = "n/a"
+keywords = ["hardware", "hdl"]
 
 [workspace.dependencies]
 # Local Crates
