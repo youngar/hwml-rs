@@ -1,6 +1,6 @@
 use hwml_core::{
-    common::Level,
-    syn::{MetavariableId, RcSyntax, Syntax},
+    common::{Level, MetaVariableId},
+    syn::{RcSyntax, Syntax},
 };
 
 enum PruningPosition {
@@ -17,12 +17,12 @@ fn merge_pruning_positions(a: PruningPosition, b: PruningPosition) -> PruningPos
 
 struct OccursState {
     locals: Vec<Level>,
-    current: MetavariableId,
+    current: MetaVariableId,
     position: PruningPosition,
 }
 
 impl OccursState {
-    fn new(metavariable: MetavariableId) -> OccursState {
+    fn new(metavariable: MetaVariableId) -> OccursState {
         OccursState {
             locals: Vec::new(),
             current: metavariable,
@@ -54,6 +54,6 @@ fn occurs(state: &mut OccursState, term: RcSyntax) -> bool {
     }
 }
 
-pub fn occurs_check(metavariable: MetavariableId, term: RcSyntax) -> bool {
+pub fn occurs_check(metavariable: MetaVariableId, term: RcSyntax) -> bool {
     occurs(&mut OccursState::new(metavariable), term)
 }

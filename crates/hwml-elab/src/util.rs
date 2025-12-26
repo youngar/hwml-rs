@@ -42,15 +42,13 @@ pub fn subst_metavariable<'db>(
     from: Index,
     to: RcSyntax<'db>,
 ) -> RcSyntax<'db> {
-    // Rewrite the closure to substitute the variable.
-    let values = meta
-        .closure
-        .values
+    // Rewrite the substitution to substitute the variable.
+    let substitution = meta
+        .substitution
         .iter()
         .map(|term| subst(term.clone(), from, to.clone()))
         .collect();
-    let closure = Closure::with_values(values);
-    Syntax::metavariable_rc(meta.id, closure)
+    Syntax::metavariable_rc(meta.id, substitution)
 }
 
 pub fn subst_variable<'db>(var: Variable, from: Index, to: RcSyntax<'db>) -> RcSyntax<'db> {

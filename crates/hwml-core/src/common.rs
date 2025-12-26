@@ -214,11 +214,18 @@ impl From<usize> for UniverseLevel {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MetaVariableId(pub usize);
 
 impl MetaVariableId {
     pub fn new(id: usize) -> MetaVariableId {
         MetaVariableId(id)
+    }
+}
+
+impl std::fmt::Display for MetaVariableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "?{}", self.0)
     }
 }

@@ -1,5 +1,3 @@
-use itertools::DedupWithCount;
-
 use crate::common::Level;
 use crate::equal;
 use crate::eval;
@@ -7,8 +5,7 @@ use crate::syn as stx;
 use crate::syn;
 use crate::syn::Syntax;
 use crate::val;
-use crate::val::Closure;
-use crate::val::Value;
+use crate::val::{Closure, Environment, LocalEnv, Value};
 use std::rc::Rc;
 
 pub struct TCEnvironment<'g, 'db> {
@@ -143,6 +140,7 @@ pub fn type_synth<'g, 'db>(
         Syntax::Check(check) => type_synth_check(env, check),
         Syntax::Application(application) => type_synth_application(env, application),
         Syntax::Case(case) => type_synth_case(env, case),
+        Syntax::Metavariable(metavariable) => type_synth_metavariable(env, metavariable),
         _ => Err(Error::BadSynth {
             tm: Rc::new(term.clone()),
         }),
@@ -167,6 +165,63 @@ pub fn type_synth_check<'g, 'db>(
     let ty = eval(env, &check.ty)?;
     type_check(env, &check.term, &ty)?;
     Ok(ty)
+}
+
+/// Synthesize the type of a metavariable.
+pub fn type_synth_metavariable<'g, 'db>(
+    env: &mut TCEnvironment<'g, 'db>,
+    metavariable: &syn::Metavariable<'db>,
+) -> Result<Rc<Value<'db>>, Error<'db>> {
+    // Lookup the metavariable info in the global environment.
+    let meta_info = env
+        .globals
+        .metavariable(metavariable.id)
+        .map_err(|_| Error::BadSynth {
+            tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+        })?;
+
+    // The metavariable has a telescope of argument types.
+    // We need to check that the substitution has the right number of arguments.
+    if metavariable.substitution.len() != meta_info.arguments.len() {
+        return Err(Error::BadSynth {
+            tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+        });
+    }
+
+    // Check each argument against its expected type and build up the local environment.
+    let mut local_env = LocalEnv::new();
+    for (arg, arg_ty) in metavariable
+        .substitution
+        .iter()
+        .zip(meta_info.arguments.iter())
+    {
+        // Evaluate the expected argument type in a temporary environment with the local_env.
+        let mut temp_env = Environment {
+            global: env.globals,
+            local: local_env.clone(),
+        };
+        let expected_ty = eval::eval(&mut temp_env, arg_ty).map_err(|_| Error::BadSynth {
+            tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+        })?;
+
+        // Check the argument against the expected type.
+        type_check(env, arg, &expected_ty)?;
+
+        // Evaluate the argument and add it to the local environment.
+        let arg_val = eval(env, arg)?;
+        local_env.push(arg_val);
+    }
+
+    // Evaluate the final type in the extended local environment.
+    let mut temp_env = Environment {
+        global: env.globals,
+        local: local_env,
+    };
+    let meta_ty = eval::eval(&mut temp_env, &meta_info.ty).map_err(|_| Error::BadSynth {
+        tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+    })?;
+
+    Ok(meta_ty)
 }
 
 /// Synthesize the type of a function application.

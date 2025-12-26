@@ -1,3 +1,4 @@
+use crate::common;
 use crate::syn::{self as stx};
 use crate::syn::{self, Syntax};
 use crate::val::{self, Closure, Eliminator, Environment, Flex, GlobalEnv, Normal, Rigid, Value};
@@ -10,6 +11,7 @@ pub enum Error {
     BadCase,
     UnknownTypeConstructor,
     UnknownDataConstructor,
+    UnknownMetavariable,
 }
 
 pub fn eval<'g, 'db>(
@@ -114,10 +116,38 @@ fn eval_universe<'g, 'db>(
 }
 
 fn eval_metavariable<'g, 'db>(
-    _env: &mut Environment<'g, 'db>,
-    _meta: &syn::Metavariable<'db>,
+    env: &mut Environment<'g, 'db>,
+    meta: &syn::Metavariable<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    todo!()
+    // Evaluate all the arguments in the substitution to build the local environment.
+    let mut local_env = val::LocalEnv::new();
+    for arg in meta.iter() {
+        let evaluated_arg = eval(env, arg)?;
+        local_env.push(evaluated_arg);
+    }
+
+    // Look up the metavariable info to get its type.
+    let meta_info = env
+        .global
+        .metavariable(meta.id)
+        .map_err(|_| Error::UnknownMetavariable)?;
+
+    // Create an environment for evaluating the type with the substitution.
+    let mut type_env = Environment {
+        global: env.global,
+        local: local_env.clone(),
+    };
+
+    // Evaluate the type of the metavariable in the extended environment.
+    let meta_ty = eval(&mut type_env, &meta_info.ty)?;
+
+    // Create a metavariable value with the local environment.
+    let meta_value = val::MetaVariable::new(meta.id, local_env);
+
+    // Create a Flex neutral with an empty spine.
+    let flex = val::Flex::new(meta_value, val::Spine::empty(), meta_ty);
+
+    Ok(Rc::new(Value::Flex(flex)))
 }
 
 fn eval_application<'g, 'db>(

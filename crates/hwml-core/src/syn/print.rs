@@ -1,6 +1,5 @@
 use crate::syn::*;
 use elegance::{Io, Printer, Render};
-use hwml_support::FromWithDb;
 
 const INDENT: isize = 2;
 const COLUMNS: usize = 80;
@@ -449,12 +448,14 @@ impl<'db> Print for Metavariable<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text_owned(&format!("{}", self.id))?;
-        if !self.closure.is_empty() {
-            self.closure.print(db, st, p)
-        } else {
-            Ok(())
+        p.text("?[")?;
+        p.text_owned(&format!("{}", self.id.0))?;
+        for arg in &self.substitution {
+            p.text(" ")?;
+            arg.print(db, st, p)?;
         }
+        p.text("]")?;
+        Ok(())
     }
 }
 
@@ -752,8 +753,9 @@ impl<'db> Print for DataConstructor<'db> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Index, UniverseLevel};
-    use crate::syn::{ConstantId, MetavariableId, Syntax};
+    use crate::common::{Index, MetaVariableId, UniverseLevel};
+    use crate::syn::{ConstantId, Syntax};
+    use hwml_support::FromWithDb;
     use insta::assert_snapshot;
 
     #[test]
@@ -849,33 +851,33 @@ mod tests {
             @"λ %0 → (λ %1 → %1 %0 : 𝒰0)"
         );
 
-        // Simple metavariable: ?0
+        // Simple metavariable: ?[0]
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::metavariable(
-                MetavariableId(0),
-                Closure::new()
+                MetaVariableId(0),
+                vec![]
             )),
-            @"?0"
+            @"?[0]"
         );
 
-        // Application with two different metavariables: ?0 ?1
+        // Application with two different metavariables: ?[0] ?[1]
         // (both metavariables must be in the same expression to share GlobalState)
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::application(
-                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
-                Syntax::metavariable_rc(MetavariableId(1), Closure::new())
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(1), vec![])
             )),
-            @"?0 ?1"
+            @"?[0] ?[1]"
         );
 
-        // Same metavariable used twice: ?0 ?0
+        // Same metavariable used twice: ?[0] ?[0]
         // (shows that the same metavariable ID gets the same name)
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::application(
-                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
-                Syntax::metavariable_rc(MetavariableId(0), Closure::new())
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(0), vec![])
             )),
-            @"?0 ?0"
+            @"?[0] ?[0]"
         );
 
         // Data constructor with no arguments: @Nil
@@ -908,17 +910,17 @@ mod tests {
             @"[@Cons (λ %0 → %0) λ %0 → %0]"
         );
 
-        // Complex expression with three metavariables: (?0 ?1) ?2
+        // Complex expression with three metavariables: (?[0] ?[1]) ?[2]
         // (shows that distinct metavariables get distinct names)
         assert_snapshot!(
             print_syntax_to_string(&db, &Syntax::application(
                 Syntax::application_rc(
-                    Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
-                    Syntax::metavariable_rc(MetavariableId(1), Closure::new())
+                    Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                    Syntax::metavariable_rc(MetaVariableId(1), vec![])
                 ),
-                Syntax::metavariable_rc(MetavariableId(2), Closure::new())
+                Syntax::metavariable_rc(MetaVariableId(2), vec![])
             )),
-            @"?0 ?1 ?2"
+            @"?[0] ?[1] ?[2]"
         );
 
         // Unbound variable at depth 0: !0

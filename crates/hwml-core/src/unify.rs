@@ -49,7 +49,14 @@ fn force<'db>(
     while let Value::Flex(flex) = &*value {
         match mctx.lookup(flex.head.id) {
             Some(solution) => {
-                value = eval::run_spine(global, solution.clone(), &flex.spine)?;
+                // First, apply the solution to the local substitution.
+                // The solution is a closure that expects the substitution arguments.
+                let mut result = solution.clone();
+                for arg in flex.head.local.iter() {
+                    result = eval::run_application(global, &result, arg.clone())?;
+                }
+                // Then apply the spine.
+                value = eval::run_spine(global, result, &flex.spine)?;
             }
             None => break,
         }
@@ -393,6 +400,7 @@ pub fn unify<'db>(
         }
         (Value::Lambda(l1), Value::Lambda(l2)) => {
             let var = Rc::new(Value::variable(
+                // TODO: get the type.
                 Rc::new(Value::universe(UniverseLevel::new(0))),
                 Level::new(depth),
             ));
@@ -459,6 +467,14 @@ pub fn unify<'db>(
         }
         (Value::Flex(f1), Value::Flex(f2)) => {
             if f1.head.id == f2.head.id {
+                // Same metavariable - first unify their substitutions (local environments)
+                if f1.head.local.depth() != f2.head.local.depth() {
+                    return Err(UnificationError::Mismatch(lhs, rhs));
+                }
+                for (v1, v2) in f1.head.local.iter().zip(f2.head.local.iter()) {
+                    unify(db, global, mctx, depth, v1.clone(), v2.clone())?;
+                }
+                // Then unify their spines
                 unify_spine(db, global, mctx, depth, &f1.spine, &f2.spine)
             } else {
                 solve(

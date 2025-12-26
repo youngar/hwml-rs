@@ -219,6 +219,44 @@ impl<'db> Convertible<'db> for Flex<'db> {
         // Check that the heads are the same metavariable.
         self.head.id.is_convertible(global, depth, &other.head.id)?;
 
+        // Check that the local environments (substitutions) have the same depth.
+        if self.head.local.depth() != other.head.local.depth() {
+            return Err(Error::NotConvertible);
+        }
+
+        // Look up the metavariable info to get the types of the substitution arguments.
+        let meta_info = global
+            .metavariable(self.head.id)
+            .map_err(|_| Error::NotConvertible)?;
+
+        // Create an environment for evaluating the types of the substitution arguments.
+        let mut env = Environment {
+            global: global,
+            local: LocalEnv::new(),
+        };
+
+        // Check that each pair of substitution values is convertible at its expected type.
+        for ((lval, rval), syn_ty) in self
+            .head
+            .local
+            .iter()
+            .zip(other.head.local.iter())
+            .zip(meta_info.arguments.iter())
+        {
+            // Evaluate the type of the current substitution argument.
+            let sem_ty = eval::eval(&mut env, syn_ty)?;
+
+            // Check that the substitution values are convertible.
+            Normal::new(sem_ty.clone(), lval.clone()).is_convertible(
+                global,
+                depth,
+                &Normal::new(sem_ty, rval.clone()),
+            )?;
+
+            // Push the semantic argument into the environment for subsequent iterations.
+            env.push(lval.clone());
+        }
+
         // Check that the spines are convertible.
         self.spine.is_convertible(global, depth, &other.spine)
     }

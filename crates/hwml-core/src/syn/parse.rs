@@ -1,5 +1,5 @@
 use crate::common::{DBParseError, Index, NegativeLevel};
-use crate::syn::{CaseBranch, Closure, ConstantId, MetavariableId, RcSyntax, Syntax};
+use crate::syn::{CaseBranch, Closure, ConstantId, RcSyntax, Syntax};
 use crate::syn::{HSyntax, RcHSyntax};
 use core::fmt::Debug;
 use hwml_support::FromWithDb;
@@ -15,11 +15,13 @@ pub enum Error {
     InvalidInteger(String),
     MissingRParen,
     MissingRBracket,
+    MissingLBracket,
     MissingArrow,
     MissingVariable,
     MissingTerm,
     MissingConstant,
     MissingCaseBranch,
+    MissingMetavariableId,
     UnknownVariable(String),
     DBParseError(DBParseError),
     #[default]
@@ -49,10 +51,6 @@ impl From<DBParseError> for Error {
 }
 
 type ParseResult<T> = std::result::Result<T, Error>;
-
-fn lex_metavariable_id(lex: &mut logos::Lexer<Token>) -> Result<usize, ParseIntError> {
-    lex.slice()["?".len()..].parse()
-}
 
 #[derive(Logos, Clone, Debug, Eq, PartialEq, Hash)]
 #[logos(error(Error, Error::from_lexer))]
@@ -101,8 +99,8 @@ pub enum Token {
     Variable(String),
     #[regex(r"![0-9]+", priority = 4, callback = |lex| lex.slice().parse())]
     UnboundVariable(NegativeLevel),
-    #[regex(r"\?[0-9]+", priority = 4, callback = lex_metavariable_id)]
-    Metavariable(usize),
+    #[regex(r"[0-9]+", priority = 3, callback = |lex| lex.slice().parse())]
+    Number(usize),
     #[token("$Bit", priority = 5)]
     BitType,
     #[token("0", priority = 5)]
@@ -121,6 +119,8 @@ pub enum Token {
     Semicolon,
     #[token("#[", priority = 10)]
     LHashBracket,
+    #[token("?[", priority = 10)]
+    LQuestionBracket,
     #[token("=>", priority = 5)]
     FatArrow,
 }
@@ -274,6 +274,10 @@ fn p_lbracket_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::LBracket)
 }
 
+fn p_lbracket(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::LBracket, Error::MissingLBracket)
+}
+
 fn p_rbracket(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::RBracket, Error::MissingRBracket)
 }
@@ -361,6 +365,24 @@ fn p_variable(state: &mut State) -> ParseResult<String> {
         Err(e) => Err(e),
         Ok(Some(n)) => Ok(n),
         Ok(None) => Err(Error::MissingVariable),
+    }
+}
+
+fn p_metavariable_id(state: &mut State) -> ParseResult<usize> {
+    match state.peek_token() {
+        Some(Ok(Token::Number(n))) => {
+            state.advance_token();
+            Ok(n)
+        }
+        Some(Ok(Token::Zero)) => {
+            state.advance_token();
+            Ok(0)
+        }
+        Some(Ok(Token::One)) => {
+            state.advance_token();
+            Ok(1)
+        }
+        _ => Err(Error::MissingMetavariableId),
     }
 }
 
@@ -638,14 +660,24 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.advance_token();
                 Ok(Some(Syntax::constant_rc_from(state.db(), &name)))
             }
-            Token::Metavariable(id) => {
+            Token::LQuestionBracket => {
                 state.advance_token();
-                let closure = match p_closure_opt(state) {
-                    Ok(Some(closure)) => closure,
-                    Ok(None) => Closure::new(),
-                    Err(err) => return Err(err),
-                };
-                Ok(Some(Syntax::metavariable_rc(MetavariableId(id), closure)))
+                // Expect ?[id term1 term2 ...]
+                let id = p_metavariable_id(state)?;
+                // Parse space-separated substitution terms (atomic terms only)
+                let mut substitution = Vec::new();
+                loop {
+                    match p_atom_opt(state) {
+                        Ok(Some(term)) => substitution.push(term),
+                        Ok(None) => break,
+                        Err(err) => return Err(err),
+                    }
+                }
+                p_rbracket(state)?;
+                Ok(Some(Syntax::metavariable_rc(
+                    crate::common::MetaVariableId(id),
+                    substitution,
+                )))
             }
             Token::Lift => {
                 state.advance_token();
@@ -1105,19 +1137,19 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_simple() {
-        // Test parsing: ?x
+        // Test parsing: ?[0]
         use crate::Database;
         let db = Database::default();
-        let input = "?0";
+        let input = "?[0]";
         let result = parse_syntax(&db, input);
 
         assert!(result.is_ok(), "Failed to parse metavariable: {:?}", result);
 
         let parsed = result.unwrap();
 
-        // Build expected: ?x with ID 0
-        use crate::syn::{Closure, MetavariableId};
-        let expected = Syntax::metavariable_rc(MetavariableId(0), Closure::new());
+        // Build expected: ?[0] with ID 0
+        use crate::common::MetaVariableId;
+        let expected = Syntax::metavariable_rc(MetaVariableId(0), vec![]);
 
         assert_eq!(parsed, expected);
     }
@@ -1126,7 +1158,7 @@ mod tests {
     fn test_parse_metavariable_multiple() {
         use crate::Database;
         let db = Database::default();
-        let input = "?0 ?1 ?0";
+        let input = "?[0] ?[1] ?[0]";
         let result = parse_syntax(&db, input);
 
         assert!(
@@ -1137,15 +1169,15 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: (?x ?y) ?x
+        // Build expected: (?[0] ?[1]) ?[0]
         // Application is left-associative
-        use crate::syn::{Closure, MetavariableId};
+        use crate::common::MetaVariableId;
         let expected = Syntax::application_rc(
             Syntax::application_rc(
-                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
-                Syntax::metavariable_rc(MetavariableId(1), Closure::new()),
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(1), vec![]),
             ),
-            Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+            Syntax::metavariable_rc(MetaVariableId(0), vec![]),
         );
 
         assert_eq!(parsed, expected);
@@ -1153,10 +1185,10 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_in_lambda() {
-        // Test parsing: λ %x → ?f %x
+        // Test parsing: λ %x → ?[0] %x
         use crate::Database;
         let db = Database::default();
-        let input = "λ %x → ?0 %x";
+        let input = "λ %x → ?[0] %x";
         let result = parse_syntax(&db, input);
 
         assert!(
@@ -1167,10 +1199,10 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: λ %x → ?f %x
-        use crate::syn::{Closure, MetavariableId};
+        // Build expected: λ %x → ?[0] %x
+        use crate::common::MetaVariableId;
         let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+            Syntax::metavariable_rc(MetaVariableId(0), vec![]),
             Syntax::variable_rc(Index(0)),
         ));
 
@@ -1179,9 +1211,8 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_ordering() {
-        // Test parsing: ?z ?a ?m
-        // Should get IDs in order of discovery: ?z=0, ?a=1, ?m=2
-        let input = "?0 ?1 ?2";
+        // Test parsing: ?[0] ?[1] ?[2]
+        let input = "?[0] ?[1] ?[2]";
         use crate::Database;
         let db = Database::default();
         let result = parse_syntax(&db, input);
@@ -1194,14 +1225,14 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: (?z ?a) ?m
-        use crate::syn::{Closure, MetavariableId};
+        // Build expected: (?[0] ?[1]) ?[2]
+        use crate::common::MetaVariableId;
         let expected = Syntax::application_rc(
             Syntax::application_rc(
-                Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
-                Syntax::metavariable_rc(MetavariableId(1), Closure::new()),
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(1), vec![]),
             ),
-            Syntax::metavariable_rc(MetavariableId(2), Closure::new()),
+            Syntax::metavariable_rc(MetaVariableId(2), vec![]),
         );
 
         assert_eq!(parsed, expected);
@@ -1209,8 +1240,8 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_with_type() {
-        // Test parsing: ?x : 𝒰0
-        let input = "?0 : 𝒰0";
+        // Test parsing: ?[0] : 𝒰0
+        let input = "?[0] : 𝒰0";
         use crate::Database;
         let db = Database::default();
         let result = parse_syntax(&db, input);
@@ -1223,14 +1254,58 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: ?x : 𝒰0
-        use crate::syn::{Closure, MetavariableId};
+        // Build expected: ?[0] : 𝒰0
+        use crate::common::MetaVariableId;
         let expected = Syntax::check_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::metavariable_rc(MetavariableId(0), Closure::new()),
+            Syntax::metavariable_rc(MetaVariableId(0), vec![]),
         );
 
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_with_substitution() {
+        // Test parsing: ?[0 !0 !1]
+        let input = "?[0 !0 !1]";
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse metavariable with substitution: {:?}",
+            result
+        );
+
+        let parsed = result.unwrap();
+
+        // Build expected: ?[0 !0 !1]
+        // !0 at depth 0 means index 0, !1 at depth 0 means index 1
+        use crate::common::MetaVariableId;
+        let expected = Syntax::metavariable_rc(
+            MetaVariableId(0),
+            vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))],
+        );
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_metavariable_no_space_between_question_and_bracket() {
+        // Test that "? [0]" (with space) doesn't parse as a metavariable
+        // because ?[ must be a single token
+        let input = "? [0]";
+        use crate::Database;
+        let db = Database::default();
+        let result = parse_syntax(&db, input);
+
+        // This should fail to parse because ? is not a valid token by itself
+        assert!(
+            result.is_err(),
+            "Expected parse error for '? [0]' but got: {:?}",
+            result
+        );
     }
 
     #[test]

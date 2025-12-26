@@ -338,30 +338,39 @@ fn quote_variable<'db>(
 }
 
 /// Read a metavariable back to syntax.
-/// Expands to applications for each element of its local environment.
-/// For example, `meta[x, y]` becomes `app(app(meta, x), y)`.
 fn quote_metavariable<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     sem_meta: &val::MetaVariable<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    // Quote each value in the local environment to build the closure.
-    let mut closure_values = Vec::new();
-    for value in sem_meta.local.iter() {
-        // We need to quote each value. Since we don't have type information,
-        // we'll use Universe(0) as a placeholder type for now.
-        // In a more complete implementation, we'd track types for the local environment.
-        let universe_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
-        let quoted = quote(db, global, depth, &universe_ty, value)?;
-        closure_values.push(quoted);
+    // Look up the metavariable info to get the argument types.
+    let meta_info = global
+        .metavariable(sem_meta.id)
+        .map_err(|_| Error::IllTyped)?;
+
+    // Create an environment for evaluating the type of each argument.
+    let mut env = Environment {
+        global: global,
+        local: LocalEnv::new(),
+    };
+
+    // Quote each value in the local environment to build the substitution.
+    let mut substitution = Vec::new();
+    for (value, syn_ty) in sem_meta.local.iter().zip(meta_info.arguments.iter()) {
+        // Evaluate the type of the current argument.
+        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
+
+        // Quote the current argument with its proper type.
+        let quoted = quote(db, global, depth, &sem_ty, value)?;
+        substitution.push(quoted);
+
+        // Push the semantic argument into the environment for subsequent iterations.
+        env.push(value.clone());
     }
 
-    // Create the closure from the quoted values.
-    let closure = crate::syn::Closure::with_values(closure_values);
-
-    // Create the metavariable syntax node.
-    let meta_syntax = Syntax::metavariable(crate::syn::MetavariableId(sem_meta.id.0), closure);
+    // Create the metavariable syntax node with the substitution.
+    let meta_syntax = Syntax::metavariable(sem_meta.id, substitution);
 
     Ok(Rc::new(meta_syntax))
 }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::Constraint;
 use hwml_core::common::*;
 use hwml_core::syn::basic::*;
-use hwml_core::syn::{Closure, ConstantId, MetavariableId};
+use hwml_core::syn::{Closure, ConstantId};
 
 /// A custom environment for the elaborator that tracks types and provides
 /// the methods needed for context manipulation.
@@ -81,7 +81,7 @@ pub struct State<'db> {
     closure: Closure<'db>,
     env: ElabEnvironment<'db>,
     name_map: NameMap,
-    solved_metas: HashMap<MetavariableId, RcSyntax<'db>>,
+    solved_metas: HashMap<MetaVariableId, RcSyntax<'db>>,
     next_metavariable_id: usize,
 }
 
@@ -153,20 +153,20 @@ impl<'db> State<'db> {
         self.env.lookup(level)
     }
 
-    pub fn fresh_metavariable_id(&mut self) -> MetavariableId {
-        let id = MetavariableId(self.next_metavariable_id);
+    pub fn fresh_metavariable_id(&mut self) -> MetaVariableId {
+        let id = MetaVariableId(self.next_metavariable_id);
         self.next_metavariable_id += 1;
         id
     }
 
-    pub fn solve_metavariable_id(&mut self, meta: MetavariableId, tm: RcSyntax<'db>) {
+    pub fn solve_metavariable_id(&mut self, meta: MetaVariableId, tm: RcSyntax<'db>) {
         assert!(!self.solved_metas.contains_key(&meta));
         self.solved_metas.insert(meta, tm);
     }
 
     /// Create a new metavariable under the current context.
-    pub fn metavariable(&mut self, id: MetavariableId) -> RcSyntax<'db> {
-        Syntax::metavariable_rc(id, self.closure.clone())
+    pub fn metavariable(&mut self, id: MetaVariableId) -> RcSyntax<'db> {
+        Syntax::metavariable_rc(id, self.closure.values.clone())
     }
 
     /// Create a fresh metavariable under the current context.
@@ -188,7 +188,7 @@ impl<'db> State<'db> {
         lhs: RcSyntax<'db>,
         rhs: RcSyntax<'db>,
         ty: RcSyntax<'db>,
-    ) -> MetavariableId {
+    ) -> MetaVariableId {
         let antiunifier = self.fresh_metavariable_id();
         let constraint = Constraint::equality(lhs, rhs, ty, antiunifier);
         self.register_constraint(constraint);

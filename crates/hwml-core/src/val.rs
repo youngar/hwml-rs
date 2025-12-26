@@ -522,6 +522,11 @@ pub struct LookupError<'db> {
     pub id: ConstantId<'db>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MetavariableLookupError {
+    pub id: MetaVariableId,
+}
+
 #[derive(Clone, Debug)]
 pub enum Global<'db> {
     Definition(Rc<Value<'db>>),
@@ -533,12 +538,15 @@ pub enum Global<'db> {
 pub struct GlobalEnv<'db> {
     /// Constant environment mapping ConstantId to values.
     constants: HashMap<ConstantId<'db>, Global<'db>>,
+    /// Metavariable context mapping MetaVariableId to metavariable info.
+    metavariables: HashMap<MetaVariableId, MetavariableInfo<'db>>,
 }
 
 impl<'db> GlobalEnv<'db> {
     pub fn new() -> Self {
         Self {
             constants: HashMap::new(),
+            metavariables: HashMap::new(),
         }
     }
 
@@ -602,6 +610,25 @@ impl<'db> GlobalEnv<'db> {
     /// Add a data constructor to the global environment.
     pub fn add_data_constructor(&mut self, name: ConstantId<'db>, info: DataConstructorInfo<'db>) {
         self.constants.insert(name, Global::DataConstructor(info));
+    }
+
+    /// Add a metavariable with its type to the global environment.
+    pub fn add_metavariable<Args>(&mut self, id: MetaVariableId, args: Args, ty: RcSyntax<'db>)
+    where
+        Args: Into<Telescope<'db>>,
+    {
+        self.metavariables
+            .insert(id, MetavariableInfo::new(args, ty));
+    }
+
+    /// Lookup metavariable info by id.
+    pub fn metavariable(
+        &self,
+        id: MetaVariableId,
+    ) -> Result<&MetavariableInfo<'db>, MetavariableLookupError> {
+        self.metavariables
+            .get(&id)
+            .ok_or(MetavariableLookupError { id })
     }
 }
 
@@ -731,6 +758,26 @@ impl<'db> DataConstructorInfo<'db> {
         Args: Into<Telescope<'db>>,
     {
         DataConstructorInfo {
+            arguments: args.into(),
+            ty,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MetavariableInfo<'db> {
+    /// The telescope of argument types (the substitution).
+    pub arguments: Telescope<'db>,
+    /// The final type of the metavariable.
+    pub ty: RcSyntax<'db>,
+}
+
+impl<'db> MetavariableInfo<'db> {
+    pub fn new<Args>(args: Args, ty: RcSyntax<'db>) -> Self
+    where
+        Args: Into<Telescope<'db>>,
+    {
+        MetavariableInfo {
             arguments: args.into(),
             ty,
         }

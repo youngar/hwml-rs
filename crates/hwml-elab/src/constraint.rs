@@ -1,3 +1,4 @@
+use hwml_core::common::MetaVariableId;
 use hwml_core::syn::*;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
@@ -18,7 +19,7 @@ impl<'db> Constraint<'db> {
         lhs: RcSyntax<'db>,
         rhs: RcSyntax<'db>,
         ty: RcSyntax<'db>,
-        meta: MetavariableId,
+        meta: MetaVariableId,
     ) -> Self {
         Self::new(ConstraintData::EqualityConstraint(EqualityConstraint {
             lhs,
@@ -40,5 +41,5 @@ pub struct EqualityConstraint<'db> {
     pub lhs: RcSyntax<'db>,
     pub rhs: RcSyntax<'db>,
     pub ty: RcSyntax<'db>,
-    pub meta: MetavariableId,
+    pub meta: MetaVariableId,
 }

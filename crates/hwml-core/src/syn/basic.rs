@@ -1,4 +1,4 @@
-use crate::common::{Index, UniverseLevel};
+use crate::common::{Index, MetaVariableId, UniverseLevel};
 use crate::symbol::InternedString;
 use hwml_support::{FromWithDb, IntoWithDb};
 use salsa::Database;
@@ -83,16 +83,6 @@ impl<'a, 'db> IntoIterator for &'a Telescope<'db> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.bindings.iter()
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct MetavariableId(pub usize);
-
-impl std::fmt::Display for MetavariableId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "?{}", self.0)
     }
 }
 
@@ -225,12 +215,18 @@ impl<'db> Syntax<'db> {
     }
 
     // Create a metavariable syntax node with a reference to an existing metavariable.
-    pub fn metavariable(metavariable: MetavariableId, closure: Closure<'db>) -> Syntax<'db> {
-        Syntax::Metavariable(Metavariable::new(metavariable, closure))
+    pub fn metavariable(
+        metavariable: MetaVariableId,
+        substitution: Vec<RcSyntax<'db>>,
+    ) -> Syntax<'db> {
+        Syntax::Metavariable(Metavariable::new(metavariable, substitution))
     }
 
-    pub fn metavariable_rc(metavariable: MetavariableId, closure: Closure<'db>) -> RcSyntax<'db> {
-        Rc::new(Syntax::metavariable(metavariable, closure))
+    pub fn metavariable_rc(
+        metavariable: MetaVariableId,
+        substitution: Vec<RcSyntax<'db>>,
+    ) -> RcSyntax<'db> {
+        Rc::new(Syntax::metavariable(metavariable, substitution))
     }
 
     pub fn lift(tm: RcSyntax<'db>) -> Syntax<'db> {
@@ -389,16 +385,21 @@ impl Universe {
     }
 }
 
-// A reference to a metavariable. All metavariables have identity equality.
+// A reference to a metavariable with its substitution.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Metavariable<'db> {
-    pub id: MetavariableId,
-    pub closure: Closure<'db>,
+    pub id: MetaVariableId,
+    /// The substitution for the metavariable's context
+    pub substitution: Vec<RcSyntax<'db>>,
 }
 
 impl<'db> Metavariable<'db> {
-    pub fn new(id: MetavariableId, closure: Closure<'db>) -> Metavariable<'db> {
-        Metavariable { id, closure }
+    pub fn new(id: MetaVariableId, substitution: Vec<RcSyntax<'db>>) -> Metavariable<'db> {
+        Metavariable { id, substitution }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, RcSyntax<'db>> {
+        self.substitution.iter()
     }
 }
 
@@ -920,20 +921,21 @@ mod tests {
     #[test]
     fn test_metavariable_identity_equality() {
         // Metavariables use identity equality (id comparison)
-        let meta_id1 = MetavariableId(0);
-        let meta_id2 = MetavariableId(0);
-        let meta_id3 = MetavariableId(1);
+        use crate::common::MetaVariableId;
+        let meta_id1 = MetaVariableId(0);
+        let meta_id2 = MetaVariableId(0);
+        let meta_id3 = MetaVariableId(1);
 
-        let closure1 = Closure::new();
-        let closure2 = Closure::new();
+        let subst1 = vec![];
+        let subst2 = vec![];
 
-        let meta1 = Metavariable::new(meta_id1, closure1.clone());
-        let meta2 = Metavariable::new(meta_id2, closure2.clone());
-        let meta3 = Metavariable::new(meta_id3, closure1.clone());
+        let meta1 = Metavariable::new(meta_id1, subst1.clone());
+        let meta2 = Metavariable::new(meta_id2, subst2.clone());
+        let meta3 = Metavariable::new(meta_id3, subst1.clone());
 
-        // Same identity, even with different closures
+        // Same identity, even with different substitutions
         assert_eq!(meta1, meta2);
-        // Different identity, even with same closure
+        // Different identity, even with same substitution
         assert_ne!(meta1, meta3);
     }
 
@@ -1028,15 +1030,16 @@ mod tests {
 
     #[test]
     fn test_syntax_metavariable_equality() {
-        let meta_id1 = MetavariableId(0);
-        let meta_id2 = MetavariableId(0);
-        let meta_id3 = MetavariableId(1);
+        use crate::common::MetaVariableId;
+        let meta_id1 = MetaVariableId(0);
+        let meta_id2 = MetaVariableId(0);
+        let meta_id3 = MetaVariableId(1);
 
-        let closure = Closure::new();
+        let subst = vec![];
 
-        let syn1 = Syntax::metavariable(meta_id1, closure.clone());
-        let syn2 = Syntax::metavariable(meta_id2, closure.clone());
-        let syn3 = Syntax::metavariable(meta_id3, closure.clone());
+        let syn1 = Syntax::metavariable(meta_id1, subst.clone());
+        let syn2 = Syntax::metavariable(meta_id2, subst.clone());
+        let syn3 = Syntax::metavariable(meta_id3, subst.clone());
 
         assert_eq!(syn1, syn2);
         assert_ne!(syn1, syn3);
