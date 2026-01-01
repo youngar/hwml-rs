@@ -389,7 +389,7 @@ impl Universe {
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Metavariable<'db> {
     pub id: MetaVariableId,
-    /// The substitution for the metavariable's context
+    /// The substitution for the metavariable's context.
     pub substitution: Vec<RcSyntax<'db>>,
 }
 
