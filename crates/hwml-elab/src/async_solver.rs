@@ -1,13 +1,12 @@
+use hwml_core::common::MetaVariableId;
+use hwml_core::syn::RcSyntax;
 use slab::Slab;
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-use hwml_core::common::MetaVariableId;
-use hwml_core::syn::RcSyntax;
 
 // ============================================================================
 // RICH DEPENDENCY TRACKING
