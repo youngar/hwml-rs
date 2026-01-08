@@ -9,7 +9,6 @@ use crate::val::{Closure, Environment, LocalEnv, Value};
 use std::rc::Rc;
 
 pub struct TCEnvironment<'g, 'db> {
-    pub globals: &'g val::GlobalEnv<'db>,
     pub values: val::Environment<'g, 'db>,
     pub types: Vec<Rc<Value<'db>>>,
 }
@@ -174,7 +173,8 @@ pub fn type_synth_metavariable<'g, 'db>(
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     // Lookup the metavariable info in the global environment.
     let meta_info = env
-        .globals
+        .values
+        .global
         .metavariable(metavariable.id)
         .map_err(|_| Error::BadSynth {
             tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
@@ -197,7 +197,7 @@ pub fn type_synth_metavariable<'g, 'db>(
     {
         // Evaluate the expected argument type in a temporary environment with the local_env.
         let mut temp_env = Environment {
-            global: env.globals,
+            global: env.values.global,
             local: local_env.clone(),
         };
         let expected_ty = eval::eval(&mut temp_env, arg_ty).map_err(|_| Error::BadSynth {
@@ -214,7 +214,7 @@ pub fn type_synth_metavariable<'g, 'db>(
 
     // Evaluate the final type in the extended local environment.
     let mut temp_env = Environment {
-        global: env.globals,
+        global: env.values.global,
         local: local_env,
     };
     let meta_ty = eval::eval(&mut temp_env, &meta_info.ty).map_err(|_| Error::BadSynth {
@@ -481,16 +481,18 @@ fn type_check_data_constructor<'g, 'db>(
     match ty_exp {
         Value::TypeConstructor(tc) => {
             let dc_info = env
-                .globals
+                .values
+                .global
                 .data_constructor(dc.constructor)
                 .map_err(Error::LookupError)?;
             let tc_info = env
-                .globals
+                .values
+                .global
                 .type_constructor(tc.constructor)
                 .map_err(Error::LookupError)?;
 
             let mut ty_env = val::Environment {
-                global: env.globals,
+                global: env.values.global,
                 local: val::LocalEnv::new(),
             };
 
@@ -507,7 +509,7 @@ fn type_check_data_constructor<'g, 'db>(
             }
 
             let ty_got = eval::eval(&mut ty_env, &dc_info.ty)?;
-            match equal::is_type_convertible(env.globals, env.depth(), ty_exp, &ty_got) {
+            match equal::is_type_convertible(env.values.global, env.depth(), ty_exp, &ty_got) {
                 Ok(_) => Ok(()),
                 Err(_) => Err(Error::BadCheck {
                     tm: Rc::new(Syntax::DataConstructor(dc.clone())),
@@ -530,7 +532,7 @@ pub fn type_check_synth_term<'g, 'db>(
     ty1: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     let ty2 = type_synth(env, term)?;
-    match crate::equal::is_type_convertible(env.globals, env.depth(), ty1, &ty2) {
+    match crate::equal::is_type_convertible(env.values.global, env.depth(), ty1, &ty2) {
         Ok(()) => Ok(()),
         Err(_) => Err(Error::BadCheck {
             tm: Rc::new(term.clone()),

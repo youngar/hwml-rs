@@ -86,7 +86,6 @@ fn run_core(args: Args) {
     hwml_core::prelude::load(&db, &mut globals);
 
     let mut tc_env = hwml_core::check::TCEnvironment {
-        globals: &globals,
         values: val::Environment::new(&globals),
         types: Vec::new(),
     };
