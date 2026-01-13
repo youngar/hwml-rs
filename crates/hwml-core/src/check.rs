@@ -8,6 +8,7 @@ use crate::val;
 use crate::val::{Closure, Environment, LocalEnv, Value};
 use std::rc::Rc;
 
+#[derive(Clone, Debug)]
 pub struct TCEnvironment<'db, 'g> {
     pub values: val::Environment<'db, 'g>,
     pub types: Vec<Rc<Value<'db>>>,
@@ -109,8 +110,8 @@ impl<'db> From<eval::Error> for Error<'db> {
 use std::result::Result;
 
 /// Evaluate a syntactic term to a semantic value.
-fn eval<'gb, 'g>(
-    env: &TCEnvironment<'gb, 'g>,
+fn eval<'db, 'g>(
+    env: &TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     let mut sem_env = env.values.clone();
@@ -118,8 +119,8 @@ fn eval<'gb, 'g>(
 }
 
 /// Adaptor for running a closure from the semantic domain.
-fn run_closure<'gb, 'g, T>(
-    env: &TCEnvironment<'gb, 'g>,
+fn run_closure<'db, 'g, T>(
+    env: &TCEnvironment<'db, 'g>,
     closure: &val::Closure<'db>,
     args: T,
 ) -> Result<Rc<Value<'db>>, Error<'db>>
@@ -130,8 +131,8 @@ where
 }
 
 /// Synthesize (infer) types for variables and elimination forms.
-pub fn type_synth<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_synth<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     match term {
@@ -147,8 +148,8 @@ pub fn type_synth<'gb, 'g>(
 }
 
 /// Synthesize a type for a variable.
-pub fn type_synth_variable<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_synth_variable<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     variable: &syn::Variable,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     // Pull the type from the typing environment.
@@ -156,8 +157,8 @@ pub fn type_synth_variable<'gb, 'g>(
 }
 
 /// Synthesize the type of a term annotated with a type.
-pub fn type_synth_check<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_synth_check<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     check: &syn::Check<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     check_type(env, &check.ty)?;
@@ -168,7 +169,7 @@ pub fn type_synth_check<'gb, 'g>(
 
 /// Synthesize the type of a metavariable.
 pub fn type_synth_metavariable<'db, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+    env: &mut TCEnvironment<'db, 'g>,
     metavariable: &syn::Metavariable<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     // Lookup the metavariable info in the global environment.
@@ -225,8 +226,8 @@ pub fn type_synth_metavariable<'db, 'g>(
 }
 
 /// Synthesize the type of a function application.
-pub fn type_synth_application<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_synth_application<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     application: &syn::Application<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     // First synthesize the type of the term being applied.
@@ -249,8 +250,8 @@ pub fn type_synth_application<'gb, 'g>(
 }
 
 /// Synthesize the type of a case expression.
-pub fn type_synth_case<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_synth_case<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     case: &syn::Case<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     // First synthesize the type of the scrutinee.
@@ -366,8 +367,8 @@ pub fn type_synth_case<'gb, 'g>(
 }
 
 /// Check types of terms against an expected type.
-pub fn type_check<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_check<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
@@ -381,8 +382,8 @@ pub fn type_check<'gb, 'g>(
 }
 
 /// Typecheck a pi term.
-fn type_check_pi<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+fn type_check_pi<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     pi: &syn::Pi<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
@@ -407,8 +408,8 @@ fn type_check_pi<'gb, 'g>(
     result
 }
 
-fn type_check_lambda<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+fn type_check_lambda<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     lam: &syn::Lambda<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
@@ -431,8 +432,8 @@ fn type_check_lambda<'gb, 'g>(
     }
 }
 
-fn type_check_type_constructor<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+fn type_check_type_constructor<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     tcon: &syn::TypeConstructor<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
@@ -473,8 +474,8 @@ fn type_check_type_constructor<'gb, 'g>(
     }
 }
 
-fn type_check_data_constructor<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+fn type_check_data_constructor<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     dc: &syn::DataConstructor<'db>,
     ty_exp: &Value<'db>,
 ) -> Result<(), Error<'db>> {
@@ -526,8 +527,8 @@ fn type_check_data_constructor<'gb, 'g>(
 }
 
 // Synthesize a type for the term, then check for equality against the expected type.
-pub fn type_check_synth_term<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn type_check_synth_term<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
     ty1: &Value<'db>,
 ) -> Result<(), Error<'db>> {
@@ -543,8 +544,8 @@ pub fn type_check_synth_term<'gb, 'g>(
 }
 
 /// Check that the given term is a valid type.
-pub fn check_type<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+pub fn check_type<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
     // If the term is a pi, then we just check that it is valid.
@@ -569,8 +570,8 @@ pub fn check_type<'gb, 'g>(
 }
 
 /// Check that a pi is a valid type.
-fn check_pi_type<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+fn check_pi_type<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     pi: &stx::Pi<'db>,
 ) -> Result<(), Error<'db>> {
     // First check that the source-type of the pi is a type.
@@ -587,8 +588,8 @@ fn check_pi_type<'gb, 'g>(
     result
 }
 
-fn check_type_constructor_type<'gb, 'g>(
-    env: &mut TCEnvironment<'gb, 'g>,
+fn check_type_constructor_type<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
     tcon: &stx::TypeConstructor<'db>,
 ) -> Result<(), Error<'db>> {
     // Lookup the type constructor info.

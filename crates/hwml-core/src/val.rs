@@ -699,7 +699,7 @@ impl<'db> LocalEnv<'db> {
     }
 }
 
-impl<'gb, 'g> Extend<Rc<Value<'db>>> for Environment<'gb, 'g> {
+impl<'db, 'g> Extend<Rc<Value<'db>>> for Environment<'db, 'g> {
     fn extend<T>(&mut self, iter: T)
     where
         T: IntoIterator<Item = Rc<Value<'db>>>,

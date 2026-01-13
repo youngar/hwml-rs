@@ -14,8 +14,8 @@ pub enum Error {
     UnknownMetavariable,
 }
 
-pub fn eval<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+pub fn eval<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     stx: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     match stx {
@@ -36,29 +36,29 @@ pub fn eval<'gb, 'g>(
     }
 }
 
-fn eval_constant<'gb, 'g>(
-    _env: &mut Environment<'gb, 'g>,
+fn eval_constant<'db, 'g>(
+    _env: &mut Environment<'db, 'g>,
     constant: &syn::Constant<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::Constant(constant.name)))
 }
 
-fn eval_variable<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_variable<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     var: &syn::Variable,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(env.get(var.index.to_level(env.depth())).clone())
 }
 
-fn eval_check<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_check<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     chk: &syn::Check<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     eval(env, &chk.term)
 }
 
-fn eval_type_constructor<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_type_constructor<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     type_constructor: &syn::TypeConstructor<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments
@@ -74,8 +74,8 @@ fn eval_type_constructor<'gb, 'g>(
     Ok(Rc::new(type_constructor_value))
 }
 
-fn eval_data_constructor<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_data_constructor<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     data_constructor: &syn::DataConstructor<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments
@@ -90,8 +90,8 @@ fn eval_data_constructor<'gb, 'g>(
     Ok(Rc::new(data_value))
 }
 
-fn eval_pi<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_pi<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     pi: &syn::Pi<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     let source = eval(env, &pi.source)?;
@@ -99,8 +99,8 @@ fn eval_pi<'gb, 'g>(
     Ok(Rc::new(Value::pi(source, target)))
 }
 
-fn eval_lambda<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_lambda<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     lambda: &syn::Lambda<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::Lambda(dom::Lambda {
@@ -108,15 +108,15 @@ fn eval_lambda<'gb, 'g>(
     })))
 }
 
-fn eval_universe<'gb, 'g>(
-    _: &mut Environment<'gb, 'g>,
+fn eval_universe<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
     universe: &syn::Universe,
 ) -> Result<Rc<Value<'db>>, Error> {
     Ok(Rc::new(Value::universe(universe.level)))
 }
 
-fn eval_metavariable<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_metavariable<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     meta: &syn::Metavariable<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate all the arguments in the substitution to build the local environment.
@@ -150,8 +150,8 @@ fn eval_metavariable<'gb, 'g>(
     Ok(Rc::new(Value::Flex(flex)))
 }
 
-fn eval_application<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_application<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     application: &stx::Application<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the function and argument to a value, then perform the substitution.
@@ -235,8 +235,8 @@ fn apply_flex<'db>(
     Ok(Rc::new(Value::Flex(new_flex)))
 }
 
-fn eval_case<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_case<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     case: &stx::Case<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the scrutinee expression
@@ -404,7 +404,7 @@ where
 }
 
 /// Evaluate a telescope to a list of types.
-pub fn eval_telescope<'gb, 'g, T>(
+pub fn eval_telescope<'db, 'g, T>(
     global: &'g GlobalEnv<'db>,
     params: T,
     telescope: &stx::Telescope<'db>,

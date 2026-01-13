@@ -33,8 +33,8 @@ fn parse_and_print<'db>(db: &'db Database, input: &'db str) -> Result<RcSyntax<'
 }
 
 /// Evaluate syntax and print the result.
-fn eval_and_print<'gb, 'g>(
-    env: &mut Environment<'gb, 'g>,
+fn eval_and_print<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
     syntax: &RcSyntax<'db>,
 ) -> Result<Rc<Value<'db>>, String> {
     let value = eval::eval(env, syntax).map_err(|e| format!("Eval error: {:?}", e))?;
