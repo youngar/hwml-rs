@@ -121,8 +121,8 @@ impl<'db> From<eval::Error> for UnificationError<'db> {
 ///
 /// This is essential for the async solver because metavariables may be solved
 /// concurrently by other tasks, and we need to pick up those solutions.
-fn force<'g, 'db>(
-    ctx: &SolverEnvironment<'g, 'db>,
+fn force<'gb, 'g>(
+    ctx: &SolverEnvironment<'gb, 'g>,
     mut value: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
     while let Value::Flex(flex) = &*value {
@@ -194,11 +194,12 @@ impl Renaming {
     }
 }
 
+pub fn unification_of<'db, 'g>(ctx: SolverEnvironment<')
 /// Async unification function.
 /// Instead of returning a Blocker, this function uses .await to suspend when blocked.
 /// This version works with Values (normalized terms) instead of Syntax.
 pub async fn unify<'g: 'db, 'db>(
-    ctx: SolverEnvironment<'g, 'db>,
+    ctx: SolverEnvironment<'gb, 'g>,
     lhs: Rc<Value<'db>>,
     rhs: Rc<Value<'db>>,
 ) -> Result<(), UnificationError<'db>> {
@@ -483,7 +484,7 @@ pub async fn unify<'g: 'db, 'db>(
 
 /// Unify two eliminators (applications, projections, etc.)
 async fn unify_eliminator<'g: 'db, 'db>(
-    ctx: SolverEnvironment<'g, 'db>,
+    ctx: SolverEnvironment<'gb, 'g>,
     lhs: &Eliminator<'db>,
     rhs: &Eliminator<'db>,
 ) -> Result<(), UnificationError<'db>> {
@@ -512,7 +513,7 @@ async fn unify_eliminator<'g: 'db, 'db>(
 /// Unify two spines (sequences of eliminators).
 /// This is a helper function used in Rigid-Rigid and Flex-Flex unification.
 async fn unify_spine<'g: 'db, 'db>(
-    ctx: SolverEnvironment<'g, 'db>,
+    ctx: SolverEnvironment<'gb, 'g>,
     spine1: &hwml_core::val::Spine<'db>,
     spine2: &hwml_core::val::Spine<'db>,
 ) -> Result<(), UnificationError<'db>> {
@@ -538,8 +539,8 @@ async fn unify_spine<'g: 'db, 'db>(
 ///
 /// A spine is a valid pattern if it consists only of distinct variables.
 /// Returns a renaming that maps the variables in the spine to a fresh context.
-fn invert<'g, 'db>(
-    ctx: &SolverEnvironment<'g, 'db>,
+fn invert<'gb, 'g>(
+    ctx: &SolverEnvironment<'gb, 'g>,
     depth: usize,
     spine: &hwml_core::val::Spine<'db>,
 ) -> Result<Renaming, UnificationError<'db>> {
@@ -572,8 +573,8 @@ fn invert<'g, 'db>(
 }
 
 /// Rename an eliminator according to a renaming.
-fn rename_eliminator<'g, 'db>(
-    ctx: &SolverEnvironment<'g, 'db>,
+fn rename_eliminator<'gb, 'g>(
+    ctx: &SolverEnvironment<'gb, 'g>,
     meta: &hwml_core::val::MetaVariable<'db>,
     renaming: &mut Renaming,
     eliminator: &hwml_core::val::Eliminator<'db>,
@@ -594,8 +595,8 @@ fn rename_eliminator<'g, 'db>(
 }
 
 /// Rename a spine according to a renaming.
-fn rename_spine<'g, 'db>(
-    ctx: &SolverEnvironment<'g, 'db>,
+fn rename_spine<'gb, 'g>(
+    ctx: &SolverEnvironment<'gb, 'g>,
     meta: &hwml_core::val::MetaVariable<'db>,
     renaming: &mut Renaming,
     spine: &hwml_core::val::Spine<'db>,
@@ -610,8 +611,8 @@ fn rename_spine<'g, 'db>(
 /// Rename a value according to a renaming.
 ///
 /// This performs occurs check and scope check while renaming.
-fn rename<'g, 'db>(
-    ctx: &SolverEnvironment<'g, 'db>,
+fn rename<'gb, 'g>(
+    ctx: &SolverEnvironment<'gb, 'g>,
     meta: &hwml_core::val::MetaVariable<'db>,
     renaming: &mut Renaming,
     value: &Rc<Value<'db>>,
@@ -699,7 +700,7 @@ fn rename<'g, 'db>(
 /// The metavariable carries its context via the `local` field, and when the solution
 /// is looked up via `force()`, the local environment is applied to instantiate it.
 async fn solve<'g: 'db, 'db>(
-    ctx: SolverEnvironment<'g, 'db>,
+    ctx: SolverEnvironment<'gb, 'g>,
     depth: usize,
     meta_variable: &hwml_core::val::MetaVariable<'db>,
     spine: &hwml_core::val::Spine<'db>,

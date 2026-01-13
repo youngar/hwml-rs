@@ -406,12 +406,12 @@ impl<'db> CaseBranch<'db> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Environment<'g, 'db> {
+pub struct Environment<'db, 'g> {
     pub global: &'g GlobalEnv<'db>,
     pub local: LocalEnv<'db>,
 }
 
-impl<'g, 'db> Environment<'g, 'db> {
+impl<'db, 'g> Environment<'db, 'g> {
     pub fn new(global: &'g GlobalEnv<'db>) -> Self {
         Self {
             global,
@@ -699,7 +699,7 @@ impl<'db> LocalEnv<'db> {
     }
 }
 
-impl<'g, 'db> Extend<Rc<Value<'db>>> for Environment<'g, 'db> {
+impl<'gb, 'g> Extend<Rc<Value<'db>>> for Environment<'gb, 'g> {
     fn extend<T>(&mut self, iter: T)
     where
         T: IntoIterator<Item = Rc<Value<'db>>>,

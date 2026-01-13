@@ -173,18 +173,18 @@ impl<'db> SolverState<'db> {
 /// A shared handle to the solver state.
 /// This is cloned and passed to all constraint futures.
 #[derive(Clone)]
-pub struct SolverEnvironment<'g, 'db> {
+pub struct SolverEnvironment<'gb, 'g> {
     /// Shared reference to the solver state
     pub state: Rc<RefCell<SolverState<'db>>>,
     /// Type-checking environment for evaluation and type checking
-    pub tc_env: Rc<TCEnvironment<'g, 'db>>,
+    pub tc_env: Rc<TCEnvironment<'gb, 'g>>,
     /// Task spawner for spawning concurrent unification tasks
     pub spawner: TaskSpawner<'db>,
 }
 
-impl<'g, 'db> SolverEnvironment<'g, 'db> {
+impl<'gb, 'g> SolverEnvironment<'gb, 'g> {
     /// Create a new context handle with the given type-checking environment and spawner
-    pub fn new(tc_env: TCEnvironment<'g, 'db>, spawner: TaskSpawner<'db>) -> Self {
+    pub fn new(tc_env: TCEnvironment<'gb, 'g>, spawner: TaskSpawner<'db>) -> Self {
         SolverEnvironment {
             state: Rc::new(RefCell::new(SolverState::new())),
             tc_env: Rc::new(tc_env),
@@ -292,25 +292,25 @@ impl<'g, 'db> SolverEnvironment<'g, 'db> {
 /// A Future that blocks until a specific MetaVar is solved.
 /// This replaces the `BlockOnMeta` constructor in Haskell.
 /// Now includes a reason for blocking to enable rich error reporting.
-pub struct WaitForResolved<'g, 'db> {
-    ctx: SolverEnvironment<'g, 'db>,
+pub struct WaitForResolved<'gb, 'g> {
+    ctx: SolverEnvironment<'gb, 'g>,
     meta: MetaVariableId,
     reason: BlockReason,
 }
 
-impl<'g, 'db> WaitForResolved<'g, 'db> {
+impl<'gb, 'g> WaitForResolved<'gb, 'g> {
     /// Create a new future that waits for a metavariable to be resolved.
     ///
     /// # Arguments
     /// * `ctx` - The solver context
     /// * `meta` - The metavariable to wait for
     /// * `reason` - Why we're waiting (for error reporting)
-    pub fn new(ctx: SolverEnvironment<'g, 'db>, meta: MetaVariableId, reason: BlockReason) -> Self {
+    pub fn new(ctx: SolverEnvironment<'gb, 'g>, meta: MetaVariableId, reason: BlockReason) -> Self {
         WaitForResolved { ctx, meta, reason }
     }
 }
 
-impl<'g, 'db> Future for WaitForResolved<'g, 'db> {
+impl<'gb, 'g> Future for WaitForResolved<'gb, 'g> {
     type Output = Rc<Value<'db>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -409,7 +409,7 @@ impl<'db> SingleThreadedExecutor<'db> {
     /// The main loop. Runs until all tasks are done or stalled.
     /// Returns Ok if all tasks completed successfully.
     /// Returns Err if any task failed or if there's a deadlock.
-    pub fn run<'g>(&mut self, ctx: &SolverEnvironment<'g, 'db>) -> Result<(), String> {
+    pub fn run<'g>(&mut self, ctx: &SolverEnvironment<'gb, 'g>) -> Result<(), String> {
         println!("[Executor] Starting execution");
 
         loop {
