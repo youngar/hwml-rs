@@ -21,3 +21,6 @@ pub use util::*;
 
 pub mod async_solver;
 pub use async_solver::*;
+
+pub mod unify;
+pub use unify::UnificationError;
