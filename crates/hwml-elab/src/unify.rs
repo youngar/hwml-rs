@@ -394,7 +394,7 @@ pub async fn unify<'db, 'g>(
         // Eta-expansion: non-lambda on left, Lambda on right
         // Unify t with λx. body by unifying (t x) with body
         (_, Value::Lambda(lam)) => {
-            println!("[Unify] Eta-expansion: Lambda on left");
+            println!("[Unify] Eta-expansion: Lambda on right");
             let Value::Pi(pi) = &*ty else {
                 return Err(UnificationError::Generic(
                     "Expected Pi type for lambda unification".to_string(),
@@ -404,18 +404,18 @@ pub async fn unify<'db, 'g>(
             // Create a fresh variable to instantiate the lambda.
             let var = ctx.tc_env.push_var(pi.source.clone());
 
-            // Instantiate the lambda body with the fresh variable.
-            let rhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
-
             // Apply the right side to the fresh variable
             let lhs_applied = run_application(ctx.tc_env.values.global, &lhs, var.clone())?;
+
+            // Instantiate the lambda body with the fresh variable.
+            let rhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
 
             // Instantiate the codomain type with the fresh variable.
             let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
 
             // Unify the lambda body with the applied right side
-            println!("[Unify] Unifying lambda body with applied term");
-            Box::pin(unify(ctx, rhs_body, lhs_applied, codomain)).await
+            println!("[Unify] Unifying applied term with lambda body");
+            Box::pin(unify(ctx, lhs_applied, rhs_body, codomain)).await
         }
 
         // Handle TypeConstructor injectivity
@@ -714,46 +714,67 @@ async fn unify_spine<'g: 'db, 'db>(
     Ok(())
 }
 
-// ============================================================================
-// PATTERN UNIFICATION
-// ============================================================================
-
-/// Invert a spine to check if it's a valid pattern and build a renaming.
+/// Perform lowering on a flexible term with a non-empty spine.
+/// U : Pi A B |- U[S] => V : B |- U[S] <- \x. V[S, x]
 ///
-/// A spine is a valid pattern if it consists only of distinct variables.
-/// Returns a renaming that maps the variables in the spine to a fresh context.
-fn invert<'db, 'g>(
-    ctx: &SolverEnvironment<'db, 'g>,
-    depth: usize,
-    spine: &hwml_core::val::Spine<'db>,
-) -> Result<Renaming, UnificationError<'db>> {
-    let mut renaming = Renaming::new();
-    renaming.cod_len = depth;
+///
+/// Val::Lam(env, body: Syntax {
+///   App(App(Meta(V), S), x)
+/// })
+///
+/// Flex(U[S], [z])
+/// (\x. V S.. x) [z]
+/// VFlex[]
+///
+async fn lower_flex<'g: 'db, 'db>(
+    ctx: SolverEnvironment<'db, 'g>,
+    flex: hwml_core::val::Flex<'db>,
+) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
+    let mut env = flex.head.local.clone();
 
-    for eliminator in spine.iter() {
-        match eliminator {
-            hwml_core::val::Eliminator::Application(a) => {
-                // Force the argument to see if it's a variable
-                let head = force(ctx, a.argument.value.clone())?;
-                match &*head {
-                    Value::Rigid(r) if r.spine.is_empty() => {
-                        // Check for non-linearity (variable appears twice)
-                        if renaming.map.contains_key(&r.head.level) {
-                            return Err(UnificationError::NonLinearApplication(eliminator.clone()));
-                        }
-                        renaming.insert(r.head.level);
-                    }
-                    // Not a variable - blocked solution
-                    _ => return Err(UnificationError::BlockedSolution(eliminator.clone())),
-                }
+    // Create the inner term of the lambda
+    // Given, ?M[S] a b c, create ?N[S, a, b, c]
+    for elim in flex.spine.iter() {
+        match elim {
+            hwml_core::val::Eliminator::Application(app) => {
+                env.push(app.argument.value.clone());
             }
-            // Case eliminators not supported yet
-            _ => return Err(UnificationError::BlockedSolution(eliminator.clone())),
+            _ => {
+                todo!("Lowering for non-application eliminators not implemented yet");
+            }
         }
     }
 
-    Ok(renaming)
+    // TODO: THIS DOES NOT WORK AT ALL
+    // to wrap the metavariable up in lambdas, we need a closure for the body
+    // this is a pair of environment and syntax
+    // we need probably need to perform real renaming here...
+    let mut term = Rc::new(Value::flex(
+        flex.head,
+        hwml_core::val::Spine::new(vec![]),
+        flex.ty,
+    ));
+
+    // Wrap the term in constructors.
+    // Given, ?M[S] a b c, create \a .(\b .(\c .?N[S, a, b, c, x]))
+    for elim in flex.spine.iter().rev() {
+        match elim {
+            hwml_core::val::Eliminator::Application(app) => {
+                let arg_value = app.argument.value.clone();
+                term = run_application(ctx.tc_env.values.global, &term, arg_value)?;
+            }
+            _ => {
+                todo!("Lowering for non-application eliminators not implemented yet");
+            }
+        }
+    }
+
+    Ok(term)
 }
+
+// ============================================================================
+// PATTERN UNIFICATION
+// ============================================================================
 
 /// Rename an eliminator according to a renaming.
 fn rename_eliminator<'db, 'g>(
