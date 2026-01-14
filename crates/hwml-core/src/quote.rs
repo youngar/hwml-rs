@@ -130,6 +130,18 @@ pub fn quote_type<'db>(
         Value::Pi(pi) => quote_pi(db, global, depth, pi),
         Value::TypeConstructor(tc) => quote_type_constructor(db, global, depth, tc),
         Value::Universe(universe) => quote_universe(db, depth, universe),
+        Value::Rigid(_) | Value::Flex(_) => quote_neutral_instance(db, global, depth, value),
+        _ => Err(Error::IllTyped),
+    }
+}
+
+fn quote_neutral_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    neutral: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match neutral {
         Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
         Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped),
