@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use crate::State;
 use hwml_core::common::*;
 use hwml_core::syn::basic::*;
 use hwml_core::syn::*;
