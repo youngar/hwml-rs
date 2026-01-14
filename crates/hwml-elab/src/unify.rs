@@ -1,16 +1,22 @@
+use futures::future::join_all;
 use futures::join;
 use futures::TryFutureExt;
 use hwml_core::common::{Level, MetaVariableId};
 use hwml_core::equal::is_type_convertible;
 use hwml_core::eval::{self, run_application, run_closure, run_spine};
+use hwml_core::val::Environment;
+use hwml_core::val::LocalEnv;
 use hwml_core::val::{Eliminator, Value};
+use itertools::izip;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::rc::Rc;
 
+use crate::BlockReason;
+use crate::WaitForResolved;
 // Import the SolverEnvironment from async_solver
-use crate::async_solver::SolverEnvironment;
+use crate::engine::SolverEnvironment;
 
 /// Unification error type for the async unifier.
 #[derive(Debug, Clone)]
@@ -43,6 +49,8 @@ pub enum UnificationError<'db> {
     ScopingError(Rc<Value<'db>>),
     /// Quotation error
     Quote(String),
+    /// Generic error
+    Generic(String),
 }
 
 impl<'db> fmt::Display for UnificationError<'db> {
@@ -112,6 +120,27 @@ impl<'db> From<eval::Error> for UnificationError<'db> {
     fn from(e: eval::Error) -> Self {
         UnificationError::Eval(e)
     }
+}
+
+async fn whnf<'db, 'g>(
+    ctx: &SolverEnvironment<'db, 'g>,
+    mut value: Rc<Value<'db>>,
+) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
+    while let Value::Flex(flex) = &*value {
+        let solution =
+            WaitForResolved::new(ctx.clone(), flex.head.id, BlockReason::generic("whnf")).await;
+        println!("[WHNF] Substituting meta {} with solution", flex.head.id);
+        // First, apply the solution to the local substitution.
+        // With contextual metavariables, the solution is a value in the metavariable's
+        // context. We apply the local environment to instantiate it in the current context.
+        let mut result = solution.clone();
+        for arg in flex.head.local.iter() {
+            result = run_application(ctx.tc_env.values.global, &result, arg.clone())?;
+        }
+        // Then apply the spine.
+        value = run_spine(ctx.tc_env.values.global, result, &flex.spine)?;
+    }
+    Ok(value)
 }
 
 /// Force the substitution of a metavariable with its solution, if available.
@@ -204,12 +233,24 @@ pub fn antiunify<'db, 'g>(
     lhs: Rc<Value<'db>>,
     rhs: Rc<Value<'db>>,
     ty: Rc<Value<'db>>,
-) -> (impl Future<Output = UnifyResult<'db>>, Rc<Value<'db>>) {
-    let meta_id = ctx.fresh_meta();
-    let future = unify(ctx, lhs, rhs, ty).map_ok(|()| {
-        ctx.define_meta(meta_id, lhs);
-    });
-    (future, Rc::new(Value::metavariable(meta_id, local_env)))
+) -> (impl Future<Output = UnifyResult<'db>> + 'g, Rc<Value<'db>>) {
+    // Clone values that need to be used multiple times
+    let meta_id = ctx.fresh_meta_id(ty.clone());
+    let local_env = ctx.tc_env.values.local.clone();
+    let ty_clone = ty.clone();
+    let lhs_clone = lhs.clone();
+    let ctx_clone = ctx.clone();
+
+    let future = async move {
+        unify(ctx, lhs, rhs, ty).await?;
+        ctx_clone.define_meta(meta_id, lhs_clone);
+        Ok(())
+    };
+
+    (
+        future,
+        Rc::new(Value::metavariable(meta_id, local_env, ty_clone)),
+    )
 }
 
 pub async fn unify<'db, 'g>(
@@ -219,6 +260,8 @@ pub async fn unify<'db, 'g>(
     ty: Rc<Value<'db>>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Unifying {:?} == {:?}", lhs, rhs);
+
+    // Force the current type, block if it's a metavariable.
 
     // Force both sides to substitute any solved metavariables.
     let lhs = force(&ctx, lhs)?;
@@ -253,47 +296,45 @@ pub async fn unify<'db, 'g>(
             println!("[Unify] Pi injectivity");
 
             // Unify the domains.
-            let dom_fut = Box::pin(unify(ctx.clone(), pi1.source.clone(), pi2.source.clone()));
+            let dom_fut = Box::pin(unify(
+                ctx.clone(),
+                pi1.source.clone(),
+                pi2.source.clone(),
+                ty.clone(),
+            ));
 
-            // Create a fresh metavariable for the anti-unifier's domain type. This will be solved once the domain unification completes.
-            let dom_meta = ctx.fresh_meta();
+            // Create a fresh metavariable for the anti-unifier's domain type.
+            // This will be solved once the domain unification completes.
+            let dom_meta = ctx.fresh_meta_id(ty.clone());
             println!(
                 "[Unify] Created domain anti-unifier metavariable {}",
                 dom_meta
             );
-            let dom_ty = Rc::new(Value::metavariable(
-                dom_meta,
-                ctx.tc_env.values.local.clone(),
-            ));
-            let dom_val = Rc::new(Value::variable(
-                dom_ty.clone(),
-                Level::new(ctx.tc_env.values.depth()),
-            ));
+            let dom_fut = async {
+                // If domain unification succeeded, solve the domain metavariable.
+                dom_fut.await?;
+                ctx.define_meta(dom_meta, pi1.source.clone());
+                Ok(())
+            };
 
             // Instantiate both closures with the fresh variable to get codomain values.
-            let cod1 = run_closure(ctx.tc_env.values.global, &pi1.target, [dom_val.clone()])?;
-            let cod2 = run_closure(ctx.tc_env.values.global, &pi2.target, [dom_val])?;
+            let dom_var_ty = Rc::new(Value::metavariable(
+                dom_meta,
+                ctx.tc_env.values.local.clone(),
+                ty.clone(),
+            ));
+            let dom_var = ctx.tc_env.push_var(dom_var_ty.clone());
+            let cod1 = run_closure(ctx.tc_env.values.global, &pi1.target, [dom_var.clone()])?;
+            let cod2 = run_closure(ctx.tc_env.values.global, &pi2.target, [dom_var])?;
 
             // Unify the codomains concurrently with the domain
             println!("[Unify] Unifying Pi codomains: {:?} == {:?}", cod1, cod2);
-            let cod_fut = Box::pin(unify(ctx.clone(), cod1, cod2));
+            let cod_fut = Box::pin(unify(ctx, cod1, cod2, ty.clone()));
 
             // Wait for both domain and codomain unification to complete concurrently.
-            let (dom_result, cod_result): (
-                Result<(), UnificationError<'db>>,
-                Result<(), UnificationError<'db>>,
-            ) = join!(
-                async {
-                    // If domain unification succeeded, solve the domain metavariable.
-                    // The anti-unifier for the domain is just the domain itself (since they unified).
-                    dom_fut.await?;
-                    ctx.define_meta(dom_meta, pi1.source.clone());
-                    Ok(())
-                },
-                cod_fut
-            );
+            let (dom_result, cod_result) = join!(dom_fut, cod_fut);
 
-            // Propagate codomain errors first
+            // Propagate domain errors first, codomain errors second.
             dom_result?;
             cod_result
         }
@@ -302,66 +343,84 @@ pub async fn unify<'db, 'g>(
         // Similar pattern to Pi: instantiate closures with fresh variable and unify bodies
         (Value::Lambda(lam1), Value::Lambda(lam2)) => {
             println!("[Unify] Lambda injectivity");
+            let Value::Pi(pi) = &*ty else {
+                return Err(UnificationError::Generic(
+                    "Expected Pi type for lambda unification".to_string(),
+                ));
+            };
 
             // Create a fresh variable to instantiate both lambda bodies
-            // We use Universe(0) as a placeholder type since we don't have the domain type here
-            let current_depth = ctx.tc_env.values.depth();
-            let placeholder_ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-            let fresh_var = Rc::new(Value::variable(placeholder_ty, Level::new(current_depth)));
+            let var = ctx.tc_env.push_var(pi.source.clone());
 
             // Instantiate both closures with the fresh variable
-            let body1 = run_closure(ctx.tc_env.values.global, &lam1.body, [fresh_var.clone()])?;
-            let body2 = run_closure(ctx.tc_env.values.global, &lam2.body, [fresh_var])?;
+            let body1 = run_closure(ctx.tc_env.values.global, &lam1.body, [var.clone()])?;
+            let body2 = run_closure(ctx.tc_env.values.global, &lam2.body, [var.clone()])?;
+
+            // Instantiate the codomain type with the fresh variable.
+            let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
 
             // Unify the bodies
             println!("[Unify] Unifying Lambda bodies: {:?} == {:?}", body1, body2);
-            Box::pin(unify(ctx, body1, body2)).await
+            Box::pin(unify(ctx, body1, body2, codomain)).await
         }
 
         // Eta-expansion: Lambda on left, non-lambda on right
         // Unify λx. body with t by unifying body with (t x)
         (Value::Lambda(lam), _) => {
             println!("[Unify] Eta-expansion: Lambda on left");
+            let Value::Pi(pi) = &*ty else {
+                return Err(UnificationError::Generic(
+                    "Expected Pi type for lambda unification".to_string(),
+                ));
+            };
 
-            // Create a fresh variable to instantiate the lambda
-            let current_depth = ctx.tc_env.values.depth();
-            let placeholder_ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-            let fresh_var = Rc::new(Value::variable(placeholder_ty, Level::new(current_depth)));
+            // Create a fresh variable to instantiate the lambda.
+            let var = ctx.tc_env.push_var(pi.source.clone());
 
-            // Instantiate the lambda body with the fresh variable
-            let body = run_closure(ctx.tc_env.values.global, &lam.body, [fresh_var.clone()])?;
+            // Instantiate the lambda body with the fresh variable.
+            let lhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
 
             // Apply the right side to the fresh variable
-            let rhs_applied = run_application(ctx.tc_env.values.global, &rhs, fresh_var)?;
+            let rhs_applied = run_application(ctx.tc_env.values.global, &rhs, var.clone())?;
+
+            // Instantiate the codomain type with the fresh variable.
+            let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
 
             // Unify the lambda body with the applied right side
             println!("[Unify] Unifying lambda body with applied term");
-            Box::pin(unify(ctx, body, rhs_applied)).await
+            Box::pin(unify(ctx, lhs_body, rhs_applied, codomain)).await
         }
 
         // Eta-expansion: non-lambda on left, Lambda on right
         // Unify t with λx. body by unifying (t x) with body
         (_, Value::Lambda(lam)) => {
-            println!("[Unify] Eta-expansion: Lambda on right");
+            println!("[Unify] Eta-expansion: Lambda on left");
+            let Value::Pi(pi) = &*ty else {
+                return Err(UnificationError::Generic(
+                    "Expected Pi type for lambda unification".to_string(),
+                ));
+            };
 
-            // Create a fresh variable to instantiate the lambda
-            let current_depth = ctx.tc_env.values.depth();
-            let placeholder_ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-            let fresh_var = Rc::new(Value::variable(placeholder_ty, Level::new(current_depth)));
+            // Create a fresh variable to instantiate the lambda.
+            let var = ctx.tc_env.push_var(pi.source.clone());
 
-            // Apply the left side to the fresh variable
-            let lhs_applied = run_application(ctx.tc_env.values.global, &lhs, fresh_var.clone())?;
+            // Instantiate the lambda body with the fresh variable.
+            let rhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
 
-            // Instantiate the lambda body with the fresh variable
-            let body = run_closure(ctx.tc_env.values.global, &lam.body, [fresh_var])?;
+            // Apply the right side to the fresh variable
+            let lhs_applied = run_application(ctx.tc_env.values.global, &lhs, var.clone())?;
 
-            // Unify the applied left side with the lambda body
-            println!("[Unify] Unifying applied term with lambda body");
-            Box::pin(unify(ctx, lhs_applied, body)).await
+            // Instantiate the codomain type with the fresh variable.
+            let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
+
+            // Unify the lambda body with the applied right side
+            println!("[Unify] Unifying lambda body with applied term");
+            Box::pin(unify(ctx, rhs_body, lhs_applied, codomain)).await
         }
 
         // Handle TypeConstructor injectivity
         (Value::TypeConstructor(tc1), Value::TypeConstructor(tc2)) => {
+            // Check that the constructor is the same.
             if tc1.constructor != tc2.constructor {
                 return Err(UnificationError::TypeConstructorMismatch(
                     format!("{:?}", tc1.constructor),
@@ -374,15 +433,60 @@ pub async fn unify<'db, 'g>(
                     tc2.arguments.len(),
                 ));
             }
+
+            // Look up the type info.
+            let type_info = ctx
+                .tc_env
+                .values
+                .global
+                .type_constructor(tc1.constructor)
+                .map_err(|e| UnificationError::Generic(format!("{:?}", e)))?
+                .clone();
+
+            // Create a new environment.
+            let mut env = Environment {
+                global: ctx.tc_env.values.global,
+                local: LocalEnv::new(),
+            };
+
             println!("[Unify] Type constructor injectivity");
-            for (arg1, arg2) in tc1.arguments.iter().zip(tc2.arguments.iter()) {
-                Box::pin(unify(ctx.clone(), arg1.clone(), arg2.clone())).await?;
+
+            // Collect all futures into a vector
+            let mut arg_futs = Vec::new();
+            for (arg1, arg2, syn_ty) in izip!(
+                tc1.arguments.iter(),
+                tc2.arguments.iter(),
+                type_info.arguments.iter()
+            ) {
+                // Evaluate the type of the current argument.
+                let sem_ty = eval::eval(&mut env, &syn_ty)?;
+
+                // Unify the arguments.
+                let arg_fut = unify(ctx.clone(), arg1.clone(), arg2.clone(), sem_ty);
+                arg_futs.push(arg_fut);
+
+                // Push the semantic argument into the environment for the next iteration.
+                env.push(arg1.clone())
+            }
+
+            // Await all futures concurrently, and check the results from left to right.
+            let results = join_all(arg_futs).await;
+            for result in results {
+                result?;
             }
             Ok(())
         }
 
         // Handle DataConstructor injectivity
         (Value::DataConstructor(dc1), Value::DataConstructor(dc2)) => {
+            // Check that the type is a type constructor.
+            let Value::TypeConstructor(tc) = &*ty else {
+                return Err(UnificationError::Generic(
+                    "Expected type constructor type for data constructor unification".to_string(),
+                ));
+            };
+
+            // Check that the constructor is the same.
             if dc1.constructor != dc2.constructor {
                 return Err(UnificationError::DataConstructorMismatch(
                     format!("{:?}", dc1.constructor),
@@ -395,9 +499,61 @@ pub async fn unify<'db, 'g>(
                     dc2.arguments.len(),
                 ));
             }
+
+            // Look up the type constructor info.
+            let type_info = ctx
+                .tc_env
+                .values
+                .global
+                .type_constructor(tc.constructor)
+                .map_err(|e| UnificationError::Generic(format!("{:?}", e)))?
+                .clone();
+
+            // Look up the data constructor info.
+            let data_info = ctx
+                .tc_env
+                .values
+                .global
+                .data_constructor(dc1.constructor)
+                .map_err(|e| UnificationError::Generic(format!("{:?}", e)))?
+                .clone();
+
+            // Find the number of parameters.
+            let num_parameters = type_info.num_parameters();
+
+            // Create an array of just the parameters, leaving out the indices.
+            let parameters = tc.iter().take(num_parameters).cloned().collect();
+
+            // Create an environment for evaluating the type of each argument, with
+            // parameters in the context.
+            let mut env = Environment {
+                global: ctx.tc_env.values.global,
+                local: LocalEnv::new(),
+            };
+            env.extend(parameters);
+
             println!("[Unify] Data constructor injectivity");
-            for (arg1, arg2) in dc1.arguments.iter().zip(dc2.arguments.iter()) {
-                Box::pin(unify(ctx.clone(), arg1.clone(), arg2.clone())).await?;
+            let mut arg_futs = Vec::new();
+            for (arg1, arg2, syn_ty) in izip!(
+                dc1.arguments.iter(),
+                dc2.arguments.iter(),
+                data_info.arguments.iter()
+            ) {
+                // Evaluate the type of the current argument.
+                let sem_ty = eval::eval(&mut env, &syn_ty)?;
+
+                // Unify the arguments.
+                let arg_fut = unify(ctx.clone(), arg1.clone(), arg2.clone(), sem_ty);
+                arg_futs.push(arg_fut);
+
+                // Push the semantic argument into the environment for the next iteration.
+                env.push(arg1.clone())
+            }
+
+            // Await all futures concurrently, and check the results from left to right.
+            let results = join_all(arg_futs).await;
+            for result in results {
+                result?;
             }
             Ok(())
         }
@@ -406,7 +562,7 @@ pub async fn unify<'db, 'g>(
         (Value::Flex(f1), Value::Flex(f2)) => {
             println!("[Unify] Flex-Flex: {} vs {}", f1.head.id, f2.head.id);
 
-            // Check if they're the same metavariable
+            // Check if they're the same metavariable.
             if f1.head.id == f2.head.id {
                 println!("[Unify] Same metavariable, unifying spines");
                 // Same metavariable: unify the spines
