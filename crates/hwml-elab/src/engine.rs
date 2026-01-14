@@ -1,6 +1,6 @@
 use hwml_core::check::TCEnvironment;
 use hwml_core::common::MetaVariableId;
-use hwml_core::val::{GlobalEnv, Value};
+use hwml_core::val::{MetavariableInfo, Value};
 use slab::Slab;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -52,15 +52,18 @@ type TaskId = usize;
 /// Information stored for each metavariable slot.
 #[derive(Clone)]
 struct MetaSlot<'db> {
-    /// The solution for this metavariable, if solved
+    /// The type of the metavariable.
+    ty: Rc<Value<'db>>,
+    /// The solution for this metavariable, if solved.
     solution: Option<Rc<Value<'db>>>,
-    /// Tasks waiting for this metavariable to be solved, with reasons
+    /// Tasks waiting for this metavariable to be solved.
     waiters: Vec<WaitingTask>,
 }
 
 impl<'db> MetaSlot<'db> {
-    fn new() -> Self {
+    fn new(ty: Rc<Value<'db>>) -> Self {
         Self {
+            ty,
             solution: None,
             waiters: Vec::new(),
         }
@@ -88,9 +91,9 @@ impl<'db> SolverState<'db> {
     ///
     /// This is the **only** way to create new MetaVariableIds for this solver.
     /// By allocating through the state, we ensure the vector is always properly sized.
-    pub fn fresh_meta(&mut self) -> MetaVariableId {
+    pub fn fresh_meta(&mut self, ty: Rc<Value<'db>>) -> MetaVariableId {
         let id = MetaVariableId(self.metas.len());
-        self.metas.push(MetaSlot::new());
+        self.metas.push(MetaSlot::new(ty));
         println!("[Solver] Allocated fresh meta {}", id);
         id
     }
@@ -154,20 +157,6 @@ impl<'db> SolverState<'db> {
             None
         }
     }
-
-    /// Get the final substitution as a vector indexed by MetaVariableId.
-    ///
-    /// Returns a Vec where `result[meta.0]` gives the solution for `meta`.
-    /// Unsolved metas have `None` at their index.
-    ///
-    /// This is more efficient than a HashMap since MetaVariableIds are
-    /// sequential integers, allowing O(1) lookup by direct indexing.
-    pub fn get_substitution(&self) -> Vec<Option<Rc<Value<'db>>>> {
-        self.metas
-            .iter()
-            .map(|slot| slot.solution.clone())
-            .collect()
-    }
 }
 
 /// A shared handle to the solver state.
@@ -204,13 +193,21 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     }
 
     /// Allocate a fresh metavariable.
-    pub fn fresh_meta_id(&self) -> MetaVariableId {
-        self.state.borrow_mut().fresh_meta()
+    pub fn fresh_meta_id(&self, ty: Rc<Value<'db>>) -> MetaVariableId {
+        let env = self.tc_env.types.clone();
+        // TODO: Store metavariable type information in the global environment.
+        // let info = MetavariableInfo::new(env.into(), ty);
+        self.state.borrow_mut().fresh_meta(ty)
     }
 
-    pub fn fresh_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        let id = self.fresh_meta_id();
-        let context = self.tc_env.
+    pub fn fresh_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+        // TODO: extend the global environment to store metavariable types.
+        let id = self.fresh_meta_id(ty.clone());
+        Rc::new(Value::metavariable(
+            id,
+            self.tc_env.values.local.clone(),
+            ty,
+        ))
     }
 
     /// Get the solution for a specific metavariable, if it has been solved.
@@ -251,14 +248,6 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
                 waiting_task.waker.wake();
             }
         }
-    }
-
-    /// Get the final substitution as a vector indexed by MetaVariableId.
-    ///
-    /// Returns a Vec where `result[meta.0]` gives the solution for `meta`.
-    /// Unsolved metas have `None` at their index.
-    pub fn get_substitution(&self) -> Vec<Option<Rc<Value<'db>>>> {
-        self.state.borrow().get_substitution()
     }
 
     /// Generate a detailed blame report for unsolved metavariables.
