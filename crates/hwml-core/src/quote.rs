@@ -68,7 +68,7 @@ fn quote_pi_instance<'db>(
     value: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Build a variable representing the lambda's argument.
-    let var = Rc::new(Value::variable(ty.source.clone(), Level::new(depth)));
+    let var = Rc::new(Value::variable(Level::new(depth), ty.source.clone()));
 
     // Compute the body type by substituting the variable into the target type.
     let body_ty = match eval::run_closure(global, &ty.target, [var.clone()]) {
@@ -148,7 +148,7 @@ fn quote_pi<'db>(
     let syn_source_ty = quote_type(db, global, depth, sem_source_ty)?;
 
     // Read back the target type.
-    let var = Rc::new(Value::variable(sem_pi.source.clone(), Level::new(depth)));
+    let var = Rc::new(Value::variable(Level::new(depth), sem_pi.source.clone()));
     let sem_target_ty = match eval::run_closure(global, &sem_pi.target, [var]) {
         Ok(ty) => ty,
         Err(error) => return Err(Error::EvalError(error)),
@@ -401,8 +401,8 @@ fn quote_case_eliminator<'db>(
         let mut dcon_args = Vec::new();
         for ty in dcon_arg_tys.types {
             dcon_args.push(Rc::new(Value::variable(
-                ty,
                 Level::new(depth + dcon_args.len()),
+                ty,
             )));
         }
         let mut dcon_env = LocalEnv::new();
@@ -435,15 +435,15 @@ fn quote_case_eliminator<'db>(
     let mut motive_args = Vec::new();
     for ty in index_tys.types {
         motive_args.push(Rc::new(Value::variable(
-            ty,
             Level::new(depth + motive_args.len()),
+            ty,
         )));
     }
     let scrutinee_ty = Rc::new(Value::type_constructor(
         sem_case.type_constructor,
         sem_case.parameters.clone(),
     ));
-    let scrutinee_var = Rc::new(Value::variable(scrutinee_ty, Level::new(depth)));
+    let scrutinee_var = Rc::new(Value::variable(Level::new(depth), scrutinee_ty));
     motive_args.push(scrutinee_var);
     let motive_args_len = motive_args.len();
     let sem_motive_result = eval::run_closure(global, &sem_case.motive, motive_args)?;

@@ -393,7 +393,7 @@ pub fn unify<'db>(
                 p1.source.clone(),
                 p2.source.clone(),
             )?;
-            let var = Rc::new(Value::variable(p1.source.clone(), Level::new(depth)));
+            let var = Rc::new(Value::variable(Level::new(depth), p1.source.clone()));
             let p1_target = eval::run_closure(global, &p1.target, [var.clone()])?;
             let p2_target = eval::run_closure(global, &p2.target, [var])?;
             unify(db, global, mctx, depth + 1, p1_target, p2_target)
@@ -401,8 +401,8 @@ pub fn unify<'db>(
         (Value::Lambda(l1), Value::Lambda(l2)) => {
             let var = Rc::new(Value::variable(
                 // TODO: get the type.
-                Rc::new(Value::universe(UniverseLevel::new(0))),
                 Level::new(depth),
+                Rc::new(Value::universe(UniverseLevel::new(0))),
             ));
             let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
             let l2_body = eval::run_closure(global, &l2.body, [var])?;
@@ -410,8 +410,8 @@ pub fn unify<'db>(
         }
         (Value::Lambda(l1), t2) => {
             let var = Rc::new(Value::variable(
-                Rc::new(Value::universe(UniverseLevel::new(0))),
                 Level::new(depth),
+                Rc::new(Value::universe(UniverseLevel::new(0))),
             ));
             let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
             let l2_body = eval::run_application(global, &t2, var)?;
@@ -419,8 +419,8 @@ pub fn unify<'db>(
         }
         (t1, Value::Lambda(l2)) => {
             let var = Rc::new(Value::variable(
-                Rc::new(Value::universe(UniverseLevel::new(0))),
                 Level::new(depth),
+                Rc::new(Value::universe(UniverseLevel::new(0))),
             ));
             let l1_body = eval::run_application(global, &t1, var.clone())?;
             let l2_body = eval::run_closure(global, &l2.body, [var])?;

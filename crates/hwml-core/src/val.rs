@@ -88,16 +88,20 @@ impl<'db> Value<'db> {
         Value::Flex(Flex { head, spine, ty })
     }
 
-    pub fn variable(ty: Rc<Value<'db>>, level: Level) -> Value<'db> {
+    pub fn variable(level: Level, ty: Rc<Value<'db>>) -> Value<'db> {
         Value::rigid(Variable::new(level), Spine::empty(), ty)
     }
 
-    pub fn metavariable(id: MetaVariableId, local: LocalEnv<'db>) -> Value<'db> {
-        Value::flex(
-            MetaVariable::new(id, local),
-            Spine::empty(),
-            Rc::new(Value::universe(UniverseLevel::new(0))),
-        )
+    pub fn metavariable(
+        id: MetaVariableId,
+        local: LocalEnv<'db>,
+        ty: Rc<Value<'db>>,
+    ) -> Value<'db> {
+        Value::flex(MetaVariable::new(id, local), Spine::empty(), ty)
+    }
+
+    pub fn identity_closure(id: MetaVariableId, ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::flex(MetaVariable::new(id, LocalEnv::new()), Spine::empty(), ty)
     }
 }
 
@@ -224,49 +228,27 @@ impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
 /// The structure of the neutral ensures that the prima.
 #[derive(Clone, Debug)]
 pub struct Flex<'db> {
+    pub ty: Rc<Value<'db>>,
     pub head: MetaVariable<'db>,
     pub spine: Spine<'db>,
-    pub ty: Rc<Value<'db>>,
 }
 
 impl<'db> Flex<'db> {
     pub fn new(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Flex<'db> {
         Flex { head, spine, ty }
     }
-
-    /// Apply an eliminator to this flexible neutral, extending the spine.
-    pub fn apply_eliminator(
-        mut self,
-        eliminator: Eliminator<'db>,
-        ty: Rc<Value<'db>>,
-    ) -> Flex<'db> {
-        self.spine.push(eliminator);
-        self.ty = ty;
-        self
-    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Rigid<'db> {
+    pub ty: Rc<Value<'db>>,
     pub head: Variable,
     pub spine: Spine<'db>,
-    pub ty: Rc<Value<'db>>,
 }
 
 impl<'db> Rigid<'db> {
     pub fn new(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Rigid<'db> {
         Rigid { head, spine, ty }
-    }
-
-    /// Apply an eliminator to this rigid neutral, extending the spine.
-    pub fn apply_eliminator(
-        mut self,
-        eliminator: Eliminator<'db>,
-        ty: Rc<Value<'db>>,
-    ) -> Rigid<'db> {
-        self.spine.push(eliminator);
-        self.ty = ty;
-        self
     }
 }
 
@@ -667,7 +649,7 @@ impl<'db> LocalEnv<'db> {
     /// Extend the environment by pushing a variable onto the end.
     pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
         let depth = self.depth();
-        let value = Rc::new(Value::variable(ty, Level::new(depth)));
+        let value = Rc::new(Value::variable(Level::new(depth), ty));
         self.push(value.clone());
         value
     }

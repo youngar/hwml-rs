@@ -39,8 +39,8 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.types.push(ty);
     }
 
-    fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        let var = Rc::new(Value::variable(ty.clone(), Level::new(self.depth())));
+    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+        let var = Rc::new(Value::variable(Level::new(self.depth()), ty.clone()));
         self.push(var.clone(), ty);
         var
     }
@@ -418,7 +418,7 @@ fn type_check_lambda<'db, 'g>(
             source,
             target: target_closure,
         }) => {
-            let var = Rc::new(Value::variable(source.clone(), Level::new(env.depth())));
+            let var = Rc::new(Value::variable(Level::new(env.depth()), source.clone()));
             let target = run_closure(env, target_closure, [var.clone()])?;
             env.push(var, source.clone());
             let r = type_check(env, &lam.body, &target);

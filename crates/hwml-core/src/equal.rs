@@ -100,7 +100,7 @@ impl<'db> Convertible<'db> for Normal<'db> {
     ) -> Result<'db> {
         match (&*self.ty, &*other.ty) {
             (Value::Pi(lhs), Value::Pi(rhs)) => {
-                let arg = Rc::new(Value::variable(lhs.source.clone(), Level::new(depth)));
+                let arg = Rc::new(Value::variable(Level::new(depth), lhs.source.clone()));
                 let lnf = Normal::new(
                     run_closure(global, &lhs.target, [arg.clone()])?,
                     run_application(global, &self.value, arg.clone())?,
@@ -156,7 +156,7 @@ impl<'db> Convertible<'db> for Pi<'db> {
         other: &Pi<'db>,
     ) -> Result<'db> {
         is_type_convertible(global, depth, &self.source, &other.source)?;
-        let arg = Rc::new(Value::variable(self.source.clone(), Level::new(depth)));
+        let arg = Rc::new(Value::variable(Level::new(depth), self.source.clone()));
         let self_target = run_closure(global, &self.target, [arg.clone()])?;
         let other_target = run_closure(global, &other.target, [arg])?;
         is_type_convertible(global, depth + 1, &self_target, &other_target)
@@ -345,8 +345,8 @@ impl<'db> Convertible<'db> for Case<'db> {
         let mut motive_args = Vec::new();
         for ty in index_tys.types {
             motive_args.push(Rc::new(Value::variable(
-                ty,
                 Level::new(depth + motive_args.len()),
+                ty,
             )));
         }
 
@@ -356,7 +356,7 @@ impl<'db> Convertible<'db> for Case<'db> {
             // TODO: shouldn't this include the indices?
             self.parameters.clone(),
         ));
-        let scrutinee_var = Rc::new(Value::variable(scrutinee_ty, Level::new(depth)));
+        let scrutinee_var = Rc::new(Value::variable(Level::new(depth), scrutinee_ty));
         motive_args.push(scrutinee_var);
 
         // Apply both motives to the same arguments.
@@ -402,8 +402,8 @@ impl<'db> Convertible<'db> for Case<'db> {
             let mut dcon_args = Vec::new();
             for ty in dcon_arg_tys.types {
                 dcon_args.push(Rc::new(Value::variable(
-                    ty,
                     Level::new(depth + dcon_args.len()),
+                    ty,
                 )));
             }
 

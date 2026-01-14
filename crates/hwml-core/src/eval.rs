@@ -203,9 +203,11 @@ fn apply_rigid<'db>(
     let eliminator = Eliminator::application(arg_normal);
 
     // Extend the spine with the application.
-    let new_rigid = Rigid::new(rigid.head, rigid.spine.clone(), rigid.ty.clone())
-        .apply_eliminator(eliminator, target_ty.clone());
+    let mut spine = rigid.spine.clone();
+    spine.push(eliminator);
 
+    // Create the new rigid neutral.
+    let new_rigid = Rigid::new(rigid.head, spine, target_ty);
     Ok(Rc::new(Value::Rigid(new_rigid)))
 }
 
@@ -229,9 +231,11 @@ fn apply_flex<'db>(
     let eliminator = Eliminator::application(arg_normal);
 
     // Extend the spine with the application.
-    let new_flex = Flex::new(flex.head.clone(), flex.spine.clone(), flex.ty.clone())
-        .apply_eliminator(eliminator, target_ty.clone());
+    let mut spine = flex.spine.clone();
+    spine.push(eliminator);
 
+    // Create the new flex neutral.
+    let new_flex = Flex::new(flex.head.clone(), spine, target_ty);
     Ok(Rc::new(Value::Flex(new_flex)))
 }
 
@@ -318,9 +322,11 @@ fn run_case_on_rigid<'db>(
     let eliminator = Eliminator::case(constructor, parameters.to_vec(), motive, branches);
 
     // Extend the spine with the case.
-    let new_rigid = Rigid::new(rigid.head, rigid.spine.clone(), rigid.ty.clone())
-        .apply_eliminator(eliminator, final_ty.clone());
+    let mut spine = rigid.spine.clone();
+    spine.push(eliminator);
 
+    // Create the new rigid neutral.
+    let new_rigid = Rigid::new(rigid.head, spine, final_ty);
     Ok(Rc::new(Value::Rigid(new_rigid)))
 }
 
@@ -356,9 +362,11 @@ fn run_case_on_flex<'db>(
     let eliminator = Eliminator::case(constructor, parameters.to_vec(), motive, branches);
 
     // Extend the spine with the case.
-    let new_flex = Flex::new(flex.head.clone(), flex.spine.clone(), flex.ty.clone())
-        .apply_eliminator(eliminator, final_ty.clone());
+    let mut spine = flex.spine.clone();
+    spine.push(eliminator);
 
+    // Create the new flex neutral.
+    let new_flex = Flex::new(flex.head.clone(), spine, final_ty);
     Ok(Rc::new(Value::Flex(new_flex)))
 }
 
