@@ -458,7 +458,7 @@ fn is_data_constructor_convertible<'db>(
         return Err(Error::NotConvertible);
     }
 
-    // Look up the type constructor info (from the type, not the data constructor).
+    // Look up the type constructor info.
     let type_info = global
         .type_constructor(ty.constructor)
         .map_err(Error::LookupError)?
