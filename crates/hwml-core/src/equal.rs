@@ -123,11 +123,27 @@ impl<'db> Convertible<'db> for Normal<'db> {
                     &other.value,
                 )
             }
-            (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
-            (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
+            (Value::Rigid(_), Value::Rigid(_)) | (Value::Flex(_), Value::Flex(_)) => {
+                is_neutral_instance_convertible(global, depth, &self.value, &other.value)
+            }
             _ => Err(Error::NotConvertible),
         }
     }
+}
+
+pub fn is_neutral_instance_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+) -> Result<'db> {
+    if let (Value::Rigid(lhs), Value::Rigid(rhs)) = (lhs, rhs) {
+        return lhs.is_convertible(global, depth, rhs);
+    }
+    if let (Value::Flex(lhs), Value::Flex(rhs)) = (lhs, rhs) {
+        return lhs.is_convertible(global, depth, rhs);
+    }
+    Err(Error::NotConvertible)
 }
 
 pub fn is_type_convertible<'a, 'db: 'a>(
