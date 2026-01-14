@@ -637,6 +637,7 @@ pub async fn unify<'db, 'g>(
 
         // Handle Rigid (variable) neutrals - they must have the same head and spine
         (Value::Rigid(r1), Value::Rigid(r2)) => {
+            // Check that the head terms are the same.
             if r1.head != r2.head {
                 return Err(UnificationError::RigidHeadMismatch(
                     format!("{:?}", r1.head),
@@ -666,6 +667,7 @@ async fn unify_eliminator<'g: 'db, 'db>(
                 ctx,
                 app1.argument.value.clone(),
                 app2.argument.value.clone(),
+                app1.argument.ty.clone(),
             ))
             .await
         }
@@ -688,6 +690,7 @@ async fn unify_spine<'g: 'db, 'db>(
     spine1: &hwml_core::val::Spine<'db>,
     spine2: &hwml_core::val::Spine<'db>,
 ) -> Result<(), UnificationError<'db>> {
+    // Check that the spines have the same length.
     if spine1.len() != spine2.len() {
         return Err(UnificationError::SpineLengthMismatch(
             spine1.len(),
@@ -696,8 +699,17 @@ async fn unify_spine<'g: 'db, 'db>(
     }
 
     println!("[Unify] Unifying spines of length {}", spine1.len());
+
+    let mut futures = Vec::new();
     for (e1, e2) in spine1.iter().zip(spine2.iter()) {
-        Box::pin(unify_eliminator(ctx.clone(), e1, e2)).await?;
+        let future = Box::pin(unify_eliminator(ctx.clone(), e1, e2));
+        futures.push(future);
+    }
+
+    // Await all eliminator unifications concurrently
+    let results = join_all(futures).await;
+    for result in results {
+        result?;
     }
     Ok(())
 }
