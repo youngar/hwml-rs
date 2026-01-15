@@ -2,7 +2,7 @@ use crate::common::{Index, MetaVariableId, UniverseLevel};
 use crate::symbol::InternedString;
 use hwml_support::{FromWithDb, IntoWithDb};
 use salsa::Database;
-use std::rc::Rc;
+use std::{fmt, rc::Rc};
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 pub struct ConstantId<'db>(pub InternedString<'db>);

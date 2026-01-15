@@ -1,7 +1,6 @@
-use crate::common::{Level, MetaVariableId, UniverseLevel};
-use crate::syn::{ConstantId, RcSyntax, Telescope};
-use std::collections::HashMap;
-use std::rc::Rc;
+use crate::*;
+use std::{collections::HashMap, fmt, rc::*};
+use syn::{ConstantId, RcSyntax, Telescope};
 
 /// A closure represents a pending evaluation. A closure records the term to be
 /// reduced by evaluation, as well as the local environment it is to be evaluated under.
@@ -498,15 +497,38 @@ pub enum LookupErrorKind {
     NotDataConstructor,
 }
 
+impl<'db> fmt::Display for LookupErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownConstant => f.write_str("unknown constant"),
+            Self::NotDefinition => f.write_str("not definition"),
+            Self::NotTypeConstructor => f.write_str("not a type constructor"),
+            Self::NotDataConstructor => f.write_str("not a data constructor"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LookupError<'db> {
     pub kind: LookupErrorKind,
     pub id: ConstantId<'db>,
 }
 
+impl<'db> fmt::Display for LookupError<'db> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.kind)
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct MetavariableLookupError {
+pub struct MetaVariableLookupError {
     pub id: MetaVariableId,
+}
+
+impl fmt::Display for MetaVariableLookupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown metavariable: {}", self.id)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -607,10 +629,10 @@ impl<'db> GlobalEnv<'db> {
     pub fn metavariable(
         &self,
         id: MetaVariableId,
-    ) -> Result<&MetavariableInfo<'db>, MetavariableLookupError> {
+    ) -> Result<&MetavariableInfo<'db>, MetaVariableLookupError> {
         self.metavariables
             .get(&id)
-            .ok_or(MetavariableLookupError { id })
+            .ok_or(MetaVariableLookupError { id })
     }
 }
 

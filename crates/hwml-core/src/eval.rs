@@ -1,9 +1,12 @@
-use crate::common;
-use crate::syn::{self as stx};
-use crate::syn::{self, Syntax};
-use crate::val::{self, Closure, Eliminator, Environment, Flex, GlobalEnv, Normal, Rigid, Value};
-use crate::val::{self as dom, DataConstructor, LocalEnv, SemTelescope};
-use std::rc::Rc;
+use crate::val::{
+    self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
+    MetaVariableLookupError, Normal, Rigid, SemTelescope, Value,
+};
+use crate::*;
+use std::{
+    fmt::{self, Display},
+    rc::Rc,
+};
 
 #[derive(Debug, Clone)]
 pub enum Error {
@@ -11,7 +14,25 @@ pub enum Error {
     BadCase,
     UnknownTypeConstructor,
     UnknownDataConstructor,
-    UnknownMetavariable,
+    MetaVariableLookupError(MetaVariableLookupError),
+}
+
+impl From<MetaVariableLookupError> for Error {
+    fn from(e: MetaVariableLookupError) -> Self {
+        Error::MetaVariableLookupError(e)
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::BadApplication => write!(f, "bad application"),
+            Error::BadCase => write!(f, "bad case"),
+            Error::UnknownTypeConstructor => write!(f, "unknown type constructor"),
+            Error::UnknownDataConstructor => write!(f, "unknown data constructor"),
+            Error::MetaVariableLookupError(e) => e.fmt(f),
+        }
+    }
 }
 
 pub fn substitute<'db, 'g>(
@@ -139,10 +160,7 @@ fn eval_metavariable<'db, 'g>(
     }
 
     // Look up the metavariable info to get its type.
-    let meta_info = env
-        .global
-        .metavariable(meta.id)
-        .map_err(|_| Error::UnknownMetavariable)?;
+    let meta_info = env.global.metavariable(meta.id)?;
 
     // Create an environment for evaluating the type with the substitution.
     let mut type_env = Environment {
@@ -164,7 +182,7 @@ fn eval_metavariable<'db, 'g>(
 
 fn eval_application<'db, 'g>(
     env: &mut Environment<'db, 'g>,
-    application: &stx::Application<'db>,
+    application: &syn::Application<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the function and argument to a value, then perform the substitution.
     let fun: Rc<Value> = eval(env, &application.function)?;
@@ -253,7 +271,7 @@ fn apply_flex<'db>(
 
 fn eval_case<'db, 'g>(
     env: &mut Environment<'db, 'g>,
-    case: &stx::Case<'db>,
+    case: &syn::Case<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     // Evaluate the scrutinee expression
     let scrutinee = eval(env, &case.expr)?;
@@ -427,7 +445,7 @@ where
 pub fn eval_telescope<'db, 'g, T>(
     global: &'g GlobalEnv<'db>,
     params: T,
-    telescope: &stx::Telescope<'db>,
+    telescope: &syn::Telescope<'db>,
 ) -> Result<SemTelescope<'db>, Error>
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,

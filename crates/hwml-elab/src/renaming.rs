@@ -1,14 +1,17 @@
+///! Renaming: preparing metavariable solutions for substitution.
 use crate::*;
-use hwml_core::eval::{self, eval_telescope};
-use hwml_core::syn::{CaseBranch, RcSyntax, Syntax};
-use hwml_core::val::{self, Closure, Eliminator, Environment, Flex, LocalEnv, Rigid};
-use hwml_core::val::{GlobalEnv, Normal, Value};
+use hwml_core::syn::{RcSyntax, Syntax};
+use hwml_core::val::{
+    self, Eliminator, Environment, Flex, GlobalEnv, LocalEnv, Normal, Rigid, Value,
+};
 use hwml_core::*;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::result::Result;
+use std::{collections::HashMap, fmt, fmt::Display, rc::Rc, result::Result};
 
-/// A partial renaming from variables in one context, to variables in a new
+////////////////////////////////////////////////////////////////////////////////
+/// Inversion
+////////////////////////////////////////////////////////////////////////////////
+
+/// A partial renaming from variables in one context, to variables in a different
 /// context. A renaming is a substitution that maps variables to variables. The
 /// renaming is partial because, it does not provide a mapping for all variables
 /// under the original context.
@@ -77,26 +80,24 @@ impl<'db> From<eval::Error> for InversionError<'db> {
     }
 }
 
-/// Every metavariable has an associated substitution, written ?m[x, y, z].
-/// The metavariable solution is under a context whose size matches the length
-/// of the substitution.
-///
-/// When the substitution consists solely of unique variables, it falls within
-/// the pattern fragment, and the metavariable is solvable.
-///
-/// This function checks if a substitution forms a valid pattern, and if so,
-/// returns a renaming which maps variables in the current context to
-/// Invert a metavariable substitution to check if it is a valid pattern, and
-/// if so, build a renaming.
-///
-/// A metavariable's subsistution maps variables from the metavariable's context
-/// to terms in the current context.
-///
-/// The substitution forms a pattern if it consists only of distinct variables
-/// bound in the current context. For example,
-/// [x, y, z] is a pattern, while [x, x, z] and [123, y, z] are not.
-/// Returns a renaming that maps the variables in the substitution to variables
-/// defined by the metavariable's context.
+impl<'db> Display for InversionError<'db> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EvalError(e) => write!(f, "eval error: {}", e),
+            Self::NonInvertibleValue(i, v) => write!(f, "non invertible value: {:?} at {}", v, i),
+            Self::NonLinearVariable(i, j, v) => {
+                write!(f, "non linear variable {:?} at {} and {}", v, i, j)
+            }
+        }
+    }
+}
+
+/// Every metavariable occurence has an associated substitution. When the
+/// substitution consists solely of unique variables, it forms a pattern. When a
+/// metavariable with a pattern substitution appears in a unification problem,
+/// we can attempt to solve the metavariable. This function checks if a
+/// substitution forms a valid pattern, and if so, returns a renaming which maps
+/// variables in the current context to the free variables of the metavariable.
 pub fn invert_substitution<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
     depth: usize,
@@ -118,6 +119,10 @@ pub fn invert_substitution<'db, 'g>(
     }
     Ok(renaming)
 }
+
+////////////////////////////////////////////////////////////////////////////////
+/// Renaming
+////////////////////////////////////////////////////////////////////////////////
 
 /// A quotation error.
 #[derive(Debug, Clone)]
@@ -234,6 +239,10 @@ fn rename_rigid_instance<'db>(
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+/// Types
+////////////////////////////////////////////////////////////////////////////////
+
 pub fn rename_type<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
@@ -299,6 +308,10 @@ fn rename_type_constructor<'db>(
     }
     Ok(Syntax::type_constructor_rc(tcon.constructor, syn_args))
 }
+
+////////////////////////////////////////////////////////////////////////////////
+/// Terms
+////////////////////////////////////////////////////////////////////////////////
 
 fn rename_lambda<'db>(
     db: &'db dyn salsa::Database,

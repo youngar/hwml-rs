@@ -7,17 +7,13 @@ use std::path::PathBuf;
 #[clap(author = "Andrew Young", version, about)]
 /// Application configuration
 struct Args {
-    /// whether to be verbose
+    /// whether to be verbose.
     #[arg(short = 'v')]
     verbose: bool,
-
     /// Whether to run in "core mode" or "surface mode".
     #[arg(short = 'c', long = "core")]
     core: bool,
-
-    #[arg(long = "skip-chec")]
-
-    /// input file to read
+    /// input file to read.
     #[arg(short = 'f', long = "file")]
     file: PathBuf,
 }
@@ -42,16 +38,16 @@ fn main() {
         return;
     };
     println!("Program: {program:?}");
-    let db = hwml_core::Database::new();
-    let elab_result = hwml_elab::go(&db, program);
-    let Ok(module) = elab_result else {
-        println!("Failed to elaborate");
-        return;
-    };
-    println!("Elaborated:");
-    for decl in module.declarations() {
-        println!("{decl:?}");
-    }
+    // let db = hwml_core::Database::new();
+    // let elab_result = hwml_elab::go(&db, program);
+    // let Ok(module) = elab_result else {
+    //     println!("Failed to elaborate");
+    //     return;
+    // };
+    // println!("Elaborated:");
+    // for decl in module.declarations() {
+    //     println!("{decl:?}");
+    // }
 
     // let program = result.unwrap();
     // let prog: Prog = AstMakerGuy::ne(&nodes, &loc, &toks, &contents).create_prog(program);

@@ -1,6 +1,5 @@
-use hwml_core::check::TCEnvironment;
-use hwml_core::common::MetaVariableId;
-use hwml_core::val::{MetavariableInfo, Value};
+use check::TCEnvironment;
+use hwml_core::*;
 use slab::Slab;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -55,7 +54,7 @@ struct MetaSlot<'db> {
     /// The type of the metavariable.
     ty: Rc<Value<'db>>,
     /// The solution for this metavariable, if solved.
-    solution: Option<Rc<Value<'db>>>,
+    solution: Option<Rc<Syntax<'db>>>,
     /// Tasks waiting for this metavariable to be solved.
     waiters: Vec<WaitingTask>,
 }
@@ -105,7 +104,7 @@ impl<'db> SolverState<'db> {
         meta: MetaVariableId,
         waker: &Waker,
         reason: BlockReason,
-    ) -> Option<Rc<Value<'db>>> {
+    ) -> Option<Rc<Syntax<'db>>> {
         // Meta should already exist if it was allocated through fresh_meta
         assert!(
             meta.0 < self.metas.len(),
@@ -149,13 +148,13 @@ impl<'db> SolverState<'db> {
             .collect()
     }
 
+    pub fn is_solved(&self, MetaVariableId(i): MetaVariableId) -> bool {
+        self.metas[i].solution.is_some()
+    }
+
     /// Get the solution for a specific metavariable, if it has been solved.
-    pub fn get_solution(&self, meta: MetaVariableId) -> Option<Rc<Value<'db>>> {
-        if meta.0 < self.metas.len() {
-            self.metas[meta.0].solution.clone()
-        } else {
-            None
-        }
+    pub fn solution(&self, MetaVariableId(i): MetaVariableId) -> Option<Rc<Syntax<'db>>> {
+        self.metas[i].solution.clone()
     }
 }
 
@@ -188,7 +187,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         meta: MetaVariableId,
         waker: &Waker,
         reason: BlockReason,
-    ) -> Option<Rc<Value<'db>>> {
+    ) -> Option<Rc<Syntax<'db>>> {
         self.state.borrow_mut().poll_meta(meta, waker, reason)
     }
 
@@ -211,12 +210,16 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     }
 
     /// Get the solution for a specific metavariable, if it has been solved.
-    pub fn get_solution(&self, meta: MetaVariableId) -> Option<Rc<Value<'db>>> {
-        self.state.borrow().get_solution(meta)
+    pub fn solution(&self, meta: MetaVariableId) -> Option<Rc<Syntax<'db>>> {
+        self.state.borrow().solution(meta)
     }
 
-    /// Solve a meta and wake everyone up
-    pub fn define_meta(&self, meta: MetaVariableId, value: Rc<Value<'db>>) {
+    pub fn is_solved(&self, meta: MetaVariableId) -> bool {
+        self.state.borrow().is_solved(meta)
+    }
+
+    /// Solve a meta and wake everyone up.
+    pub fn solve(&self, meta: MetaVariableId, value: Rc<Syntax<'db>>) {
         // We need to be careful here to avoid holding the borrow when waking
         let waiting_tasks = {
             let mut state = self.state.borrow_mut();
@@ -305,7 +308,7 @@ impl<'db, 'g> WaitForResolved<'db, 'g> {
 }
 
 impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
-    type Output = Rc<Value<'db>>;
+    type Output = Rc<Syntax<'db>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self
