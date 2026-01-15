@@ -13,10 +13,8 @@ use std::fmt;
 use std::future::Future;
 use std::rc::Rc;
 
-use crate::BlockReason;
-use crate::WaitForResolved;
-// Import the SolverEnvironment from async_solver
 use crate::engine::SolverEnvironment;
+use crate::*;
 
 /// Unification error type for the async unifier.
 #[derive(Debug, Clone)]
@@ -49,6 +47,8 @@ pub enum UnificationError<'db> {
     ScopingError(Rc<Value<'db>>),
     /// Quotation error
     Quote(String),
+    /// Inversion error
+    InversionError(renaming::InversionError<'db>),
     /// Generic error
     Generic(String),
 }
@@ -56,6 +56,9 @@ pub enum UnificationError<'db> {
 impl<'db> fmt::Display for UnificationError<'db> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            UnificationError::Generic(msg) => {
+                write!(f, "error: {}", msg)
+            }
             UnificationError::Eval(e) => write!(f, "Evaluation error: {:?}", e),
             UnificationError::Mismatch(lhs, rhs) => {
                 write!(f, "Cannot unify {:?} with {:?}", lhs, rhs)
@@ -121,6 +124,11 @@ impl<'db> From<eval::Error> for UnificationError<'db> {
         UnificationError::Eval(e)
     }
 }
+impl<'db> From<renaming::InversionError<'db>> for UnificationError<'db> {
+    fn from(e: renaming::InversionError<'db>) -> Self {
+        UnificationError::InversionError(e)
+    }
+}
 
 async fn whnf<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
@@ -139,39 +147,6 @@ async fn whnf<'db, 'g>(
         }
         // Then apply the spine.
         value = run_spine(ctx.tc_env.values.global, result, &flex.spine)?;
-    }
-    Ok(value)
-}
-
-/// Force the substitution of a metavariable with its solution, if available.
-///
-/// This implements the "propagate metas" functionality: when a metavariable has been
-/// solved, we substitute its solution into the value. Forcing only computes until
-/// it hits the next head constructor which cannot be further unblocked - it does
-/// not recurse into values.
-///
-/// This is essential for the async solver because metavariables may be solved
-/// concurrently by other tasks, and we need to pick up those solutions.
-fn force<'db, 'g>(
-    ctx: &SolverEnvironment<'db, 'g>,
-    mut value: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
-    while let Value::Flex(flex) = &*value {
-        match ctx.get_solution(flex.head.id) {
-            Some(solution) => {
-                println!("[Force] Substituting meta {} with solution", flex.head.id);
-                // First, apply the solution to the local substitution.
-                // With contextual metavariables, the solution is a value in the metavariable's
-                // context. We apply the local environment to instantiate it in the current context.
-                let mut result = solution.clone();
-                for arg in flex.head.local.iter() {
-                    result = run_application(ctx.tc_env.values.global, &result, arg.clone())?;
-                }
-                // Then apply the spine.
-                value = run_spine(ctx.tc_env.values.global, result, &flex.spine)?;
-            }
-            None => break,
-        }
     }
     Ok(value)
 }
@@ -907,7 +882,6 @@ async fn solve<'g: 'db, 'db>(
     ctx: SolverEnvironment<'db, 'g>,
     depth: usize,
     meta_variable: &hwml_core::val::MetaVariable<'db>,
-    spine: &hwml_core::val::Spine<'db>,
     solution: Rc<Value<'db>>,
     _ty: Rc<Value<'db>>,
 ) -> Result<(), UnificationError<'db>> {
@@ -917,7 +891,7 @@ async fn solve<'g: 'db, 'db>(
     );
 
     // Create an initial renaming from the spine
-    let mut renaming = invert(&ctx, depth, spine)?;
+    let mut renaming = renaming::invert_substitution(&ctx, depth, &meta_variable.local)?;
 
     // Rename the solution
     let rhs = rename(&ctx, meta_variable, &mut renaming, &solution)?;

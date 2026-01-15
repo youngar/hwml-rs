@@ -53,8 +53,8 @@ pub fn quote<'db>(
         Value::Pi(pi) => quote_pi_instance(db, global, depth, pi, value),
         Value::Universe(universe) => quote_universe_instance(db, global, depth, universe, value),
         Value::TypeConstructor(tc) => quote_type_constructor_instance(db, global, depth, tc, value),
-        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
-        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::Rigid(rigid) => quote_rigid_instance(db, global, depth, rigid, value),
+        Value::Flex(flex) => quote_flex_instance(db, global, depth, flex, value),
         _ => Err(Error::IllTyped),
     }
 }
@@ -119,6 +119,32 @@ fn quote_type_constructor_instance<'db>(
     }
 }
 
+fn quote_rigid_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    _ty: &val::Rigid<'db>,
+    value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match value {
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        _ => Err(Error::IllTyped),
+    }
+}
+
+fn quote_flex_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    _ty: &val::Flex<'db>,
+    value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match value {
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        _ => Err(Error::IllTyped),
+    }
+}
+
 /// Read back a type in the semantic domain into a syntactic type.
 pub fn quote_type<'db>(
     db: &'db dyn salsa::Database,
@@ -130,18 +156,6 @@ pub fn quote_type<'db>(
         Value::Pi(pi) => quote_pi(db, global, depth, pi),
         Value::TypeConstructor(tc) => quote_type_constructor(db, global, depth, tc),
         Value::Universe(universe) => quote_universe(db, depth, universe),
-        Value::Rigid(_) | Value::Flex(_) => quote_neutral_instance(db, global, depth, value),
-        _ => Err(Error::IllTyped),
-    }
-}
-
-fn quote_neutral_instance<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    neutral: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    match neutral {
         Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
         Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped),

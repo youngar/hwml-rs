@@ -647,6 +647,7 @@ dependencies = [
  "hwml_core",
  "hwml_support",
  "hwml_surface",
+ "itertools 0.13.0",
  "salsa",
  "slab",
 ]

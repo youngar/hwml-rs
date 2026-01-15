@@ -1,103 +1,121 @@
-use hwml_core::common::Level;
+use crate::*;
 use hwml_core::eval::{self, eval_telescope};
 use hwml_core::syn::{CaseBranch, RcSyntax, Syntax};
 use hwml_core::val::{self, Closure, Eliminator, Environment, Flex, LocalEnv, Rigid};
 use hwml_core::val::{GlobalEnv, Normal, Value};
+use hwml_core::*;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::result::Result;
 
-use crate::SolverEnvironment;
-
-/// A partial renaming from context gamma (old context) to delta (new context).
-///
-/// This is used in pattern unification to track how variables in the solution
-/// should be renamed to match the metavariable's substitution.
-#[derive(Clone, Debug)]
-struct Renaming {
-    /// Size of gamma (domain - the original context).
-    dom: usize,
-    /// Size of delta (codomain - the new context).
-    cod: usize,
-    /// Mapping from gamma vars to delta vars.
-    map: HashMap<Level, Level>,
+/// A partial renaming from variables in one context, to variables in a new
+/// context. A renaming is a substitution that maps variables to variables. The
+/// renaming is partial because, it does not provide a mapping for all variables
+/// under the original context.
+pub struct Renaming {
+    /// The number of variables in scope originally.
+    pub depth: usize,
+    /// A map from variables in the original scope (expressed as levels) to
+    /// variables in the new scope. The number of entries in the map is the size
+    /// of the new context.
+    pub map: HashMap<Level, Level>,
 }
 
 impl Renaming {
-    /// Create a new empty renaming.
-    fn new() -> Renaming {
+    pub fn new(depth: usize) -> Renaming {
         Renaming {
-            dom: 0,
-            cod: 0,
+            depth,
             map: HashMap::new(),
         }
     }
 
-    /// Insert a mapping from a variable in gamma to the next variable in delta.
-    fn insert(&mut self, from: Level) {
-        self.map.insert(from, Level::new(self.cod));
-        self.cod += 1;
+    pub fn source_depth(&self) -> usize {
+        self.depth
     }
 
-    /// Lift the renaming under a binder.
-    /// This extends both contexts with a fresh variable.
-    fn lift(&self) -> Renaming {
-        let mut new_map = self.map.clone();
-        new_map.insert(Level::new(self.dom), Level::new(self.cod));
-        Renaming {
-            dom: self.dom + 1,
-            cod: self.cod + 1,
-            map: new_map,
-        }
+    pub fn target_depth(&self) -> usize {
+        self.map.len()
     }
 
-    /// Rename a level from gamma to delta.
-    /// Returns None if the level is not in the renaming.
-    fn rename(&self, level: Level) -> Option<Level> {
-        self.map.get(&level).cloned()
+    pub fn get(&self, src: Level) -> Option<Level> {
+        self.map.get(&src).cloned()
+    }
+
+    pub fn get_idx(&self, src: Level) -> Option<Index> {
+        self.get(src).map(|tgt| tgt.to_index(self.depth))
+    }
+
+    pub fn under_binder<'db, R, F>(&mut self, ty: Rc<Value<'db>>, f: F) -> R
+    where
+        F: FnOnce(&mut Renaming, Rc<Value<'db>>) -> R,
+    {
+        self.depth = self.depth + 1;
+        let a = Level::new(self.source_depth());
+        let b = Level::new(self.target_depth());
+        self.map.insert(a, b);
+        let var = Rc::new(Value::variable(a, ty));
+        let result = f(self, var);
+        self.map.remove(&a);
+        result
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum InversionError<'db> {
-    NonLinearApplication(hwml_core::val::Eliminator<'db>),
-    BlockedSolution(hwml_core::val::Eliminator<'db>),
+    /// Internal evaluation error.
+    EvalError(eval::Error),
+    /// One of the values of the substitution is not a plain variable, which prevents us from inverting the
+    /// substitution. All values in the substitution must be a plain variable.
+    NonInvertibleValue(usize, Rc<Value<'db>>),
+    /// A variable appears as a value in the substitution more than once.
+    NonLinearVariable(usize, usize, Rc<Value<'db>>),
 }
 
-pub type InversionResult<'db, T> = std::result::Result<T, InversionError<'db>>;
+impl<'db> From<eval::Error> for InversionError<'db> {
+    fn from(eval_error: eval::Error) -> InversionError<'db> {
+        InversionError::EvalError(eval_error)
+    }
+}
 
-/// Invert a spine to check if it's a valid pattern and build a renaming.
+/// Every metavariable has an associated substitution, written ?m[x, y, z].
+/// The metavariable solution is under a context whose size matches the length
+/// of the substitution.
 ///
-/// A spine is a valid pattern if it consists only of distinct variables.
-/// Returns a renaming that maps the variables in the spine to a fresh context.
-fn invert<'db, 'g>(
+/// When the substitution consists solely of unique variables, it falls within
+/// the pattern fragment, and the metavariable is solvable.
+///
+/// This function checks if a substitution forms a valid pattern, and if so,
+/// returns a renaming which maps variables in the current context to
+/// Invert a metavariable substitution to check if it is a valid pattern, and
+/// if so, build a renaming.
+///
+/// A metavariable's subsistution maps variables from the metavariable's context
+/// to terms in the current context.
+///
+/// The substitution forms a pattern if it consists only of distinct variables
+/// bound in the current context. For example,
+/// [x, y, z] is a pattern, while [x, x, z] and [123, y, z] are not.
+/// Returns a renaming that maps the variables in the substitution to variables
+/// defined by the metavariable's context.
+pub fn invert_substitution<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
     depth: usize,
     substitution: &LocalEnv<'db>,
-) -> InversionResult<'db, Renaming> {
-    let mut renaming = Renaming::new();
-    renaming.cod_len = depth;
-
-    for eliminator in spine.iter() {
-        match eliminator {
-            hwml_core::val::Eliminator::Application(a) => {
-                // Force the argument to see if it's a variable
-                let head = force(ctx, a.argument.value.clone())?;
-                match &*head {
-                    Value::Rigid(r) if r.spine.is_empty() => {
-                        // Check for non-linearity (variable appears twice)
-                        if renaming.map.contains_key(&r.head.level) {
-                            return Err(UnificationError::NonLinearApplication(eliminator.clone()));
-                        }
-                        renaming.insert(r.head.level);
-                    }
-                    // Not a variable - blocked solution
-                    _ => return Err(UnificationError::BlockedSolution(eliminator.clone())),
+) -> Result<Renaming, InversionError<'db>> {
+    let mut renaming = Renaming::new(depth);
+    // Each value in the substitution must be a unique variable with no eliminators.
+    for (i, x) in substitution.iter().enumerate() {
+        let x = force(ctx, x.clone())?;
+        match &*x {
+            Value::Rigid(r) if !r.spine.is_empty() => {
+                if let Some(j) = renaming.map.get(&r.head.level) {
+                    return Err(InversionError::NonLinearVariable(j.into(), i, x));
                 }
+                renaming.map.insert(r.head.level, i.into());
             }
-            // Case eliminators not supported yet
-            _ => return Err(UnificationError::BlockedSolution(eliminator.clone())),
-        }
+            _ => return Err(InversionError::NonInvertibleValue(i, x)),
+        };
     }
-
     Ok(renaming)
 }
 
@@ -105,10 +123,17 @@ fn invert<'db, 'g>(
 #[derive(Debug, Clone)]
 pub enum Error<'db> {
     /// Something about the input was ill-typed, preventing quotation.
-    IllTyped,
+    IllTyped {
+        tm: Rc<Value<'db>>,
+        ty: Rc<Value<'db>>,
+    },
     /// Quotation can force evaluation, which may itself prevent an error.
     EvalError(eval::Error),
     LookupError(val::LookupError<'db>),
+    /// A variable occurred in the solution which was not renamed.
+    ScopeError(Level),
+    Occurs,
+    NotAType(Rc<Value<'db>>),
 }
 
 impl<'db> From<eval::Error> for Error<'db> {
@@ -123,440 +148,342 @@ impl<'db> From<val::LookupError<'db>> for Error<'db> {
     }
 }
 
-type Result<'db, T> = std::result::Result<T, Error<'db>>;
-
-/// Read a normal (value * type) back into syntax. The resulting syntax is in normal form.
+/// Rename a normal form back into syntax. The resulting syntax is in normal form.
 pub fn rename_normal<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
     normal: &Normal<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    quote(db, global, depth, &normal.ty, &normal.value)
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    rename(db, global, meta, renaming, &normal.ty, &normal.value)
 }
 
-/// Read a value back into syntax. The resulting syntax is in normal form.
-/// Quotation is a type-directed procedure whereby we convert a value in the
-/// semantic domain to a syntactic normal form.
-pub fn quote<'db>(
+/// Prepare a metavariable solution by reading the solution back to syntax, and
+/// renaming variables according to the renaming. Will fail if we encounter a
+/// variable for which no renaming exists, or if we encounter the metavariable
+/// itself. This is a fusion of the occurs check, quoting, and renaming, in a
+/// single pass over the solution. The solution does not have to be in normal
+/// form.
+pub fn rename<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
-    ty: &Value<'db>,
-    value: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    match ty {
-        Value::Pi(pi) => rename_pi_instance(db, global, depth, pi, value),
-        Value::Universe(universe) => rename_universe_instance(db, global, depth, universe, value),
-        Value::TypeConstructor(tc) => {
-            rename_type_constructor_instance(db, global, depth, tc, value)
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    ty: &Rc<Value<'db>>,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match &**ty {
+        Value::Universe(_) => rename_type(db, global, meta, renaming, value),
+        Value::Pi(pi) => rename_pi_instance(db, global, meta, renaming, pi, value),
+        Value::TypeConstructor(tcon) => {
+            rename_type_constructor_instance(db, global, meta, renaming, tcon, value)
         }
-        Value::Rigid(rigid) => rename_rigid(db, global, depth, rigid),
-        Value::Flex(flex) => rename_flex(db, global, depth, flex),
-        _ => Err(Error::IllTyped),
+        Value::Rigid(rigid) => rename_rigid_instance(db, global, meta, renaming, rigid, value),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: ty.clone(),
+        }),
     }
 }
 
-/// Read an instance of a pi type back to syntax.
 fn rename_pi_instance<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
-    ty: &val::Pi<'db>,
-    value: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Build a variable representing the lambda's argument.
-    let var = Rc::new(Value::variable(Level::new(depth), ty.source.clone()));
-
-    // Compute the body type by substituting the variable into the target type.
-    let body_ty = match eval::run_closure(global, &ty.target, [var.clone()]) {
-        Ok(body_ty) => body_ty,
-        Err(error) => return Err(Error::EvalError(error)),
-    };
-
-    // Compute the body value. This will error if the value is not a lambda.
-    let body = match eval::run_application(global, value, var) {
-        Ok(body_ty) => body_ty,
-        Err(eval_error) => return Err(Error::EvalError(eval_error)),
-    };
-
-    // Now quote the body back to syntax.
-    let body_stx = quote(db, global, depth + 1, &body_ty, &body)?;
-
-    // Build and return the lambda.
-    let lam = Syntax::lambda(body_stx);
-    Ok(Rc::new(lam))
-}
-
-/// Read an instance of a universe back to syntax.
-fn rename_universe_instance<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    _: &val::Universe,
-    value: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    rename_type(db, global, depth, value)
-}
-
-/// Read an instance of a datatype back to syntax.
-fn rename_type_constructor_instance<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    ty: &val::TypeConstructor<'db>,
-    value: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    match value {
-        Value::DataConstructor(data_constructor) => {
-            rename_data_constructor(db, global, depth, ty, data_constructor)
-        }
-        Value::Rigid(rigid) => rename_rigid(db, global, depth, rigid),
-        Value::Flex(flex) => rename_flex(db, global, depth, flex),
-        _ => Err(Error::IllTyped),
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    pi: &val::Pi<'db>,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match &**value {
+        Value::Lambda(lambda) => rename_lambda(db, global, meta, renaming, pi, lambda),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::Pi(pi.clone())),
+        }),
     }
 }
 
-/// Read back a type in the semantic domain into a syntactic type.
+fn rename_type_constructor_instance<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _meta: MetaVariableId,
+    _renaming: &mut Renaming,
+    _ty: &val::TypeConstructor<'db>,
+    _value: &Value<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    todo!();
+}
+
+fn rename_rigid_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    ty: &val::Rigid<'db>,
+    value: &Value<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match value {
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        _ => Err(Error::IllTyped {
+            tm: Rc::new(value.clone()),
+            ty: Rc::new(Value::Rigid(ty.clone())),
+        }),
+    }
+}
+
 pub fn rename_type<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
     value: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
+) -> Result<RcSyntax<'db>, Error<'db>> {
     match value {
-        Value::Pi(pi) => rename_pi(db, global, depth, pi),
-        Value::TypeConstructor(tc) => rename_type_constructor(db, global, depth, tc),
-        Value::Universe(universe) => rename_universe(db, depth, universe),
-        Value::Rigid(_) | Value::Flex(_) => rename_neutral_instance(db, global, depth, value),
-        _ => Err(Error::IllTyped),
+        Value::Universe(universe) => rename_universe(db, global, meta, renaming, universe),
+        Value::Pi(pi) => rename_pi(db, global, meta, renaming, pi),
+        Value::TypeConstructor(tcon) => rename_type_constructor(db, global, meta, renaming, tcon),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::NotAType(Rc::new(value.clone()))),
     }
 }
 
-fn rename_neutral_instance<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    neutral: &Value<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    match neutral {
-        Value::Rigid(rigid) => rename_rigid(db, global, depth, rigid),
-        Value::Flex(flex) => rename_flex(db, global, depth, flex),
-        _ => Err(Error::IllTyped),
-    }
+fn rename_universe<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _meta: MetaVariableId,
+    _renaming: &mut Renaming,
+    universe: &val::Universe,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    Ok(Syntax::universe_rc(universe.level))
 }
 
-// Read a pi back to syntax.
 fn rename_pi<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
-    sem_pi: &val::Pi<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Read back the source type.
-    let sem_source_ty = &sem_pi.source;
-    let syn_source_ty = rename_type(db, global, depth, sem_source_ty)?;
-
-    // Read back the target type.
-    let var = Rc::new(Value::variable(Level::new(depth), sem_pi.source.clone()));
-    let sem_target_ty = match eval::run_closure(global, &sem_pi.target, [var]) {
-        Ok(ty) => ty,
-        Err(error) => return Err(Error::EvalError(error)),
-    };
-    let syn_target_ty = rename_type(db, global, depth + 1, &sem_target_ty)?;
-
-    // Return the syntactic pi.
-    let syn_pi = Syntax::pi(syn_source_ty, syn_target_ty);
-    Ok(Rc::new(syn_pi))
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    pi: &val::Pi<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let sem_source = &pi.source;
+    let sem_target_closure = &pi.target;
+    let syn_source = rename_type(db, global, meta, renaming, &sem_source)?;
+    let syn_target = renaming.under_binder(sem_source.clone(), |renaming, var| {
+        let sem_target = eval::run_closure(global, &sem_target_closure, [var])?;
+        rename_type(db, global, meta, renaming, &sem_target)
+    })?;
+    Ok(Rc::new(Syntax::pi(syn_source, syn_target)))
 }
 
-/// Read a data constructor instance back to syntax.
 fn rename_type_constructor<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
-    sem_tcon: &val::TypeConstructor<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Get the constructor constant.
-    let constructor = sem_tcon.constructor;
-
-    // Look up the type info.
-    let type_info: val::TypeConstructorInfo<'db> = global
-        .type_constructor(constructor)
-        .map_err(Error::LookupError)?
-        .clone();
-
-    // Create a new environment.
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    tcon: &val::TypeConstructor<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let type_info = global.type_constructor(tcon.constructor)?.clone();
     let mut env = Environment {
         global: global,
         local: LocalEnv::new(),
     };
-
-    // The arguments vector contains parameters first, then indices.
-    let mut arguments = Vec::new();
-
-    // Quote each argument (both parameters and indices).
-    for (sem_arg, syn_ty) in sem_tcon.iter().zip(type_info.arguments.iter()) {
-        // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
-
-        // Quote the current argument.
-        let syn_arg = quote(db, global, depth, &sem_ty, sem_arg)?;
-        arguments.push(syn_arg);
-
-        // Push the semantic argument into the environment for subsequent iterations.
+    let mut syn_args = Vec::new();
+    for (sem_arg, syn_arg_ty) in tcon.iter().zip(type_info.arguments.iter()) {
+        let sem_arg_ty = eval::eval(&mut env, &syn_arg_ty)?;
+        let syn_arg = rename(db, global, meta, renaming, &sem_arg_ty, sem_arg)?;
+        syn_args.push(syn_arg);
         env.push(sem_arg.clone());
     }
-    Ok(Syntax::type_constructor_rc(constructor, arguments))
+    Ok(Syntax::type_constructor_rc(tcon.constructor, syn_args))
 }
 
-/// Read a universe back to syntax.
-fn rename_universe<'db>(
-    _db: &'db dyn salsa::Database,
-    _depth: usize,
-    sem_universe: &val::Universe,
-) -> Result<'db, RcSyntax<'db>> {
-    // Return a syntactic universe at the same universe level.
-    let syn_universe = Syntax::universe(sem_universe.level);
-    Ok(Rc::new(syn_universe))
+fn rename_lambda<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    sem_pi: &val::Pi<'db>,
+    sem_lambda: &val::Lambda<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let val::Pi {
+        source: sem_source,
+        target: sem_target_closure,
+    } = sem_pi;
+    let syn_body: Rc<Syntax<'db>> =
+        renaming.under_binder(sem_source.clone(), |renaming, var| {
+            let sem_body_ty: Rc<Value<'db>> =
+                eval::run_closure(global, sem_target_closure, [var.clone()])?;
+            let sem_body: Rc<Value<'db>> = eval::apply_lambda(global, sem_lambda, var)?;
+            rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
+        })?;
+    Ok(Rc::new(Syntax::lambda(syn_body)))
 }
 
-/// Read a rigid neutral back to syntax by quoting the head and traversing the spine.
 fn rename_rigid<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
     rigid: &Rigid<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Start with the variable at the head.
-    let mut result = rename_variable(db, depth, &rigid.head)?;
-
-    // Traverse the spine, applying each eliminator.
-    for eliminator in rigid.spine.iter() {
-        result = rename_eliminator(db, global, depth, result, eliminator)?;
-    }
-
-    Ok(result)
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let head = rename_variable(db, meta, renaming, &rigid.head)?;
+    rename_spine(db, global, meta, renaming, head, &rigid.spine)
 }
 
-/// Read a flexible neutral back to syntax by quoting the head and traversing the spine.
 fn rename_flex<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
     flex: &Flex<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Quote the metavariable head by converting its local environment to a closure.
-    let mut result = rename_metavariable(db, global, depth, &flex.head)?;
-
-    // Traverse the spine, applying each eliminator.
-    for eliminator in flex.spine.iter() {
-        result = rename_eliminator(db, global, depth, result, eliminator)?;
-    }
-
-    Ok(result)
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let head = rename_metavariable(db, global, meta, renaming, &flex.head)?;
+    rename_spine(db, global, meta, renaming, head, &flex.spine)
 }
 
-/// Quote an eliminator applied to a term.
-fn rename_eliminator<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    head: RcSyntax<'db>,
-    eliminator: &Eliminator<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    match eliminator {
-        Eliminator::Application(app) => {
-            // Quote the argument.
-            let syn_arg = rename_normal(db, global, depth, &app.argument)?;
-            // Build the application.
-            let syn_app = Syntax::application(head, syn_arg);
-            Ok(Rc::new(syn_app))
-        }
-        Eliminator::Case(case) => {
-            // Quote the case eliminator.
-            rename_case_eliminator(db, global, depth, head, case)
-        }
-    }
-}
-
-/// Read a data constructor instance back to syntax.
 fn rename_data_constructor<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    mut depth: usize,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
     type_constructor: &val::TypeConstructor<'db>,
     sem_data: &val::DataConstructor<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Get the constructor constant.
+) -> Result<RcSyntax<'db>, Error<'db>> {
     let constructor = sem_data.constructor;
-
-    // Look up the type constructor info (from the type, not the data constructor).
     let type_info = global
         .type_constructor(type_constructor.constructor)
         .map_err(Error::LookupError)?
         .clone();
-
-    // Look up the data constructor info.
     let data_info = global
         .data_constructor(constructor)
         .map_err(Error::LookupError)?
         .clone();
-
-    // Find the number of parameters.
     let num_parameters = type_info.num_parameters();
-
-    // Create an array of just the parameters, leaving out indices.
     let parameters = type_constructor.iter().take(num_parameters).cloned();
-
-    // Create an environment for evaluating the type of each argument, with
-    // parameters in the context.
     let mut env = Environment {
         global: global,
         local: LocalEnv::new(),
     };
     env.extend(parameters);
-    // TODO: i don't think we should be adding the parameters to the depth here...
-    // we use the depth for quoting the arguments
-    depth = depth + num_parameters;
-
-    // Quote each argument.
-    let mut arguments = Vec::new();
-    for (sem_arg, syn_ty) in sem_data.iter().zip(data_info.arguments.bindings) {
-        // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
-
-        // Quote the current argument
-        let syn_arg = quote(db, global, depth, &sem_ty, &sem_arg)?;
-        arguments.push(syn_arg);
-
-        // Push the semantic argument into the environment for subsequent iterations.
+    let mut syn_args = Vec::new();
+    for (sem_arg, syn_arg_ty) in sem_data.iter().zip(data_info.arguments.bindings) {
+        let sem_arg_ty = eval::eval(&mut env, &syn_arg_ty)?;
+        let syn_arg = rename(db, global, meta, renaming, &sem_arg_ty, &sem_arg)?;
+        syn_args.push(syn_arg);
         env.push(sem_arg.clone());
     }
-    Ok(Syntax::data_constructor_rc(constructor, arguments))
+    Ok(Syntax::data_constructor_rc(constructor, syn_args))
 }
 
-/// Read a variable back to syntax.
+////////////////////////////////////////////////////////////////////////////////
+/// Eliminators and Spines
+////////////////////////////////////////////////////////////////////////////////
+
+fn rename_spine<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    mut head: Rc<Syntax<'db>>,
+    spine: &val::Spine<'db>,
+) -> Result<Rc<Syntax<'db>>, Error<'db>> {
+    for eliminator in spine.iter() {
+        head = rename_eliminator(db, global, meta, renaming, head, eliminator)?;
+    }
+    Ok(head)
+}
+
+fn rename_eliminator<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    head: RcSyntax<'db>,
+    eliminator: &Eliminator<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match eliminator {
+        Eliminator::Application(app) => rename_application(db, global, meta, renaming, head, app),
+        Eliminator::Case(case) => rename_case(db, global, meta, renaming, head, case),
+    }
+}
+
+fn rename_application<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    head: RcSyntax<'db>,
+    app: &val::Application<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let sem_arg = &app.argument;
+    let syn_arg = rename_normal(db, global, meta, renaming, sem_arg)?;
+    Ok(Syntax::application_rc(head, syn_arg))
+}
+
+fn rename_case<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _meta: MetaVariableId,
+    _renaming: &mut Renaming,
+    _head: RcSyntax<'db>,
+    _case: &val::Case<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    todo!();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Variables and Meta Variables
+////////////////////////////////////////////////////////////////////////////////
+
 fn rename_variable<'db>(
     _db: &'db dyn salsa::Database,
-    depth: usize,
+    _meta: MetaVariableId,
+    renaming: &Renaming,
     sem_var: &val::Variable,
-) -> Result<'db, RcSyntax<'db>> {
-    // Convert the DB level to an index, and return the syntactic variable.
-    let syn_var = Syntax::variable(sem_var.level.to_index(depth));
-    Ok(Rc::new(syn_var))
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let Some(idx) = renaming.get_idx(sem_var.level) else {
+        return Err(Error::ScopeError(sem_var.level));
+    };
+    Ok(Rc::new(Syntax::variable(idx)))
 }
 
-/// Read a metavariable back to syntax.
 fn rename_metavariable<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
-    depth: usize,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
     sem_meta: &val::MetaVariable<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    // Look up the metavariable info to get the argument types.
-    let meta_info = global
-        .metavariable(sem_meta.id)
-        .map_err(|_| Error::IllTyped)?;
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    if sem_meta.id == meta {
+        return Err(Error::Occurs);
+    }
+    let info = global.metavariable(sem_meta.id).unwrap();
+    let substitution =
+        rename_substitution(db, global, meta, renaming, &info.arguments, &sem_meta.local)?;
+    Ok(Syntax::metavariable_rc(sem_meta.id, substitution))
+}
 
-    // Create an environment for evaluating the type of each argument.
+fn rename_substitution<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    tys: &syn::Telescope<'db>,
+    sem_substitution: &LocalEnv<'db>,
+) -> Result<Vec<RcSyntax<'db>>, Error<'db>> {
     let mut env = Environment {
         global: global,
         local: LocalEnv::new(),
     };
-
-    // Quote each value in the local environment to build the substitution.
-    let mut substitution = Vec::new();
-    for (value, syn_ty) in sem_meta.local.iter().zip(meta_info.arguments.iter()) {
-        // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
-
-        // Quote the current argument with its proper type.
-        let quoted = quote(db, global, depth, &sem_ty, value)?;
-        substitution.push(quoted);
-
-        // Push the semantic argument into the environment for subsequent iterations.
-        env.push(value.clone());
+    let mut syn_substitution = Vec::new();
+    for (sem_arg, syn_arg_ty) in sem_substitution.iter().zip(tys.iter()) {
+        let sem_arg_ty = eval::eval(&mut env, &syn_arg_ty)?;
+        let syn_arg = rename(db, global, meta, renaming, &sem_arg_ty, sem_arg)?;
+        syn_substitution.push(syn_arg);
+        env.push(sem_arg.clone());
     }
-
-    // Create the metavariable syntax node with the substitution.
-    let meta_syntax = Syntax::metavariable(sem_meta.id, substitution);
-
-    Ok(Rc::new(meta_syntax))
-}
-
-/// Read a stuck case expression back to syntax.
-/// The scrutinee is already quoted and passed as `syn_scrutinee`.
-fn rename_case_eliminator<'db>(
-    db: &'db dyn salsa::Database,
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    syn_scrutinee: RcSyntax<'db>,
-    sem_case: &val::Case<'db>,
-) -> Result<'db, RcSyntax<'db>> {
-    let type_info = global.type_constructor(sem_case.type_constructor)?;
-    let num_parameters = type_info.num_parameters();
-
-    let parameters = &sem_case.parameters;
-    let index_bindings = type_info.arguments.bindings[num_parameters..].to_vec();
-    let index_telescope = crate::syn::Telescope::from(index_bindings);
-    let index_tys = eval_telescope(global, parameters.clone(), &index_telescope)?;
-
-    let mut branches = Vec::new();
-    for branch in &sem_case.branches {
-        let data_info = global.data_constructor(branch.constructor)?;
-
-        // Create an instance of this data constructor.
-        let dcon_arg_tys = eval_telescope(global, parameters.clone(), &data_info.arguments)?;
-        let mut dcon_args = Vec::new();
-        for ty in dcon_arg_tys.types {
-            dcon_args.push(Rc::new(Value::variable(
-                Level::new(depth + dcon_args.len()),
-                ty,
-            )));
-        }
-        let mut dcon_env = LocalEnv::new();
-        dcon_env.extend(parameters.clone());
-        let dcon_ty_clos = Closure::new(dcon_env, data_info.ty.clone());
-        let dcon_ty = eval::run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
-        let Value::TypeConstructor(tcon) = &*dcon_ty else {
-            return Err(Error::IllTyped);
-        };
-        let dcon_val = Rc::new(Value::data_constructor(
-            branch.constructor,
-            dcon_args.clone(),
-        ));
-        // Create the arguments to the motive, by pulling the indices from the type constructor, and appending the data constructor.
-        let mut motive_args = tcon.arguments[type_info.num_parameters..].to_vec();
-        motive_args.push(dcon_val);
-        let branch_ty = eval::run_closure(global, &sem_case.motive, motive_args)?;
-        // Evaluate the branch body closure with the data constructor arguments
-        let branch_val = eval::run_closure(global, &branch.body, dcon_args)?;
-        let branch_syn = quote(db, global, depth + branch.arity, &*branch_ty, &*branch_val)?;
-        branches.push(CaseBranch::new(
-            branch.constructor,
-            branch.arity,
-            branch_syn,
-        ));
-    }
-
-    // Read back the motive by creating a variable for the scrutinee.
-    // Reconstruct the scrutinee type from the type constructor and parameters.
-    let mut motive_args = Vec::new();
-    for ty in index_tys.types {
-        motive_args.push(Rc::new(Value::variable(
-            Level::new(depth + motive_args.len()),
-            ty,
-        )));
-    }
-    let scrutinee_ty = Rc::new(Value::type_constructor(
-        sem_case.type_constructor,
-        sem_case.parameters.clone(),
-    ));
-    let scrutinee_var = Rc::new(Value::variable(Level::new(depth), scrutinee_ty));
-    motive_args.push(scrutinee_var);
-    let motive_args_len = motive_args.len();
-    let sem_motive_result = eval::run_closure(global, &sem_case.motive, motive_args)?;
-    let syn_motive = rename_type(db, global, depth + 1 + motive_args_len, &sem_motive_result)?;
-    Ok(Syntax::case_rc(syn_scrutinee, syn_motive, branches))
+    Ok(syn_substitution)
 }

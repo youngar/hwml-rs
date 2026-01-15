@@ -14,6 +14,18 @@ pub enum Error {
     UnknownMetavariable,
 }
 
+pub fn substitute<'db, 'g>(
+    global: &GlobalEnv<'db>,
+    tm: &Syntax<'db>,
+    substitution: LocalEnv<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    let mut env = Environment {
+        global,
+        local: substitution,
+    };
+    eval(&mut env, tm)
+}
+
 pub fn eval<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     stx: &Syntax<'db>,
@@ -175,7 +187,7 @@ pub fn run_application<'db>(
 }
 
 /// Perform the application of a lambda to an argument.
-fn apply_lambda<'db>(
+pub fn apply_lambda<'db>(
     global: &GlobalEnv<'db>,
     lambda: &val::Lambda<'db>,
     arg: Rc<Value<'db>>,

@@ -12,6 +12,8 @@ pub mod unify;
 pub mod val;
 
 pub use common::*;
+pub use syn::Syntax;
+pub use val::Value;
 
 /// A simple database implementation for testing and parsing.
 /// This is a minimal implementation that only supports string interning.

@@ -37,7 +37,7 @@ fn db_parse(sigil: &'static str, str: &str) -> Result<usize, DBParseError> {
 
 #[derive(Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Level(usize);
+pub struct Level(pub usize);
 
 impl Level {
     pub fn new(x: usize) -> Level {
@@ -67,6 +67,12 @@ impl FromStr for Level {
 }
 
 impl Into<usize> for Level {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
+impl Into<usize> for &Level {
     fn into(self) -> usize {
         self.0
     }

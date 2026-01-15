@@ -22,6 +22,7 @@ hwml_surface.workspace = true
 hwml_support.workspace = true
 salsa.workspace = true
 slab.workspace = true
+itertools.workspace = true
 
 [lints]
 workspace = true
