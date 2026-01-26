@@ -83,7 +83,7 @@ impl<'db> From<eval::Error> for InversionError<'db> {
 impl<'db> Display for InversionError<'db> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EvalError(e) => write!(f, "eval error: {}", e),
+            Self::EvalError(e) => write!(f, "eval error: {:?}", e),
             Self::NonInvertibleValue(i, v) => write!(f, "non invertible value: {:?} at {}", v, i),
             Self::NonLinearVariable(i, j, v) => {
                 write!(f, "non linear variable {:?} at {} and {}", v, i, j)

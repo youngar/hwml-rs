@@ -1,0 +1,22 @@
+[package]
+name = "hwml_circt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Local crates
+hwml_core.workspace = true
+hwml_circt_sys.workspace = true
+
+# External dependencies
+anyhow.workspace = true
+thiserror.workspace = true
+salsa.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+hwml_support.workspace = true

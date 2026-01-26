@@ -67,6 +67,32 @@
 - Conversion checking
   - case statements currently require branches to be in the same order.
 
+TODO List:
+0. implement "invert", calculuate the renaming - walk the spine instead of the eliminators.
+1. implement renaming - should return quoted syntax.  Should not perform eta expansion. Needs to perform the occures check.  Currently it renames a value directly, but does not look under lambdas (because they are in syntax and don't need to be renamed). https://github.com/AndrasKovacs/smalltt/tree/master?tab=readme-ov-file#meta-solution-checking-and-quotation
+2. constraints should store their binder depth - maybe not the whole "TCEnvironment"
+  - conversion checking does not use TCEnv, so unification should not either
+  - when creating metavariables, do we need to form a contextual type for them or not? [args] |- final_type
+  - does a new metavar created during unification need the environment to calculate its substitution, or can it always copy it out of another metavariable
+3. need to implement forcing metavariable solutions properly: they are not running contextual substitutions
+4. standardize if the type is first or last across our datastructures and functions.
+5. typed unification - we need to actually calculate the type we are unifying at for many terms.
+6. decide what to do for metavariables in core syntax for type checking, conversion checking, evaluation, etc.
+
+
+- Syntax Node Naming
+  - FunctionType, Function, FunctionApplication
+  - ModuleType, Module, ModuleApplication
+  - Check/HCheck to Annotate
+  - Prim to Primitive
+- In Values, Constant and Prim don't have a dedicated inner-structure, they just wrap constant id's
+    pub enum Value<'db> {
+        Constant(ConstantId<'db>),
+        Prim(ConstantId<'db>),
+- Syntax&Values - all inner structs should take a 'db lifetime and have phantom data if needed
+- Should splice be in the eliminator spine?
+  e.g., g |- splice(a .fst) = splice(b .fst), moved to the spine becomes: a[fst splice] = b[fst splice]
+
 ## Completed
 - case parsing/printing using semicolons
 - Data Constructors should not use pi types for arguments.

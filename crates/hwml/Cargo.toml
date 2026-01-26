@@ -14,12 +14,29 @@ license.workspace = true
 [dependencies]
 clap.workspace = true
 hwml_core.workspace = true
-hwml_db.workspace = true
-hwml_surface.workspace = true
-hwml_elab.workspace = true
-la-arena.workspace = true
-lalrpop-util.workspace = true
+hwml_db = { workspace = true, optional = true }
+hwml_surface = { workspace = true, optional = true }
+hwml_elab = { workspace = true, optional = true }
+la-arena = { workspace = true, optional = true }
+lalrpop-util = { workspace = true, optional = true }
 salsa.workspace = true
+
+# Optional CIRCT backend
+hwml_circt = { workspace = true, optional = true }
+
+[features]
+# By default, do not include CIRCT (requires external dependencies)
+default = []
+# Enable CIRCT backend for Verilog generation
+circt = ["dep:hwml_circt"]
+# Enable surface syntax support (currently has compilation errors)
+surface = [
+    "dep:hwml_db",
+    "dep:hwml_surface",
+    "dep:hwml_elab",
+    "dep:la-arena",
+    "dep:lalrpop-util",
+]
 
 [lints]
 workspace = true

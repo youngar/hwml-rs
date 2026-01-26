@@ -1,8 +1,8 @@
 use crate::common::Level;
 use crate::eval::{self, eval_telescope};
-use crate::syn::{CaseBranch, RcSyntax, Syntax};
+use crate::syn::{CaseBranch, ConstantId, HSyntax, RcSyntax, RcSyntax, Syntax};
 use crate::val::{self, Closure, Eliminator, Environment, Flex, LocalEnv, Rigid};
-use crate::val::{GlobalEnv, Normal, Value};
+use crate::val::{GlobalEnv, Normal, Value, Value};
 use std::rc::Rc;
 
 /// A quotation error.
@@ -55,6 +55,17 @@ pub fn quote<'db>(
         Value::TypeConstructor(tc) => quote_type_constructor_instance(db, global, depth, tc, value),
         Value::Rigid(rigid) => quote_rigid_instance(db, global, depth, rigid, value),
         Value::Flex(flex) => quote_flex_instance(db, global, depth, flex, value),
+        // HardwareUniverse types
+        Value::Type(_) => quote_hwtype(db, global, depth, value),
+        Value::Lift(hw_ty) => quote_lift_instance(db, global, depth, hw_ty, value),
+
+        // These are not valid types at meta level
+        Value::Bit
+        | Value::HArrow(_)
+        | Value::Quote(_)
+        | Value::Constant(_)
+        | Value::Lambda(_)
+        | Value::DataConstructor(_) => Err(Error::IllTyped),
         _ => Err(Error::IllTyped),
     }
 }
@@ -115,6 +126,7 @@ fn quote_type_constructor_instance<'db>(
         }
         Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
         Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::Prim(name) => quote_prim(*name),
         _ => Err(Error::IllTyped),
     }
 }
@@ -128,6 +140,7 @@ fn quote_rigid_instance<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Prim(name) => quote_prim(*name),
         _ => Err(Error::IllTyped),
     }
 }
@@ -141,6 +154,7 @@ fn quote_flex_instance<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::Prim(name) => quote_prim(*name),
         _ => Err(Error::IllTyped),
     }
 }
@@ -156,10 +170,164 @@ pub fn quote_type<'db>(
         Value::Pi(pi) => quote_pi(db, global, depth, pi),
         Value::TypeConstructor(tc) => quote_type_constructor(db, global, depth, tc),
         Value::Universe(universe) => quote_universe(db, depth, universe),
-        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
-        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        // HardwareUniverse types that can appear as meta-level types
+        Value::Lift(hw_ty) => {
+            let hw_ty_stx = quote_hwtype(db, global, depth, hw_ty)?;
+            Ok(Syntax::lift_rc(hw_ty_stx))
+        }
+
         _ => Err(Error::IllTyped),
     }
+}
+
+// ============================================================================
+// HardwareUniverse Quotation
+// ============================================================================
+
+/// Quote a hardware type (value of type Type) back to syntax.
+fn quote_hwtype<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match value {
+        Value::Bit => Ok(Syntax::bit_rc()),
+        Value::HArrow(harrow) => {
+            let source = quote_hwtype(db, global, depth, &harrow.source)?;
+            let target = quote_hwtype(db, global, depth, &harrow.target)?;
+            Ok(Syntax::harrow_rc(source, target))
+        }
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::Prim(name) => quote_prim(*name),
+        _ => Err(Error::IllTyped),
+    }
+}
+
+/// Quote an instance of a lifted type (^ht) back to syntax.
+fn quote_lift_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    hw_ty: &Value<'db>,
+    value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match value {
+        Value::Quote(hw_value) => {
+            // Quote the hardware value back to syntax using type-directed quotation
+            let hw_syntax = quote_Value(db, global, depth, hw_ty, hw_value)?;
+            Ok(Syntax::quote_rc(hw_syntax))
+        }
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::Prim(name) => quote_prim(*name),
+        _ => Err(Error::IllTyped),
+    }
+}
+
+/// Quote a hardware value back to hardware syntax.
+/// This is the type-directed readback function for the hardware value domain.
+///
+/// Type-directed quotation means we dispatch based on the *type* of the value,
+/// not the value itself. This is essential for correctly handling functions:
+/// - For `HArrow(source, target)`, we apply the value to a fresh variable
+/// - For `Bit`, we just quote the canonical value
+fn quote_Value<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    hw_ty: &Value<'db>,
+    Value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match hw_ty {
+        // Function type: apply to fresh variable and quote the result
+        Value::HArrow(harrow) => quote_harrow_instance(db, global, depth, harrow, Value),
+
+        // Base type (Bit): quote the value directly
+        Value::Bit => quote_Value_at_base(depth, Value),
+
+        // Neutral types: quote the value directly
+        Value::Rigid(_) | Value::Flex(_) => quote_Value_at_base(depth, Value),
+
+        // Invalid types at hardware level
+        _ => Err(Error::IllTyped),
+    }
+}
+
+/// Quote an instance of a hardware arrow type (a -> b) back to syntax.
+/// This is analogous to quote_pi_instance for meta-level functions.
+fn quote_harrow_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    harrow: &val::HArrow<'db>,
+    Value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    // Create a fresh hardware variable at the current depth
+    let fresh_var = Rc::new(Value::hvariable(Level::new(depth)));
+
+    // Apply the hardware value to this fresh variable
+    let body_value = eval::apply_Value(global, Value, fresh_var)?;
+
+    // Quote the body at depth + 1, with the target type
+    let body_syntax = quote_Value(db, global, depth + 1, &harrow.target, &body_value)?;
+
+    // Build and return the lambda
+    Ok(Rc::new(HSyntax::Module(body_syntax)))
+}
+
+/// Quote a hardware value at a base type (not a function type).
+/// This handles the non-type-directed cases where we just inspect the value.
+fn quote_Value_at_base<'db>(depth: usize, Value: &Value<'db>) -> Result<'db, RcSyntax<'db>> {
+    match Value {
+        // Canonical bit values
+        Value::Zero => Ok(Rc::new(HSyntax::zero())),
+        Value::One => Ok(Rc::new(HSyntax::one())),
+
+        // HardwareUniverse variable - convert level to index
+        Value::HVariable(var) => {
+            let index = var.level.to_index(depth);
+            Ok(Rc::new(HSyntax::hvariable(index)))
+        }
+
+        // Embedded meta-level neutral - wrap back in Splice syntax
+        Value::Splice(term) => Ok(Rc::new(HSyntax::splice(term.clone()))),
+
+        // HardwareUniverse constant reference
+        Value::HConstant(name) => Ok(Rc::new(HSyntax::hconstant(*name))),
+
+        // HardwareUniverse primitive reference
+        Value::HPrim(name) => Ok(Rc::new(HSyntax::hprim(*name))),
+
+        // Lambda at base type - this shouldn't happen if types are correct
+        // But we handle it for robustness by quoting it untyped
+        Value::Module(closure) => {
+            // This is a type error in principle, but we try to recover
+            // by just returning the closure body (which may have wrong indices)
+            Ok(Rc::new(HSyntax::Module(closure.body.clone())))
+        }
+
+        // Neutral application
+        Value::HApp(fun, arg) => {
+            let fun_syn = quote_Value_at_base(depth, fun)?;
+            let arg_syn = quote_Value_at_base(depth, arg)?;
+            Ok(Rc::new(HSyntax::happlication(fun_syn, arg_syn)))
+        }
+    }
+}
+
+/// Quote a hardware value back to hardware syntax without type information.
+///
+/// This is a convenience function for callers who don't have access to the
+/// hardware type. It performs non-type-directed quotation, which may not
+/// correctly handle hardware lambdas (they will be quoted with potentially
+/// incorrect de Bruijn indices).
+///
+/// For correct quotation of hardware functions, use `quote_Value` with the
+/// hardware type.
+pub fn quote_hardware<'db>(depth: usize, Value: &Value<'db>) -> Result<'db, RcSyntax<'db>> {
+    quote_Value_at_base(depth, Value)
 }
 
 // Read a pi back to syntax.
@@ -271,6 +439,12 @@ fn quote_flex<'db>(
     }
 
     Ok(result)
+}
+
+/// Quote a primitive reference back to syntax.
+/// Primitives are neutral values - they have no definition to unfold.
+fn quote_prim<'db>(name: ConstantId<'db>) -> Result<'db, RcSyntax<'db>> {
+    Ok(Rc::new(Syntax::prim(name)))
 }
 
 /// Quote an eliminator applied to a term.

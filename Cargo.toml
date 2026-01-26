@@ -3,6 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 homepage = "hardware.land"
@@ -22,12 +23,16 @@ hwml_lsp_server = { path = "crates/hwml-lsp-server" }
 hwml_parser = { path = "crates/hwml-parser" }
 hwml_support = { path = "crates/hwml-support" }
 hwml_surface = { path = "crates/hwml-surface" }
+hwml_circt_sys = { path = "crates/hwml-circt-sys" }
+hwml_circt = { path = "crates/hwml-circt" }
 
 # External Crates
 annotate-snippets = "0.11.5"
 anyhow = "1.0"
 arbitrary = { version = "1", features = ["derive"] }
+bindgen = "0.70"
 clap = { version = "4.5.28", features = ["derive"] }
+cmake = "0.1"
 crossbeam-channel = "0.5.15"
 dashmap = "6.1.0"
 derive-new = "0.7.0"
@@ -42,6 +47,7 @@ lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
 logos = "0.15.1"
 lsp-server = "0.7.9"
 lsp-types = "0.97.0"
+melior = "0.26"
 notify-debouncer-mini = "0.4.1"
 salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
 serde = { version = "1.0", features = ["derive"] }

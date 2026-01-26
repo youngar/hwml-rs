@@ -3,7 +3,7 @@
 use crate::*;
 use hwml_support::IntoWithDb;
 use syn::Syntax;
-use val::{DataConstructorInfo, GlobalEnv, TypeConstructorInfo};
+use val::{DataConstructorInfo, GlobalEnv, HardwarePrimitiveInfo, TypeConstructorInfo};
 
 pub fn def_bool<'db>(db: &'db Database, g: &mut GlobalEnv<'db>) {
     let bool_id = "Bool".into_with_db(db);

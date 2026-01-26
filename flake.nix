@@ -6,6 +6,7 @@
     systems.url = "github:nix-systems/default";
     rust-flake.url = "github:juspay/rust-flake";
     rust-flake.inputs.nixpkgs.follows = "nixpkgs";
+    circt-nix.url = "github:dtzSiFive/circt-nix";
   };
 
   outputs = inputs:

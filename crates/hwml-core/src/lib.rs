@@ -1,4 +1,5 @@
 pub mod check;
+pub mod check_module;
 pub mod common;
 pub mod declaration;
 pub mod environment;

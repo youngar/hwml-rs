@@ -1,10 +1,10 @@
 use crate::{
     common::{Level, MetaVariableId},
-    eval::{self, run_application, run_closure},
+    eval::{self, apply_Value, run_application, run_closure},
     syn::ConstantId,
     val::{
-        self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv,
-        LocalEnv, Normal, Pi, Rigid, Spine, TypeConstructor, Universe, Value,
+        self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
+        LocalEnv, Normal, Pi, Rigid, Spine, Type, TypeConstructor, Universe, Value, Value,
     },
 };
 use itertools::izip;
@@ -91,6 +91,53 @@ impl<'db> Convertible<'db> for Universe {
     }
 }
 
+// ============================================================================
+// HardwareUniverse Type Equality
+// ============================================================================
+
+impl<'db> Convertible<'db> for Type {
+    fn is_convertible(
+        &self,
+        _global: &GlobalEnv<'db>,
+        _depth: usize,
+        _other: &Self,
+    ) -> Result<'db> {
+        // Type is a unit type, so all instances are equal
+        Ok(())
+    }
+}
+
+impl<'db> Convertible<'db> for HArrow<'db> {
+    fn is_convertible(&self, global: &GlobalEnv<'db>, depth: usize, other: &Self) -> Result<'db> {
+        // Check that source and target hardware types are convertible
+        is_hwtype_convertible(global, depth, &self.source, &other.source)?;
+        is_hwtype_convertible(global, depth, &self.target, &other.target)
+    }
+}
+
+/// Check convertibility of hardware types (values of type Type).
+pub fn is_hwtype_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+) -> Result<'db> {
+    match (lhs, rhs) {
+        // Bit is equal to Bit
+        (Value::Bit, Value::Bit) => Ok(()),
+
+        // HardwareUniverse arrows are equal if their components are equal
+        (Value::HArrow(lhs), Value::HArrow(rhs)) => lhs.is_convertible(global, depth, rhs),
+
+        // Neutral hardware types (variables, metavariables, primitives)
+        (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Prim(lhs), Value::Prim(rhs)) => lhs.is_convertible(global, depth, rhs),
+
+        _ => Err(Error::NotConvertible),
+    }
+}
+
 impl<'db> Convertible<'db> for Normal<'db> {
     fn is_convertible(
         &self,
@@ -126,6 +173,16 @@ impl<'db> Convertible<'db> for Normal<'db> {
             (Value::Rigid(_), Value::Rigid(_)) | (Value::Flex(_), Value::Flex(_)) => {
                 is_neutral_instance_convertible(global, depth, &self.value, &other.value)
             }
+
+            // HardwareUniverse types
+            (Value::Type(_), Value::Type(_)) => {
+                is_hwtype_convertible(global, depth, &self.value, &other.value)
+            }
+            (Value::Lift(hw_ty), Value::Lift(_)) => {
+                // Pass the hardware type to enable type-directed comparison
+                is_lift_instance_convertible(global, depth, hw_ty, &self.value, &other.value)
+            }
+
             _ => Err(Error::NotConvertible),
         }
     }
@@ -141,6 +198,9 @@ pub fn is_neutral_instance_convertible<'db>(
         return lhs.is_convertible(global, depth, rhs);
     }
     if let (Value::Flex(lhs), Value::Flex(rhs)) = (lhs, rhs) {
+        return lhs.is_convertible(global, depth, rhs);
+    }
+    if let (Value::Prim(lhs), Value::Prim(rhs)) = (lhs, rhs) {
         return lhs.is_convertible(global, depth, rhs);
     }
     Err(Error::NotConvertible)
@@ -160,6 +220,80 @@ pub fn is_type_convertible<'a, 'db: 'a>(
         (Value::Universe(lhs), Value::Universe(rhs)) => lhs.is_convertible(global, depth, rhs),
         (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
         (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Prim(lhs), Value::Prim(rhs)) => lhs.is_convertible(global, depth, rhs),
+
+        // HardwareUniverse types that can appear as meta-level types
+        (Value::Lift(lhs), Value::Lift(rhs)) => is_hwtype_convertible(global, depth, lhs, rhs),
+
+        _ => Err(Error::NotConvertible),
+    }
+}
+
+/// Check convertibility of instances of lifted types (^ht).
+/// These are hardware terms wrapped in Quote.
+///
+/// This function is type-directed: it uses the hardware type to determine
+/// how to compare the values, enabling eta-equality for hardware functions.
+pub fn is_lift_instance_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    hw_ty: &Value<'db>,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+) -> Result<'db> {
+    match (lhs, rhs) {
+        // Quoted hardware terms: use type-directed comparison on the Values
+        (Value::Quote(lhs_hval), Value::Quote(rhs_hval)) => {
+            is_Value_convertible(global, depth, hw_ty, lhs_hval, rhs_hval)
+        }
+
+        // Neutral values (variables, metavariables, primitives)
+        (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Prim(lhs), Value::Prim(rhs)) => lhs.is_convertible(global, depth, rhs),
+
+        _ => Err(Error::NotConvertible),
+    }
+}
+
+/// Check convertibility of hardware values at a given hardware type.
+///
+/// This is the hardware-level analog of Normal::is_convertible for meta-level values.
+/// For hardware arrows, we apply both values to a fresh variable and compare the results
+/// (eta-equality). For base types, we compare structurally.
+pub fn is_Value_convertible<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    hw_ty: &Value<'db>,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+) -> Result<'db> {
+    match hw_ty {
+        // For hardware arrows, apply to fresh variable and compare results (eta)
+        Value::HArrow(arrow) => {
+            // Create a fresh hardware variable at the current depth
+            let fresh_var = Rc::new(Value::hvariable(Level::new(depth)));
+
+            // Apply both values to the fresh variable
+            let lhs_result =
+                apply_Value(global, lhs, fresh_var.clone()).map_err(|_| Error::NotConvertible)?;
+            let rhs_result =
+                apply_Value(global, rhs, fresh_var).map_err(|_| Error::NotConvertible)?;
+
+            // Recursively compare at the target type, with incremented depth
+            is_Value_convertible(global, depth + 1, &arrow.target, &lhs_result, &rhs_result)
+        }
+
+        // For base types (Bit) or neutral types, compare structurally
+        Value::Bit | Value::Rigid(_) | Value::Flex(_) | Value::Prim(_) => {
+            if lhs == rhs {
+                Ok(())
+            } else {
+                Err(Error::NotConvertible)
+            }
+        }
+
+        // Other types shouldn't appear as hardware types
         _ => Err(Error::NotConvertible),
     }
 }
@@ -463,7 +597,7 @@ impl<'db> Convertible<'db> for Case<'db> {
 
 fn is_data_constructor_convertible<'db>(
     global: &GlobalEnv<'db>,
-    mut depth: usize,
+    depth: usize,
     ty: TypeConstructor<'db>,
     lhs: &DataConstructor<'db>,
     rhs: &DataConstructor<'db>,
@@ -536,6 +670,7 @@ pub fn is_type_constructor_instance_convertible<'db>(
         }
         (Value::Rigid(lhs), Value::Rigid(rhs)) => lhs.is_convertible(global, depth, rhs),
         (Value::Flex(lhs), Value::Flex(rhs)) => lhs.is_convertible(global, depth, rhs),
+        (Value::Prim(lhs), Value::Prim(rhs)) => lhs.is_convertible(global, depth, rhs),
         _ => Err(Error::NotConvertible),
     }
 }

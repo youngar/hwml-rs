@@ -1,5 +1,4 @@
 use clap::Parser;
-use hwml_core::{syn, val};
 use std::fs;
 use std::path::PathBuf;
 
@@ -7,13 +6,27 @@ use std::path::PathBuf;
 #[clap(author = "Andrew Young", version, about)]
 /// Application configuration
 struct Args {
-    /// whether to be verbose.
+    /// Whether to be verbose.
     #[arg(short = 'v')]
     verbose: bool,
+
     /// Whether to run in "core mode" or "surface mode".
     #[arg(short = 'c', long = "core")]
     core: bool,
-    /// input file to read.
+
+    /// Emit MLIR IR (requires --core and CIRCT feature).
+    #[arg(long = "emit-mlir")]
+    emit_mlir: bool,
+
+    /// Emit Verilog (requires --core and CIRCT feature).
+    #[arg(long = "emit-verilog")]
+    emit_verilog: bool,
+
+    /// Skip type checking in core mode.
+    #[arg(long = "skip-chec")]
+    skip_check: bool,
+
+    /// Input file to read.
     #[arg(short = 'f', long = "file")]
     file: PathBuf,
 }
@@ -29,36 +42,39 @@ fn main() {
         return;
     }
 
-    let path = args.file.canonicalize().unwrap();
-    let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
-    let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
+    #[cfg(feature = "surface")]
+    {
+        let path = args.file.canonicalize().unwrap();
+        let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
+        let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
 
-    let Some(program) = parse_result else {
-        println!("Failed to parse");
-        return;
-    };
-    println!("Program: {program:?}");
-    // let db = hwml_core::Database::new();
-    // let elab_result = hwml_elab::go(&db, program);
-    // let Ok(module) = elab_result else {
-    //     println!("Failed to elaborate");
-    //     return;
-    // };
-    // println!("Elaborated:");
-    // for decl in module.declarations() {
-    //     println!("{decl:?}");
-    // }
+        let Some(program) = parse_result else {
+            println!("Failed to parse");
+            return;
+        };
+        println!("Program: {program:?}");
+        let db = hwml_core::Database::new();
+        //let elab_result = hwml_elab::go(&db, program);
+        //let Ok(module) = elab_result else {
+        //    println!("Failed to elaborate");
+        //    return;
+        //};
+        //println!("Elaborated:");
+        //for decl in module.declarations() {
+        //    println!("{decl:?}");
+        //}
 
-    // let program = result.unwrap();
-    // let prog: Prog = AstMakerGuy::ne(&nodes, &loc, &toks, &contents).create_prog(program);
+        println!("Done.")
+    }
 
-    //     println!("Program: {program:?}");
-
-    // if args.verbose {
-    //     println!("File contents:\n{contents}");
-    // }
-
-    println!("Done.")
+    #[cfg(not(feature = "surface"))]
+    {
+        eprintln!("Error: Surface syntax support not enabled.");
+        eprintln!(
+            "Use --core flag for core syntax, or rebuild with: cargo build --features surface"
+        );
+        std::process::exit(1);
+    }
 }
 
 fn run_core(args: Args) {
@@ -66,8 +82,10 @@ fn run_core(args: Args) {
     let input = fs::read_to_string(&path).expect("Should have been able to read the file");
 
     let db = hwml_core::Database::new();
-    let syn_tm = match hwml_core::syn::parse_syntax(&db, &input) {
-        Ok(s) => s,
+
+    // Parse as a module instead of a single expression
+    let module = match hwml_core::syn::parse_module(&db, &input) {
+        Ok(m) => m,
         Err(e) => {
             println!("parse error: {:#?}", e);
             return;
@@ -75,75 +93,140 @@ fn run_core(args: Args) {
     };
 
     if args.verbose {
-        println!("Parsed syntax: {:#?}", syn_tm);
+        println!(
+            "Parsed module with {} declarations:",
+            module.declarations.len()
+        );
+        for decl in &module.declarations {
+            match decl {
+                hwml_core::declaration::Declaration::Primitive(p) => {
+                    println!("  - prim {}: {:?}", p.name.name(&db), p.ty);
+                }
+                hwml_core::declaration::Declaration::HardwarePrimitive(hp) => {
+                    println!("  - hprim {}: {:?}", hp.name.name(&db), hp.ty);
+                }
+                hwml_core::declaration::Declaration::Constant(c) => {
+                    println!("  - const {}: {:?} = {:?}", c.name.name(&db), c.ty, c.value);
+                }
+                hwml_core::declaration::Declaration::HardwareConstant(hc) => {
+                    println!(
+                        "  - hconst {}: {:?} = {:?}",
+                        hc.name.name(&db),
+                        hc.ty,
+                        hc.value
+                    );
+                }
+                hwml_core::declaration::Declaration::TypeConstructor(tc) => {
+                    println!(
+                        "  - tcon {} with {} data constructors",
+                        tc.name.name(&db),
+                        tc.data_constructors.len()
+                    );
+                }
+            }
+        }
     }
 
-    let mut globals = val::GlobalEnv::new();
-    hwml_core::prelude::load(&db, &mut globals);
+    // Display the parsed module
+    println!("Module:");
+    for decl in &module.declarations {
+        match decl {
+            hwml_core::declaration::Declaration::Primitive(p) => {
+                print!("  prim ${} : ", p.name.name(&db));
+                hwml_core::syn::dump_syntax(&db, &p.ty);
+            }
+            hwml_core::declaration::Declaration::HardwarePrimitive(hp) => {
+                print!("  hprim ${} : ", hp.name.name(&db));
+                hwml_core::syn::dump_syntax(&db, &hp.ty);
+            }
+            hwml_core::declaration::Declaration::Constant(c) => {
+                print!("  const @{} : ", c.name.name(&db));
+                hwml_core::syn::dump_syntax(&db, &c.ty);
+            }
+            hwml_core::declaration::Declaration::HardwareConstant(hc) => {
+                print!("  hconst ${} : ", hc.name.name(&db));
+                hwml_core::syn::dump_syntax(&db, &hc.ty);
+            }
+            hwml_core::declaration::Declaration::TypeConstructor(tc) => {
+                print!("  tcon @{} : ", tc.name.name(&db));
+                hwml_core::syn::dump_syntax(&db, &tc.universe);
 
-    let mut tc_env = hwml_core::check::TCEnvironment {
-        values: val::Environment::new(&globals),
-        types: Vec::new(),
-    };
-    let sem_ty = match hwml_core::check::type_synth(&mut tc_env, &syn_tm) {
-        Ok(ty) => ty,
+                // Print data constructors
+                for dcon in &tc.data_constructors {
+                    print!("    dcon @{} : ", dcon.name.name(&db));
+                    hwml_core::syn::dump_syntax(&db, &dcon.full_type());
+                }
+            }
+        }
+    }
+
+    // If CIRCT emission is requested, emit all hardware constants as HW modules
+    #[cfg(feature = "circt")]
+    if args.emit_mlir || args.emit_verilog {
+        emit_circt_module(&db, &module, args.emit_mlir, args.emit_verilog);
+    }
+}
+
+#[cfg(feature = "circt")]
+fn emit_circt_module(
+    db: &hwml_core::Database,
+    module: &hwml_core::declaration::Module,
+    emit_mlir: bool,
+    emit_verilog: bool,
+) {
+    // Create CIRCT context
+    let ctx = match hwml_circt::CirctContext::new() {
+        Ok(c) => c,
         Err(e) => {
-            println!("check error: {:#?}", e);
-            return;
+            eprintln!("Error: Failed to create CIRCT context: {}", e);
+            std::process::exit(1);
         }
     };
 
-    if args.verbose {
-        println!("Sem Ty: {:#?}", sem_ty);
-    }
-
-    let mut env = val::Environment {
-        global: &globals,
-        local: val::LocalEnv::new(),
-    };
-    let sem_tm = match hwml_core::eval::eval(&mut env, &syn_tm) {
-        Ok(s) => s,
+    // Translate the entire module to MLIR
+    // This will create a HW module for each hardware constant
+    let mlir_module = match hwml_circt::translate::translate_module(&ctx, db, module) {
+        Ok(m) => m,
         Err(e) => {
-            println!("eval error: {:#?}", e);
-            return;
+            eprintln!("Error: Failed to translate module to MLIR: {}", e);
+            std::process::exit(1);
         }
     };
 
-    if args.verbose {
-        println!("Evaluated to: {:#?}", sem_tm);
+    // Verify the module
+    if !mlir_module.verify() {
+        eprintln!("Error: Generated MLIR module failed verification");
+        std::process::exit(1);
     }
 
-    let syn_ty = match hwml_core::quote::quote_type(&db, &env.global, 0, &sem_ty) {
-        Ok(s) => s,
-        Err(e) => {
-            println!("error quoting type: {:#?}", e);
-            return;
+    println!("Generated MLIR:");
+    println!("{}", mlir_module.to_string());
+
+    // Emit MLIR if requested
+    if emit_mlir {
+        println!("╔════════════════════════════════════════════════════════════╗");
+        println!("║    MLIR IR                                                 ║");
+        println!("╚════════════════════════════════════════════════════════════╝");
+        println!();
+        println!("{}", mlir_module.to_string());
+        println!();
+    }
+
+    // Emit Verilog if requested
+    if emit_verilog {
+        // Use lower_and_export_verilog to handle seq dialect lowering automatically
+        match hwml_circt::export::lower_and_export_verilog(&mlir_module) {
+            Ok(verilog) => {
+                println!("╔════════════════════════════════════════════════════════════╗");
+                println!("║    Verilog                                                 ║");
+                println!("╚════════════════════════════════════════════════════════════╝");
+                println!();
+                println!("{}", verilog);
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to export Verilog: {}", e);
+                std::process::exit(1);
+            }
         }
-    };
-
-    if args.verbose {
-        print!("Type: ");
-        hwml_core::syn::dump_syntax(&db, &syn_ty);
     }
-
-    let syn_tm = match hwml_core::quote::quote_normal(
-        &db,
-        &env.global,
-        0,
-        &hwml_core::val::Normal::new(sem_ty, sem_tm),
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            println!("error quoting term: {:#?}", e);
-            return;
-        }
-    };
-
-    if args.verbose {
-        print!("Type: ");
-        hwml_core::syn::dump_syntax(&db, &syn_ty);
-    }
-
-    let syn_ch = syn::Syntax::check(syn_ty, syn_tm);
-    hwml_core::syn::dump_syntax(&db, &syn_ch);
 }

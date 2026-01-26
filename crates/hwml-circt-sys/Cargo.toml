@@ -1,0 +1,22 @@
+[package]
+name = "hwml_circt_sys"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# This tells Cargo that this crate links to a native library
+# and prevents multiple versions from being linked
+links = "circt"
+
+[build-dependencies]
+bindgen = "0.70"
+cmake = "0.1"
+
+[features]
+# Build CIRCT from source (30+ minute build)
+# Only enable if you don't have CIRCT installed via Nix or package manager
+build-from-source = []
+
