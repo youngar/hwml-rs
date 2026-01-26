@@ -866,7 +866,7 @@ mod tests {
         // Create: (0 : $Bit) - a Check node with hardware type
         // We'll use a Quote of Zero as the term since we can't use Zero directly in Syntax
         let bit_ty = Syntax::bit_rc();
-        let zero_hw = HSyntax::zero_rc();
+        let zero_hw = Syntax::zero_rc();
         let quoted_zero = Syntax::quote_rc(zero_hw);
         let check_term = Syntax::check_rc(bit_ty, quoted_zero);
 
@@ -888,8 +888,8 @@ mod tests {
 
         // Create: (0 : $Bit) in hardware syntax - an HCheck node
         let bit_ty = Syntax::bit_rc();
-        let zero = HSyntax::zero_rc();
-        let hcheck_term = HSyntax::hcheck_rc(bit_ty, zero);
+        let zero = Syntax::zero_rc();
+        let hcheck_term = Syntax::hcheck_rc(bit_ty, zero);
 
         let mut tc_env = TCEnvironment {
             values: val::Environment::new(&global_env),
@@ -918,7 +918,7 @@ mod tests {
         let mut module = Module::new();
         let hconst_name = "my_hconst".into_with_db(&db);
         let bit_ty = Syntax::bit_rc();
-        let zero_val = HSyntax::zero_rc();
+        let zero_val = Syntax::zero_rc();
         module.add_declaration(crate::declaration::Declaration::HardwareConstant(
             HardwareConstant::new(hconst_name, bit_ty.clone(), zero_val),
         ));
@@ -933,7 +933,7 @@ mod tests {
         let checked = checked.unwrap();
 
         // Create an HConstant reference
-        let hconst_ref = HSyntax::hconstant_rc(hconst_name);
+        let hconst_ref = Syntax::hconstant_rc(hconst_name);
 
         let mut tc_env = TCEnvironment {
             values: val::Environment::new(&checked.global_env),
@@ -975,7 +975,7 @@ mod tests {
         let checked = checked.unwrap();
 
         // Try to use the regular constant as an HConstant
-        let hconst_ref = HSyntax::hconstant_rc(const_name);
+        let hconst_ref = Syntax::hconstant_rc(const_name);
 
         let mut tc_env = TCEnvironment {
             values: val::Environment::new(&checked.global_env),

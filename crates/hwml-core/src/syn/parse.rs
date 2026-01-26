@@ -1,10 +1,12 @@
 use crate::common::{DBParseError, Index, NegativeLevel};
-use crate::declaration;
+use crate::declaration::{Declaration, Module};
 use crate::syn::{CaseBranch, Closure, ConstantId, RcSyntax, Syntax, Telescope};
+use crate::{declaration, MetaVariableId};
 use core::fmt::Debug;
-use hwml_support::{FromWithDb, IntoWithDb};
+use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
 use salsa::Database;
+use std::collections::HashMap;
 use std::fmt;
 use std::num::ParseIntError;
 use std::ops::Range;
@@ -80,6 +82,10 @@ pub enum Token {
     Splice,
     #[token("^", priority = 4)]
     Lift,
+    #[token("^s", priority = 5)]
+    SLift,
+    #[token("^m", priority = 5)]
+    MLift,
     #[token("(", priority = 10)]
     LParen,
     #[token(")", priority = 10)]
@@ -104,6 +110,10 @@ pub enum Token {
     Universe(usize),
     #[regex(r"HW[0-9]+", priority = 4, callback = |lex| lex.slice()["HW".len()..].parse())]
     Type(usize),
+    #[token("SignalType", priority = 5)]
+    SignalType,
+    #[token("M", priority = 5)]
+    ModuleType,
     #[regex(r"@(?&id)+", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
     Constant(String),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
@@ -134,12 +144,8 @@ pub enum Token {
     FatArrow,
     #[token("prim", priority = 5)]
     Prim,
-    #[token("hprim", priority = 5)]
-    HPrim,
     #[token("const", priority = 5)]
     Const,
-    #[token("hconst", priority = 5)]
-    HConst,
     #[token("tcon", priority = 5)]
     TCon,
     #[token("dcon", priority = 5)]
@@ -158,16 +164,11 @@ struct State<'input> {
     /// The database reference.
     db: &'input dyn Database,
     /// The names in scope. Each new name is pushed on the end.
-    ///
-    /// We conceptually split this into two regions:
-    /// - meta-level binders: names[0..meta_depth)
-    /// - hardware-level binders: names[meta_depth..)
-    ///
-    /// This allows us to keep separate de Bruijn environments for
-    /// meta and hardware variables while still using a single vector.
     names: Vec<String>,
-    /// Number of meta-level binders currently in scope.
-    meta_depth: usize,
+    /// Map from metavariable names to their IDs.
+    meta_names: HashMap<String, MetaVariableId>,
+    /// Counter for allocating new metavariable IDs.
+    next_meta_id: usize,
     /// The main lexer.
     lexer: Lexer<'input, Token>,
     /// The current token. We support single token peeking.
@@ -181,7 +182,8 @@ impl<'input> State<'input> {
         State {
             db,
             names: Vec::new(),
-            meta_depth: 0,
+            meta_names: HashMap::new(),
+            next_meta_id: 0,
             lexer,
             token,
         }
@@ -202,20 +204,8 @@ impl<'input> State<'input> {
         self.token = self.lexer.next();
     }
 
-    /// Push a meta-level binder to the environment.
+    /// Push a binder to the environment.
     fn push_name(&mut self, name: String) {
-        self.push_meta_name(name);
-    }
-
-    /// Push a meta-level binder to the environment.
-    fn push_meta_name(&mut self, name: String) {
-        self.names.push(name);
-        self.meta_depth += 1;
-    }
-
-    /// Push a hardware-level binder to the environment.
-    /// This does not affect the meta-depth, only the total depth.
-    fn push_hw_name(&mut self, name: String) {
         self.names.push(name);
     }
 
@@ -224,35 +214,18 @@ impl<'input> State<'input> {
         T: IntoIterator<Item = String>,
     {
         for name in names {
-            self.push_meta_name(name);
+            self.push_name(name);
         }
     }
 
-    /// Find a meta-level name in the environment.
-    ///
-    /// This only searches the meta-level region [0..meta_depth),
-    /// counting indices from the end of that region.
-    fn find_meta_name(&self, name: &String) -> Option<Index> {
-        for (i, n) in self.names[..self.meta_depth].iter().rev().enumerate() {
+    fn find_name(&self, name: &String) -> Option<Index> {
+        self.names.iter().rev().enumerate().find_map(|(i, n)| {
             if name == n.as_str() {
-                return Some(Index::new(i));
+                Some(Index::new(i))
+            } else {
+                None
             }
-        }
-        None
-    }
-
-    /// Find a hardware-level name in the environment.
-    ///
-    /// This only searches the hardware region [meta_depth..),
-    /// counting indices from the end of that region.
-    fn find_hw_name(&self, name: &String) -> Option<Index> {
-        let hw_slice = &self.names[self.meta_depth..];
-        for (i, n) in hw_slice.iter().rev().enumerate() {
-            if name == n.as_str() {
-                return Some(Index::new(i));
-            }
-        }
-        None
+        })
     }
 
     /// Get the current depth of the name environment.
@@ -260,23 +233,9 @@ impl<'input> State<'input> {
         self.names.len()
     }
 
-    /// Get the current number of meta-level binders.
-    fn meta_depth(&self) -> usize {
-        self.meta_depth
-    }
-
-    /// Get the current number of hardware-level binders.
-    fn hw_depth(&self) -> usize {
-        self.names.len().saturating_sub(self.meta_depth)
-    }
-
     /// Reset the name environment to a given depth.
     fn reset_names(&mut self, depth: usize) {
         self.names.truncate(depth);
-        // Ensure meta_depth never exceeds the total depth.
-        if self.meta_depth > depth {
-            self.meta_depth = depth;
-        }
     }
 
     /// Parse with additional variables in scope.
@@ -290,6 +249,22 @@ impl<'input> State<'input> {
         let r = block(self);
         self.reset_names(depth);
         r
+    }
+
+    /// Get or create a metavariable ID for the given name. If the name already
+    /// exists in the map, return the existing ID. Otherwise, allocate a new ID
+    /// and store the mapping.
+    fn get_or_create_meta_id(&mut self, name: String) -> MetaVariableId {
+        if let Some(&id) = self.meta_names.get(&name) {
+            // Name exists, return existing ID
+            id
+        } else {
+            // Name doesn't exist, allocate new ID
+            let id = MetaVariableId(self.next_meta_id);
+            self.next_meta_id += 1;
+            self.meta_names.insert(name, id);
+            id
+        }
     }
 }
 
@@ -465,19 +440,27 @@ fn p_variable(state: &mut State) -> ParseResult<String> {
     }
 }
 
-fn p_metavariable_id(state: &mut State) -> ParseResult<usize> {
+fn p_metavariable_id(state: &mut State) -> ParseResult<MetaVariableId> {
     match state.peek_token() {
         Some(Ok(Token::Number(n))) => {
+            // Numeric ID: ?[0], ?[1], etc.
             state.advance_token();
-            Ok(n)
+            Ok(MetaVariableId(n))
         }
         Some(Ok(Token::Zero)) => {
             state.advance_token();
-            Ok(0)
+            Ok(MetaVariableId(0))
         }
         Some(Ok(Token::One)) => {
             state.advance_token();
-            Ok(1)
+            Ok(MetaVariableId(1))
+        }
+        Some(Ok(Token::Variable(name))) => {
+            // Named metavariable: ?[x], ?[myvar], etc.
+            // Use get_or_create_meta_id to allocate or reuse an ID
+            let name = name.clone();
+            state.advance_token();
+            Ok(state.get_or_create_meta_id(name))
         }
         _ => Err(Error::MissingMetavariableId),
     }
@@ -554,7 +537,7 @@ fn p_hatom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>
                         Ok(Some(var)) => {
                             i = i + 1;
                             // HardwareUniverse lambdas introduce hardware-level binders.
-                            state.push_hw_name(var)
+                            state.push_name(var)
                         }
                         Ok(None) => break,
                     }
@@ -565,45 +548,66 @@ fn p_hatom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>
                 // Build nested lambdas from right to left
                 let mut result = body;
                 for _ in 0..i {
-                    result = HSyntax::Module_rc(result);
+                    result = Syntax::module_rc(result);
                 }
                 Ok(Some(result))
             }
             Token::Variable(name) => {
                 state.advance_token();
-                // Otherwise, look it up in the environment
-                match state.find_hw_name(&name) {
-                    Some(index) => Ok(Some(HSyntax::hvariable_rc(index))),
+                // Look it up in the environment
+                match state.find_name(&name) {
+                    Some(index) => Ok(Some(Syntax::variable_rc(index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
                 state.advance_token();
-                // Convert negative level to index using the hardware depth only:
-                // index = hw_depth + negative_level
-                let index = negative_level.to_index(state.hw_depth());
-                Ok(Some(HSyntax::hvariable_rc(index)))
+                // Convert negative level to index using the current depth:
+                // index = depth + negative_level
+                let index = negative_level.to_index(state.names_depth());
+                Ok(Some(Syntax::variable_rc(index)))
             }
             Token::Constant(name) => {
                 state.advance_token();
-                Ok(Some(HSyntax::hconstant_rc_from(state.db(), &name)))
+                Ok(Some(Syntax::constant_rc_from(state.db(), &name)))
+            }
+            Token::Primitive(name) => {
+                state.advance_token();
+                if name == "Bit" {
+                    Ok(Some(Syntax::bit_rc()))
+                } else {
+                    Ok(Some(Syntax::prim_rc_from(state.db(), &name)))
+                }
+            }
+            Token::LQuestionBracket => {
+                state.advance_token();
+                // Expect ?[id term1 term2 ...] or ?[name term1 term2 ...]
+                let id = p_metavariable_id(state)?;
+                // Parse space-separated substitution terms (atomic terms only)
+                let mut substitution = Vec::new();
+                loop {
+                    match p_hatom_opt(state) {
+                        Ok(Some(term)) => substitution.push(term),
+                        Ok(None) => break,
+                        Err(err) => return Err(err),
+                    }
+                }
+                p_rbracket(state)?;
+                Ok(Some(Syntax::metavariable_rc(id, substitution)))
             }
             Token::Splice => {
                 state.advance_token();
                 let tm = p_atom(state)?;
-                Ok(Some(HSyntax::splice_rc(tm)))
+                // Splice syntax node is gone - just return the underlying meta-level term
+                Ok(Some(tm))
             }
             Token::Zero => {
                 state.advance_token();
-                Ok(Some(HSyntax::zero_rc()))
+                Ok(Some(Syntax::zero_rc()))
             }
             Token::One => {
                 state.advance_token();
-                Ok(Some(HSyntax::one_rc()))
-            }
-            Token::Primitive(name) => {
-                state.advance_token();
-                Ok(Some(HSyntax::hprim_rc(name.into_with_db(state.db))))
+                Ok(Some(Syntax::one_rc()))
             }
             _ => Ok(None),
         },
@@ -630,7 +634,7 @@ fn p_happlication_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSynta
 
     // Keep parsing atoms and building left-associative applications
     while let Some(arg) = p_hatom_opt(state)? {
-        result = HSyntax::happlication_rc(result, arg);
+        result = Syntax::happlication_rc(result, arg);
     }
 
     Ok(Some(result))
@@ -652,7 +656,7 @@ fn p_hcheck_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>
     if let Some(()) = p_colon_opt(state)? {
         // Parse a hardware type (meta-level syntax like Bit, Bit -> Bit)
         let ty = p_hwtype(state)?;
-        Ok(Some(HSyntax::hcheck_rc(ty, term)))
+        Ok(Some(Syntax::check_rc(ty, term)))
     } else {
         Ok(Some(term))
     }
@@ -703,8 +707,8 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                         Err(e) => return Err(e),
                         Ok(Some(var)) => {
                             i = i + 1;
-                            // Meta-level lambda: introduce meta-level binders.
-                            state.push_meta_name(var)
+                            // Introduce binders into the unified environment
+                            state.push_name(var)
                         }
                         Ok(None) => break,
                     }
@@ -769,17 +773,17 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             }
             Token::Variable(name) => {
                 state.advance_token();
-                // Otherwise, look it up in the environment
-                match state.find_meta_name(&name) {
+                // Look it up in the unified environment
+                match state.find_name(&name) {
                     Some(index) => Ok(Some(Syntax::variable_rc(index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
             Token::UnboundVariable(negative_level) => {
                 state.advance_token();
-                // Convert negative level to index using only the meta depth:
-                // index = meta_depth + negative_level
-                let index = negative_level.to_index(state.meta_depth());
+                // Convert negative level to index using the current depth:
+                // index = depth + negative_level
+                let index = negative_level.to_index(state.names_depth());
                 Ok(Some(Syntax::variable_rc(index)))
             }
             Token::Universe(level) => {
@@ -790,7 +794,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             }
             Token::Type(_level) => {
                 state.advance_token();
-                Ok(Some(Syntax::Hardware_rc()))
+                Ok(Some(Syntax::hardware_rc()))
             }
             Token::Constant(name) => {
                 state.advance_token();
@@ -798,7 +802,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             }
             Token::LQuestionBracket => {
                 state.advance_token();
-                // Expect ?[id term1 term2 ...]
+                // Expect ?[id term1 term2 ...] or ?[name term1 term2 ...]
                 let id = p_metavariable_id(state)?;
                 // Parse space-separated substitution terms (atomic terms only)
                 let mut substitution = Vec::new();
@@ -810,20 +814,43 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     }
                 }
                 p_rbracket(state)?;
-                Ok(Some(Syntax::metavariable_rc(
-                    crate::common::MetaVariableId(id),
-                    substitution,
-                )))
+                Ok(Some(Syntax::metavariable_rc(id, substitution)))
             }
             Token::Lift => {
                 state.advance_token();
                 let tm = p_atom(state)?;
                 Ok(Some(Syntax::lift_rc(tm)))
             }
+            Token::SLift => {
+                state.advance_token();
+                let tm = p_atom(state)?;
+                Ok(Some(Syntax::slift_rc(tm)))
+            }
+            Token::MLift => {
+                state.advance_token();
+                let tm = p_atom(state)?;
+                Ok(Some(Syntax::mlift_rc(tm)))
+            }
+            Token::SignalType => {
+                state.advance_token();
+                Ok(Some(Syntax::signal_universe_rc()))
+            }
+            Token::ModuleType => {
+                state.advance_token();
+                Ok(Some(Syntax::module_universe_rc()))
+            }
+            Token::Zero => {
+                state.advance_token();
+                Ok(Some(Syntax::zero_rc()))
+            }
+            Token::One => {
+                state.advance_token();
+                Ok(Some(Syntax::one_rc()))
+            }
             Token::Quote => {
                 state.advance_token();
-                let tm = p_hatom(state)?;
-                Ok(Some(Syntax::quote_rc(tm)))
+                // Quote syntax node is gone - just return the underlying hardware term
+                p_hatom(state).map(Some)
             }
             Token::Primitive(name) => {
                 state.advance_token();
@@ -1029,10 +1056,6 @@ pub fn parse_hsyntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult
     p_hterm(&mut state)
 }
 
-// ========== MODULE AND DECLARATION PARSING ==========
-
-use crate::declaration::{Declaration, Module};
-
 /// Parse a primitive declaration: prim $Name : Type;
 fn p_prim_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
     // Expect 'prim' token
@@ -1051,26 +1074,6 @@ fn p_prim_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
     p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
 
     Ok(Declaration::primitive(name, ty))
-}
-
-/// Parse a hardware primitive declaration: hprim $Name : Type;
-fn p_hprim_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
-    // Expect 'hprim' token
-    p_token(state, Token::HPrim, Error::Other)?;
-
-    // Parse the name (hardware primitives use $Name syntax)
-    let name = p_primitive(state)?;
-
-    // Expect ':'
-    p_token(state, Token::Colon, Error::MissingColon)?;
-
-    // Parse the type
-    let ty = p_term(state)?;
-
-    // Expect ';'
-    p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
-
-    Ok(Declaration::hardware_primitive(name, ty))
 }
 
 /// Parse a constant declaration: const Name : Type = Value;
@@ -1100,34 +1103,6 @@ fn p_const_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
     p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
 
     Ok(Declaration::constant(name, ty, value))
-}
-
-/// Parse a hardware constant declaration: hconst $Name : HardwareType = HardwareValue;
-/// The type should be a hardware type (e.g., $Bit, $Bit -> $Bit).
-/// The value is parsed using the hardware term parser (p_hterm).
-fn p_hconst_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
-    // Expect 'hconst' token
-    p_token(state, Token::HConst, Error::Other)?;
-
-    // Parse the name (hardware constants use $Name syntax like primitives)
-    let name = p_primitive(state)?;
-
-    // Expect ':'
-    p_token(state, Token::Colon, Error::MissingColon)?;
-
-    // Parse the hardware type (this is still meta-level syntax for types like $Bit -> $Bit)
-    let ty = p_term(state)?;
-
-    // Expect '='
-    p_token(state, Token::Equals, Error::Other)?;
-
-    // Parse the hardware value using the hardware term parser
-    let value = p_hterm(state)?;
-
-    // Expect ';'
-    p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
-
-    Ok(Declaration::hardware_constant(name, ty, value))
 }
 
 /// Parse a data constructor: dcon Name (%param1 : Type1) ... : Type
@@ -1277,20 +1252,18 @@ fn p_tcon_decl<'db>(state: &mut State<'db>) -> ParseResult<Vec<Declaration<'db>>
     Ok(vec![tcon_decl])
 }
 
-/// Parse a single declaration (any type)
+/// Parse a single declaration.
 fn p_declaration<'db>(state: &mut State<'db>) -> ParseResult<Option<Vec<Declaration<'db>>>> {
     match state.peek_token() {
         Some(Ok(Token::Prim)) => Ok(Some(vec![p_prim_decl(state)?])),
-        Some(Ok(Token::HPrim)) => Ok(Some(vec![p_hprim_decl(state)?])),
         Some(Ok(Token::Const)) => Ok(Some(vec![p_const_decl(state)?])),
-        Some(Ok(Token::HConst)) => Ok(Some(vec![p_hconst_decl(state)?])),
         Some(Ok(Token::TCon)) => Ok(Some(p_tcon_decl(state)?)),
         Some(Err(err)) => Err(err.clone()),
         _ => Ok(None),
     }
 }
 
-/// Parse a module (list of declarations)
+/// Parse a module (list of declarations).
 pub fn parse_module<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<Module<'db>> {
     let mut state = State::new(db, input);
     let mut all_declarations = Vec::new();
@@ -1308,6 +1281,7 @@ mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
     use crate::syn::*;
+    use hwml_support::IntoWithDb;
 
     #[test]
     fn test_parse_lambda_single_var() {
@@ -2124,7 +2098,7 @@ mod tests {
 
         // Build expected: @42
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42"));
+        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
 
         assert_eq!(parsed, expected);
     }
@@ -2142,7 +2116,7 @@ mod tests {
 
         // Build expected: @0
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "0"));
+        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "0"));
 
         assert_eq!(parsed, expected);
     }
@@ -2164,7 +2138,7 @@ mod tests {
 
         // Build expected: @123456789
         use crate::syn::ConstantId;
-        let expected = HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "123456789"));
+        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "123456789"));
 
         assert_eq!(parsed, expected);
     }
@@ -2181,7 +2155,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: λ %x → %x
-        let expected = HSyntax::Module_rc(HSyntax::hvariable_rc(Index(0)));
+        let expected = Syntax::module_rc(Syntax::variable_rc(Index(0)));
 
         assert_eq!(parsed, expected);
     }
@@ -2202,7 +2176,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: !0 (at depth 0, becomes index 0)
-        let expected = HSyntax::hvariable_rc(Index(0));
+        let expected = Syntax::variable_rc(Index(0));
 
         assert_eq!(parsed, expected);
     }
@@ -2225,13 +2199,13 @@ mod tests {
 
         // Build expected: λ %x → !0
         // Inside the lambda (depth 1), !0 means index = 1 + 0 = 1
-        let expected = HSyntax::Module_rc(HSyntax::hvariable_rc(Index(1)));
+        let expected = Syntax::module_rc(Syntax::variable_rc(Index(1)));
 
         assert_eq!(parsed, expected);
     }
 
     #[test]
-    fn test_parse_Module_single_var() {
+    fn test_parse_module_single_var() {
         use crate::Database;
         let db = Database::default(); // Test parsing: λ %x → %x
         let input = "λ %x → %x";
@@ -2242,13 +2216,13 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: λ %x → %x
-        let expected = HSyntax::Module_rc(HSyntax::hvariable_rc(Index(0)));
+        let expected = Syntax::module_rc(Syntax::variable_rc(Index(0)));
 
         assert_eq!(parsed, expected);
     }
 
     #[test]
-    fn test_parse_Module_multiple_vars() {
+    fn test_parse_module_multiple_vars() {
         use crate::Database;
         let db = Database::default(); // Test parsing: λ %x %y → %x
                                       // This creates nested lambdas: λ %x → (λ %y → %x)
@@ -2262,13 +2236,13 @@ mod tests {
 
         // Build expected: λ %x → λ %y → %x
         // %x is at index 1 in the innermost scope
-        let expected = HSyntax::Module_rc(HSyntax::Module_rc(HSyntax::hvariable_rc(Index(1))));
+        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::variable_rc(Index(1))));
 
         assert_eq!(parsed, expected);
     }
 
     #[test]
-    fn test_parse_Module_with_parens() {
+    fn test_parse_module_with_parens() {
         use crate::Database;
         let db = Database::default(); // Test parsing: (λ %x → %x)
         let input = "(λ %x → %x)";
@@ -2283,7 +2257,7 @@ mod tests {
         let parsed = result.unwrap();
 
         // Build expected: λ %x → %x
-        let expected = HSyntax::Module_rc(HSyntax::hvariable_rc(Index(0)));
+        let expected = Syntax::module_rc(Syntax::variable_rc(Index(0)));
 
         assert_eq!(parsed, expected);
     }
@@ -2302,9 +2276,9 @@ mod tests {
 
         // Build expected: λ %f → λ %x → %f %x
         // %f is at index 1 (skip over %x), %x is at index 0
-        let expected = HSyntax::Module_rc(HSyntax::Module_rc(HSyntax::happlication_rc(
-            HSyntax::hvariable_rc(Index(1)),
-            HSyntax::hvariable_rc(Index(0)),
+        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::happlication_rc(
+            Syntax::variable_rc(Index(1)),
+            Syntax::variable_rc(Index(0)),
         )));
 
         assert_eq!(parsed, expected);
@@ -2325,13 +2299,13 @@ mod tests {
 
         // Build expected: λ %f → λ %x → λ %y → ((%f %x) %y)
         // %f is at index 2, %x is at index 1, %y is at index 0
-        let expected = HSyntax::Module_rc(HSyntax::Module_rc(HSyntax::Module_rc(
-            HSyntax::happlication_rc(
-                HSyntax::happlication_rc(
-                    HSyntax::hvariable_rc(Index(2)),
-                    HSyntax::hvariable_rc(Index(1)),
+        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::module_rc(
+            Syntax::happlication_rc(
+                Syntax::happlication_rc(
+                    Syntax::variable_rc(Index(2)),
+                    Syntax::variable_rc(Index(1)),
                 ),
-                HSyntax::hvariable_rc(Index(0)),
+                Syntax::variable_rc(Index(0)),
             ),
         )));
 
@@ -2355,9 +2329,9 @@ mod tests {
 
         // Build expected: @42 @99
         use crate::syn::ConstantId;
-        let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
-            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
+        let expected = Syntax::happlication_rc(
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
         );
 
         assert_eq!(parsed, expected);
@@ -2378,8 +2352,7 @@ mod tests {
 
         // Build expected: (λ %x → %x) : $Bit -> $Bit
         let hw_type = Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc());
-        let expected =
-            HSyntax::hcheck_rc(hw_type, HSyntax::Module_rc(HSyntax::hvariable_rc(Index(0))));
+        let expected = Syntax::check_rc(hw_type, Syntax::module_rc(Syntax::variable_rc(Index(0))));
 
         assert_eq!(parsed, expected);
     }
@@ -2403,11 +2376,11 @@ mod tests {
 
         // Build expected: (@42 @99) : $Bit
         use crate::syn::ConstantId;
-        let expected = HSyntax::hcheck_rc(
+        let expected = Syntax::check_rc(
             Syntax::bit_rc(),
-            HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
-                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
+            Syntax::happlication_rc(
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
             ),
         );
 
@@ -2426,9 +2399,9 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: ~@42
+        // Build expected: ~@42 - splice syntax node is gone, just the underlying term
         use crate::syn::ConstantId;
-        let expected = HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_with_db(&db, "42")));
+        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
 
         assert_eq!(parsed, expected);
     }
@@ -2449,8 +2422,8 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: ~(λ %x → %x)
-        let expected = HSyntax::splice_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(0))));
+        // Build expected: ~(λ %x → %x) - splice syntax node is gone, just the underlying term
+        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(0)));
 
         assert_eq!(parsed, expected);
     }
@@ -2471,8 +2444,8 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: ~𝒰0
-        let expected = HSyntax::splice_rc(Syntax::universe_rc(UniverseLevel::new(0)));
+        // Build expected: ~𝒰0 - splice syntax node is gone, just the underlying term
+        let expected = Syntax::universe_rc(UniverseLevel::new(0));
 
         assert_eq!(parsed, expected);
     }
@@ -2495,12 +2468,12 @@ mod tests {
 
         // Build expected: λ %f → (λ %x → %f %x) @42
         use crate::syn::ConstantId;
-        let expected = HSyntax::Module_rc(HSyntax::happlication_rc(
-            HSyntax::Module_rc(HSyntax::happlication_rc(
-                HSyntax::hvariable_rc(Index(1)), // %f
-                HSyntax::hvariable_rc(Index(0)), // %x
+        let expected = Syntax::module_rc(Syntax::happlication_rc(
+            Syntax::module_rc(Syntax::happlication_rc(
+                Syntax::variable_rc(Index(1)), // %f
+                Syntax::variable_rc(Index(0)), // %x
             )),
-            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
         ));
 
         assert_eq!(parsed, expected);
@@ -2524,9 +2497,9 @@ mod tests {
 
         // Build expected: λ %x → λ %y → %y !0
         // %y has index 0, !0 has index 2
-        let expected = HSyntax::Module_rc(HSyntax::Module_rc(HSyntax::happlication_rc(
-            HSyntax::hvariable_rc(Index(0)),
-            HSyntax::hvariable_rc(Index(2)),
+        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::happlication_rc(
+            Syntax::variable_rc(Index(0)),
+            Syntax::variable_rc(Index(2)),
         )));
 
         assert_eq!(parsed, expected);
@@ -2547,11 +2520,11 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: @42 ~𝒰0
+        // Build expected: @42 ~𝒰0 - splice syntax node is gone, just the underlying term
         use crate::syn::ConstantId;
-        let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
-            HSyntax::splice_rc(Syntax::universe_rc(UniverseLevel::new(0))),
+        let expected = Syntax::happlication_rc(
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         assert_eq!(parsed, expected);
@@ -2574,11 +2547,11 @@ mod tests {
 
         let parsed = result.unwrap();
 
-        // Build expected: ~@42 : $Bit
+        // Build expected: ~@42 : $Bit - splice syntax node is gone, just the underlying term
         use crate::syn::ConstantId;
-        let expected = HSyntax::hcheck_rc(
+        let expected = Syntax::check_rc(
             Syntax::bit_rc(),
-            HSyntax::splice_rc(Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))),
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
         );
 
         assert_eq!(parsed, expected);
@@ -2601,12 +2574,9 @@ mod tests {
 
         // Build expected: (!0 !1) !2
         // Application is left-associative
-        let expected = HSyntax::happlication_rc(
-            HSyntax::happlication_rc(
-                HSyntax::hvariable_rc(Index(0)),
-                HSyntax::hvariable_rc(Index(1)),
-            ),
-            HSyntax::hvariable_rc(Index(2)),
+        let expected = Syntax::happlication_rc(
+            Syntax::happlication_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))),
+            Syntax::variable_rc(Index(2)),
         );
 
         assert_eq!(parsed, expected);
@@ -2630,11 +2600,11 @@ mod tests {
 
         // Build expected: @42 (@99 @100)
         use crate::syn::ConstantId;
-        let expected = HSyntax::happlication_rc(
-            HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "42")),
-            HSyntax::happlication_rc(
-                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "99")),
-                HSyntax::hconstant_rc(ConstantId::from_with_db(&db, "100")),
+        let expected = Syntax::happlication_rc(
+            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+            Syntax::happlication_rc(
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
+                Syntax::constant_rc(ConstantId::from_with_db(&db, "100")),
             ),
         );
 
@@ -2643,7 +2613,7 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_roundtrip_examples() {
-        use crate::syn::print::print_hsyntax_to_string;
+        use crate::syn::print::print_syntax_to_string;
         use crate::Database;
         let db = Database::default();
 
@@ -2664,7 +2634,7 @@ mod tests {
             let parsed = parse_hsyntax(&db, input).expect(&format!("Failed to parse: {}", input));
 
             // Also verify that the printed form can be understood
-            let printed = print_hsyntax_to_string(&db, &parsed);
+            let printed = print_syntax_to_string(&db, &parsed);
 
             // The printed form should be parseable
             let reparsed = parse_hsyntax(&db, &printed);
@@ -2783,7 +2753,7 @@ mod tests {
         );
 
         let parsed = result.unwrap();
-        let expected = HSyntax::zero_rc();
+        let expected = Syntax::zero_rc();
 
         assert_eq!(parsed, expected, "Parsed Zero does not match expected");
     }
@@ -2798,7 +2768,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse One constant: {:?}", result);
 
         let parsed = result.unwrap();
-        let expected = HSyntax::one_rc();
+        let expected = Syntax::one_rc();
 
         assert_eq!(parsed, expected, "Parsed One does not match expected");
     }
@@ -2814,7 +2784,8 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse quoted zero: {:?}", result);
 
         let parsed = result.unwrap();
-        let expected = Syntax::quote_rc(HSyntax::zero_rc());
+        // Quote syntax node is gone - just return the underlying hardware term
+        let expected = Syntax::zero_rc();
         assert_eq!(
             parsed, expected,
             "Parsed quoted Zero does not match expected"
@@ -2826,7 +2797,8 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse quoted one: {:?}", result);
 
         let parsed = result.unwrap();
-        let expected = Syntax::quote_rc(HSyntax::one_rc());
+        // Quote syntax node is gone - just return the underlying hardware term
+        let expected = Syntax::one_rc();
         assert_eq!(
             parsed, expected,
             "Parsed quoted One does not match expected"
@@ -2853,7 +2825,7 @@ mod tests {
             assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
 
             let parsed = result.unwrap();
-            let expected = HSyntax::hprim_rc(expected_name.into_with_db(&db));
+            let expected = Syntax::prim_rc(expected_name.into_with_db(&db));
 
             assert_eq!(
                 parsed, expected,
@@ -2880,7 +2852,7 @@ mod tests {
             assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
 
             let parsed = result.unwrap();
-            let expected = HSyntax::hconstant_rc(expected_name.into_with_db(&db));
+            let expected = Syntax::constant_rc(expected_name.into_with_db(&db));
 
             assert_eq!(
                 parsed, expected,
@@ -3179,29 +3151,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_hprim_declaration() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "hprim $Add : $Bit -> $Bit -> $Bit;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse hardware primitive declaration: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
-        assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::HardwarePrimitive(_)));
-        if let Declaration::HardwarePrimitive(hp) = decl {
-            assert_eq!(hp.name.name(&db), "Add");
-        }
-    }
-
-    #[test]
     fn test_parse_const_declaration() {
         use crate::Database;
         let db = Database::default();
@@ -3282,7 +3231,6 @@ mod tests {
         let db = Database::default();
         let input = r#"
             prim $Nat : U0;
-            hprim $Add : $Bit -> $Bit -> $Bit;
             const @zero : $Nat;
             tcon @Bool : -> U0 where dcon @True : @Bool dcon @False : @Bool;
         "#;
@@ -3295,31 +3243,23 @@ mod tests {
         );
 
         let module = result.unwrap();
-        assert_eq!(module.declarations.len(), 4); // prim + hprim + const + tcon (containing 2 dcons)
+        assert_eq!(module.declarations.len(), 3); // prim + const + tcon (containing 2 dcons)
 
         assert!(matches!(&module.declarations[0], Declaration::Primitive(_)));
         if let Declaration::Primitive(p) = &module.declarations[0] {
             assert_eq!(p.name.name(&db), "Nat");
         }
 
-        assert!(matches!(
-            &module.declarations[1],
-            Declaration::HardwarePrimitive(_)
-        ));
-        if let Declaration::HardwarePrimitive(hp) = &module.declarations[1] {
-            assert_eq!(hp.name.name(&db), "Add");
-        }
-
-        assert!(matches!(&module.declarations[2], Declaration::Constant(_)));
-        if let Declaration::Constant(c) = &module.declarations[2] {
+        assert!(matches!(&module.declarations[1], Declaration::Constant(_)));
+        if let Declaration::Constant(c) = &module.declarations[1] {
             assert_eq!(c.name.name(&db), "zero");
         }
 
         assert!(matches!(
-            &module.declarations[3],
+            &module.declarations[2],
             Declaration::TypeConstructor(_)
         ));
-        if let Declaration::TypeConstructor(tc) = &module.declarations[3] {
+        if let Declaration::TypeConstructor(tc) = &module.declarations[2] {
             assert_eq!(tc.name.name(&db), "Bool");
             assert_eq!(tc.data_constructors.len(), 2);
             assert_eq!(tc.data_constructors[0].name.name(&db), "True");

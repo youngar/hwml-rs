@@ -266,28 +266,28 @@ fn eval_quote<'db, 'g>(
 pub fn eval_hardware<'db, 'g>(
     henv: &mut HEnvironment<'db>,
     env: &mut Environment<'db, 'g>,
-    hsyntax: &syn::HSyntax<'db>,
+    hsyntax: &syn::Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     match hsyntax {
         // Canonical bit values
-        syn::HSyntax::Zero(_) => Ok(Rc::new(Value::Zero)),
-        syn::HSyntax::One(_) => Ok(Rc::new(Value::One)),
+        syn::Syntax::Zero(_) => Ok(Rc::new(Value::Zero)),
+        syn::Syntax::One(_) => Ok(Rc::new(Value::One)),
 
         // HardwareUniverse variable - look up in hardware environment
-        syn::HSyntax::HVariable(var) => {
+        syn::Syntax::HVariable(var) => {
             let level = var.index.to_level(henv.depth());
             henv.get(level).cloned().ok_or(Error::BadApplication)
         }
 
         // HardwareUniverse constant - treat as neutral
-        syn::HSyntax::HConstant(hconst) => {
+        syn::Syntax::HConstant(hconst) => {
             // HardwareUniverse constants are references to user-defined hardware functions
             // They evaluate to neutral values (like variables)
             Ok(Rc::new(Value::HConstant(hconst.name)))
         }
 
         // Lambda: create a closure
-        syn::HSyntax::Module(lam) => {
+        syn::Syntax::Module(lam) => {
             // Capture both the current hardware environment and the current
             // meta-level local environment. This ensures that splices inside
             // the lambda body that reference meta-level variables (e.g. in
@@ -301,14 +301,14 @@ pub fn eval_hardware<'db, 'g>(
         }
 
         // Application: evaluate and potentially beta-reduce
-        syn::HSyntax::HApplication(app) => {
+        syn::Syntax::HApplication(app) => {
             let fun = eval_hardware(henv, env, &app.function)?;
             let arg = eval_hardware(henv, env, &app.argument)?;
             apply_hardware(henv, env, fun, arg)
         }
 
         // Splice: THE BRIDGE from meta to hardware
-        syn::HSyntax::Splice(splice) => {
+        syn::Syntax::Splice(splice) => {
             let meta_val = eval(env, &splice.term)?;
 
             match &*meta_val {
@@ -325,10 +325,10 @@ pub fn eval_hardware<'db, 'g>(
         }
 
         // Type check: just evaluate the term
-        syn::HSyntax::HCheck(check) => eval_hardware(henv, env, &check.term),
+        syn::Syntax::HCheck(check) => eval_hardware(henv, env, &check.term),
 
         // HardwareUniverse primitive reference
-        syn::HSyntax::HPrim(hprim) => Ok(Rc::new(Value::HPrim(hprim.name))),
+        syn::Syntax::HPrim(hprim) => Ok(Rc::new(Value::HPrim(hprim.name))),
     }
 }
 

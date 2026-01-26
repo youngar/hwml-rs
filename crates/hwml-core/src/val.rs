@@ -1,6 +1,6 @@
 use crate::*;
 use std::{collections::HashMap, fmt, marker::PhantomData, rc::*};
-use syn::{ConstantId, HSyntax, RcSyntax, RcSyntax, Telescope};
+use syn::{ConstantId, RcSyntax, RcSyntax, Syntax, Telescope};
 
 /// A closure represents a pending evaluation. A closure records the term to be
 /// reduced by evaluation, as well as the local environment it is to be evaluated under.
@@ -168,7 +168,7 @@ impl<'db> Value<'db> {
     pub fn Module(
         env: HEnvironment<'db>,
         local: LocalEnv<'db>,
-        body: Rc<HSyntax<'db>>,
+        body: Rc<Syntax<'db>>,
     ) -> Value<'db> {
         Value::Module(HClosure::new(env, local, body))
     }
@@ -565,7 +565,7 @@ impl HVariable {
 pub struct Module<'db> {
     pub env: HEnvironment<'db>,
     pub local: LocalEnv<'db>,
-    pub body: Rc<HSyntax<'db>>,
+    pub body: Rc<Syntax<'db>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1111,14 +1111,14 @@ pub struct HClosure<'db> {
     /// The captured meta-level local environment
     pub local: LocalEnv<'db>,
     /// The body of the lambda
-    pub body: Rc<HSyntax<'db>>,
+    pub body: Rc<Syntax<'db>>,
 }
 
 impl<'db> HClosure<'db> {
     pub fn new(
         env: HEnvironment<'db>,
         local: LocalEnv<'db>,
-        body: Rc<HSyntax<'db>>,
+        body: Rc<Syntax<'db>>,
     ) -> HClosure<'db> {
         HClosure { env, local, body }
     }

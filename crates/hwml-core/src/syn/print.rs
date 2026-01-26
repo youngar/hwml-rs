@@ -24,11 +24,6 @@ impl Properties {
     }
 }
 
-const CHECK: Properties = Properties {
-    mode: None,
-    precedence: (Some(2), Some(3)),
-};
-
 const QUOTE: Properties = Properties {
     mode: None,
     precedence: (None, Some(5)),
@@ -44,34 +39,9 @@ const UNIVERSE: Properties = Properties {
     precedence: (None, None),
 };
 
-const HARDWARE_UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
 const LIFT: Properties = Properties {
     mode: Some(Mode::ML),
     precedence: (None, Some(5)),
-};
-
-const SLIFT: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(5)),
-};
-
-const MLIFT: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(5)),
-};
-
-const SIGNAL_UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const MODULE_UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
 };
 
 const PI: Properties = Properties {
@@ -114,19 +84,24 @@ const CASE: Properties = Properties {
     precedence: (APP.precedence.0, None),
 };
 
-const HARROW: Properties = Properties {
+const HARDWARE_UNIVERSE: Properties = Properties {
     mode: Some(Mode::ML),
-    precedence: (Some(4), Some(3)),
+    precedence: (None, None),
 };
 
-const MODULE: Properties = Properties {
-    mode: Some(Mode::HW),
-    precedence: LAMBDA.precedence,
+const SLIFT: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(5)),
 };
 
-const HAPP: Properties = Properties {
-    mode: Some(Mode::HW),
-    precedence: APP.precedence,
+const MLIFT: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(5)),
+};
+
+const SIGNAL_UNIVERSE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
 };
 
 const BIT: Properties = Properties {
@@ -142,6 +117,31 @@ const ZERO: Properties = Properties {
 const ONE: Properties = Properties {
     mode: Some(Mode::HW),
     precedence: (None, None),
+};
+
+const MODULE_UNIVERSE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const HARROW: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (Some(4), Some(3)),
+};
+
+const MODULE: Properties = Properties {
+    mode: Some(Mode::HW),
+    precedence: LAMBDA.precedence,
+};
+
+const HAPP: Properties = Properties {
+    mode: Some(Mode::HW),
+    precedence: APP.precedence,
+};
+
+const CHECK: Properties = Properties {
+    mode: None,
+    precedence: (Some(2), Some(3)),
 };
 
 pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {

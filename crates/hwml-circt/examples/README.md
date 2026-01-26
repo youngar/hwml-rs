@@ -4,11 +4,11 @@ This directory contains examples demonstrating the HWML CIRCT backend.
 
 ## Examples
 
-### `minimal_hsyntax.rs` - Minimal HSyntax Translation
+### `minimal_hsyntax.rs` - Minimal Syntax Translation
 
 **Status**: ✅ Implemented
 
-This example demonstrates the minimal working translation from HWML's hardware-level syntax (`HSyntax`) to CIRCT IR.
+This example demonstrates the minimal working translation from HWML's hardware-level syntax (`Syntax`) to CIRCT IR.
 
 **What it does**:
 - Creates a simple hardware expression: `Xor One Zero`
@@ -27,13 +27,13 @@ cargo run --example minimal_hsyntax -p hwml_circt
 **Expected output**:
 ```
 ╔════════════════════════════════════════════════════════════╗
-║    HWML CIRCT: Minimal HSyntax Translation Example        ║
+║    HWML CIRCT: Minimal Syntax Translation Example        ║
 ╚════════════════════════════════════════════════════════════╝
 
 Step 1: Creating CIRCT context...
 ✓ Context created
 
-Step 2: Creating HSyntax expression...
+Step 2: Creating Syntax expression...
   Expression: (Xor One Zero)
   Expected result: 1 XOR 0 = 1
 
@@ -56,7 +56,7 @@ hw.module @Top() -> (out: i1) {
 ```
 
 **What's implemented**:
-- ✅ HSyntax expression creation (`Zero`, `One`, `Xor`)
+- ✅ Syntax expression creation (`Zero`, `One`, `Xor`)
 - ✅ Translation to CIRCT operations
 - ✅ MLIR module generation
 - ✅ Module verification

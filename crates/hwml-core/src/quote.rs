@@ -1,6 +1,6 @@
 use crate::common::Level;
 use crate::eval::{self, eval_telescope};
-use crate::syn::{CaseBranch, ConstantId, HSyntax, RcSyntax, RcSyntax, Syntax};
+use crate::syn::{CaseBranch, ConstantId, RcSyntax, RcSyntax, Syntax, Syntax};
 use crate::val::{self, Closure, Eliminator, Environment, Flex, LocalEnv, Rigid};
 use crate::val::{GlobalEnv, Normal, Value, Value};
 use std::rc::Rc;
@@ -274,7 +274,7 @@ fn quote_harrow_instance<'db>(
     let body_syntax = quote_Value(db, global, depth + 1, &harrow.target, &body_value)?;
 
     // Build and return the lambda
-    Ok(Rc::new(HSyntax::Module(body_syntax)))
+    Ok(Rc::new(Syntax::Module(body_syntax)))
 }
 
 /// Quote a hardware value at a base type (not a function type).
@@ -282,37 +282,37 @@ fn quote_harrow_instance<'db>(
 fn quote_Value_at_base<'db>(depth: usize, Value: &Value<'db>) -> Result<'db, RcSyntax<'db>> {
     match Value {
         // Canonical bit values
-        Value::Zero => Ok(Rc::new(HSyntax::zero())),
-        Value::One => Ok(Rc::new(HSyntax::one())),
+        Value::Zero => Ok(Rc::new(Syntax::zero())),
+        Value::One => Ok(Rc::new(Syntax::one())),
 
         // HardwareUniverse variable - convert level to index
         Value::HVariable(var) => {
             let index = var.level.to_index(depth);
-            Ok(Rc::new(HSyntax::hvariable(index)))
+            Ok(Rc::new(Syntax::hvariable(index)))
         }
 
         // Embedded meta-level neutral - wrap back in Splice syntax
-        Value::Splice(term) => Ok(Rc::new(HSyntax::splice(term.clone()))),
+        Value::Splice(term) => Ok(Rc::new(Syntax::splice(term.clone()))),
 
         // HardwareUniverse constant reference
-        Value::HConstant(name) => Ok(Rc::new(HSyntax::hconstant(*name))),
+        Value::HConstant(name) => Ok(Rc::new(Syntax::hconstant(*name))),
 
         // HardwareUniverse primitive reference
-        Value::HPrim(name) => Ok(Rc::new(HSyntax::hprim(*name))),
+        Value::HPrim(name) => Ok(Rc::new(Syntax::hprim(*name))),
 
         // Lambda at base type - this shouldn't happen if types are correct
         // But we handle it for robustness by quoting it untyped
         Value::Module(closure) => {
             // This is a type error in principle, but we try to recover
             // by just returning the closure body (which may have wrong indices)
-            Ok(Rc::new(HSyntax::Module(closure.body.clone())))
+            Ok(Rc::new(Syntax::Module(closure.body.clone())))
         }
 
         // Neutral application
         Value::HApp(fun, arg) => {
             let fun_syn = quote_Value_at_base(depth, fun)?;
             let arg_syn = quote_Value_at_base(depth, arg)?;
-            Ok(Rc::new(HSyntax::happlication(fun_syn, arg_syn)))
+            Ok(Rc::new(Syntax::happlication(fun_syn, arg_syn)))
         }
     }
 }

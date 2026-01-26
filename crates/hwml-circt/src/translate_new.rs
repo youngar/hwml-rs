@@ -28,7 +28,7 @@ use hwml_circt_sys::{
 };
 use hwml_core::{
     declaration::Module,
-    syn::{HSyntax, RcSyntax},
+    syn::{Syntax, RcSyntax},
 };
 
 /// Translation context that tracks state during translation.
@@ -143,7 +143,7 @@ pub fn translate_checked_module<'c, 'db>(
             let lifted_ty = val::Value::lift(hw_ty_value.clone());
             let fake_value = val::Value::quote(Value.clone());
 
-            // Read the evaluated hardware value back to HSyntax using the
+            // Read the evaluated hardware value back to Syntax using the
             // core lifted-type quotation. This ultimately dispatches to
             // `quote_Value`, which will apply any hardware lambdas to fresh
             // variables and, via `run_hclosure`, evaluate splices inside
@@ -211,7 +211,7 @@ pub fn translate_checked_module<'c, 'db>(
                 Error::UnsupportedConstruct(format!("Failed to evaluate constant: {}", e))
             })?;
 
-        // Extract HSyntax from the evaluated value
+        // Extract Syntax from the evaluated value
         if let Some(hsyntax) =
             extract_hsyntax_from_value(db, &checked.global_env, &constant.ty, &constant_value)
         {
@@ -234,9 +234,9 @@ pub fn translate_checked_module<'c, 'db>(
     Ok(mlir_module)
 }
 
-/// Extract HSyntax from a *meta-level* value whose type is (up to Pis)
+/// Extract Syntax from a *meta-level* value whose type is (up to Pis)
 /// a lifted hardware type, by quoting it back to syntax and then
-/// pulling out the inner `HSyntax` from a `Quote` node.
+/// pulling out the inner `Syntax` from a `Quote` node.
 ///
 /// This is used for constants like:
 ///
@@ -248,7 +248,7 @@ pub fn translate_checked_module<'c, 'db>(
 /// given type. For a value of type `^ht`, this reduces to
 /// `quote_lift_instance`, which in turn uses `quote_Value` and therefore
 /// fully evaluates any hardware closures (running splices) before
-/// producing `HSyntax`.
+/// producing `Syntax`.
 fn extract_hsyntax_from_value<'db>(
     db: &'db dyn salsa::Database,
     global_env: &hwml_core::val::GlobalEnv<'db>,
@@ -262,12 +262,12 @@ fn extract_hsyntax_from_value<'db>(
     let ty_value = eval::eval(&mut env, ty).ok()?;
 
     // Quote the value at this type back to syntax, then extract the
-    // inner `HSyntax` from the resulting `Quote` node.
+    // inner `Syntax` from the resulting `Quote` node.
     let syntax = quote::quote(db, global_env, 0, &ty_value, value).ok()?;
     extract_hsyntax_from_syntax(&syntax)
 }
 
-/// Extract HSyntax from a Syntax node if it's a Quote node.
+/// Extract Syntax from a Syntax node if it's a Quote node.
 /// This function recursively searches through Lambda nodes to find the innermost Quote.
 fn extract_hsyntax_from_syntax<'db>(
     syntax: &hwml_core::syn::RcSyntax<'db>,
@@ -359,7 +359,7 @@ fn unwrap_Modules<'a, 'db>(expr: &'a RcSyntax<'db>) -> (&'a RcSyntax<'db>, usize
 
     loop {
         match &**current {
-            HSyntax::Module(lambda) => {
+            Syntax::Module(lambda) => {
                 current = &lambda.body;
                 count += 1;
             }
@@ -510,7 +510,7 @@ fn translate_constant_to_module<'c, 'db>(
     Ok(())
 }
 
-/// Translate an HSyntax expression to a CIRCT HW module named "Top".
+/// Translate an Syntax expression to a CIRCT HW module named "Top".
 ///
 /// This is a simplified entry point for translating hardware-level expressions
 /// directly to CIRCT without going through the full module system.
@@ -597,7 +597,7 @@ pub fn translate_hsyntax_to_top<'c, 'db>(
     Ok(mlir_module)
 }
 
-/// Translate an HSyntax expression to a CIRCT value.
+/// Translate an Syntax expression to a CIRCT value.
 fn translate_hsyntax_expr<'c, 'db>(
     ctx: &'c CirctContext,
     db: &'db dyn salsa::Database,
@@ -609,7 +609,7 @@ fn translate_hsyntax_expr<'c, 'db>(
     let bit_type = dialects::hw::bit_type(mlir_ctx);
 
     match &**expr {
-        HSyntax::Zero(_) => {
+        Syntax::Zero(_) => {
             // Create hw.constant 0 : i1
             let zero_attr = MlirAttributeWrapper::integer(bit_type, 0);
             let const_op = OperationBuilder::new("hw.constant", location)
@@ -620,7 +620,7 @@ fn translate_hsyntax_expr<'c, 'db>(
             block.append_operation(const_op);
             operation_result(const_op, 0).map_err(|e| Error::MlirOperation(e))
         }
-        HSyntax::One(_) => {
+        Syntax::One(_) => {
             // Create hw.constant 1 : i1
             let one_attr = MlirAttributeWrapper::integer(bit_type, 1);
             let const_op = OperationBuilder::new("hw.constant", location)
@@ -631,12 +631,12 @@ fn translate_hsyntax_expr<'c, 'db>(
             block.append_operation(const_op);
             operation_result(const_op, 0).map_err(|e| Error::MlirOperation(e))
         }
-        HSyntax::HApplication(app) => {
+        Syntax::HApplication(app) => {
             // Check if this is a binary operation application
             // Pattern: ((Op arg1) arg2)
-            if let HSyntax::HApplication(inner_app) = &*app.function {
+            if let Syntax::HApplication(inner_app) = &*app.function {
                 // Check if the inner function is a primitive
-                if let HSyntax::HPrim(prim) = &*inner_app.function {
+                if let Syntax::HPrim(prim) = &*inner_app.function {
                     let prim_name = prim.name.name(db);
 
                     // Handle $reg specially - it generates seq.compreg
@@ -711,7 +711,7 @@ fn translate_hsyntax_expr<'c, 'db>(
                     "Unsupported nested application: {:?}",
                     inner_app.function
                 )));
-            } else if let HSyntax::HPrim(prim) = &*app.function {
+            } else if let Syntax::HPrim(prim) = &*app.function {
                 let prim_name = prim.name.name(db);
                 if prim_name == "not" {
                     // Unary NOT operation
@@ -752,7 +752,7 @@ fn translate_hsyntax_expr<'c, 'db>(
                 )))
             }
         }
-        HSyntax::HVariable(var) => {
+        Syntax::HVariable(var) => {
             // Get the block argument corresponding to this variable
             // Variables are indexed from the end (De Bruijn indices)
             let num_args = unsafe { hwml_circt_sys::mlirBlockGetNumArguments(block.as_raw()) };
@@ -779,7 +779,7 @@ fn translate_hsyntax_expr<'c, 'db>(
 
             Ok(arg_value)
         }
-        HSyntax::Splice(splice) => {
+        Syntax::Splice(splice) => {
             // A splice ~t evaluates the meta-level term t and extracts the hardware value
             // In our case, t should be a Variable that refers to a lambda parameter
             // which is bound to a quoted hardware value
@@ -820,7 +820,7 @@ fn translate_hsyntax_expr<'c, 'db>(
             }
         }
         _ => Err(Error::UnsupportedConstruct(format!(
-            "Unsupported HSyntax variant: {:?}",
+            "Unsupported Syntax variant: {:?}",
             expr
         ))),
     }
