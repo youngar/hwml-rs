@@ -420,7 +420,7 @@ impl<'db> Universe<'db> {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Lift<'db> {
     pub ty: RcSyntax<'db>,
 }

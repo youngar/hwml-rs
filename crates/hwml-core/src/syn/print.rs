@@ -1,5 +1,5 @@
 use crate::{
-    declaration::{Declaration, Primitive},
+    declaration::{self, Declaration, Primitive},
     syn::*,
 };
 use elegance::{Io, Printer, Render};
@@ -7,29 +7,142 @@ use elegance::{Io, Printer, Render};
 const INDENT: isize = 2;
 const COLUMNS: usize = 80;
 
-const NO_PREC: Option<usize> = None;
-const CHECK_LHS: Option<usize> = Some(2);
-const CHECK_RHS: Option<usize> = Some(2);
-const PI_LHS: Option<usize> = NO_PREC;
-const PI_RHS: Option<usize> = Some(3);
-const LAMBDA_LHS: Option<usize> = NO_PREC;
-const LAMBDA_RHS: Option<usize> = Some(3);
-const APP_LHS: Option<usize> = Some(4);
-const APP_RHS: Option<usize> = Some(5);
-const TCON_APP_LHS: Option<usize> = APP_LHS;
-const TCON_APP_RHS: Option<usize> = APP_RHS;
-const DCON_APP_LHS: Option<usize> = APP_LHS;
-const DCON_APP_RHS: Option<usize> = APP_RHS;
-const CASE_LHS: Option<usize> = APP_LHS;
-const CASE_RHS: Option<usize> = NO_PREC;
-const LIFT_LHS: Option<usize> = NO_PREC;
-const LIFT_RHS: Option<usize> = Some(5);
-const QUOTE_LHS: Option<usize> = NO_PREC;
-const QUOTE_RHS: Option<usize> = Some(5);
-const HARROW_LHS: Option<usize> = Some(4);
-const HARROW_RHS: Option<usize> = Some(3);
-const SPLICE_LHS: Option<usize> = NO_PREC;
-const SPLICE_RHS: Option<usize> = Some(5);
+type Precedence = (Option<usize>, Option<usize>);
+
+struct Properties {
+    mode: Option<Mode>,
+    precedence: Precedence,
+}
+
+impl Properties {
+    fn lhs_prec(&self) -> Option<usize> {
+        self.precedence.0
+    }
+
+    fn rhs_prec(&self) -> Option<usize> {
+        self.precedence.1
+    }
+}
+
+const CHECK: Properties = Properties {
+    mode: None,
+    precedence: (Some(2), Some(3)),
+};
+
+const QUOTE: Properties = Properties {
+    mode: None,
+    precedence: (None, Some(5)),
+};
+
+const SPLICE: Properties = Properties {
+    mode: None,
+    precedence: (None, Some(5)),
+};
+
+const UNIVERSE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const HARDWARE_UNIVERSE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const LIFT: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(5)),
+};
+
+const SLIFT: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(5)),
+};
+
+const MLIFT: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(5)),
+};
+
+const SIGNAL_UNIVERSE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const MODULE_UNIVERSE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const PI: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(3)),
+};
+
+const LAMBDA: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, Some(3)),
+};
+
+const APP: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (Some(4), Some(5)),
+};
+
+const TCON_APP: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: APP.precedence,
+};
+
+const DCON_APP: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: APP.precedence,
+};
+
+const TCON: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const DCON: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const CASE: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (APP.precedence.0, None),
+};
+
+const HARROW: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (Some(4), Some(3)),
+};
+
+const MODULE: Properties = Properties {
+    mode: Some(Mode::HW),
+    precedence: LAMBDA.precedence,
+};
+
+const HAPP: Properties = Properties {
+    mode: Some(Mode::HW),
+    precedence: APP.precedence,
+};
+
+const BIT: Properties = Properties {
+    mode: Some(Mode::ML),
+    precedence: (None, None),
+};
+
+const ZERO: Properties = Properties {
+    mode: Some(Mode::HW),
+    precedence: (None, None),
+};
+
+const ONE: Properties = Properties {
+    mode: Some(Mode::HW),
+    precedence: (None, None),
+};
 
 pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
@@ -93,7 +206,6 @@ fn print_declaration<'db, R: Render>(
         Declaration::Constant(c) => print_constant(db, c, p),
         Declaration::TypeConstructor(tc) => print_type_constructor(db, tc, p),
     }
-    Ok(())
 }
 
 pub fn print_primitive<'db, R: Render>(
@@ -112,7 +224,7 @@ pub fn print_primitive<'db, R: Render>(
 
 pub fn print_constant<'db, R: Render>(
     db: &'db dyn salsa::Database,
-    c: &Constant<'db>,
+    c: &declaration::Constant<'db>,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("const @")?;
@@ -128,7 +240,7 @@ pub fn print_constant<'db, R: Render>(
 
 pub fn print_type_constructor<'db, R: Render>(
     db: &'db dyn salsa::Database,
-    tc: &TypeConstructor<'db>,
+    tc: &declaration::TypeConstructor<'db>,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("tcon @")?;
@@ -159,32 +271,56 @@ pub fn print_type_constructor<'db, R: Render>(
         }
     }
     p.text(";")?;
+    Ok(())
 }
 
-pub fn print_hsyntax_to_string<'db>(
+pub fn print_hw_syntax_to_string<'db>(
     db: &'db dyn salsa::Database,
-    hsyntax: &HSyntax<'db>,
+    syntax: &Syntax<'db>,
 ) -> String {
     let mut p = Printer::new(String::new(), 80);
-    let st = State::new();
-    let _ = hsyntax.print(db, st, &mut p);
+    let st = State::with_mode(Mode::HW);
+    let _ = syntax.print(db, st, &mut p);
     p.finish().unwrap_or_default()
 }
 
 #[derive(Clone, Copy)]
+enum Mode {
+    /// Hardware mode.
+    HW,
+    /// Meta-level mode.
+    ML,
+}
+
+#[derive(Clone, Copy)]
 struct State {
+    /// The current mode (HW/ML) we are printing at.
+    mode: Mode,
     /// Ambient binder depth.
     depth: usize,
     // The parent precedence.
-    precedence: (Option<usize>, Option<usize>),
+    precedence: Precedence,
 }
 
 impl State {
     fn new() -> State {
         State {
+            mode: Mode::ML,
             depth: 0,
             precedence: (None, None),
         }
+    }
+
+    fn with_mode(mode: Mode) -> State {
+        State {
+            mode,
+            depth: 0,
+            precedence: (None, None),
+        }
+    }
+
+    fn set_prec(self, precedence: Precedence) -> State {
+        State { precedence, ..self }
     }
 
     fn set_lhs_prec(self, prec: Option<usize>) -> State {
@@ -207,6 +343,10 @@ impl State {
             ..self
         }
     }
+
+    fn set_mode(self, mode: Mode) -> State {
+        State { mode, ..self }
+    }
 }
 
 trait Print {
@@ -218,7 +358,7 @@ trait Print {
     ) -> Result<(), R::Error>;
 }
 
-fn print_left_subterm<R, A>(
+fn print_lhs_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
     p: &mut Printer<R>,
@@ -232,7 +372,7 @@ where
     x.print(db, st.set_rhs_prec(lhs_prec), p)
 }
 
-fn print_right_subterm<R, A>(
+fn print_rhs_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
     p: &mut Printer<R>,
@@ -247,7 +387,7 @@ where
 }
 
 fn print_internal<F, R>(
-    db: &dyn salsa::Database,
+    _db: &dyn salsa::Database,
     st: State,
     p: &mut Printer<R>,
     f: F,
@@ -256,7 +396,7 @@ where
     F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
 {
-    f(st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)
+    f(st.set_prec((None, None)), p)
 }
 
 fn print_internal_subterm<R, A>(
@@ -269,14 +409,13 @@ where
     R: Render,
     A: Print,
 {
-    x.print(db, st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)
+    x.print(db, st.set_prec((None, None)), p)
 }
 
-fn with_prec<F, R>(
+fn ensure_precedence<F, R>(
     st: State,
     p: &mut Printer<R>,
-    lhs_prec: Option<usize>,
-    rhs_prec: Option<usize>,
+    (lhs_prec, rhs_prec): Precedence,
     f: F,
 ) -> Result<(), R::Error>
 where
@@ -299,7 +438,7 @@ where
     if need_parens {
         p.igroup(INDENT, |p| {
             p.text("(")?;
-            f(st.set_lhs_prec(NO_PREC).set_rhs_prec(NO_PREC), p)?;
+            f(st.set_prec((None, None)), p)?;
             p.text(")")
         })
     } else {
@@ -307,16 +446,57 @@ where
     }
 }
 
-impl<'db> Print for ConstantId<'db> {
-    fn print<R: Render>(
-        &self,
-        db: &dyn salsa::Database,
-        _st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        let name = self.name(db);
-        p.text_owned(&format!("@{}", name))
+pub fn quote<F, R>(st: State, p: &mut Printer<R>, f: F) -> Result<(), R::Error>
+where
+    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    R: Render,
+{
+    ensure_precedence(st, p, QUOTE.precedence, |st, p| {
+        p.text("'")?;
+        let st = st.set_mode(Mode::HW);
+        let st = st.set_lhs_prec(QUOTE.precedence.1);
+        f(st, p)
+    })
+}
+
+pub fn splice<F, R>(st: State, p: &mut Printer<R>, f: F) -> Result<(), R::Error>
+where
+    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    R: Render,
+{
+    ensure_precedence(st, p, SPLICE.precedence, |st, p| {
+        p.text("~")?;
+        let st = st.set_mode(Mode::ML);
+        let st = st.set_lhs_prec(SPLICE.precedence.1);
+        f(st, p)
+    })
+}
+
+fn ensure_mode<F, R>(
+    st: State,
+    p: &mut Printer<R>,
+    mode: Option<Mode>,
+    f: F,
+) -> Result<(), R::Error>
+where
+    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    R: Render,
+{
+    match (st.mode, mode) {
+        (Mode::ML, Some(Mode::HW)) => quote(st, p, f),
+        (Mode::HW, Some(Mode::ML)) => splice(st, p, f),
+        _ => f(st, p),
     }
+}
+
+fn ensure<F, R>(st: State, p: &mut Printer<R>, properties: Properties, f: F) -> Result<(), R::Error>
+where
+    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    R: Render,
+{
+    ensure_mode(st, p, properties.mode, |st, p| {
+        ensure_precedence(st, p, properties.precedence, f)
+    })
 }
 
 fn print_binder<R>(st: State, p: &mut Printer<R>) -> Result<(), R::Error>
@@ -339,6 +519,18 @@ where
         print_binder(st, p)?;
     }
     Ok(())
+}
+
+impl<'db> Print for ConstantId<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        let name = self.name(db);
+        p.text_owned(&format!("@{}", name))
+    }
 }
 
 impl<'db> Print for Closure<'db> {
@@ -389,9 +581,13 @@ impl<'db> Print for Syntax<'db> {
 
             Syntax::SignalUniverse(sig) => sig.print(db, st, p),
             Syntax::Bit(bit) => bit.print(db, st, p),
+            Syntax::Zero(zero) => zero.print(db, st, p),
+            Syntax::One(one) => one.print(db, st, p),
 
             Syntax::ModuleUniverse(mty) => mty.print(db, st, p),
             Syntax::HArrow(harrow) => harrow.print(db, st, p),
+            Syntax::Module(module) => module.print(db, st, p),
+            Syntax::HApplication(app) => app.print(db, st, p),
 
             Syntax::Prim(prim) => prim.print(db, st, p),
             Syntax::Constant(constant) => constant.print(db, st, p),
@@ -399,32 +595,20 @@ impl<'db> Print for Syntax<'db> {
             Syntax::Metavariable(meta) => meta.print(db, st, p),
 
             Syntax::Check(chk) => chk.print(db, st, p),
-
-            _ => print_quote(db, st, p, self),
         }
     }
-}
-
-pub fn print_quote<R: Render>(
-    db: &dyn salsa::Database,
-    st: State,
-    p: &mut Printer<R>,
-    syntax: &Syntax<'db>,
-) -> Result<(), R::Error> {
-    with_prec(st, p, QUOTE_LHS, QUOTE_RHS, |st, p| {
-        p.text("'")?;
-        print_right_subterm(db, st, p, &*quote.expr, QUOTE_RHS)
-    })
 }
 
 impl<'db> Print for Universe<'db> {
     fn print<R: Render>(
         &self,
-        db: &dyn salsa::Database,
-        _st: State,
+        _db: &dyn salsa::Database,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text_owned(&format!("𝒰{}", self.level))
+        ensure(st, p, UNIVERSE, |_, p| {
+            p.text_owned(&format!("𝒰{}", self.level))
+        })
     }
 }
 
@@ -435,9 +619,9 @@ impl<'db> Print for Lift<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, LIFT_LHS, LIFT_RHS, |st, p| {
+        ensure(st, p, LIFT, |st, p| {
             p.text("^")?;
-            print_right_subterm(db, st, p, &*self.tm, LIFT_RHS)
+            print_rhs_subterm(db, st, p, &*self.ty, LIFT.rhs_prec())
         })
     }
 }
@@ -449,7 +633,7 @@ impl<'db> Print for Pi<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, PI_LHS, PI_RHS, |mut st, p| {
+        ensure(st, p, PI, |mut st, p| {
             p.cgroup(0, |p| {
                 let mut next = self;
                 p.text("∀ ")?;
@@ -460,7 +644,7 @@ impl<'db> Print for Pi<'db> {
                             print_binder(st, p)?;
                             p.text(" :")?;
                             p.space()?;
-                            print_right_subterm(db, st, p, &*next.source, CHECK_RHS)
+                            print_rhs_subterm(db, st, p, &*next.source, CHECK.rhs_prec())
                         })?;
                         p.text(")")?;
                         st = st.inc_depth();
@@ -475,7 +659,7 @@ impl<'db> Print for Pi<'db> {
                 })?;
                 p.text(" →")?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*next.target, PI_RHS)
+                print_rhs_subterm(db, st, p, &*next.target, PI.rhs_prec())
             })
         })
     }
@@ -488,7 +672,7 @@ impl<'db> Print for Lambda<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, LAMBDA_LHS, LAMBDA_RHS, |st, p| {
+        ensure(st, p, LAMBDA, |st, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
                 let mut st = st;
@@ -507,7 +691,7 @@ impl<'db> Print for Lambda<'db> {
                     p.text("→")
                 })?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*next.body, LAMBDA_RHS)
+                print_rhs_subterm(db, st, p, &*next.body, LAMBDA.rhs_prec())
             })
         })
     }
@@ -520,11 +704,11 @@ impl<'db> Print for Application<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, APP_LHS, APP_RHS, |st, p| {
+        ensure(st, p, APP, |st, p| {
             p.cgroup(0, |p| {
-                print_left_subterm(db, st, p, &*self.function, APP_LHS)?;
+                print_lhs_subterm(db, st, p, &*self.function, APP.lhs_prec())?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*self.argument, APP_RHS)
+                print_rhs_subterm(db, st, p, &*self.argument, APP.rhs_prec())
             })
         })
     }
@@ -537,7 +721,9 @@ impl<'db> Print for TypeConstructor<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        print_constructor(db, st, p, "#", self.constructor, &self.arguments)
+        ensure(st, p, TCON, |st, p| {
+            print_constructor(db, st, p, "#", self.constructor, &self.arguments)
+        })
     }
 }
 
@@ -548,7 +734,9 @@ impl<'db> Print for DataConstructor<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        print_constructor(db, st, p, "", self.constructor, &self.arguments)
+        ensure(st, p, DCON_APP, |st, p| {
+            print_constructor(db, st, p, "", self.constructor, &self.arguments)
+        })
     }
 }
 
@@ -565,8 +753,8 @@ fn print_constructor<'db, R: Render>(
         p.text("[");
         constructor.print(db, st, p)?;
         if let Some((last, rest)) = arguments.split_last() {
-            let st = st.set_lhs_prec(DCON_APP_RHS);
-            let ist = st.set_rhs_prec(DCON_APP_LHS);
+            let st = st.set_lhs_prec(DCON_APP.rhs_prec());
+            let ist = st.set_rhs_prec(DCON_APP.lhs_prec());
             for arg in rest {
                 p.space()?;
                 arg.print(db, ist, p)?;
@@ -611,8 +799,8 @@ impl<'db> Print for Case<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, CASE_LHS, CASE_RHS, |st, p| {
-            print_left_subterm(db, st, p, &*self.expr, CASE_LHS)?;
+        ensure(st, p, CASE, |st, p| {
+            print_lhs_subterm(db, st, p, &*self.expr, CASE.lhs_prec())?;
             p.space()?;
             p.text("case")?;
             p.space()?;
@@ -653,41 +841,14 @@ impl<'db> Print for CaseBranch<'db> {
     }
 }
 
-/// Print a hardware level term, assuming we are in a hardware context.
-pub fn print_hsyntax<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    st: State,
-    p: &mut Printer<R>,
-    hsyntax: &Syntax<'db>,
-) -> Result<(), R::Error> {
-    match hsyntax {
-        Syntax::Module(module) => module.print(db, st, p),
-        Syntax::HApplication(application) => application.print(db, st, p),
-        Syntax::Zero(zero) => zero.print(db, st, p),
-        Syntax::One(one) => one.print(db, st, p),
-        _ => print_splice(db, st, p, hsyntax),
-    }
-}
-
-fn print_splice<'db, R: Render>(
-    db: &dyn salsa::Database,
-    st: State,
-    p: &mut Printer<R>,
-    syntax: &Syntax<'db>,
-) -> Result<(), R::Error> {
-    p.text("~")?;
-    print_right_subterm(db, st, p, syntax, SPLICE_RHS)
-}
-
 impl<'db> Print for HardwareUniverse<'db> {
     fn print<R: Render>(
         &self,
         _db: &dyn salsa::Database,
-        _st: State,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        // Preserve existing textual representation for the hardware universe
-        p.text("H")
+        ensure(st, p, HARDWARE_UNIVERSE, |st, p| p.text("H"))
     }
 }
 
@@ -698,9 +859,9 @@ impl<'db> Print for SLift<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, LIFT_LHS, LIFT_RHS, |st, p| {
+        ensure(st, p, SLIFT, |st, p| {
             p.text("^s")?;
-            print_right_subterm(db, st, p, &*self.tm, LIFT_RHS)
+            print_rhs_subterm(db, st, p, &*self.ty, SLIFT.rhs_prec())
         })
     }
 }
@@ -712,9 +873,9 @@ impl<'db> Print for MLift<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, LIFT_LHS, LIFT_RHS, |st, p| {
+        ensure(st, p, MLIFT, |st, p| {
             p.text("^m")?;
-            print_right_subterm(db, st, p, &*self.tm, LIFT_RHS)
+            print_rhs_subterm(db, st, p, &*self.ty, MLIFT.rhs_prec())
         })
     }
 }
@@ -723,44 +884,43 @@ impl<'db> Print for SignalUniverse<'db> {
     fn print<R: Render>(
         &self,
         _db: &dyn salsa::Database,
-        _st: State,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        // Preserve existing textual representation for the signal universe
-        p.text("ValueType")
+        ensure(st, p, SIGNAL_UNIVERSE, |st, p| p.text("SignalType"))
     }
 }
 
-impl Print for Bit {
+impl<'db> Print for Bit<'db> {
     fn print<R: Render>(
         &self,
         _db: &dyn salsa::Database,
-        _st: State,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("$Bit")
+        ensure(st, p, BIT, |st, p| p.text("$Bit"))
     }
 }
 
-impl Print for Zero {
+impl<'db> Print for Zero<'db> {
     fn print<R: Render>(
         &self,
         _db: &dyn salsa::Database,
-        _st: State,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("0")
+        ensure(st, p, ZERO, |st, p| p.text("0"))
     }
 }
 
-impl Print for One {
+impl<'db> Print for One<'db> {
     fn print<R: Render>(
         &self,
         _db: &dyn salsa::Database,
-        _st: State,
+        st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("1")
+        ensure(st, p, ONE, |st, p| p.text("1"))
     }
 }
 
@@ -782,13 +942,13 @@ impl<'db> Print for HArrow<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, HARROW_LHS, HARROW_RHS, |st, p| {
+        ensure(st, p, HARROW, |st, p| {
             p.cgroup(0, |p| {
-                print_left_subterm(db, st, p, &*self.source, HARROW_LHS)?;
+                print_lhs_subterm(db, st, p, &*self.source, HARROW.lhs_prec())?;
                 p.space()?;
                 p.text("→")?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*self.target, HARROW_RHS)
+                print_rhs_subterm(db, st, p, &*self.target, HARROW.rhs_prec())
             })
         })
     }
@@ -801,7 +961,7 @@ impl<'db> Print for Module<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, LAMBDA_LHS, LAMBDA_RHS, |st, p| {
+        ensure(st, p, MODULE, |st, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
                 let mut st = st;
@@ -811,7 +971,7 @@ impl<'db> Print for Module<'db> {
                         print_binder(st, p)?;
                         st = st.inc_depth();
                         match &*next.body {
-                            HSyntax::Module(lam) => next = lam,
+                            Syntax::Module(lam) => next = lam,
                             _ => break,
                         }
                         p.space()?;
@@ -820,7 +980,7 @@ impl<'db> Print for Module<'db> {
                     p.text("→")
                 })?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*next.body, LAMBDA_RHS)
+                print_rhs_subterm(db, st, p, &*next.body, MODULE.rhs_prec())
             })
         })
     }
@@ -833,11 +993,11 @@ impl<'db> Print for HApplication<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, APP_LHS, APP_RHS, |st, p| {
+        ensure(st, p, HAPP, |st, p| {
             p.cgroup(0, |p| {
-                print_left_subterm(db, st, p, &*self.function, APP_LHS)?;
+                print_lhs_subterm(db, st, p, &*self.function, HAPP.lhs_prec())?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*self.argument, APP_RHS)
+                print_rhs_subterm(db, st, p, &*self.argument, HAPP.rhs_prec())
             })
         })
     }
@@ -906,12 +1066,12 @@ impl<'db> Print for Check<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        with_prec(st, p, CHECK_LHS, CHECK_RHS, |st, p| {
+        ensure(st, p, CHECK, |st, p| {
             p.igroup(0, |p| {
-                print_left_subterm(db, st, p, &*self.term, CHECK_LHS)?;
+                print_lhs_subterm(db, st, p, &*self.term, CHECK.lhs_prec())?;
                 p.text(" :")?;
                 p.space()?;
-                print_right_subterm(db, st, p, &*self.ty, CHECK_RHS)
+                print_rhs_subterm(db, st, p, &*self.ty, CHECK.rhs_prec())
             })
         })
     }
@@ -1150,221 +1310,200 @@ mod tests {
 
     #[test]
     fn test_print_hardware_terms() {
-        use crate::syn::{HApplication, HCheck, HConstant, HSyntax, Module, Splice, Variable};
+        use crate::syn::{HApplication, Module, Variable};
         use crate::Database;
         use std::rc::Rc;
         let db = Database::default();
 
-        // Simple HConstant: @42
+        // Simple Constant: @42
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::HConstant(HConstant::new(ConstantId::from_with_db(&db, "42")))),
+            print_syntax_to_string(&db, &Syntax::Constant(Constant::new(ConstantId::from_with_db(&db, "42")))),
             @"@42"
         );
 
-        // Simple HVariable bound: %0 (at depth 1)
-        let hvar_bound = HSyntax::HVariable(Variable::new(Index(0)));
+        // Simple Variable bound: %0 (at depth 1)
+        let hvar_bound = Syntax::Variable(Variable::new(Index(0)));
         let mut p = Printer::new(String::new(), 80);
         let st = State::new().inc_depth(); // depth 1, so index 0 is bound
         let _ = hvar_bound.print(&db, st, &mut p);
         let result = p.finish().unwrap_or_default();
         assert_eq!(result, "%0");
 
-        // Simple HVariable unbound: !0 (at depth 0)
+        // Simple Variable unbound: !0 (at depth 0)
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::HVariable(Variable::new(Index(0)))),
+            print_syntax_to_string(&db, &Syntax::Variable(Variable::new(Index(0)))),
             @"!0"
         );
 
-        // HCheck: @42 : $Bit
+        // Check: @42 : $Bit
         // Type annotation is now a meta-level Syntax (hardware type)
-        let hcheck = HSyntax::HCheck(HCheck::new(
+        let hcheck = Syntax::Check(Check::new(
             Rc::new(Syntax::Bit(Bit::new())),
-            Rc::new(HSyntax::HConstant(HConstant::new(
-                ConstantId::from_with_db(&db, "42"),
-            ))),
+            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+                &db, "42",
+            )))),
         ));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &hcheck),
+            print_syntax_to_string(&db, &hcheck),
             @"@42 : $Bit"
         );
 
         // Module: λ%0 → %0
-        let Module = HSyntax::Module(Module::new(Rc::new(HSyntax::HVariable(Variable::new(
+        let Module = Syntax::Module(Module::new(Rc::new(Syntax::Variable(Variable::new(
             Index(0),
         )))));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &Module),
+            print_syntax_to_string(&db, &Module),
             @"λ %0 → %0"
         );
 
         // HApplication: @42 @99
-        let happ = HSyntax::HApplication(HApplication::new(
-            Rc::new(HSyntax::HConstant(HConstant::new(
-                ConstantId::from_with_db(&db, "42"),
-            ))),
-            Rc::new(HSyntax::HConstant(HConstant::new(
-                ConstantId::from_with_db(&db, "99"),
-            ))),
+        let happ = Syntax::HApplication(HApplication::new(
+            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+                &db, "42",
+            )))),
+            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+                &db, "99",
+            )))),
         ));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &happ),
+            print_syntax_to_string(&db, &happ),
             @"@42 @99"
-        );
-
-        // Splice: ~@42
-        let splice = HSyntax::Splice(Splice::new(Syntax::constant_rc(ConstantId::from_with_db(
-            &db, "42",
-        ))));
-        assert_snapshot!(
-            print_hsyntax_to_string(&db, &splice),
-            @"~@42"
         );
     }
 
     #[test]
     fn test_print_complex_hardware_terms() {
-        use crate::syn::{HApplication, HCheck, HConstant, HSyntax, Module, Splice, Variable};
+        use crate::syn::{HApplication, Module, Syntax, Variable};
         use crate::Database;
         use std::rc::Rc;
         let db = Database::default();
 
         // Nested Module: λ%0 %1 → %1 %0
-        let nested_Module = HSyntax::Module(Module::new(Rc::new(HSyntax::Module(Module::new(
-            Rc::new(HSyntax::HApplication(HApplication::new(
-                Rc::new(HSyntax::HVariable(Variable::new(Index(0)))), // inner lambda param
-                Rc::new(HSyntax::HVariable(Variable::new(Index(1)))), // outer lambda param
+        let nested_module = Syntax::Module(Module::new(Rc::new(Syntax::Module(Module::new(
+            Rc::new(Syntax::HApplication(HApplication::new(
+                Rc::new(Syntax::Variable(Variable::new(Index(0)))), // inner lambda param
+                Rc::new(Syntax::Variable(Variable::new(Index(1)))), // outer lambda param
             ))),
         )))));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &nested_Module),
+            print_syntax_to_string(&db, &nested_module),
             @"λ %0 %1 → %1 %0"
         );
 
-        // Module with HCheck: λ%0 → (@42 : $Bit)
-        let Module_with_check =
-            HSyntax::Module(Module::new(Rc::new(HSyntax::HCheck(HCheck::new(
-                Rc::new(Syntax::Bit(Bit::new())),
-                Rc::new(HSyntax::HConstant(HConstant::new(
-                    ConstantId::from_with_db(&db, "42"),
-                ))),
-            )))));
+        // Module with Check: λ%0 → (@42 : $Bit)
+        let module_with_check = Syntax::Module(Module::new(Rc::new(Syntax::Check(Check::new(
+            Rc::new(Syntax::Bit(Bit::new())),
+            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+                &db, "42",
+            )))),
+        )))));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &Module_with_check),
+            print_syntax_to_string(&db, &module_with_check),
             @"λ %0 → (@42 : $Bit)"
         );
 
         // HApplication with Module: (λ%0 → %0) @42
-        let happ_with_lambda = HSyntax::HApplication(HApplication::new(
-            Rc::new(HSyntax::Module(Module::new(Rc::new(HSyntax::HVariable(
+        let happ_with_lambda = Syntax::HApplication(HApplication::new(
+            Rc::new(Syntax::Module(Module::new(Rc::new(Syntax::Variable(
                 Variable::new(Index(0)),
             ))))),
-            Rc::new(HSyntax::HConstant(HConstant::new(
-                ConstantId::from_with_db(&db, "42"),
-            ))),
+            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+                &db, "42",
+            )))),
         ));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &happ_with_lambda),
+            print_syntax_to_string(&db, &happ_with_lambda),
             @"(λ %0 → %0) @42"
         );
 
-        // Splice with complex term: ~λ %0 → @42 %0
-        let splice_complex =
-            HSyntax::Splice(Splice::new(Syntax::lambda_rc(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                Syntax::variable_rc(Index(0)),
-            ))));
+        // Variable unbound at different indices
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &splice_complex),
-            @"~λ %0 → @42 %0"
-        );
-
-        // HVariable unbound at different indices
-        assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::HVariable(Variable::new(Index(5)))),
+            print_syntax_to_string(&db, &Syntax::Variable(Variable::new(Index(5)))),
             @"!5"
         );
 
-        // HCheck with Module: (λ%0 → %0) : $Bit -> $Bit
+        // Check with Module: (λ%0 → %0) : $Bit -> $Bit
         // The type annotation is a hardware type (meta-level Syntax)
         let harrow_type = Syntax::HArrow(HArrow::new(
             Rc::new(Syntax::Bit(Bit::new())),
             Rc::new(Syntax::Bit(Bit::new())),
         ));
-        let hcheck_lambdas = HSyntax::HCheck(HCheck::new(
+        let hcheck_lambdas = Syntax::Check(Check::new(
             Rc::new(harrow_type),
-            Rc::new(HSyntax::Module(Module::new(Rc::new(HSyntax::HVariable(
+            Rc::new(Syntax::Module(Module::new(Rc::new(Syntax::Variable(
                 Variable::new(Index(0)),
             ))))),
         ));
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &hcheck_lambdas),
+            print_syntax_to_string(&db, &hcheck_lambdas),
             @"λ %0 → %0 : $Bit → $Bit"
         );
     }
 
-    #[test]
-    fn test_print_quote_with_hardware_terms() {
-        use crate::syn::{HApplication, HConstant, HSyntax, Lift, Module, Quote, Splice, Variable};
-        use crate::Database;
-        use std::rc::Rc;
-        let db = Database::default();
+    // #[test]
+    // fn test_print_quote_with_hardware_terms() {
+    //     use crate::syn::{Constant, HApplication, Lift, Module, Syntax, Variable};
+    //     use crate::Database;
+    //     use std::rc::Rc;
+    //     let db = Database::default();
 
-        // Quote with HConstant: '@42
-        let quote_hconst = Syntax::Quote(Quote::new(Rc::new(HSyntax::HConstant(HConstant::new(
-            ConstantId::from_with_db(&db, "42"),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &quote_hconst),
-            @"'@42"
-        );
+    //     // Quote with Constant: '@42
+    //     let quote_hconst = Syntax::Quote(Quote::new(Rc::new(Syntax::Constant(Constant::new(
+    //         ConstantId::from_with_db(&db, "42"),
+    //     )))));
+    //     assert_snapshot!(
+    //         print_syntax_to_string(&db, &quote_hconst),
+    //         @"'@42"
+    //     );
 
-        // Quote with Module: '(λ%0 → %0)
-        let quote_Module = Syntax::Quote(Quote::new(Rc::new(HSyntax::Module(Module::new(
-            Rc::new(HSyntax::HVariable(Variable::new(Index(0)))),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &quote_Module),
-            @"'λ %0 → %0"
-        );
+    //     // Quote with Module: '(λ%0 → %0)
+    //     let quote_Module = Syntax::Quote(Quote::new(Rc::new(Syntax::Module(Module::new(
+    //         Rc::new(Syntax::Variable(Variable::new(Index(0)))),
+    //     )))));
+    //     assert_snapshot!(
+    //         print_syntax_to_string(&db, &quote_Module),
+    //         @"'λ %0 → %0"
+    //     );
 
-        // Quote with HApplication: '@42 @99
-        let quote_happ = Syntax::Quote(Quote::new(Rc::new(HSyntax::HApplication(
-            HApplication::new(
-                Rc::new(HSyntax::HConstant(HConstant::new(
-                    ConstantId::from_with_db(&db, "42"),
-                ))),
-                Rc::new(HSyntax::HConstant(HConstant::new(
-                    ConstantId::from_with_db(&db, "99"),
-                ))),
-            ),
-        ))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &quote_happ),
-            @"'(@42 @99)"
-        );
+    //     // Quote with HApplication: '@42 @99
+    //     let quote_happ = Syntax::Quote(Quote::new(Rc::new(Syntax::HApplication(
+    //         HApplication::new(
+    //             Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+    //                 &db, "42",
+    //             )))),
+    //             Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
+    //                 &db, "99",
+    //             )))),
+    //         ),
+    //     ))));
+    //     assert_snapshot!(
+    //         print_syntax_to_string(&db, &quote_happ),
+    //         @"'(@42 @99)"
+    //     );
 
-        // Quote with Splice: '~@42
-        let quote_splice = Syntax::Quote(Quote::new(Rc::new(HSyntax::Splice(Splice::new(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &quote_splice),
-            @"'~@42"
-        );
+    //     // Quote with Splice: '~@42
+    //     let quote_splice = Syntax::Quote(Quote::new(Rc::new(Syntax::Splice(Splice::new(
+    //         Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+    //     )))));
+    //     assert_snapshot!(
+    //         print_syntax_to_string(&db, &quote_splice),
+    //         @"'~@42"
+    //     );
 
-        // Lift with Quote: ^'@42
-        let lift_quote = Syntax::Lift(Lift::new(Syntax::quote_rc(Rc::new(HSyntax::HConstant(
-            HConstant::new(ConstantId::from_with_db(&db, "42")),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &lift_quote),
-            @"^'@42"
-        );
-    }
+    //     // Lift with Quote: ^'@42
+    //     let lift_quote = Syntax::Lift(Lift::new(Syntax::quote_rc(Rc::new(Syntax::Constant(
+    //         Constant::new(ConstantId::from_with_db(&db, "42")),
+    //     )))));
+    //     assert_snapshot!(
+    //         print_syntax_to_string(&db, &lift_quote),
+    //         @"^'@42"
+    //     );
+    // }
 
     #[test]
     fn test_print_bit_zero_one() {
-        use crate::syn::{HSyntax, Syntax};
+        use crate::syn::Syntax;
         use crate::Database;
         let db = Database::default();
 
@@ -1376,31 +1515,31 @@ mod tests {
 
         // Test Zero constant: 0
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::zero()),
+            print_syntax_to_string(&db, &Syntax::zero()),
             @"0"
         );
 
         // Test One constant: 1
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::one()),
+            print_syntax_to_string(&db, &Syntax::one()),
             @"1"
         );
 
         // Test Xor operation: $xor
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::hprim("xor".into_with_db(&db))),
+            print_syntax_to_string(&db, &Syntax::prim("xor".into_with_db(&db))),
             @"$xor"
         );
 
-        // Test HConstant: @Add
+        // Test Constant: @Add
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::hconstant("Add".into_with_db(&db))),
+            print_syntax_to_string(&db, &Syntax::constant("Add".into_with_db(&db))),
             @"@Add"
         );
 
-        // Test HConstant: @MyCircuit
+        // Test Constant: @MyCircuit
         assert_snapshot!(
-            print_hsyntax_to_string(&db, &HSyntax::hconstant("MyCircuit".into_with_db(&db))),
+            print_syntax_to_string(&db, &Syntax::constant("MyCircuit".into_with_db(&db))),
             @"@MyCircuit"
         );
     }

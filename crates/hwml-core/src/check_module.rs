@@ -6,8 +6,7 @@
 
 use crate::check::{check_type, type_check, TCEnvironment};
 use crate::declaration::{
-    Constant, Declaration, HardwareConstant, HardwarePrimitive, Module, Primitive,
-    TypeConstructor as DeclTypeConstructor,
+    Constant, Declaration, Module, Primitive, TypeConstructor as DeclTypeConstructor,
 };
 use crate::eval;
 use crate::syn::{ConstantId, Syntax, Telescope};
@@ -69,18 +68,11 @@ pub fn check_module<'db>(
             Declaration::Primitive(prim) => {
                 check_primitive(&mut global_env, prim)?;
             }
-            Declaration::HardwarePrimitive(hprim) => {
-                check_hardware_primitive(&mut global_env, hprim)?;
-            }
             Declaration::Constant(constant) => {
                 let is_hw = check_constant(&mut global_env, constant)?;
                 if is_hw {
                     hardware_constants.push(constant.name);
                 }
-            }
-            Declaration::HardwareConstant(hconst) => {
-                check_hardware_constant(&mut global_env, hconst)?;
-                hardware_constants.push(hconst.name);
             }
             Declaration::TypeConstructor(tcon) => {
                 check_type_constructor(&mut global_env, tcon)?;
@@ -110,63 +102,6 @@ fn check_primitive<'db>(
 
     // Add the primitive to the global environment
     global.add_primitive(prim.name, PrimitiveInfo::new(prim.ty.clone()));
-
-    Ok(())
-}
-
-/// Check a hardware primitive declaration and add it to the global environment.
-///
-/// HardwareUniverse primitives differ from regular primitives:
-/// - The type must be a hardware type (in Type), not a meta-level type
-fn check_hardware_primitive<'db>(
-    global: &mut GlobalEnv<'db>,
-    hprim: &HardwarePrimitive<'db>,
-) -> Result<(), Error<'db>> {
-    // Create a type-checking environment
-    let mut tc_env = TCEnvironment {
-        values: crate::val::Environment::new(global),
-        types: Vec::new(),
-    };
-
-    // Check that the type is a valid hardware type (has type Type)
-    crate::check::check_hwtype_pub(&mut tc_env, &hprim.ty)?;
-
-    // Add the hardware primitive to the global environment
-    global.add_hardware_primitive(hprim.name, HardwarePrimitiveInfo::new(hprim.ty.clone()));
-
-    Ok(())
-}
-
-/// Check a hardware constant declaration and add it to the global environment.
-///
-/// HardwareUniverse constants differ from regular constants:
-/// - The type must be a hardware type (in Type), not a meta-level type
-/// - The value is an HSyntax term, checked using the hardware type checker
-fn check_hardware_constant<'db>(
-    global: &mut GlobalEnv<'db>,
-    hconst: &HardwareConstant<'db>,
-) -> Result<(), Error<'db>> {
-    // Create a type-checking environment
-    let mut tc_env = TCEnvironment {
-        values: crate::val::Environment::new(global),
-        types: Vec::new(),
-    };
-
-    // Check that the type is a valid hardware type (has type Type)
-    crate::check::check_hwtype_pub(&mut tc_env, &hconst.ty)?;
-
-    // Evaluate the type to a value
-    let mut eval_env = crate::val::Environment::new(global);
-    let ty_val = eval::eval(&mut eval_env, &hconst.ty)?;
-
-    // Check the hardware term value against the hardware type
-    crate::check::check_hsyntax_pub(&mut tc_env, &hconst.value, &ty_val)?;
-
-    // Add the hardware constant to the global environment
-    global.add_hardware_constant(
-        hconst.name,
-        HardwareConstantInfo::new(hconst.ty.clone(), hconst.value.clone()),
-    );
 
     Ok(())
 }

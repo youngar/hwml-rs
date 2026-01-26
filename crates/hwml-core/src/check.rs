@@ -431,7 +431,6 @@ pub fn type_check<'db, 'g>(
         // HardwareUniverse constructs
         Syntax::Bit(_) => type_check_bit(env, ty),
         Syntax::HArrow(harrow) => type_check_harrow(env, harrow, ty),
-        Syntax::Quote(quote) => type_check_quote(env, quote, ty),
 
         _ => type_check_synth_term(env, term, ty),
     }
@@ -592,7 +591,7 @@ fn type_synth_lift<'db, 'g>(
     lift: &syn::Lift<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
     // Check that the inner term is a valid hardware type
-    check_hwtype(env, &lift.tm)?;
+    check_hwtype(env, &lift.ty)?;
 
     // ^ht : Type (at universe level 0)
     Ok(Rc::new(Value::universe(crate::common::UniverseLevel::new(
@@ -600,14 +599,12 @@ fn type_synth_lift<'db, 'g>(
     ))))
 }
 
-/// Check that Bit has type Type.
 fn type_check_bit<'db, 'g>(
     _env: &mut TCEnvironment<'db, 'g>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
-    // Bit : Type
     match ty {
-        Value::Type(_) => Ok(()),
+        Value::SignalUniverse(_) => Ok(()),
         _ => Err(Error::BadCtor {
             tm: Rc::new(Syntax::Bit(syn::Bit::new())),
             ty_exp: Rc::new(ty.clone()),
@@ -615,15 +612,13 @@ fn type_check_bit<'db, 'g>(
     }
 }
 
-/// Check that a hardware arrow has type Type.
 fn type_check_harrow<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     harrow: &syn::HArrow<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
-    // (a -> b) : Type if a : Type and b : Type
     match ty {
-        Value::Type(_) => {
+        Value::ModuleUniverse(_) => {
             // Check that source and target are hardware types
             check_hwtype(env, &harrow.source)?;
             check_hwtype(env, &harrow.target)?;
@@ -631,26 +626,6 @@ fn type_check_harrow<'db, 'g>(
         }
         _ => Err(Error::BadCtor {
             tm: Rc::new(Syntax::HArrow(harrow.clone())),
-            ty_exp: Rc::new(ty.clone()),
-        }),
-    }
-}
-
-/// Check that a quoted hardware term has the right lifted type.
-fn type_check_quote<'db, 'g>(
-    env: &mut TCEnvironment<'db, 'g>,
-    quote: &syn::Quote<'db>,
-    ty: &Value<'db>,
-) -> Result<(), Error<'db>> {
-    // 'circuit : ^ht if circuit : ht (at hardware level)
-    match ty {
-        Value::Lift(hw_ty) => {
-            // Check that the hardware term has the expected hardware type
-            check_hsyntax(env, &quote.tm, hw_ty)?;
-            Ok(())
-        }
-        _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Quote(quote.clone())),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -672,208 +647,12 @@ fn check_hwtype<'db, 'g>(
         _ => {
             let ty = type_synth(env, term)?;
             match &*ty {
-                Value::Type(_) => Ok(()),
+                Value::HardwareUniverse(_) => Ok(()),
                 _ => Err(Error::BadType {
                     tm: Rc::new(term.clone()),
                 }),
             }
         }
-    }
-}
-
-/// Public version of check_hwtype for use by check_module.
-pub fn check_hwtype_pub<'db, 'g>(
-    env: &mut TCEnvironment<'db, 'g>,
-    term: &Syntax<'db>,
-) -> Result<(), Error<'db>> {
-    check_hwtype(env, term)
-}
-
-/// HardwareUniverse type checking environment.
-/// Tracks the types of hardware variables bound by Module.
-struct HTypeEnv<'db> {
-    /// Types of hardware variables, indexed by de Bruijn level
-    types: Vec<Rc<Value<'db>>>,
-}
-
-impl<'db> HTypeEnv<'db> {
-    fn new() -> Self {
-        HTypeEnv { types: Vec::new() }
-    }
-
-    fn push(&mut self, ty: Rc<Value<'db>>) {
-        self.types.push(ty);
-    }
-
-    fn pop(&mut self) {
-        self.types.pop();
-    }
-
-    fn depth(&self) -> usize {
-        self.types.len()
-    }
-
-    fn get(&self, level: crate::common::Level) -> Option<&Rc<Value<'db>>> {
-        self.types.get(level.0)
-    }
-}
-
-/// Check that a hardware term (HSyntax) has the expected hardware type.
-fn check_hsyntax<'db, 'g>(
-    env: &mut TCEnvironment<'db, 'g>,
-    term: &syn::RcSyntax<'db>,
-    ty: &Value<'db>,
-) -> Result<(), Error<'db>> {
-    let mut henv = HTypeEnv::new();
-    check_hsyntax_inner(env, &mut henv, term, ty)
-}
-
-/// Public version of check_hsyntax for use by check_module.
-pub fn check_hsyntax_pub<'db, 'g>(
-    env: &mut TCEnvironment<'db, 'g>,
-    term: &syn::RcSyntax<'db>,
-    ty: &Value<'db>,
-) -> Result<(), Error<'db>> {
-    check_hsyntax(env, term, ty)
-}
-
-/// Inner recursive function for hardware type checking.
-fn check_hsyntax_inner<'db, 'g>(
-    env: &mut TCEnvironment<'db, 'g>,
-    henv: &mut HTypeEnv<'db>,
-    term: &syn::RcSyntax<'db>,
-    ty: &Value<'db>,
-) -> Result<(), Error<'db>> {
-    use syn::HSyntax;
-
-    match (&**term, ty) {
-        // Module: check against HArrow type
-        (HSyntax::Module(hlam), Value::HArrow(arrow)) => {
-            // Push the source type for the hardware variable
-            henv.push(arrow.source.clone());
-            // Check the body at the target type
-            let result = check_hsyntax_inner(env, henv, &hlam.body, &arrow.target);
-            henv.pop();
-            result
-        }
-
-        // Zero and One: check against Bit type
-        (HSyntax::Zero(_), Value::Bit) => Ok(()),
-        (HSyntax::One(_), Value::Bit) => Ok(()),
-
-        // For other forms, synthesize and compare
-        _ => {
-            let synth_ty = synth_hsyntax_inner(env, henv, term)?;
-            match equal::is_hwtype_convertible(env.values.global, env.depth(), ty, &synth_ty) {
-                Ok(()) => Ok(()),
-                Err(_) => Err(Error::BadCheck {
-                    tm: Rc::new(Syntax::Quote(syn::Quote::new(term.clone()))),
-                    ty_exp: Rc::new(ty.clone()),
-                    ty_got: synth_ty,
-                }),
-            }
-        }
-    }
-}
-
-/// Synthesize the hardware type of a hardware term.
-fn synth_hsyntax_inner<'db, 'g>(
-    env: &mut TCEnvironment<'db, 'g>,
-    henv: &mut HTypeEnv<'db>,
-    term: &syn::RcSyntax<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
-    use syn::HSyntax;
-
-    match &**term {
-        // HardwareUniverse variable: look up in hardware environment
-        HSyntax::HVariable(var) => {
-            let level = var.index.to_level(henv.depth());
-            match henv.get(level) {
-                Some(ty) => Ok(ty.clone()),
-                None => Err(Error::BadSynth {
-                    tm: Rc::new(Syntax::Quote(syn::Quote::new(term.clone()))),
-                }),
-            }
-        }
-
-        // Zero and One have type Bit
-        HSyntax::Zero(_) | HSyntax::One(_) => Ok(Rc::new(Value::bit())),
-
-        // HApplication: synthesize function type, check argument, return result type
-        HSyntax::HApplication(happ) => {
-            let fun_ty = synth_hsyntax_inner(env, henv, &happ.function)?;
-            match &*fun_ty {
-                Value::HArrow(arrow) => {
-                    // Check the argument has the expected source type
-                    check_hsyntax_inner(env, henv, &happ.argument, &arrow.source)?;
-                    Ok(arrow.target.clone())
-                }
-                _ => Err(Error::BadElim {
-                    tm: Rc::new(Syntax::Quote(syn::Quote::new(term.clone()))),
-                    ty_got: fun_ty,
-                }),
-            }
-        }
-
-        // HCheck: type annotation (analogous to meta-level Check)
-        // 1. Check that the type annotation is a valid hardware type (has type Type)
-        // 2. Evaluate the type to get a hardware type value
-        // 3. Check the hardware term against this type
-        // 4. Return the type
-        HSyntax::HCheck(hcheck) => {
-            // Check the type annotation is a valid hardware type
-            check_hwtype(env, &hcheck.ty)?;
-            // Evaluate the type
-            let hw_ty = eval(env, &hcheck.ty)?;
-            // Check the term against the type
-            check_hsyntax_inner(env, henv, &hcheck.term, &hw_ty)?;
-            Ok(hw_ty)
-        }
-
-        // Splice: synthesize meta-level type and extract hardware type from Lift
-        HSyntax::Splice(splice) => {
-            let meta_ty = type_synth(env, &splice.term)?;
-            match &*meta_ty {
-                Value::Lift(hw_ty) => Ok(hw_ty.clone()),
-                _ => Err(Error::BadElim {
-                    tm: Rc::new(splice.term.as_ref().clone()),
-                    ty_got: meta_ty,
-                }),
-            }
-        }
-
-        // HConstant: look up hardware constant in global environment
-        // HardwareUniverse constants have a hardware type directly (not Lift-wrapped)
-        HSyntax::HConstant(hconst) => {
-            let hw_const_info = env
-                .values
-                .global
-                .hardware_constant(hconst.name)
-                .map_err(Error::LookupError)?;
-
-            // Evaluate the hardware constant's type (which is already a hardware type)
-            eval(env, &hw_const_info.ty)
-        }
-
-        // HPrim: look up hardware primitive type
-        HSyntax::HPrim(hprim) => {
-            let info = env
-                .values
-                .global
-                .hardware_primitive(hprim.name)
-                .map_err(Error::LookupError)?;
-            // Evaluate the type
-            let mut prim_env = val::Environment {
-                global: env.values.global,
-                local: val::LocalEnv::new(),
-            };
-            eval::eval(&mut prim_env, &info.ty).map_err(Error::EvaluationFailure)
-        }
-
-        // Module without expected type: cannot synthesize
-        HSyntax::Module(_) => Err(Error::BadSynth {
-            tm: Rc::new(Syntax::Quote(syn::Quote::new(term.clone()))),
-        }),
     }
 }
 
@@ -923,7 +702,7 @@ fn check_meta_type<'db, 'g>(
 
     // Lifted hardware types are valid meta-level types (^$Bit is in Universe)
     if let Syntax::Lift(lift) = term {
-        return check_hwtype(env, &lift.tm);
+        return check_hwtype(env, &lift.ty);
     }
 
     // Otherwise, synthesize a type for the term, which must be a Universe (not Type)
@@ -933,7 +712,7 @@ fn check_meta_type<'db, 'g>(
     }
 
     // Type means this is a hardware type, not a meta-level type
-    if let Value::Type(_) = &*ty {
+    if let Value::HardwareUniverse(_) = &*ty {
         return Err(Error::BadType {
             tm: Rc::new(term.clone()),
         });
@@ -981,7 +760,7 @@ pub fn check_type<'db, 'g>(
 
     // Lifted hardware types are valid types
     if let Syntax::Lift(lift) = term {
-        return check_hwtype(env, &lift.tm);
+        return check_hwtype(env, &lift.ty);
     }
 
     // The hardware universe HardwareUniverse (whose semantic value is `Type`) is a
@@ -1063,8 +842,8 @@ mod tests {
     use super::*;
     use crate::check_module::check_module;
     use crate::common::UniverseLevel;
-    use crate::declaration::{HardwareConstant, Module};
-    use crate::syn::{HSyntax, Syntax};
+    use crate::declaration::Module;
+    use crate::syn::Syntax;
     use crate::Database;
     use hwml_support::IntoWithDb;
 
@@ -1073,8 +852,8 @@ mod tests {
         env: &mut TCEnvironment<'db, 'g>,
         term: &syn::RcSyntax<'db>,
     ) -> Result<Rc<Value<'db>>, Error<'db>> {
-        let mut henv = HTypeEnv::new();
-        synth_hsyntax_inner(env, &mut henv, term)
+        let mut env = &mut TCEnvironment::new();
+        type_synth(env, &mut henv, term)
     }
 
     /// Test that Check nodes reject hardware types like $Bit.
