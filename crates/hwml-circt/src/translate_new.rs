@@ -28,7 +28,7 @@ use hwml_circt_sys::{
 };
 use hwml_core::{
     declaration::Module,
-    syn::{Syntax, RcSyntax},
+    syn::{RcSyntax, Syntax},
 };
 
 /// Translation context that tracks state during translation.
@@ -102,85 +102,7 @@ pub fn translate_checked_module<'c, 'db>(
 
     // Translate each hardware constant to a HW module
     for &hw_const_name in &checked.hardware_constants {
-        // First, try to find a HardwareConstant declaration.
-        if let Some(hconst) = hwml_module.declarations.iter().find_map(|decl| {
-            if let hwml_core::declaration::Declaration::HardwareConstant(hc) = decl {
-                if hc.name == hw_const_name {
-                    return Some(hc);
-                }
-            }
-            None
-        }) {
-            use hwml_core::{eval, quote, val};
-
-            // Evaluate the hardware term in an empty hardware and meta
-            // environment, but with the checked global environment so that
-            // splices (~t) can refer to meta-level constants.
-            let mut henv = val::HEnvironment::new();
-            let mut meta_env = val::Environment::new(&checked.global_env);
-            let Value =
-                eval::eval_hardware(&mut henv, &mut meta_env, &hconst.value).map_err(|e| {
-                    Error::UnsupportedConstruct(format!(
-                        "Failed to evaluate hardware constant {}: {:?}",
-                        hconst.name.name(db),
-                        e
-                    ))
-                })?;
-
-            // Evaluate the hardware type to a semantic value so we can use
-            // the *lifted* type-directed quotation (`^ht`). The type of an
-            // `hconst` is a hardware type (Bit or HArrow ...), not a lifted
-            // meta-level type, so we wrap it in `Lift` before quoting.
-            let mut type_env = val::Environment::new(&checked.global_env);
-            let hw_ty_value = eval::eval(&mut type_env, &hconst.ty).map_err(|e| {
-                Error::UnsupportedConstruct(format!(
-                    "Failed to evaluate hardware constant type {}: {:?}",
-                    hconst.name.name(db),
-                    e
-                ))
-            })?;
-
-            let lifted_ty = val::Value::lift(hw_ty_value.clone());
-            let fake_value = val::Value::quote(Value.clone());
-
-            // Read the evaluated hardware value back to Syntax using the
-            // core lifted-type quotation. This ultimately dispatches to
-            // `quote_Value`, which will apply any hardware lambdas to fresh
-            // variables and, via `run_hclosure`, evaluate splices inside
-            // those lambdas.
-            let syntax = quote::quote(db, &checked.global_env, 0, &lifted_ty, &fake_value)
-                .map_err(|e| {
-                    Error::UnsupportedConstruct(format!(
-                        "Failed to quote hardware constant {}: {:?}",
-                        hconst.name.name(db),
-                        e
-                    ))
-                })?;
-
-            let hsyntax = extract_hsyntax_from_syntax(&syntax).ok_or_else(|| {
-                Error::UnsupportedConstruct(format!(
-                    "Failed to extract hardware syntax from quoted value for {}",
-                    hconst.name.name(db)
-                ))
-            })?;
-
-            // Extract input types from the constant's (hardware) type.
-            let input_types = extract_hardware_input_types(&hconst.ty);
-
-            // Translate this hardware constant to a HW module
-            translate_constant_to_module(
-                ctx,
-                db,
-                &mlir_module,
-                location,
-                &hconst.name,
-                &input_types,
-                &hsyntax,
-            )?;
-            continue;
-        }
-
-        // Fall back to regular Constant with quoted type
+        // Find the Constant declaration for this hardware constant
         let constant = hwml_module
             .declarations
             .iter()
@@ -204,80 +126,90 @@ pub fn translate_checked_module<'c, 'db>(
             Error::UnsupportedConstruct(format!("Constant not found in environment: {:?}", e))
         })?;
 
-        // Evaluate the constant's syntax to get a value
+        // Evaluate the constant's syntax to get a normalized value
         let mut eval_env = hwml_core::val::Environment::new(&checked.global_env);
         let constant_value =
             hwml_core::eval::eval(&mut eval_env, &constant_info.value).map_err(|e| {
                 Error::UnsupportedConstruct(format!("Failed to evaluate constant: {}", e))
             })?;
 
-        // Extract Syntax from the evaluated value
-        if let Some(hsyntax) =
-            extract_hsyntax_from_value(db, &checked.global_env, &constant.ty, &constant_value)
-        {
-            // Extract input types from the constant's type (Pi types)
-            let input_types = extract_input_types(&constant.ty);
+        // Evaluate the constant's type to get a semantic type
+        let constant_ty_value =
+            hwml_core::eval::eval(&mut eval_env, &constant.ty).map_err(|e| {
+                Error::UnsupportedConstruct(format!("Failed to evaluate constant type: {}", e))
+            })?;
 
-            // Translate this constant to a HW module
-            translate_constant_to_module(
-                ctx,
-                db,
-                &mlir_module,
-                location,
-                &constant.name,
-                &input_types,
-                &hsyntax,
-            )?;
-        }
+        // === Lambda Saturation Pass ===
+        // Saturate all hardware lambdas in the value and quote back to syntax.
+        // This beta-reduces HApplication values where the module is a concrete
+        // Module closure, ensuring the resulting syntax is closure-free.
+        //
+        // This is required because hardware cannot support first-class functions
+        // or closures - all module applications must be inlined at their call sites.
+        //
+        // The input is already normalized from the evaluation above.
+        let saturated_syntax =
+            saturate_and_quote_for_circt(&checked.global_env, &constant_value, &constant_ty_value)?;
+
+        // Extract input types from the constant's type (Pi types)
+        let input_types = extract_input_types(&constant.ty);
+
+        // Translate this constant to a HW module
+        translate_constant_to_module(
+            ctx,
+            db,
+            &mlir_module,
+            location,
+            &constant.name,
+            &input_types,
+            &saturated_syntax,
+        )?;
     }
 
     Ok(mlir_module)
 }
 
-/// Extract Syntax from a *meta-level* value whose type is (up to Pis)
-/// a lifted hardware type, by quoting it back to syntax and then
-/// pulling out the inner `Syntax` from a `Quote` node.
+/// Apply lambda saturation to a value and quote it back to syntax for CIRCT translation.
 ///
-/// This is used for constants like:
+/// This function runs the value-based lambda saturation pass from `hwml_core::lower`,
+/// which beta-reduces all `HApplication` values where the module is a concrete
+/// `Module` closure. This ensures the resulting syntax is closure-free and ready
+/// for hardware synthesis.
 ///
-///   const @Queue0Q : ^($Bit → $Bit → $Bit) = ...
-///   const @QueueGen : ∀ (%n : #[@Nat]) → ^($Bit → $Bit → $Bit) = ...
+/// # Background: Two-Level Type Theory (2LTT)
 ///
-/// We always use the *type-directed* `quote` function from hwml-core,
-/// relying on the fact that `check_module` has ensured the value has the
-/// given type. For a value of type `^ht`, this reduces to
-/// `quote_lift_instance`, which in turn uses `quote_Value` and therefore
-/// fully evaluates any hardware closures (running splices) before
-/// producing `Syntax`.
-fn extract_hsyntax_from_value<'db>(
-    db: &'db dyn salsa::Database,
+/// In 2LTT, we distinguish between:
+/// - **Meta-level** (compile-time): Can have closures and higher-order functions
+/// - **Object-level** (hardware): Must be closure-free
+///
+/// The saturation pass implements the "unstaging" operation that converts
+/// meta-level module closures into flat hardware circuits by inlining all
+/// module applications at their call sites.
+///
+/// The input is expected to already be normalized (evaluated), so no additional
+/// evaluation is performed during saturation.
+///
+/// # Errors
+///
+/// Returns an error if saturation fails (e.g., quotation errors).
+fn saturate_and_quote_for_circt<'db>(
     global_env: &hwml_core::val::GlobalEnv<'db>,
-    ty: &hwml_core::syn::RcSyntax<'db>,
     value: &hwml_core::val::Value<'db>,
-) -> Option<RcSyntax<'db>> {
-    use hwml_core::{eval, quote};
-
-    // First evaluate the (meta-level) type syntax to a semantic type.
-    let mut env = hwml_core::val::Environment::new(global_env);
-    let ty_value = eval::eval(&mut env, ty).ok()?;
-
-    // Quote the value at this type back to syntax, then extract the
-    // inner `Syntax` from the resulting `Quote` node.
-    let syntax = quote::quote(db, global_env, 0, &ty_value, value).ok()?;
-    extract_hsyntax_from_syntax(&syntax)
+    ty: &hwml_core::val::Value<'db>,
+) -> Result<RcSyntax<'db>> {
+    hwml_core::lower::saturate_and_quote(global_env, 0, value, ty)
+        .map_err(|e| Error::UnsupportedConstruct(format!("Lambda saturation failed: {:?}", e)))
 }
 
-/// Extract Syntax from a Syntax node if it's a Quote node.
-/// This function recursively searches through Lambda nodes to find the innermost Quote.
+/// Extract the innermost hardware syntax from a syntax node.
+/// This function recursively searches through Lambda nodes to find the innermost term.
+#[allow(dead_code)]
 fn extract_hsyntax_from_syntax<'db>(
     syntax: &hwml_core::syn::RcSyntax<'db>,
 ) -> Option<RcSyntax<'db>> {
     use hwml_core::syn::Syntax;
 
     match &**syntax {
-        // Direct quote
-        Syntax::Quote(quote) => Some(quote.tm.clone()),
-
         // Lambda with a body - recurse into the body.  This is how we
         // handle generators like `QueueGen :  n. ^ht`, where normalisation
         // yields a lambda whose body is a quote.
@@ -286,10 +218,8 @@ fn extract_hsyntax_from_syntax<'db>(
         // Check node - recurse into the term
         Syntax::Check(check) => extract_hsyntax_from_syntax(&check.term),
 
-        // For now we do not try to peer inside applications or other
-        // eliminators here; if quotation produced anything other than a
-        // lambda/quote tower ending in a quote, we give up.
-        _ => None,
+        // For anything else, this IS the hardware syntax
+        _ => Some(syntax.clone()),
     }
 }
 
@@ -322,7 +252,7 @@ fn extract_input_types<'db>(
     // At this point we expect a lifted hardware type. If so, delegate to
     // the HArrow helper to extract the actual hardware argument types.
     match &**current {
-        Syntax::Lift(lift) => extract_hardware_input_types(&lift.tm),
+        Syntax::Lift(lift) => extract_hardware_input_types(&lift.ty),
         _ => Vec::new(),
     }
 }
@@ -353,7 +283,7 @@ fn extract_hardware_input_types<'db>(
 
 /// Unwrap nested Module nodes to get the innermost body expression.
 /// Returns the body and the count of lambdas unwrapped.
-fn unwrap_Modules<'a, 'db>(expr: &'a RcSyntax<'db>) -> (&'a RcSyntax<'db>, usize) {
+fn unwrap_modules<'a, 'db>(expr: &'a RcSyntax<'db>) -> (&'a RcSyntax<'db>, usize) {
     let mut current = expr;
     let mut count = 0;
 
@@ -376,7 +306,7 @@ fn translate_constant_to_module<'c, 'db>(
     db: &'db dyn salsa::Database,
     mlir_module: &MlirModuleWrapper,
     location: MlirLocationWrapper,
-    name: &hwml_core::syn::ConstantId<'db>,
+    name: &hwml_core::ConstantId<'db>,
     input_types: &[hwml_core::syn::RcSyntax<'db>],
     body: &RcSyntax<'db>,
 ) -> Result<()> {
@@ -387,7 +317,7 @@ fn translate_constant_to_module<'c, 'db>(
 
     // Unwrap Module nodes to get the actual body expression
     // Each Module corresponds to one input type
-    let (actual_body, lambda_count) = unwrap_Modules(body);
+    let (actual_body, lambda_count) = unwrap_modules(body);
 
     // Verify that the number of lambdas matches the number of input types
     if lambda_count != input_types.len() {
@@ -404,7 +334,7 @@ fn translate_constant_to_module<'c, 'db>(
     for (i, input_ty) in input_types.iter().enumerate() {
         // Unwrap Lift if present, then check if this is a Bit type
         let inner_ty = match &**input_ty {
-            Syntax::Lift(lift) => &lift.tm,
+            Syntax::Lift(lift) => &lift.ty,
             other => other,
         };
 
@@ -634,9 +564,9 @@ fn translate_hsyntax_expr<'c, 'db>(
         Syntax::HApplication(app) => {
             // Check if this is a binary operation application
             // Pattern: ((Op arg1) arg2)
-            if let Syntax::HApplication(inner_app) = &*app.function {
+            if let Syntax::HApplication(inner_app) = &*app.module {
                 // Check if the inner function is a primitive
-                if let Syntax::HPrim(prim) = &*inner_app.function {
+                if let Syntax::Prim(prim) = &*inner_app.module {
                     let prim_name = prim.name.name(db);
 
                     // Handle $reg specially - it generates seq.compreg
@@ -709,9 +639,9 @@ fn translate_hsyntax_expr<'c, 'db>(
 
                 return Err(Error::UnsupportedConstruct(format!(
                     "Unsupported nested application: {:?}",
-                    inner_app.function
+                    inner_app.module
                 )));
-            } else if let Syntax::HPrim(prim) = &*app.function {
+            } else if let Syntax::Prim(prim) = &*app.module {
                 let prim_name = prim.name.name(db);
                 if prim_name == "not" {
                     // Unary NOT operation
@@ -752,7 +682,7 @@ fn translate_hsyntax_expr<'c, 'db>(
                 )))
             }
         }
-        Syntax::HVariable(var) => {
+        Syntax::Variable(var) => {
             // Get the block argument corresponding to this variable
             // Variables are indexed from the end (De Bruijn indices)
             let num_args = unsafe { hwml_circt_sys::mlirBlockGetNumArguments(block.as_raw()) };
@@ -778,46 +708,6 @@ fn translate_hsyntax_expr<'c, 'db>(
             };
 
             Ok(arg_value)
-        }
-        Syntax::Splice(splice) => {
-            // A splice ~t evaluates the meta-level term t and extracts the hardware value
-            // In our case, t should be a Variable that refers to a lambda parameter
-            // which is bound to a quoted hardware value
-            use hwml_core::syn::Syntax;
-
-            match &*splice.term {
-                Syntax::Variable(var) => {
-                    // The variable refers to a lambda parameter
-                    // We need to get the corresponding block argument
-                    let num_args =
-                        unsafe { hwml_circt_sys::mlirBlockGetNumArguments(block.as_raw()) };
-                    let var_index: usize = var.index.into();
-
-                    if var_index >= num_args as usize {
-                        return Err(Error::UnsupportedConstruct(format!(
-                            "Splice variable index {} out of range (have {} arguments)",
-                            var_index, num_args
-                        )));
-                    }
-
-                    // Convert De Bruijn index to block argument index
-                    let arg_index = (num_args as usize) - 1 - var_index;
-
-                    let arg_value = unsafe {
-                        let raw_value = hwml_circt_sys::mlirBlockGetArgument(
-                            block.as_raw(),
-                            arg_index as isize,
-                        );
-                        MlirValueWrapper::from_raw(raw_value)
-                    };
-
-                    Ok(arg_value)
-                }
-                _ => Err(Error::UnsupportedConstruct(format!(
-                    "Unsupported splice term: {:?}",
-                    splice.term
-                ))),
-            }
         }
         _ => Err(Error::UnsupportedConstruct(format!(
             "Unsupported Syntax variant: {:?}",

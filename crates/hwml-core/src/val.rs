@@ -1,6 +1,6 @@
 use crate::*;
 use std::{collections::HashMap, fmt, marker::PhantomData, rc::*};
-use syn::{ConstantId, RcSyntax, RcSyntax, Syntax, Telescope};
+use syn::{RcSyntax, Telescope};
 
 /// A closure represents a pending evaluation. A closure records the term to be
 /// reduced by evaluation, as well as the local environment it is to be evaluated under.
@@ -34,12 +34,10 @@ impl<'db> Normal<'db> {
 }
 
 /// Fully normalized values in the semantic domain.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Value<'db> {
-    Universe(Universe),
-
-    Prim(ConstantId<'db>),
-    Constant(ConstantId<'db>),
+    Universe(Universe<'db>),
+    Lift(Lift<'db>),
 
     Pi(Pi<'db>),
     Lambda(Lambda<'db>),
@@ -47,39 +45,35 @@ pub enum Value<'db> {
     TypeConstructor(TypeConstructor<'db>),
     DataConstructor(DataConstructor<'db>),
 
-    Lift(Rc<Value<'db>>),
-    Quote(Rc<Value<'db>>),
-
-    // HardwareUniverse values (bit-level and function-level)
-    Zero,
-    One,
-    HVariable(HVariable),
-    HConstant(ConstantId<'db>),
-    HPrim(ConstantId<'db>),
-    Module(HClosure<'db>),
-    HApp(Rc<Value<'db>>, Rc<Value<'db>>),
-    Splice(RcSyntax<'db>),
-
     HardwareUniverse(HardwareUniverse<'db>),
+    SLift(SLift<'db>),
+    MLift(MLift<'db>),
+
     SignalUniverse(SignalUniverse<'db>),
     Bit(Bit<'db>),
+    Zero(Zero<'db>),
+    One(One<'db>),
 
     ModuleUniverse(ModuleUniverse<'db>),
     HArrow(HArrow<'db>),
+    Module(Module<'db>),
+    HApplication(HApplication<'db>),
 
-    /// Neutral headed by a metavariable.
-    Flex(Flex<'db>),
+    Prim(ConstantId<'db>),
+    Constant(ConstantId<'db>),
     /// Neutral headed by a variable.
     Rigid(Rigid<'db>),
+    /// Neutral headed by a metavariable.
+    Flex(Flex<'db>),
 }
 
 impl<'db> Value<'db> {
-    pub fn constant(name: ConstantId<'db>) -> Value<'db> {
-        Value::Constant(name)
+    pub fn universe(level: UniverseLevel) -> Value<'db> {
+        Value::Universe(Universe::new(level))
     }
 
-    pub fn prim(name: ConstantId<'db>) -> Value<'db> {
-        Value::Prim(name)
+    pub fn lift(ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::Lift(Lift::new(ty))
     }
 
     pub fn pi(source: Rc<Value<'db>>, target: Closure<'db>) -> Value<'db> {
@@ -88,10 +82,6 @@ impl<'db> Value<'db> {
 
     pub fn lambda(body: Closure<'db>) -> Value<'db> {
         Value::Lambda(Lambda::new(body))
-    }
-
-    pub fn universe(level: UniverseLevel) -> Value<'db> {
-        Value::Universe(Universe::new(level))
     }
 
     pub fn type_constructor(
@@ -108,16 +98,72 @@ impl<'db> Value<'db> {
         Value::DataConstructor(DataConstructor::new(constructor, arguments))
     }
 
+    pub fn hardware_universe() -> Value<'db> {
+        Value::HardwareUniverse(HardwareUniverse::new())
+    }
+
+    pub fn slift(ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::SLift(SLift::new(ty))
+    }
+
+    pub fn mlift(ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::MLift(MLift::new(ty))
+    }
+
+    pub fn signal_universe() -> Value<'db> {
+        Value::SignalUniverse(SignalUniverse::new())
+    }
+
+    pub fn bit() -> Value<'db> {
+        Value::Bit(Bit::new())
+    }
+
+    pub fn zero() -> Value<'db> {
+        Value::Zero(Zero::new())
+    }
+
+    pub fn one() -> Value<'db> {
+        Value::One(One::new())
+    }
+
+    pub fn module_universe() -> Value<'db> {
+        Value::ModuleUniverse(ModuleUniverse::new())
+    }
+
+    pub fn harrow(source: Rc<Value<'db>>, target: Closure<'db>) -> Value<'db> {
+        Value::HArrow(HArrow::new(source, target))
+    }
+
+    pub fn module(body: Closure<'db>) -> Value<'db> {
+        Value::Module(Module::new(body))
+    }
+
+    pub fn happlication(
+        module: Rc<Value<'db>>,
+        module_ty: Rc<Value<'db>>,
+        argument: Rc<Value<'db>>,
+    ) -> Value<'db> {
+        Value::HApplication(HApplication::new(module, module_ty, argument))
+    }
+
+    pub fn prim(name: ConstantId<'db>) -> Value<'db> {
+        Value::Prim(name)
+    }
+
+    pub fn constant(name: ConstantId<'db>) -> Value<'db> {
+        Value::Constant(name)
+    }
+
     pub fn rigid(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
         Value::Rigid(Rigid { head, spine, ty })
     }
 
-    pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
-        Value::Flex(Flex { head, spine, ty })
-    }
-
     pub fn variable(level: Level, ty: Rc<Value<'db>>) -> Value<'db> {
         Value::rigid(Variable::new(level), Spine::empty(), ty)
+    }
+
+    pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
+        Value::Flex(Flex { head, spine, ty })
     }
 
     pub fn metavariable(
@@ -131,85 +177,37 @@ impl<'db> Value<'db> {
     pub fn identity_closure(id: MetaVariableId, ty: Rc<Value<'db>>) -> Value<'db> {
         Value::flex(MetaVariable::new(id, LocalEnv::new()), Spine::empty(), ty)
     }
+}
 
-    pub fn lift(hw_type: Rc<Value<'db>>) -> Value<'db> {
-        Value::Lift(hw_type)
-    }
+#[derive(Clone, Debug)]
+pub struct Universe<'db> {
+    pub level: UniverseLevel,
+    _marker: PhantomData<&'db ()>,
+}
 
-    pub fn quote(hw_value: Rc<Value<'db>>) -> Value<'db> {
-        Value::Quote(hw_value)
-    }
-
-    // Constructors for hardware values in the unified domain
-    pub fn zero() -> Value<'db> {
-        Value::Zero
-    }
-
-    pub fn one() -> Value<'db> {
-        Value::One
-    }
-
-    pub fn hvariable(level: Level) -> Value<'db> {
-        Value::HVariable(HVariable::new(level))
-    }
-
-    pub fn splce(term: RcSyntax<'db>) -> Value<'db> {
-        Value::Splice(term)
-    }
-
-    pub fn hconstant(name: ConstantId<'db>) -> Value<'db> {
-        Value::HConstant(name)
-    }
-
-    pub fn hprim(name: ConstantId<'db>) -> Value<'db> {
-        Value::HPrim(name)
-    }
-
-    pub fn Module(
-        env: HEnvironment<'db>,
-        local: LocalEnv<'db>,
-        body: Rc<Syntax<'db>>,
-    ) -> Value<'db> {
-        Value::Module(HClosure::new(env, local, body))
-    }
-
-    pub fn happ(fun: Rc<Value<'db>>, arg: Rc<Value<'db>>) -> Value<'db> {
-        Value::HApp(fun, arg)
-    }
-
-    pub fn HardwareUniverse() -> Value<'db> {
-        Value::HardwareUniverse(HardwareUniverse::new())
-    }
-
-    pub fn signal_universe() -> Value<'db> {
-        Value::SignalUniverse(SignalUniverse::new())
-    }
-
-    pub fn bit() -> Value<'db> {
-        Value::Bit(Bit::new())
-    }
-
-    pub fn module_universe() -> Value<'db> {
-        Value::ModuleUniverse(ModuleUniverse::new())
-    }
-
-    pub fn harrow(source: Rc<Value<'db>>, target: Rc<Value<'db>>) -> Value<'db> {
-        Value::HArrow(HArrow::new(source, target))
+impl<'db> Universe<'db> {
+    pub fn new(level: UniverseLevel) -> Universe<'db> {
+        Universe {
+            level,
+            _marker: PhantomData,
+        }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct Constant<'db> {
-    pub name: ConstantId<'db>,
+pub struct Lift<'db> {
+    pub ty: Rc<Value<'db>>,
 }
 
-/// A dependent function type. Written `(x : source) -> target(x)`.
+impl<'db> Lift<'db> {
+    pub fn new(ty: Rc<Value<'db>>) -> Lift<'db> {
+        Lift { ty }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Pi<'db> {
-    /// The domain or source-type of this function type.
     pub source: Rc<Value<'db>>,
-
-    /// The codomain or target-type of this function type.
     pub target: Closure<'db>,
 }
 
@@ -219,7 +217,6 @@ impl<'db> Pi<'db> {
     }
 }
 
-/// A function. Written `\x => body`.
 #[derive(Clone, Debug)]
 pub struct Lambda<'db> {
     pub body: Closure<'db>,
@@ -228,88 +225,6 @@ pub struct Lambda<'db> {
 impl<'db> Lambda<'db> {
     pub fn new(body: Closure<'db>) -> Lambda<'db> {
         Lambda { body }
-    }
-}
-
-/// A universe, the "type of a type".
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub struct Universe {
-    pub level: UniverseLevel,
-}
-
-impl Universe {
-    pub fn new(level: UniverseLevel) -> Universe {
-        Universe { level }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct HardwareUniverse<'db> {
-    _marker: PhantomData<&'db ()>,
-}
-
-impl<'db> HardwareUniverse<'db> {
-    pub fn new() -> HardwareUniverse<'db> {
-        HardwareUniverse {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<'db> Default for HardwareUniverse<'db> {
-    fn default() -> Self {
-        HardwareUniverse::new()
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct SignalUniverse<'db> {
-    _marker: PhantomData<&'db ()>,
-}
-
-impl<'db> SignalUniverse<'db> {
-    pub fn new() -> SignalUniverse<'db> {
-        SignalUniverse {
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct Bit<'db> {
-    _marker: PhantomData<&'db ()>,
-}
-
-impl<'db> Bit<'db> {
-    pub fn new() -> Bit<'db> {
-        Bit {
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct ModuleUniverse<'db> {
-    _marker: PhantomData<&'db ()>,
-}
-
-impl<'db> ModuleUniverse<'db> {
-    pub fn new() -> ModuleUniverse<'db> {
-        ModuleUniverse {
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct HArrow<'db> {
-    pub source: Rc<Value<'db>>,
-    pub target: Rc<Value<'db>>,
-}
-
-impl<'db> HArrow<'db> {
-    pub fn new(source: Rc<Value<'db>>, target: Rc<Value<'db>>) -> HArrow<'db> {
-        HArrow { source, target }
     }
 }
 
@@ -382,13 +297,155 @@ impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
     }
 }
 
-/// The neutrals represent stuck computations. They ARE in normal form, but are
-/// not, per se, values in the sense that they are not composed of constructors.
-///
-/// Neutrals arise when an elimination form is applied to a variable. That
-/// elimination form is "stuck", we cannot reduce it becaus
-///
-/// The structure of the neutral ensures that the prima.
+#[derive(Debug, Clone)]
+pub struct HardwareUniverse<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> HardwareUniverse<'db> {
+    pub fn new() -> HardwareUniverse<'db> {
+        HardwareUniverse {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SLift<'db> {
+    pub ty: Rc<Value<'db>>,
+}
+
+impl<'db> SLift<'db> {
+    pub fn new(ty: Rc<Value<'db>>) -> SLift<'db> {
+        SLift { ty }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MLift<'db> {
+    pub ty: Rc<Value<'db>>,
+}
+
+impl<'db> MLift<'db> {
+    pub fn new(ty: Rc<Value<'db>>) -> MLift<'db> {
+        MLift { ty }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SignalUniverse<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> SignalUniverse<'db> {
+    pub fn new() -> SignalUniverse<'db> {
+        SignalUniverse {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Bit<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> Bit<'db> {
+    pub fn new() -> Bit<'db> {
+        Bit {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Zero<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> Zero<'db> {
+    pub fn new() -> Zero<'db> {
+        Zero {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct One<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> One<'db> {
+    pub fn new() -> One<'db> {
+        One {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleUniverse<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> ModuleUniverse<'db> {
+    pub fn new() -> ModuleUniverse<'db> {
+        ModuleUniverse {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HArrow<'db> {
+    pub source: Rc<Value<'db>>,
+    pub target: Closure<'db>,
+}
+
+impl<'db> HArrow<'db> {
+    pub fn new(source: Rc<Value<'db>>, target: Closure<'db>) -> HArrow<'db> {
+        HArrow { source, target }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Module<'db> {
+    pub body: Closure<'db>,
+}
+
+impl<'db> Module<'db> {
+    pub fn new(body: Closure<'db>) -> Module<'db> {
+        Module { body }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HApplication<'db> {
+    pub module: Rc<Value<'db>>,
+    pub module_ty: Rc<Value<'db>>,
+    pub argument: Rc<Value<'db>>,
+}
+
+impl<'db> HApplication<'db> {
+    pub fn new(
+        module: Rc<Value<'db>>,
+        module_ty: Rc<Value<'db>>,
+        argument: Rc<Value<'db>>,
+    ) -> HApplication<'db> {
+        HApplication {
+            module,
+            module_ty,
+            argument,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Constant<'db> {
+    pub name: ConstantId<'db>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Flex<'db> {
     pub ty: Rc<Value<'db>>,
@@ -403,6 +460,26 @@ impl<'db> Flex<'db> {
 }
 
 #[derive(Clone, Debug)]
+pub struct MetaVariable<'db> {
+    pub id: MetaVariableId,
+    pub local: LocalEnv<'db>,
+}
+
+impl<'db> PartialEq for MetaVariable<'db> {
+    fn eq(&self, other: &Self) -> bool {
+        // Two metavariables are equal if they have the same ID.
+        // We ignore the local environment for equality comparison.
+        self.id == other.id
+    }
+}
+
+impl<'db> MetaVariable<'db> {
+    pub fn new(id: MetaVariableId, local: LocalEnv<'db>) -> MetaVariable {
+        MetaVariable { id, local }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Rigid<'db> {
     pub ty: Rc<Value<'db>>,
     pub head: Variable,
@@ -412,6 +489,17 @@ pub struct Rigid<'db> {
 impl<'db> Rigid<'db> {
     pub fn new(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Rigid<'db> {
         Rigid { head, spine, ty }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Variable {
+    pub level: Level,
+}
+
+impl Variable {
+    pub fn new(level: Level) -> Variable {
+        Variable { level }
     }
 }
 
@@ -465,39 +553,6 @@ impl<'db> Eliminator<'db> {
     }
 }
 
-/// A free variable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Variable {
-    pub level: Level,
-}
-
-impl Variable {
-    pub fn new(level: Level) -> Variable {
-        Variable { level }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct MetaVariable<'db> {
-    pub id: MetaVariableId,
-    pub local: LocalEnv<'db>,
-}
-
-impl<'db> PartialEq for MetaVariable<'db> {
-    fn eq(&self, other: &Self) -> bool {
-        // Two metavariables are equal if they have the same ID.
-        // We ignore the local environment for equality comparison.
-        self.id == other.id
-    }
-}
-
-impl<'db> MetaVariable<'db> {
-    pub fn new(id: MetaVariableId, local: LocalEnv<'db>) -> MetaVariable {
-        MetaVariable { id, local }
-    }
-}
-
-/// Function application.
 #[derive(Clone, Debug)]
 pub struct Application<'db> {
     pub argument: Normal<'db>,
@@ -550,29 +605,6 @@ impl<'db> CaseBranch<'db> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HVariable {
-    pub level: Level,
-}
-
-impl HVariable {
-    pub fn new(level: Level) -> HVariable {
-        HVariable { level }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Module<'db> {
-    pub env: HEnvironment<'db>,
-    pub local: LocalEnv<'db>,
-    pub body: Rc<Syntax<'db>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Splice<'db> {
-    pub term: RcSyntax<'db>,
-}
-
 #[derive(Clone, Debug)]
 pub struct Environment<'db, 'g> {
     pub global: &'g GlobalEnv<'db>,
@@ -589,21 +621,6 @@ impl<'db, 'g> Environment<'db, 'g> {
 
     // Forwarding methods to GlobalEnv
 
-    // /// Lookup a global constant by name.
-    // pub fn lookup(&self, name: ConstantId<'db>) -> Result<&Global<'db>, LookupError> {
-    //     self.global.lookup(name)
-    // }
-
-    // /// Lookup a global definition by name.
-    // pub fn definition(&self, name: ConstantId<'db>) -> Result<&Rc<Value<'db>>, LookupError> {
-    //     self.global.definition(name)
-    // }
-
-    // /// Add a definition to the global environment.
-    // pub fn add_definition(&mut self, name: ConstantId<'db>, value: Rc<Value<'db>>) {
-    //     self.global.add_definition(name, value)
-    // }
-
     /// Lookup a type constructor by name.
     pub fn type_constructor(
         &self,
@@ -612,11 +629,6 @@ impl<'db, 'g> Environment<'db, 'g> {
         self.global.type_constructor(name)
     }
 
-    /// Add a type constructor to the global environment.
-    // pub fn add_type_constructor(&mut self, name: ConstantId<'db>, info: TypeConstructorInfo<'db>) {
-    //     self.global.add_type_constructor(name, info)
-    // }
-
     /// Lookup a data constructor by name.
     pub fn data_constructor(
         &self,
@@ -624,11 +636,6 @@ impl<'db, 'g> Environment<'db, 'g> {
     ) -> Result<&DataConstructorInfo<'db>, LookupError> {
         self.global.data_constructor(name)
     }
-
-    /// Add a data constructor to the global environment.
-    // pub fn add_data_constructor(&mut self, name: ConstantId<'db>, info: DataConstructorInfo<'db>) {
-    //     self.global.add_data_constructor(name, info)
-    // }
 
     // Forwarding methods to LocalEnv
 
@@ -683,8 +690,6 @@ pub enum LookupErrorKind {
     NotTypeConstructor,
     NotDataConstructor,
     NotPrimitive,
-    NotHardwarePrimitive,
-    NotHardwareConstant,
 }
 
 impl<'db> fmt::Display for LookupErrorKind {
@@ -695,8 +700,6 @@ impl<'db> fmt::Display for LookupErrorKind {
             Self::NotTypeConstructor => f.write_str("not a type constructor"),
             Self::NotDataConstructor => f.write_str("not a data constructor"),
             Self::NotPrimitive => f.write_str("not a primitive"),
-            Self::NotHardwarePrimitive => f.write_str("not a hardware primitive"),
-            Self::NotHardwareConstant => f.write_str("not a hardware constant"),
         }
     }
 }
@@ -711,6 +714,17 @@ impl<'db> fmt::Display for LookupError<'db> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.kind)
     }
+}
+
+/// Result type for looking up a specific kind of global definition.
+#[derive(Debug, Clone)]
+pub enum LookupResult<'a, T> {
+    /// The lookup succeeded and found the expected type.
+    Found(&'a T),
+    /// The constant exists but is not of the expected type.
+    WrongKind(LookupErrorKind),
+    /// The constant does not exist.
+    NotFound,
 }
 
 #[derive(Debug, Clone)]
@@ -728,12 +742,8 @@ impl fmt::Display for MetaVariableLookupError {
 pub enum Global<'db> {
     Constant(ConstantInfo<'db>),
     Primitive(PrimitiveInfo<'db>),
-
     TypeConstructor(TypeConstructorInfo<'db>),
     DataConstructor(DataConstructorInfo<'db>),
-
-    HardwareConstant(HardwareConstantInfo<'db>),
-    HardwarePrimitive(HardwarePrimitiveInfo<'db>),
 }
 
 #[derive(Clone, Debug)]
@@ -752,20 +762,16 @@ impl<'db> GlobalEnv<'db> {
         }
     }
 
-    /// Lookup a global constant by name.
-    pub fn lookup(&self, name: ConstantId<'db>) -> Result<&Global<'db>, LookupError<'db>> {
-        self.constants.get(&name).ok_or(LookupError {
-            kind: LookupErrorKind::UnknownConstant,
-            id: name,
-        })
-    }
-
     /// Lookup a constant by name.
     pub fn constant(&self, name: ConstantId<'db>) -> Result<&ConstantInfo<'db>, LookupError<'db>> {
-        match self.lookup(name)? {
-            Global::Constant(info) => Ok(info),
-            _ => Err(LookupError {
+        match self.constants.get(&name) {
+            Some(Global::Constant(info)) => Ok(info),
+            Some(_) => Err(LookupError {
                 kind: LookupErrorKind::NotConstant,
+                id: name,
+            }),
+            None => Err(LookupError {
+                kind: LookupErrorKind::UnknownConstant,
                 id: name,
             }),
         }
@@ -781,10 +787,14 @@ impl<'db> GlobalEnv<'db> {
         &self,
         name: ConstantId<'db>,
     ) -> Result<&PrimitiveInfo<'db>, LookupError<'db>> {
-        match self.lookup(name)? {
-            Global::Primitive(info) => Ok(info),
-            _ => Err(LookupError {
+        match self.constants.get(&name) {
+            Some(Global::Primitive(info)) => Ok(info),
+            Some(_) => Err(LookupError {
                 kind: LookupErrorKind::NotPrimitive,
+                id: name,
+            }),
+            None => Err(LookupError {
+                kind: LookupErrorKind::UnknownConstant,
                 id: name,
             }),
         }
@@ -795,61 +805,19 @@ impl<'db> GlobalEnv<'db> {
         self.constants.insert(name, Global::Primitive(info));
     }
 
-    /// Lookup a hardware primitive by name.
-    pub fn hardware_primitive(
-        &self,
-        name: ConstantId<'db>,
-    ) -> Result<&HardwarePrimitiveInfo<'db>, LookupError<'db>> {
-        match self.lookup(name)? {
-            Global::HardwarePrimitive(info) => Ok(info),
-            _ => Err(LookupError {
-                kind: LookupErrorKind::NotHardwarePrimitive,
-                id: name,
-            }),
-        }
-    }
-
-    /// Add a hardware primitive to the global environment.
-    pub fn add_hardware_primitive(
-        &mut self,
-        name: ConstantId<'db>,
-        info: HardwarePrimitiveInfo<'db>,
-    ) {
-        self.constants.insert(name, Global::HardwarePrimitive(info));
-    }
-
-    /// Lookup a hardware constant by name.
-    pub fn hardware_constant(
-        &self,
-        name: ConstantId<'db>,
-    ) -> Result<&HardwareConstantInfo<'db>, LookupError<'db>> {
-        match self.lookup(name)? {
-            Global::HardwareConstant(info) => Ok(info),
-            _ => Err(LookupError {
-                kind: LookupErrorKind::NotHardwareConstant,
-                id: name,
-            }),
-        }
-    }
-
-    /// Add a hardware constant to the global environment.
-    pub fn add_hardware_constant(
-        &mut self,
-        name: ConstantId<'db>,
-        info: HardwareConstantInfo<'db>,
-    ) {
-        self.constants.insert(name, Global::HardwareConstant(info));
-    }
-
     /// Lookup a type constructor by name.
     pub fn type_constructor(
         &self,
         name: ConstantId<'db>,
     ) -> Result<&TypeConstructorInfo<'db>, LookupError<'db>> {
-        match self.lookup(name)? {
-            Global::TypeConstructor(info) => Ok(info),
-            _ => Err(LookupError {
+        match self.constants.get(&name) {
+            Some(Global::TypeConstructor(info)) => Ok(info),
+            Some(_) => Err(LookupError {
                 kind: LookupErrorKind::NotTypeConstructor,
+                id: name,
+            }),
+            None => Err(LookupError {
+                kind: LookupErrorKind::UnknownConstant,
                 id: name,
             }),
         }
@@ -865,10 +833,14 @@ impl<'db> GlobalEnv<'db> {
         &self,
         name: ConstantId<'db>,
     ) -> Result<&DataConstructorInfo<'db>, LookupError<'db>> {
-        match self.lookup(name)? {
-            Global::DataConstructor(info) => Ok(info),
-            _ => Err(LookupError {
+        match self.constants.get(&name) {
+            Some(Global::DataConstructor(info)) => Ok(info),
+            Some(_) => Err(LookupError {
                 kind: LookupErrorKind::NotDataConstructor,
+                id: name,
+            }),
+            None => Err(LookupError {
+                kind: LookupErrorKind::UnknownConstant,
                 id: name,
             }),
         }
@@ -896,77 +868,6 @@ impl<'db> GlobalEnv<'db> {
         self.metavariables
             .get(&id)
             .ok_or(MetaVariableLookupError { id })
-    }
-}
-
-/// A mapping from bound variables to associated values.
-#[derive(Clone, Debug)]
-pub struct LocalEnv<'db> {
-    /// The typing environment.
-    locals: Vec<Rc<Value<'db>>>,
-}
-
-impl<'db> LocalEnv<'db> {
-    pub fn new() -> LocalEnv<'db> {
-        Self { locals: Vec::new() }
-    }
-
-    pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
-        let index: usize = level.into();
-        &self.locals[index]
-    }
-
-    /// The number of bound variables in scope.
-    pub fn depth(&self) -> usize {
-        self.locals.len() as usize
-    }
-
-    /// Extend the environment by pushing a definition onto the end.
-    pub fn push(&mut self, value: Rc<Value<'db>>) {
-        self.locals.push(value);
-    }
-
-    /// Extend the environment by pushing a variable onto the end.
-    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        let depth = self.depth();
-        let value = Rc::new(Value::variable(Level::new(depth), ty));
-        self.push(value.clone());
-        value
-    }
-
-    pub fn pop(&mut self) {
-        self.locals.pop();
-    }
-
-    /// Extend the environment with multiple values.
-    pub fn extend<T>(&mut self, values: T)
-    where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
-    {
-        self.locals.extend(values);
-    }
-
-    /// Truncate the environment to the given depth.
-    pub fn truncate(&mut self, depth: usize) {
-        self.locals.truncate(depth);
-    }
-
-    pub fn extend_vars<T>(&mut self, types: T)
-    where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
-    {
-        for ty in types {
-            self.push_var(ty);
-        }
-    }
-}
-
-impl<'db, 'g> Extend<Rc<Value<'db>>> for Environment<'db, 'g> {
-    fn extend<T>(&mut self, iter: T)
-    where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
-    {
-        self.local.locals.extend(iter);
     }
 }
 
@@ -1050,29 +951,6 @@ impl<'db> DataConstructorInfo<'db> {
 }
 
 #[derive(Clone, Debug)]
-pub struct HardwareConstantInfo<'db> {
-    pub ty: RcSyntax<'db>,
-    pub value: RcSyntax<'db>,
-}
-
-impl<'db> HardwareConstantInfo<'db> {
-    pub fn new(ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
-        HardwareConstantInfo { ty, value }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct HardwarePrimitiveInfo<'db> {
-    pub ty: RcSyntax<'db>,
-}
-
-impl<'db> HardwarePrimitiveInfo<'db> {
-    pub fn new(ty: RcSyntax<'db>) -> Self {
-        HardwarePrimitiveInfo { ty }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct MetavariableInfo<'db> {
     /// The telescope of argument types (the substitution).
     pub arguments: Telescope<'db>,
@@ -1092,89 +970,83 @@ impl<'db> MetavariableInfo<'db> {
     }
 }
 
+/// A mapping from bound variables to associated values.
 #[derive(Clone, Debug)]
-pub struct SemTelescope<'db> {
-    pub types: Vec<Rc<Value<'db>>>,
+pub struct LocalEnv<'db> {
+    /// The typing environment.
+    locals: Vec<Rc<Value<'db>>>,
 }
 
-/// A closure for hardware lambdas.
-/// Similar to meta-level `Closure` but for hardware terms.
-///
-/// Note: unlike the original design, hardware closures **do** capture the
-/// meta-level local environment. This is required for correctness when
-/// quotes produce hardware functions whose bodies contain splices that
-/// reference meta-level variables (e.g. recursive generators like QueueGen).
-#[derive(Clone, Debug)]
-pub struct HClosure<'db> {
-    /// The environment of hardware values
-    pub env: HEnvironment<'db>,
-    /// The captured meta-level local environment
-    pub local: LocalEnv<'db>,
-    /// The body of the lambda
-    pub body: Rc<Syntax<'db>>,
-}
-
-impl<'db> HClosure<'db> {
-    pub fn new(
-        env: HEnvironment<'db>,
-        local: LocalEnv<'db>,
-        body: Rc<Syntax<'db>>,
-    ) -> HClosure<'db> {
-        HClosure { env, local, body }
-    }
-}
-
-// We keep equality for HValue by defining equality for HClosure in terms of
-// its hardware environment and body only. The captured meta environment is
-// ignored for Eq/PartialEq – it is semantically relevant but not currently
-// used in any equality-based reasoning or tests.
-impl<'db> PartialEq for HClosure<'db> {
-    fn eq(&self, other: &Self) -> bool {
-        self.env == other.env && self.body == other.body
-    }
-}
-
-impl<'db> Eq for HClosure<'db> {}
-
-/// Environment for hardware evaluation.
-/// Maps hardware variables (de Bruijn levels) to hardware values in the unified domain.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HEnvironment<'db> {
-    pub values: Vec<Rc<Value<'db>>>,
-}
-
-impl<'db> HEnvironment<'db> {
-    pub fn new() -> HEnvironment<'db> {
-        HEnvironment { values: Vec::new() }
+impl<'db> LocalEnv<'db> {
+    pub fn new() -> LocalEnv<'db> {
+        Self { locals: Vec::new() }
     }
 
+    pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
+        let index: usize = level.into();
+        &self.locals[index]
+    }
+
+    /// The number of bound variables in scope.
+    pub fn depth(&self) -> usize {
+        self.locals.len() as usize
+    }
+
+    /// Extend the environment by pushing a definition onto the end.
     pub fn push(&mut self, value: Rc<Value<'db>>) {
-        self.values.push(value);
+        self.locals.push(value);
+    }
+
+    /// Extend the environment by pushing a variable onto the end.
+    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+        let depth = self.depth();
+        let value = Rc::new(Value::variable(Level::new(depth), ty));
+        self.push(value.clone());
+        value
     }
 
     pub fn pop(&mut self) {
-        self.values.pop();
+        self.locals.pop();
     }
 
-    pub fn get(&self, level: Level) -> Option<&Rc<Value<'db>>> {
-        self.values.get(level.0)
+    /// Extend the environment with multiple values.
+    pub fn extend<T>(&mut self, values: T)
+    where
+        T: IntoIterator<Item = Rc<Value<'db>>>,
+    {
+        self.locals.extend(values);
     }
 
-    pub fn len(&self) -> usize {
-        self.values.len()
+    /// Truncate the environment to the given depth.
+    pub fn truncate(&mut self, depth: usize) {
+        self.locals.truncate(depth);
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+    pub fn extend_vars<T>(&mut self, types: T)
+    where
+        T: IntoIterator<Item = Rc<Value<'db>>>,
+    {
+        for ty in types {
+            self.push_var(ty);
+        }
     }
 
-    pub fn depth(&self) -> usize {
-        self.values.len()
+    /// Iterate over the values in the environment.
+    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+        self.locals.iter()
     }
 }
 
-impl<'db> Default for HEnvironment<'db> {
-    fn default() -> Self {
-        Self::new()
+impl<'db, 'g> Extend<Rc<Value<'db>>> for Environment<'db, 'g> {
+    fn extend<T>(&mut self, iter: T)
+    where
+        T: IntoIterator<Item = Rc<Value<'db>>>,
+    {
+        self.local.locals.extend(iter);
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct SemTelescope<'db> {
+    pub types: Vec<Rc<Value<'db>>>,
 }

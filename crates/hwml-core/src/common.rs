@@ -1,3 +1,6 @@
+use crate::symbol::InternedString;
+use hwml_support::{FromWithDb, IntoWithDb};
+use salsa::Database;
 use serde::{Deserialize, Serialize};
 use std::{
     convert::{From, Into},
@@ -217,6 +220,38 @@ impl Into<usize> for UniverseLevel {
 impl From<usize> for UniverseLevel {
     fn from(x: usize) -> UniverseLevel {
         UniverseLevel(x)
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
+pub struct ConstantId<'db>(pub InternedString<'db>);
+
+impl<'db> ConstantId<'db> {
+    /// Create a new ConstantId from an interned string.
+    pub fn new(interned: InternedString<'db>) -> Self {
+        ConstantId(interned)
+    }
+
+    /// Get the interned string for this constant.
+    pub fn interned(&self) -> InternedString<'db> {
+        self.0
+    }
+
+    /// Get the string name for this constant.
+    pub fn name(&self, db: &'db dyn Database) -> &str {
+        self.0.text(db)
+    }
+}
+
+impl<'db, T> FromWithDb<'db, T> for ConstantId<'db>
+where
+    T: IntoWithDb<'db, InternedString<'db>>,
+{
+    fn from_with_db<Db>(db: &'db Db, value: T) -> Self
+    where
+        Db: salsa::Database + ?Sized,
+    {
+        ConstantId::new(value.into_with_db(db))
     }
 }
 

@@ -493,7 +493,7 @@ fn type_check_type_constructor<'db, 'g>(
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     match ty {
-        Value::Universe(u) => {
+        Value::Universe(_u) => {
             // Lookup the type constructor info.
             let tcon_info = env
                 .values
@@ -565,7 +565,7 @@ fn type_check_data_constructor<'db, 'g>(
             }
 
             let ty_got = eval::eval(&mut ty_env, &dc_info.ty)?;
-            match equal::is_type_convertible(env.values.global, env.depth(), ty_exp, &ty_got) {
+            match equal::type_equiv(env.values.global, env.depth(), ty_exp, &ty_got) {
                 Ok(_) => Ok(()),
                 Err(_) => Err(Error::BadCheck {
                     tm: Rc::new(Syntax::DataConstructor(dc.clone())),
@@ -663,7 +663,7 @@ pub fn type_check_synth_term<'db, 'g>(
     ty1: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     let ty2 = type_synth(env, term)?;
-    match crate::equal::is_type_convertible(env.values.global, env.depth(), ty1, &ty2) {
+    match crate::equal::type_equiv(env.values.global, env.depth(), ty1, &ty2) {
         Ok(()) => Ok(()),
         Err(_) => Err(Error::BadCheck {
             tm: Rc::new(term.clone()),
@@ -840,195 +840,340 @@ fn check_type_constructor_type<'db, 'g>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check_module::check_module;
     use crate::common::UniverseLevel;
-    use crate::declaration::Module;
-    use crate::syn::Syntax;
+    use crate::syn::parse::parse_syntax;
+    use crate::syn::RcSyntax;
+    use crate::ConstantId;
     use crate::Database;
-    use hwml_support::IntoWithDb;
+    use hwml_support::FromWithDb;
 
-    /// Helper to synthesize hardware syntax type using the public wrapper.
-    fn synth_hsyntax<'db, 'g>(
-        env: &mut TCEnvironment<'db, 'g>,
-        term: &syn::RcSyntax<'db>,
-    ) -> Result<Rc<Value<'db>>, Error<'db>> {
-        let mut env = &mut TCEnvironment::new();
-        type_synth(env, &mut henv, term)
-    }
-
-    /// Test that Check nodes reject hardware types like $Bit.
-    /// Using (x : $Bit) at the meta-level should fail.
-    #[test]
-    fn test_check_rejects_hardware_types() {
-        let _db = Database::default();
-        let global_env = val::GlobalEnv::new();
-
-        // Create: (0 : $Bit) - a Check node with hardware type
-        // We'll use a Quote of Zero as the term since we can't use Zero directly in Syntax
-        let bit_ty = Syntax::bit_rc();
-        let zero_hw = Syntax::zero_rc();
-        let quoted_zero = Syntax::quote_rc(zero_hw);
-        let check_term = Syntax::check_rc(bit_ty, quoted_zero);
-
-        let mut tc_env = TCEnvironment {
-            values: val::Environment::new(&global_env),
+    /// Helper to create a TCEnvironment with a GlobalEnv
+    fn make_env<'db, 'g>(global: &'g val::GlobalEnv<'db>) -> TCEnvironment<'db, 'g> {
+        TCEnvironment {
+            values: val::Environment::new(global),
             types: Vec::new(),
-        };
-
-        // This should fail because $Bit is not a valid meta-level type
-        let result = type_synth(&mut tc_env, &check_term);
-        assert!(result.is_err(), "Check with hardware type $Bit should fail");
+        }
     }
 
-    /// Test that HCheck nodes accept hardware types like $Bit.
-    #[test]
-    fn test_hcheck_accepts_hardware_types() {
-        let _db = Database::default();
-        let global_env = val::GlobalEnv::new();
-
-        // Create: (0 : $Bit) in hardware syntax - an HCheck node
-        let bit_ty = Syntax::bit_rc();
-        let zero = Syntax::zero_rc();
-        let hcheck_term = Syntax::hcheck_rc(bit_ty, zero);
-
-        let mut tc_env = TCEnvironment {
-            values: val::Environment::new(&global_env),
-            types: Vec::new(),
-        };
-
-        // Synthesize the type
-        let result = synth_hsyntax(&mut tc_env, &hcheck_term);
-        assert!(
-            result.is_ok(),
-            "HCheck with hardware type $Bit should succeed: {:?}",
-            result.err()
-        );
-
-        // The result should be Bit
-        let ty = result.unwrap();
-        assert!(matches!(&*ty, Value::Bit), "Type should be Bit");
+    /// Parse helper - panics with message on failure
+    fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
+        parse_syntax(db, input).unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e))
     }
 
-    /// Test that HConstant only resolves hardware constants (not regular constants).
-    #[test]
-    fn test_hconstant_resolves_hardware_constants() {
-        let db = Database::default();
-
-        // Create a module with a hardware constant
-        let mut module = Module::new();
-        let hconst_name = "my_hconst".into_with_db(&db);
-        let bit_ty = Syntax::bit_rc();
-        let zero_val = Syntax::zero_rc();
-        module.add_declaration(crate::declaration::Declaration::HardwareConstant(
-            HardwareConstant::new(hconst_name, bit_ty.clone(), zero_val),
-        ));
-
-        // Type-check the module
-        let checked = check_module(&module, val::GlobalEnv::new());
-        assert!(
-            checked.is_ok(),
-            "Module type-checking should succeed: {:?}",
-            checked.err()
-        );
-        let checked = checked.unwrap();
-
-        // Create an HConstant reference
-        let hconst_ref = Syntax::hconstant_rc(hconst_name);
-
-        let mut tc_env = TCEnvironment {
-            values: val::Environment::new(&checked.global_env),
-            types: Vec::new(),
-        };
-
-        // Synthesize the type - should succeed
-        let result = synth_hsyntax(&mut tc_env, &hconst_ref);
-        assert!(
-            result.is_ok(),
-            "HConstant should resolve hardware constant: {:?}",
-            result.err()
-        );
-    }
-
-    /// Test that HConstant fails when looking up a regular constant.
-    #[test]
-    fn test_hconstant_rejects_regular_constants() {
-        let db = Database::default();
-
-        // Create a module with a regular constant (not hardware)
-        // We declare: my_const : U1 = U0
-        // Since U0 : U1, this is well-typed.
-        let mut module = Module::new();
-        let const_name = "my_const".into_with_db(&db);
-        let universe_1 = Syntax::universe_rc(UniverseLevel::new(1)); // U1 as the type
-        let universe_0 = Syntax::universe_rc(UniverseLevel::new(0)); // U0 as the value
-        module.add_declaration(crate::declaration::Declaration::Constant(
-            crate::declaration::Constant::new(const_name, universe_1, universe_0),
-        ));
-
-        // Type-check the module
-        let checked = check_module(&module, val::GlobalEnv::new());
-        assert!(
-            checked.is_ok(),
-            "Module type-checking should succeed: {:?}",
-            checked.err()
-        );
-        let checked = checked.unwrap();
-
-        // Try to use the regular constant as an HConstant
-        let hconst_ref = Syntax::hconstant_rc(const_name);
-
-        let mut tc_env = TCEnvironment {
-            values: val::Environment::new(&checked.global_env),
-            types: Vec::new(),
-        };
-
-        // Synthesize the type - should fail because it's not a hardware constant
-        let result = synth_hsyntax(&mut tc_env, &hconst_ref);
-        assert!(result.is_err(), "HConstant should reject regular constants");
-    }
+    // ========== check_meta_type tests ==========
 
     /// Test that Lift types are valid meta-level types.
     #[test]
     fn test_lift_is_valid_meta_type() {
-        let _db = Database::default();
-        let global_env = val::GlobalEnv::new();
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
 
-        // Create: ^$Bit - a lifted hardware type
-        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
-
-        let mut tc_env = TCEnvironment {
-            values: val::Environment::new(&global_env),
-            types: Vec::new(),
-        };
-
-        // check_meta_type should accept Lift types
-        let result = check_meta_type(&mut tc_env, &lift_bit);
-        assert!(
-            result.is_ok(),
-            "Lift types should be valid meta-level types: {:?}",
-            result.err()
-        );
+        // ^Bit - a lifted hardware type
+        let lift_bit = parse(&db, "^Bit");
+        assert!(check_meta_type(&mut env, &lift_bit).is_ok());
     }
 
-    /// Test that hardware types ($Bit) are NOT valid meta-level types.
+    /// Test that hardware types (Bit) are NOT valid meta-level types.
     #[test]
     fn test_hwtype_is_not_valid_meta_type() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // Bit - a hardware type
+        let bit = parse(&db, "Bit");
+        assert!(check_meta_type(&mut env, &bit).is_err());
+    }
+
+    /// Test that Universe is a valid meta-level type.
+    #[test]
+    fn test_universe_is_valid_meta_type() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // 𝒰0 should be accepted
+        let u0 = parse(&db, "U0");
+        assert!(check_meta_type(&mut env, &u0).is_ok());
+    }
+
+    /// Test that Pi types with valid meta-level source/target are valid.
+    #[test]
+    fn test_pi_is_valid_meta_type() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // ∀ (%x : 𝒰0) → 𝒰0
+        let pi = parse(&db, "forall (%x : U0) -> U0");
+        assert!(check_meta_type(&mut env, &pi).is_ok());
+    }
+
+    // ========== check_type tests ==========
+
+    /// Test that check_type accepts Universe.
+    #[test]
+    fn test_check_type_accepts_universe() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        let u0 = parse(&db, "U0");
+        assert!(check_type(&mut env, &u0).is_ok());
+    }
+
+    /// Test that check_type accepts Pi types.
+    #[test]
+    fn test_check_type_accepts_pi() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        let pi = parse(&db, "forall (%x : U0) -> U0");
+        assert!(check_type(&mut env, &pi).is_ok());
+    }
+
+    /// Test that check_type accepts Bit (hardware type).
+    #[test]
+    fn test_check_type_accepts_bit() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        let bit = parse(&db, "Bit");
+        assert!(check_type(&mut env, &bit).is_ok());
+    }
+
+    /// Test that check_type accepts HArrow (hardware arrow type).
+    #[test]
+    fn test_check_type_accepts_harrow() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // Bit → Bit
+        let harrow = parse(&db, "Bit -> Bit");
+        assert!(check_type(&mut env, &harrow).is_ok());
+    }
+
+    /// Test that check_type accepts Lift types.
+    #[test]
+    fn test_check_type_accepts_lift() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // ^Bit
+        let lift = parse(&db, "^Bit");
+        assert!(check_type(&mut env, &lift).is_ok());
+    }
+
+    // ========== type_synth tests ==========
+
+    /// Test that Universe synthesizes to a higher universe.
+    #[test]
+    fn test_synth_universe() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        let u0 = parse(&db, "U0");
+        let ty = type_synth(&mut env, &u0).expect("should synthesize");
+
+        // 𝒰0 : 𝒰1
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    /// Test that Lift synthesizes to Universe(0).
+    #[test]
+    fn test_synth_lift() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // ^Bit : 𝒰0
+        let lift = parse(&db, "^Bit");
+        let ty = type_synth(&mut env, &lift).expect("should synthesize");
+
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    /// Test that variables get their type from the environment.
+    #[test]
+    fn test_synth_variable() {
         let _db = Database::default();
-        let global_env = val::GlobalEnv::new();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
 
-        // Create: $Bit - a hardware type
-        let bit = Syntax::bit_rc();
+        // Push a variable of type 𝒰0
+        let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
+        env.push_var(u0_val.clone());
 
-        let mut tc_env = TCEnvironment {
-            values: val::Environment::new(&global_env),
-            types: Vec::new(),
-        };
+        // Variable %0 should have type 𝒰0
+        // Note: We use manual AST construction here because the parser requires
+        // named variables to be in its name context.
+        let var = Syntax::variable_rc(crate::common::Index(0));
+        let ty = type_synth(&mut env, &var).expect("should synthesize");
 
-        // check_meta_type should reject $Bit
-        let result = check_meta_type(&mut tc_env, &bit);
-        assert!(
-            result.is_err(),
-            "$Bit should not be a valid meta-level type"
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    /// Test that constants get their type from the global environment.
+    #[test]
+    fn test_synth_constant() {
+        let db = Database::new();
+        let mut global = val::GlobalEnv::new();
+
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+
+        // Add constant @myConst : 𝒰0 = 𝒰0
+        global.add_constant(
+            cid("myConst"),
+            val::ConstantInfo::new(parse(&db, "U0"), parse(&db, "U0")),
         );
+
+        let mut env = make_env(&global);
+
+        // @myConst should have type 𝒰0
+        let const_syn = parse(&db, "@myConst");
+        let ty = type_synth(&mut env, &const_syn).expect("should synthesize");
+
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    /// Test that primitives get their type from the global environment.
+    #[test]
+    fn test_synth_primitive() {
+        let db = Database::new();
+        let mut global = val::GlobalEnv::new();
+
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+
+        // Add primitive $Nat : 𝒰0
+        global.add_primitive(cid("Nat"), val::PrimitiveInfo::new(parse(&db, "U0")));
+
+        let mut env = make_env(&global);
+
+        // $Nat should have type 𝒰0
+        let prim_syn = parse(&db, "$Nat");
+        let ty = type_synth(&mut env, &prim_syn).expect("should synthesize");
+
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    // ========== type_check tests ==========
+
+    /// Test that Pi types check against Universe.
+    #[test]
+    fn test_check_pi_against_universe() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // ∀ (%x : 𝒰0) → 𝒰0 has type 𝒰1 (not 𝒰0)
+        let pi = parse(&db, "forall (%x : U0) -> U0");
+
+        let u1_val = Value::universe(UniverseLevel::new(1));
+        assert!(type_check(&mut env, &pi, &u1_val).is_ok());
+    }
+
+    /// Test that Lambda checks against Pi type.
+    #[test]
+    fn test_check_lambda_against_pi() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // λ %x → %x : ∀ (%x : 𝒰0) → 𝒰0
+        let lam = parse(&db, "λ %x -> %x");
+
+        // Create the Pi type as a Value
+        let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_syn = parse(&db, "U0");
+        let pi_val = Value::Pi(val::Pi {
+            source: u0_val.clone(),
+            target: Closure::new(val::LocalEnv::new(), u0_syn),
+        });
+
+        assert!(type_check(&mut env, &lam, &pi_val).is_ok());
+    }
+
+    /// Test that Bit checks against SignalUniverse.
+    #[test]
+    fn test_check_bit_against_signal_universe() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        let bit = parse(&db, "Bit");
+        let signal_universe = Value::SignalUniverse(val::SignalUniverse::new());
+
+        assert!(type_check(&mut env, &bit, &signal_universe).is_ok());
+    }
+
+    /// Test that HArrow checks against ModuleUniverse.
+    #[test]
+    fn test_check_harrow_against_module_universe() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // Bit → Bit
+        let harrow = parse(&db, "Bit -> Bit");
+        let module_universe = Value::ModuleUniverse(val::ModuleUniverse::new());
+
+        assert!(type_check(&mut env, &harrow, &module_universe).is_ok());
+    }
+
+    // ========== Application synthesis tests ==========
+
+    /// Test that function application synthesizes the correct type.
+    #[test]
+    fn test_synth_application() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&global);
+
+        // Set up: we need a variable of Pi type
+        // Create a function f : ∀ (%x : 𝒰0) → 𝒰0
+        let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_syn = parse(&db, "U0");
+        let pi_val = Rc::new(Value::Pi(val::Pi {
+            source: u0_val.clone(),
+            target: Closure::new(val::LocalEnv::new(), u0_syn),
+        }));
+
+        // Push f into the environment
+        env.push_var(pi_val);
+
+        // Now apply f to (^Bit) which has type 𝒰0
+        // Note: We use manual AST construction for the variable reference
+        // because the parser requires named variables to be in its name context.
+        let lift_bit = parse(&db, "^Bit");
+        let app = Syntax::application_rc(Syntax::variable_rc(crate::common::Index(0)), lift_bit);
+
+        let ty = type_synth(&mut env, &app).expect("should synthesize");
+
+        // The result should be 𝒰0
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
     }
 }

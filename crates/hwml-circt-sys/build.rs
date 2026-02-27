@@ -198,7 +198,7 @@ fn configure_linking(circt_root: &PathBuf) {
         "MLIRTransformUtils",                  // Transform utilities
         "MLIRAnalysis",                        // MLIR analysis
         "MLIRArithDialect",                    // Arithmetic dialect
-        "MLIRAritValueBoundsOpInterfaceImpl", // Arith value bounds
+        "MLIRArithValueBoundsOpInterfaceImpl", // Arith value bounds
         "MLIRFuncDialect",                     // Function dialect
         "MLIRFunctionInterfaces",              // Function interfaces
         "MLIRInferTypeOpInterface",            // Type inference interface

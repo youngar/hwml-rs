@@ -1,6 +1,7 @@
 use crate::{
     declaration::{self, Declaration, Primitive},
     syn::*,
+    ConstantId,
 };
 use elegance::{Io, Printer, Render};
 
@@ -10,11 +11,14 @@ const COLUMNS: usize = 80;
 type Precedence = (Option<usize>, Option<usize>);
 
 struct Properties {
-    mode: Option<Mode>,
     precedence: Precedence,
 }
 
 impl Properties {
+    const fn new(precedence: Precedence) -> Self {
+        Properties { precedence }
+    }
+
     fn lhs_prec(&self) -> Option<usize> {
         self.precedence.0
     }
@@ -24,125 +28,28 @@ impl Properties {
     }
 }
 
-const QUOTE: Properties = Properties {
-    mode: None,
-    precedence: (None, Some(5)),
-};
-
-const SPLICE: Properties = Properties {
-    mode: None,
-    precedence: (None, Some(5)),
-};
-
-const UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const LIFT: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(5)),
-};
-
-const PI: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(3)),
-};
-
-const LAMBDA: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(3)),
-};
-
-const APP: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (Some(4), Some(5)),
-};
-
-const TCON_APP: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: APP.precedence,
-};
-
-const DCON_APP: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: APP.precedence,
-};
-
-const TCON: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const DCON: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const CASE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (APP.precedence.0, None),
-};
-
-const HARDWARE_UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const SLIFT: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(5)),
-};
-
-const MLIFT: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, Some(5)),
-};
-
-const SIGNAL_UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const BIT: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const ZERO: Properties = Properties {
-    mode: Some(Mode::HW),
-    precedence: (None, None),
-};
-
-const ONE: Properties = Properties {
-    mode: Some(Mode::HW),
-    precedence: (None, None),
-};
-
-const MODULE_UNIVERSE: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (None, None),
-};
-
-const HARROW: Properties = Properties {
-    mode: Some(Mode::ML),
-    precedence: (Some(4), Some(3)),
-};
-
-const MODULE: Properties = Properties {
-    mode: Some(Mode::HW),
-    precedence: LAMBDA.precedence,
-};
-
-const HAPP: Properties = Properties {
-    mode: Some(Mode::HW),
-    precedence: APP.precedence,
-};
-
-const CHECK: Properties = Properties {
-    mode: None,
-    precedence: (Some(2), Some(3)),
-};
+const UNIVERSE: Properties = Properties::new((None, None));
+const LIFT: Properties = Properties::new((None, Some(5)));
+const PI: Properties = Properties::new((None, Some(3)));
+const LAMBDA: Properties = Properties::new((None, Some(3)));
+const APP: Properties = Properties::new((Some(4), Some(5)));
+const TCON_APP: Properties = APP;
+const DCON_APP: Properties = APP;
+const TCON: Properties = Properties::new((None, None));
+const DCON: Properties = Properties::new((None, None));
+const CASE: Properties = Properties::new((APP.precedence.0, None));
+const HARDWARE_UNIVERSE: Properties = Properties::new((None, None));
+const SLIFT: Properties = Properties::new((None, Some(5)));
+const MLIFT: Properties = Properties::new((None, Some(5)));
+const SIGNAL_UNIVERSE: Properties = Properties::new((None, None));
+const BIT: Properties = Properties::new((None, None));
+const ZERO: Properties = Properties::new((None, None));
+const ONE: Properties = Properties::new((None, None));
+const MODULE_UNIVERSE: Properties = Properties::new((None, None));
+const HARROW: Properties = Properties::new((Some(4), Some(3)));
+const MODULE: Properties = LAMBDA;
+const HAPP: Properties = APP;
+const CHECK: Properties = Properties::new((Some(2), Some(3)));
 
 pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
@@ -274,28 +181,8 @@ pub fn print_type_constructor<'db, R: Render>(
     Ok(())
 }
 
-pub fn print_hw_syntax_to_string<'db>(
-    db: &'db dyn salsa::Database,
-    syntax: &Syntax<'db>,
-) -> String {
-    let mut p = Printer::new(String::new(), 80);
-    let st = State::with_mode(Mode::HW);
-    let _ = syntax.print(db, st, &mut p);
-    p.finish().unwrap_or_default()
-}
-
-#[derive(Clone, Copy)]
-enum Mode {
-    /// Hardware mode.
-    HW,
-    /// Meta-level mode.
-    ML,
-}
-
 #[derive(Clone, Copy)]
 struct State {
-    /// The current mode (HW/ML) we are printing at.
-    mode: Mode,
     /// Ambient binder depth.
     depth: usize,
     // The parent precedence.
@@ -305,15 +192,6 @@ struct State {
 impl State {
     fn new() -> State {
         State {
-            mode: Mode::ML,
-            depth: 0,
-            precedence: (None, None),
-        }
-    }
-
-    fn with_mode(mode: Mode) -> State {
-        State {
-            mode,
             depth: 0,
             precedence: (None, None),
         }
@@ -342,10 +220,6 @@ impl State {
             depth: self.depth + 1,
             ..self
         }
-    }
-
-    fn set_mode(self, mode: Mode) -> State {
-        State { mode, ..self }
     }
 }
 
@@ -446,57 +320,12 @@ where
     }
 }
 
-pub fn quote<F, R>(st: State, p: &mut Printer<R>, f: F) -> Result<(), R::Error>
-where
-    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
-    R: Render,
-{
-    ensure_precedence(st, p, QUOTE.precedence, |st, p| {
-        p.text("'")?;
-        let st = st.set_mode(Mode::HW);
-        let st = st.set_lhs_prec(QUOTE.precedence.1);
-        f(st, p)
-    })
-}
-
-pub fn splice<F, R>(st: State, p: &mut Printer<R>, f: F) -> Result<(), R::Error>
-where
-    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
-    R: Render,
-{
-    ensure_precedence(st, p, SPLICE.precedence, |st, p| {
-        p.text("~")?;
-        let st = st.set_mode(Mode::ML);
-        let st = st.set_lhs_prec(SPLICE.precedence.1);
-        f(st, p)
-    })
-}
-
-fn ensure_mode<F, R>(
-    st: State,
-    p: &mut Printer<R>,
-    mode: Option<Mode>,
-    f: F,
-) -> Result<(), R::Error>
-where
-    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
-    R: Render,
-{
-    match (st.mode, mode) {
-        (Mode::ML, Some(Mode::HW)) => quote(st, p, f),
-        (Mode::HW, Some(Mode::ML)) => splice(st, p, f),
-        _ => f(st, p),
-    }
-}
-
 fn ensure<F, R>(st: State, p: &mut Printer<R>, properties: Properties, f: F) -> Result<(), R::Error>
 where
     F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
 {
-    ensure_mode(st, p, properties.mode, |st, p| {
-        ensure_precedence(st, p, properties.precedence, f)
-    })
+    ensure_precedence(st, p, properties.precedence, f)
 }
 
 fn print_binder<R>(st: State, p: &mut Printer<R>) -> Result<(), R::Error>
@@ -705,10 +534,31 @@ impl<'db> Print for Application<'db> {
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         ensure(st, p, APP, |st, p| {
+            // Collect all nested applications into a flat list
+            let mut args = vec![];
+            let mut current = self;
+            let function = loop {
+                args.push(current.argument.clone());
+                match &*current.function {
+                    Syntax::Application(app) => current = app,
+                    other => break other,
+                }
+            };
+            args.reverse();
+
+            // Print: function[arg1, arg2, arg3]
             p.cgroup(0, |p| {
-                print_lhs_subterm(db, st, p, &*self.function, APP.lhs_prec())?;
-                p.space()?;
-                print_rhs_subterm(db, st, p, &*self.argument, APP.rhs_prec())
+                print_internal_subterm(db, st, p, function)?;
+                p.text("[")?;
+                if let Some((first, rest)) = args.split_first() {
+                    print_internal_subterm(db, st, p, &**first)?;
+                    for arg in rest {
+                        p.text(",")?;
+                        p.space()?;
+                        print_internal_subterm(db, st, p, &**arg)?;
+                    }
+                }
+                p.text("]")
             })
         })
     }
@@ -848,7 +698,7 @@ impl<'db> Print for HardwareUniverse<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, HARDWARE_UNIVERSE, |st, p| p.text("H"))
+        ensure(st, p, HARDWARE_UNIVERSE, |st, p| p.text("HardwareType"))
     }
 }
 
@@ -898,7 +748,7 @@ impl<'db> Print for Bit<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, BIT, |st, p| p.text("$Bit"))
+        ensure(st, p, BIT, |st, p| p.text("Bit"))
     }
 }
 
@@ -931,7 +781,7 @@ impl<'db> Print for ModuleUniverse<'db> {
         _st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("M")
+        p.text("ModuleType")
     }
 }
 
@@ -966,7 +816,7 @@ impl<'db> Print for Module<'db> {
                 let mut next = self;
                 let mut st = st;
                 p.cgroup(0, |p| {
-                    p.text("λ ")?;
+                    p.text("mod ")?;
                     loop {
                         print_binder(st, p)?;
                         st = st.inc_depth();
@@ -994,10 +844,15 @@ impl<'db> Print for HApplication<'db> {
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         ensure(st, p, HAPP, |st, p| {
+            // Print: module<module_ty>(argument)
             p.cgroup(0, |p| {
-                print_lhs_subterm(db, st, p, &*self.function, HAPP.lhs_prec())?;
-                p.space()?;
-                print_rhs_subterm(db, st, p, &*self.argument, HAPP.rhs_prec())
+                print_internal_subterm(db, st, p, &*self.module)?;
+                p.text("<")?;
+                print_internal_subterm(db, st, p, &*self.module_ty)?;
+                p.text(">")?;
+                p.text("(")?;
+                print_internal_subterm(db, st, p, &*self.argument)?;
+                p.text(")")
             })
         })
     }
@@ -1081,762 +936,226 @@ impl<'db> Print for Check<'db> {
 mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
-    use crate::syn::{ConstantId, Syntax};
-    use hwml_support::{FromWithDb, IntoWithDb};
+    use crate::Database;
+    use hwml_support::IntoWithDb;
     use insta::assert_snapshot;
 
+    /// Helper to print syntax and return string
+    fn p(db: &Database, s: &Syntax) -> String {
+        print_syntax_to_string(db, s)
+    }
+
+    // =========================================================================
+    // Core Type Theory
+    // =========================================================================
+
     #[test]
-    fn test_print_ast_to_stdout() {
-        let db = crate::Database::new();
-
-        // Simple constant: @42
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::constant_from(&db, "42")),
-            @"@42"
-        );
-
-        // Universe: 𝒰@0
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::universe(UniverseLevel::new(0))),
-            @"𝒰0"
-        );
-
-        // Lambda: λ%0 → %0
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))),
-            @"λ %0 → %0"
-        );
-
-        // Application: @42 @99
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::application(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "99"))
-            )),
-            @"@42 @99"
-        );
-
-        // Pi type: ∀(%0 : 𝒰0) → 𝒰1
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::pi(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::universe_rc(UniverseLevel::new(1))
-            )),
-            @"∀ (%0 : 𝒰0) → 𝒰1"
-        );
-
-        // Nested pi: ∀(%0 : 𝒰0) (%1 : %0) → %1
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::pi(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::pi_rc(
-                    Syntax::variable_rc(Index(1)), // refers to outer pi binder
-                    Syntax::variable_rc(Index(0))  // refers to inner pi binder
-                )
-            )),
-            @"∀ (%0 : 𝒰0) (%1 : !0) → %1"
-        );
-
-        // Check: @42 : 𝒰0
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::check(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))
-            )),
-            @"@42 : 𝒰0"
-        );
-
-        // Lambda with application: λ%0 → @999 %0
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "999")),
-                Syntax::variable_rc(Index(0))
-            ))),
-            @"λ %0 → @999 %0"
-        );
-
-        // Nested lambda: λ%0 %1 → %1 %0
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(Syntax::lambda_rc(
-                Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)), // outer lambda param
-                    Syntax::variable_rc(Index(1))  // inner lambda param
-                )
-            ))),
-            @"λ %0 %1 → %1 %0"
-        );
-
-        // Lambda with checked nested lambda: λ%0 → (λ%1 → %1 %0 : 𝒰0)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda_rc(Syntax::check_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::lambda_rc(Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)), // outer lambda param
-                    Syntax::variable_rc(Index(1))  // inner lambda param
-                ))
-            ))),
-            @"λ %0 → (λ %1 → %1 %0 : 𝒰0)"
-        );
-
-        // Simple metavariable: ?[0]
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::metavariable(
-                MetaVariableId(0),
-                vec![]
-            )),
-            @"?[0]"
-        );
-
-        // Application with two different metavariables: ?[0] ?[1]
-        // (both metavariables must be in the same expression to share GlobalState)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::application(
-                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-                Syntax::metavariable_rc(MetaVariableId(1), vec![])
-            )),
-            @"?[0] ?[1]"
-        );
-
-        // Same metavariable used twice: ?[0] ?[0]
-        // (shows that the same metavariable ID gets the same name)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::application(
-                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-                Syntax::metavariable_rc(MetaVariableId(0), vec![])
-            )),
-            @"?[0] ?[0]"
-        );
-
-        // Data constructor with no arguments: @Nil
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_with_db(&db, "Nil"),
-                vec![]
-            )),
-            @"[@Nil]"
-        );
-
-        // Data constructor with one lambda argument.
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_with_db(&db, "Nil"),
-                vec![Syntax::lambda_rc(Syntax::variable_rc(Index(0)))]
-            )),
-            @"[@Nil λ %0 → %0]"
-        );
-
-        // Data constructor with multiple lambda arguments.
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_with_db(&db, "Cons"),
-                vec![
-                    Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-                    Syntax::lambda_rc(Syntax::variable_rc(Index(0)))
-                ]
-            )),
-            @"[@Cons (λ %0 → %0) λ %0 → %0]"
-        );
-
-        // Complex expression with three metavariables: (?[0] ?[1]) ?[2]
-        // (shows that distinct metavariables get distinct names)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::application(
-                Syntax::application_rc(
-                    Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-                    Syntax::metavariable_rc(MetaVariableId(1), vec![])
-                ),
-                Syntax::metavariable_rc(MetaVariableId(2), vec![])
-            )),
-            @"?[0] ?[1] ?[2]"
-        );
-
-        // Unbound variable at depth 0: !0
-        // (variable with index 0 when there are no binders)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::variable(Index(0))),
-            @"!0"
-        );
-
-        // Unbound variable at depth 0: !1
-        // (variable with index 1 when there are no binders)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::variable(Index(1))),
-            @"!1"
-        );
-
-        // Unbound variable at depth 0: !5
-        // (variable with index 5 when there are no binders)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::variable(Index(5))),
-            @"!5"
-        );
-
-        // Lambda with unbound variable: λ%0 → !0
-        // (the lambda binds one variable, but the body references index 1 which is unbound)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(Syntax::variable_rc(Index(1)))),
-            @"λ %0 → !0"
-        );
-
-        // Lambda with unbound variable: λ%0 → !1
-        // (the lambda binds one variable, but the body references index 2 which is unbound)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(Syntax::variable_rc(Index(2)))),
-            @"λ %0 → !1"
-        );
-
-        // Nested lambda with mixed bound and unbound variables: λ%0 %1 → %1 !0
-        // (two binders, so index 0 and 1 are bound, but index 2 is unbound)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(Syntax::lambda_rc(
-                Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)), // bound to inner lambda
-                    Syntax::variable_rc(Index(2))  // unbound (negative level 0)
-                )
-            ))),
-            @"λ %0 %1 → %1 !0"
-        );
-
-        // Pi with unbound variable in target: ∀(%0 : 𝒰0) → !0
-        // (the pi binds one variable, but the target references index 1 which is unbound)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::pi(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::variable_rc(Index(1))
-            )),
-            @"∀ (%0 : 𝒰0) → !0"
-        );
+    fn print_universe() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::universe(UniverseLevel::new(0))), @"𝒰0");
+        assert_snapshot!(p(&db, &Syntax::universe(UniverseLevel::new(1))), @"𝒰1");
     }
 
     #[test]
-    fn test_print_hardware_terms() {
-        use crate::syn::{HApplication, Module, Variable};
-        use crate::Database;
-        use std::rc::Rc;
-        let db = Database::default();
-
-        // Simple Constant: @42
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::Constant(Constant::new(ConstantId::from_with_db(&db, "42")))),
-            @"@42"
-        );
-
-        // Simple Variable bound: %0 (at depth 1)
-        let hvar_bound = Syntax::Variable(Variable::new(Index(0)));
-        let mut p = Printer::new(String::new(), 80);
-        let st = State::new().inc_depth(); // depth 1, so index 0 is bound
-        let _ = hvar_bound.print(&db, st, &mut p);
-        let result = p.finish().unwrap_or_default();
-        assert_eq!(result, "%0");
-
-        // Simple Variable unbound: !0 (at depth 0)
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::Variable(Variable::new(Index(0)))),
-            @"!0"
-        );
-
-        // Check: @42 : $Bit
-        // Type annotation is now a meta-level Syntax (hardware type)
-        let hcheck = Syntax::Check(Check::new(
-            Rc::new(Syntax::Bit(Bit::new())),
-            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-                &db, "42",
-            )))),
-        ));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &hcheck),
-            @"@42 : $Bit"
-        );
-
-        // Module: λ%0 → %0
-        let Module = Syntax::Module(Module::new(Rc::new(Syntax::Variable(Variable::new(
-            Index(0),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Module),
-            @"λ %0 → %0"
-        );
-
-        // HApplication: @42 @99
-        let happ = Syntax::HApplication(HApplication::new(
-            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-                &db, "42",
-            )))),
-            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-                &db, "99",
-            )))),
-        ));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &happ),
-            @"@42 @99"
-        );
+    fn print_lift() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::lift(Syntax::bit_rc())), @"^Bit");
     }
 
     #[test]
-    fn test_print_complex_hardware_terms() {
-        use crate::syn::{HApplication, Module, Syntax, Variable};
-        use crate::Database;
-        use std::rc::Rc;
-        let db = Database::default();
-
-        // Nested Module: λ%0 %1 → %1 %0
-        let nested_module = Syntax::Module(Module::new(Rc::new(Syntax::Module(Module::new(
-            Rc::new(Syntax::HApplication(HApplication::new(
-                Rc::new(Syntax::Variable(Variable::new(Index(0)))), // inner lambda param
-                Rc::new(Syntax::Variable(Variable::new(Index(1)))), // outer lambda param
-            ))),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &nested_module),
-            @"λ %0 %1 → %1 %0"
-        );
-
-        // Module with Check: λ%0 → (@42 : $Bit)
-        let module_with_check = Syntax::Module(Module::new(Rc::new(Syntax::Check(Check::new(
-            Rc::new(Syntax::Bit(Bit::new())),
-            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-                &db, "42",
-            )))),
-        )))));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &module_with_check),
-            @"λ %0 → (@42 : $Bit)"
-        );
-
-        // HApplication with Module: (λ%0 → %0) @42
-        let happ_with_lambda = Syntax::HApplication(HApplication::new(
-            Rc::new(Syntax::Module(Module::new(Rc::new(Syntax::Variable(
-                Variable::new(Index(0)),
-            ))))),
-            Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-                &db, "42",
-            )))),
-        ));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &happ_with_lambda),
-            @"(λ %0 → %0) @42"
-        );
-
-        // Variable unbound at different indices
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::Variable(Variable::new(Index(5)))),
-            @"!5"
-        );
-
-        // Check with Module: (λ%0 → %0) : $Bit -> $Bit
-        // The type annotation is a hardware type (meta-level Syntax)
-        let harrow_type = Syntax::HArrow(HArrow::new(
-            Rc::new(Syntax::Bit(Bit::new())),
-            Rc::new(Syntax::Bit(Bit::new())),
-        ));
-        let hcheck_lambdas = Syntax::Check(Check::new(
-            Rc::new(harrow_type),
-            Rc::new(Syntax::Module(Module::new(Rc::new(Syntax::Variable(
-                Variable::new(Index(0)),
-            ))))),
-        ));
-        assert_snapshot!(
-            print_syntax_to_string(&db, &hcheck_lambdas),
-            @"λ %0 → %0 : $Bit → $Bit"
-        );
-    }
-
-    // #[test]
-    // fn test_print_quote_with_hardware_terms() {
-    //     use crate::syn::{Constant, HApplication, Lift, Module, Syntax, Variable};
-    //     use crate::Database;
-    //     use std::rc::Rc;
-    //     let db = Database::default();
-
-    //     // Quote with Constant: '@42
-    //     let quote_hconst = Syntax::Quote(Quote::new(Rc::new(Syntax::Constant(Constant::new(
-    //         ConstantId::from_with_db(&db, "42"),
-    //     )))));
-    //     assert_snapshot!(
-    //         print_syntax_to_string(&db, &quote_hconst),
-    //         @"'@42"
-    //     );
-
-    //     // Quote with Module: '(λ%0 → %0)
-    //     let quote_Module = Syntax::Quote(Quote::new(Rc::new(Syntax::Module(Module::new(
-    //         Rc::new(Syntax::Variable(Variable::new(Index(0)))),
-    //     )))));
-    //     assert_snapshot!(
-    //         print_syntax_to_string(&db, &quote_Module),
-    //         @"'λ %0 → %0"
-    //     );
-
-    //     // Quote with HApplication: '@42 @99
-    //     let quote_happ = Syntax::Quote(Quote::new(Rc::new(Syntax::HApplication(
-    //         HApplication::new(
-    //             Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-    //                 &db, "42",
-    //             )))),
-    //             Rc::new(Syntax::Constant(Constant::new(ConstantId::from_with_db(
-    //                 &db, "99",
-    //             )))),
-    //         ),
-    //     ))));
-    //     assert_snapshot!(
-    //         print_syntax_to_string(&db, &quote_happ),
-    //         @"'(@42 @99)"
-    //     );
-
-    //     // Quote with Splice: '~@42
-    //     let quote_splice = Syntax::Quote(Quote::new(Rc::new(Syntax::Splice(Splice::new(
-    //         Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-    //     )))));
-    //     assert_snapshot!(
-    //         print_syntax_to_string(&db, &quote_splice),
-    //         @"'~@42"
-    //     );
-
-    //     // Lift with Quote: ^'@42
-    //     let lift_quote = Syntax::Lift(Lift::new(Syntax::quote_rc(Rc::new(Syntax::Constant(
-    //         Constant::new(ConstantId::from_with_db(&db, "42")),
-    //     )))));
-    //     assert_snapshot!(
-    //         print_syntax_to_string(&db, &lift_quote),
-    //         @"^'@42"
-    //     );
-    // }
-
-    #[test]
-    fn test_print_bit_zero_one() {
-        use crate::syn::Syntax;
-        use crate::Database;
-        let db = Database::default();
-
-        // Test Bit type: $Bit
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::bit()),
-            @"$Bit"
-        );
-
-        // Test Zero constant: 0
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::zero()),
-            @"0"
-        );
-
-        // Test One constant: 1
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::one()),
-            @"1"
-        );
-
-        // Test Xor operation: $xor
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::prim("xor".into_with_db(&db))),
-            @"$xor"
-        );
-
-        // Test Constant: @Add
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::constant("Add".into_with_db(&db))),
-            @"@Add"
-        );
-
-        // Test Constant: @MyCircuit
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::constant("MyCircuit".into_with_db(&db))),
-            @"@MyCircuit"
-        );
+    fn print_pi() {
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let u1 = || Syntax::universe_rc(UniverseLevel::new(1));
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_snapshot!(p(&db, &Syntax::pi(u0(), u1())), @"∀ (%0 : 𝒰0) → 𝒰1");
+        assert_snapshot!(p(&db, &Syntax::pi(u0(), Syntax::pi_rc(v(0), v(0)))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
     }
 
     #[test]
-    fn test_print_data_constructors() {
-        use crate::syn::{ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
-
-        // Data constructor with no arguments: @Nil
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_with_db(&db, "Nil"),
-                vec![]
-            )),
-            @"[@Nil]"
-        );
-
-        // Data constructor with one argument: [@Nil (λ %0 → λ %0 → %0]
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_with_db(&db, "Some"),
-                vec![Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(0))))]
-            )),
-            @"[@Some λ %0 %1 → %1]"
-        );
-
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::data_constructor(
-                ConstantId::from_with_db(&db, "Pair"),
-                vec![
-                    Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-                    Syntax::lambda_rc(Syntax::variable_rc(Index(0)))
-                ]
-            )),
-            @"[@Pair (λ %0 → %0) λ %0 → %0]"
-        );
+    fn print_lambda() {
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_snapshot!(p(&db, &Syntax::lambda(v(0))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::lambda_rc(v(1)))), @"λ %0 %1 → %0");
     }
 
     #[test]
-    fn test_print_case_expressions() {
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
+    fn print_application() {
+        let db = Database::new();
+        let f = Syntax::constant_rc("f".into_with_db(&db));
+        let x = Syntax::constant_rc("x".into_with_db(&db));
+        let y = Syntax::constant_rc("y".into_with_db(&db));
+        assert_snapshot!(p(&db, &Syntax::application(f.clone(), x.clone())), @"@f[@x]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(f, x), y)), @"@f[@x, @y]");
+    }
 
-        // Simple case with zero-arity constructors: case @x { @true => @1; @false => @0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-            Syntax::constant_rc_from(&db, "Nat"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "true"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
-                    ),
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "false"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Nat { @true => @1 | @false => @0 }"
-        );
+    // =========================================================================
+    // Inductive Types
+    // =========================================================================
 
-        // Single branch case: case @x { @unit => @42 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Nat"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "unit"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Nat { @unit => @42 }"
-        );
-
-        // Empty case (edge case): case @x { }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "False"),
-                vec![],
-            )),
-            @"@x case %0 → @False { }"
-        );
+    #[test]
+    fn print_type_constructor() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Nat".into_with_db(&db), vec![])), @"#[@Nat]");
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![c("A"), c("n")])), @"#[@Vec @A @n]");
     }
 
     #[test]
-    fn test_print_case_with_arity() {
-        use crate::common::Index;
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
-
-        // Case with arity-1 constructor: case @x { @some %0 => %0; @none => @42 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Nat"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "some"),
-                        1,
-                        Syntax::variable_rc(Index(0)), // bound by the pattern
-                    ),
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "none"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Nat { @some %0 => %0 | @none => @42 }"
-        );
-
-        // Case with arity-2 constructor: case @x { @pair %0 %1 => %1; @empty => @0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Nat"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "pair"),
-                        2,
-                        Syntax::variable_rc(Index(0)), // second element of pair (innermost binder)
-                    ),
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "empty"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Nat { @pair %0 %1 => %1 | @empty => @0 }"
-        );
-
-        // Case with arity-3 constructor: case @x { @triple %0 %1 %2 => %2 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Nat"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "triple"),
-                        3,
-                        Syntax::variable_rc(Index(0)), // third element (innermost binder)
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Nat { @triple %0 %1 %2 => %2 }"
-        );
+    fn print_data_constructor() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Nil".into_with_db(&db), vec![])), @"[@Nil]");
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![c("x"), c("xs")])), @"[@Cons @x @xs]");
     }
 
     #[test]
-    fn test_print_case_with_complex_bodies() {
-        use crate::common::{Index, UniverseLevel};
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
+    fn print_case() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
+        let v = |i| Syntax::variable_rc(Index(i));
+        let scrutinee = c("n");
+        let motive = Syntax::universe_rc(UniverseLevel::new(0));
+        let branches = vec![
+            CaseBranch::new("Zero".into_with_db(&db), 0, c("a")),
+            CaseBranch::new("Succ".into_with_db(&db), 1, v(0)),
+        ];
+        assert_snapshot!(p(&db, &Syntax::case(scrutinee, motive, branches)), @"@n case %0 → 𝒰0 { @Zero => @a | @Succ %0 => %0 }");
+    }
 
-        // Case with lambda body: case @x { @f => λ%0 → %0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Function"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "f"),
-                        0,
-                        Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Function { @f => λ %0 → %0 }"
-        );
+    // =========================================================================
+    // Hardware Universe
+    // =========================================================================
 
-        // Case with application body: case @x { @app => @f @x }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Application"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "app"),
-                        0,
-                        Syntax::application_rc(
-                            Syntax::constant_rc(ConstantId::from_with_db(&db, "f")),
-                            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                        ),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Application { @app => @f @x }"
-        );
-
-        // Case with check body: case @x { @check => @42 : 𝒰0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Check"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "check"),
-                        0,
-                        Syntax::check_rc(
-                            Syntax::universe_rc(UniverseLevel::new(0)),
-                            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                        ),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Check { @check => @42 : 𝒰0 }"
-        );
+    #[test]
+    fn print_hardware_universe() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::hardware()), @"HardwareType");
     }
 
     #[test]
-    fn test_print_case_in_context() {
-        use crate::common::Index;
-        use crate::syn::{CaseBranch, ConstantId, Syntax};
-        use crate::Database;
-        let db = Database::default();
+    fn print_slift() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::slift(Syntax::bit_rc())), @"^sBit");
+    }
 
-        // Case with scrutinee: case @y { @true => @1; @false => @0 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "y")),
-                Syntax::constant_rc_from(&db, "Bool"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "true"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
-                    ),
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "false"),
-                        0,
-                        Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
-                    ),
-                ],
-            )),
-            @"@y case %0 → @Bool { @true => @1 | @false => @0 }"
-        );
+    #[test]
+    fn print_mlift() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::mlift(Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()))), @"^m(Bit → Bit)");
+    }
 
-        // Nested case: case @x { @outer => case @y { @inner => @42 } }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::case(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                Syntax::constant_rc_from(&db, "Nat"),
-                vec![
-                    CaseBranch::new(
-                        ConstantId::from_with_db(&db, "outer"),
-                        0,
-                        Syntax::case_rc(
-                            Syntax::constant_rc(ConstantId::from_with_db(&db, "y")),
-                            Syntax::constant_rc_from(&db, "Nat"),
-                            vec![
-                                CaseBranch::new(
-                                    ConstantId::from_with_db(&db, "inner"),
-                                    0,
-                                    Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            )),
-            @"@x case %0 → @Nat { @outer => @y case %0 → @Nat { @inner => @42 } }"
-        );
+    // =========================================================================
+    // Signal Universe
+    // =========================================================================
 
-        // Case in lambda: λ%0 → case @x { @some %1 => %1; @none => !1 }
-        assert_snapshot!(
-            print_syntax_to_string(&db, &Syntax::lambda(
-                Syntax::case_rc(
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-                    Syntax::constant_rc_from(&db, "Option"),
-                    vec![
-                        CaseBranch::new(
-                            ConstantId::from_with_db(&db, "some"),
-                            1,
-                            Syntax::variable_rc(Index(0)), // bound by pattern (innermost)
-                        ),
-                        CaseBranch::new(
-                            ConstantId::from_with_db(&db, "none"),
-                            0,
-                            Syntax::variable_rc(Index(1)), // bound by lambda (outer scope)
-                        ),
-                    ],
-                ),
-            )),
-            @"λ %0 → @x case %1 → @Option { @some %1 => %1 | @none => !0 }"
-        );
+    #[test]
+    fn print_signal_universe() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::signal_universe()), @"SignalType");
+    }
+
+    #[test]
+    fn print_bit() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::bit()), @"Bit");
+    }
+
+    #[test]
+    fn print_zero() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::zero()), @"0");
+    }
+
+    #[test]
+    fn print_one() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::one()), @"1");
+    }
+
+    // =========================================================================
+    // Module Universe
+    // =========================================================================
+
+    #[test]
+    fn print_module_universe() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::module_universe()), @"ModuleType");
+    }
+
+    #[test]
+    fn print_harrow() {
+        let db = Database::new();
+        let bit = || Syntax::bit_rc();
+        assert_snapshot!(p(&db, &Syntax::harrow(bit(), bit())), @"Bit → Bit");
+        assert_snapshot!(p(&db, &Syntax::harrow(bit(), Syntax::harrow_rc(bit(), bit()))), @"Bit → Bit → Bit");
+    }
+
+    #[test]
+    fn print_module() {
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_snapshot!(p(&db, &Syntax::module(v(0))), @"mod %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Syntax::module_rc(v(1)))), @"mod %0 %1 → %0");
+    }
+
+    #[test]
+    fn print_happlication() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
+        let bit = || Syntax::bit_rc();
+        let ty = Syntax::harrow_rc(bit(), bit());
+        assert_snapshot!(p(&db, &Syntax::happlication(c("m"), ty, c("x"))), @"@m<Bit → Bit>(@x)");
+    }
+
+    // =========================================================================
+    // Variables and References
+    // =========================================================================
+
+    #[test]
+    fn print_prim() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::prim_from(&db, "and")), @"$and");
+    }
+
+    #[test]
+    fn print_constant() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::constant_from(&db, "myConst")), @"@myConst");
+    }
+
+    #[test]
+    fn print_variable_bound() {
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_snapshot!(p(&db, &Syntax::lambda(v(0))), @"λ %0 → %0");
+    }
+
+    #[test]
+    fn print_variable_unbound() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::variable(Index(0))), @"!0");
+        assert_snapshot!(p(&db, &Syntax::variable(Index(1))), @"!1");
+    }
+
+    #[test]
+    fn print_metavariable() {
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(0), vec![])), @"?[0]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(1), vec![v(0), v(1)])), @"?[1 !0 !1]");
+    }
+
+    // =========================================================================
+    // Type Annotations
+    // =========================================================================
+
+    #[test]
+    fn print_check() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
+        let u0 = Syntax::universe_rc(UniverseLevel::new(0));
+        assert_snapshot!(p(&db, &Syntax::check(u0, c("x"))), @"@x : 𝒰0");
     }
 }

@@ -1,7 +1,7 @@
 use crate::common::{DBParseError, Index, NegativeLevel};
 use crate::declaration::{Declaration, Module};
-use crate::syn::{CaseBranch, Closure, ConstantId, RcSyntax, Syntax, Telescope};
-use crate::{declaration, MetaVariableId};
+use crate::syn::{CaseBranch, Closure, RcSyntax, Syntax, Telescope};
+use crate::{declaration, ConstantId, MetaVariableId};
 use core::fmt::Debug;
 use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
@@ -68,7 +68,7 @@ type ParseResult<T> = std::result::Result<T, Error>;
 // Comments
 #[logos(skip r"//[^\r\n]*")]
 // Ids
-#[logos(subpattern id = r"[^\p{gc=Separator}\p{gc=Control}():;,\[\]!\?\%]+")]
+#[logos(subpattern id = r"[^\p{gc=Separator}\p{gc=Control}():;,\[\]!\?\%<>]+")]
 pub enum Token {
     #[token("∀", priority = 4)]
     #[token("forall", priority = 4)]
@@ -76,10 +76,8 @@ pub enum Token {
     #[token("λ", priority = 4)]
     #[token("\\", priority = 4)]
     Lambda,
-    #[token("'", priority = 4)]
-    Quote,
-    #[token("~", priority = 4)]
-    Splice,
+    #[token("mod", priority = 5)]
+    Mod,
     #[token("^", priority = 4)]
     Lift,
     #[token("^s", priority = 5)]
@@ -94,6 +92,10 @@ pub enum Token {
     LBracket,
     #[token("]", priority = 10)]
     RBracket,
+    #[token("<", priority = 10)]
+    LAngle,
+    #[token(">", priority = 10)]
+    RAngle,
     #[token("→", priority = 5)]
     #[token("->", priority = 5)]
     Arrow,
@@ -108,11 +110,11 @@ pub enum Token {
     #[regex(r"U[0-9]+", priority = 4, callback = |lex| lex.slice()["U".len()..].parse())]
     #[regex(r"𝒰[0-9]+", priority = 4, callback = |lex| lex.slice()["𝒰".len()..].parse())]
     Universe(usize),
-    #[regex(r"HW[0-9]+", priority = 4, callback = |lex| lex.slice()["HW".len()..].parse())]
-    Type(usize),
+    #[token("HardwareType", priority = 5)]
+    HardwareType,
     #[token("SignalType", priority = 5)]
     SignalType,
-    #[token("M", priority = 5)]
+    #[token("ModuleType", priority = 5)]
     ModuleType,
     #[regex(r"@(?&id)+", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
     Constant(String),
@@ -124,6 +126,8 @@ pub enum Token {
     Number(usize),
     #[regex(r"\$(?&id)+", priority = 4, callback = |lex| lex.slice()["$".len()..].to_owned())]
     Primitive(String),
+    #[token("Bit", priority = 6)]
+    Bit,
     #[token("0", priority = 5)]
     Zero,
     #[token("1", priority = 5)]
@@ -152,6 +156,10 @@ pub enum Token {
     DCon,
     #[token("where", priority = 5)]
     Where,
+    #[token("~", priority = 4)]
+    Tilde,
+    #[token("'", priority = 4)]
+    Quote,
 }
 
 impl fmt::Display for Token {
@@ -379,6 +387,14 @@ fn p_semicolon_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Semicolon)
 }
 
+fn p_langle_opt(state: &mut State) -> ParseResult<Option<()>> {
+    p_token_opt(state, Token::LAngle)
+}
+
+fn p_rangle(state: &mut State) -> ParseResult<()> {
+    p_token(state, Token::RAngle, Error::Other)
+}
+
 fn p_fat_arrow(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::FatArrow, Error::Other)
 }
@@ -517,177 +533,6 @@ fn p_closure_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<Closure<'db>
 }
 
 // Parse an atomic term (no operators)
-fn p_hatom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    match state.peek_token() {
-        Some(Err(err)) => Err(err),
-        Some(Ok(token)) => match token {
-            Token::LParen => {
-                state.advance_token();
-                let term = p_hterm(state)?;
-                p_rparen(state)?;
-                Ok(Some(term))
-            }
-            Token::Lambda => {
-                state.advance_token();
-                let depth = state.names_depth();
-                let mut i = 0;
-                loop {
-                    match p_variable_opt(state) {
-                        Err(e) => return Err(e),
-                        Ok(Some(var)) => {
-                            i = i + 1;
-                            // HardwareUniverse lambdas introduce hardware-level binders.
-                            state.push_name(var)
-                        }
-                        Ok(None) => break,
-                    }
-                }
-                p_arrow(state)?;
-                let body = p_happlication(state)?;
-                state.reset_names(depth);
-                // Build nested lambdas from right to left
-                let mut result = body;
-                for _ in 0..i {
-                    result = Syntax::module_rc(result);
-                }
-                Ok(Some(result))
-            }
-            Token::Variable(name) => {
-                state.advance_token();
-                // Look it up in the environment
-                match state.find_name(&name) {
-                    Some(index) => Ok(Some(Syntax::variable_rc(index))),
-                    _ => Err(Error::UnknownVariable(name)),
-                }
-            }
-            Token::UnboundVariable(negative_level) => {
-                state.advance_token();
-                // Convert negative level to index using the current depth:
-                // index = depth + negative_level
-                let index = negative_level.to_index(state.names_depth());
-                Ok(Some(Syntax::variable_rc(index)))
-            }
-            Token::Constant(name) => {
-                state.advance_token();
-                Ok(Some(Syntax::constant_rc_from(state.db(), &name)))
-            }
-            Token::Primitive(name) => {
-                state.advance_token();
-                if name == "Bit" {
-                    Ok(Some(Syntax::bit_rc()))
-                } else {
-                    Ok(Some(Syntax::prim_rc_from(state.db(), &name)))
-                }
-            }
-            Token::LQuestionBracket => {
-                state.advance_token();
-                // Expect ?[id term1 term2 ...] or ?[name term1 term2 ...]
-                let id = p_metavariable_id(state)?;
-                // Parse space-separated substitution terms (atomic terms only)
-                let mut substitution = Vec::new();
-                loop {
-                    match p_hatom_opt(state) {
-                        Ok(Some(term)) => substitution.push(term),
-                        Ok(None) => break,
-                        Err(err) => return Err(err),
-                    }
-                }
-                p_rbracket(state)?;
-                Ok(Some(Syntax::metavariable_rc(id, substitution)))
-            }
-            Token::Splice => {
-                state.advance_token();
-                let tm = p_atom(state)?;
-                // Splice syntax node is gone - just return the underlying meta-level term
-                Ok(Some(tm))
-            }
-            Token::Zero => {
-                state.advance_token();
-                Ok(Some(Syntax::zero_rc()))
-            }
-            Token::One => {
-                state.advance_token();
-                Ok(Some(Syntax::one_rc()))
-            }
-            _ => Ok(None),
-        },
-        None => Ok(None),
-    }
-}
-
-fn p_hatom<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
-    match p_hatom_opt(state) {
-        Err(err) => Err(err),
-        Ok(None) => Err(Error::MissingTerm),
-        Ok(Some(term)) => Ok(term),
-    }
-}
-
-// Parse application (left-associative): a b c => (a b) c
-fn p_happlication_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    let first = p_hatom_opt(state)?;
-    if first.is_none() {
-        return Ok(None);
-    }
-
-    let mut result = first.unwrap();
-
-    // Keep parsing atoms and building left-associative applications
-    while let Some(arg) = p_hatom_opt(state)? {
-        result = Syntax::happlication_rc(result, arg);
-    }
-
-    Ok(Some(result))
-}
-
-fn p_happlication<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
-    match p_happlication_opt(state) {
-        Ok(None) => Err(Error::MissingTerm),
-        Ok(Some(term)) => Ok(term),
-        Err(err) => Err(err),
-    }
-}
-
-fn p_hcheck_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    let term = p_happlication(state)?;
-
-    // Check if there's a colon
-    // The type annotation is a meta-level hardware type (Syntax of type Type)
-    if let Some(()) = p_colon_opt(state)? {
-        // Parse a hardware type (meta-level syntax like Bit, Bit -> Bit)
-        let ty = p_hwtype(state)?;
-        Ok(Some(Syntax::check_rc(ty, term)))
-    } else {
-        Ok(Some(term))
-    }
-}
-
-/// Parse a hardware type (something of type Type).
-/// This is a meta-level term, not a hardware term.
-/// HardwareUniverse types include: Bit, (Bit -> Bit), variables, etc.
-fn p_hwtype<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
-    // HardwareUniverse types are parsed using the same grammar as meta-level terms
-    // up to hardware arrows
-    match p_harrow_opt(state) {
-        Ok(None) => Err(Error::MissingTerm),
-        Ok(Some(term)) => Ok(term),
-        Err(err) => Err(err),
-    }
-}
-
-fn p_hterm_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
-    p_hcheck_opt(state)
-}
-
-fn p_hterm<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
-    match p_hterm_opt(state) {
-        Err(err) => Err(err),
-        Ok(None) => Err(Error::MissingTerm),
-        Ok(Some(term)) => Ok(term),
-    }
-}
-
-// Parse an atomic term (no operators)
 fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>> {
     match state.peek_token() {
         Some(Err(err)) => Err(err),
@@ -720,6 +565,31 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 let mut result = body;
                 for _ in 0..i {
                     result = Syntax::lambda_rc(result);
+                }
+                Ok(Some(result))
+            }
+            Token::Mod => {
+                state.advance_token();
+                let depth = state.names_depth();
+                let mut i = 0;
+                loop {
+                    match p_variable_opt(state) {
+                        Err(e) => return Err(e),
+                        Ok(Some(var)) => {
+                            i = i + 1;
+                            // Introduce binders into the unified environment
+                            state.push_name(var)
+                        }
+                        Ok(None) => break,
+                    }
+                }
+                p_arrow(state)?;
+                let body = p_harrow(state)?;
+                state.reset_names(depth);
+                // Build nested modules from right to left
+                let mut result = body;
+                for _ in 0..i {
+                    result = Syntax::module_rc(result);
                 }
                 Ok(Some(result))
             }
@@ -792,7 +662,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     crate::common::UniverseLevel::new(level),
                 )))
             }
-            Token::Type(_level) => {
+            Token::HardwareType => {
                 state.advance_token();
                 Ok(Some(Syntax::hardware_rc()))
             }
@@ -839,6 +709,10 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.advance_token();
                 Ok(Some(Syntax::module_universe_rc()))
             }
+            Token::Bit => {
+                state.advance_token();
+                Ok(Some(Syntax::bit_rc()))
+            }
             Token::Zero => {
                 state.advance_token();
                 Ok(Some(Syntax::zero_rc()))
@@ -847,18 +721,19 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.advance_token();
                 Ok(Some(Syntax::one_rc()))
             }
-            Token::Quote => {
-                state.advance_token();
-                // Quote syntax node is gone - just return the underlying hardware term
-                p_hatom(state).map(Some)
-            }
             Token::Primitive(name) => {
                 state.advance_token();
-                if name == "Bit" {
-                    Ok(Some(Syntax::bit_rc()))
-                } else {
-                    Ok(Some(Syntax::prim_rc_from(state.db(), &name)))
-                }
+                Ok(Some(Syntax::prim_rc_from(state.db(), &name)))
+            }
+            Token::Tilde => {
+                // Splice is transparent - just parse the following atom
+                state.advance_token();
+                p_atom_opt(state)
+            }
+            Token::Quote => {
+                // Quote is transparent - just parse the following atom
+                state.advance_token();
+                p_atom_opt(state)
             }
             _ => Ok(None),
         },
@@ -954,15 +829,72 @@ fn p_trailing_case_opt<'db>(
     Ok(Some(Syntax::case_rc(lead.clone(), motive, branches)))
 }
 
-// Parse application (left-associative): a b c => (a b) c
+// Parse application with bracket notation: f[x, y, z]
 fn p_trailing_app_opt<'db>(
     state: &mut State<'db>,
     lead: &RcSyntax<'db>,
 ) -> ParseResult<Option<RcSyntax<'db>>> {
-    match p_atom_opt(state)? {
-        None => Ok(None),
-        Some(arg) => Ok(Some(Syntax::application_rc(lead.clone(), arg))),
+    // Check for opening bracket
+    if p_token_opt(state, Token::LBracket)?.is_none() {
+        return Ok(None);
     }
+
+    // Parse comma-separated arguments
+    let mut args = Vec::new();
+
+    // Parse first argument (optional - allows f[] syntax)
+    if let Some(arg) = p_term_opt(state)? {
+        args.push(arg);
+
+        // Parse remaining arguments after commas
+        while p_token_opt(state, Token::Comma)?.is_some() {
+            args.push(p_term(state)?);
+        }
+    }
+
+    // Expect closing bracket
+    p_rbracket(state)?;
+
+    // Build nested applications from left to right: f[x, y, z] => ((f x) y) z
+    let mut result = lead.clone();
+    for arg in args {
+        result = Syntax::application_rc(result, arg);
+    }
+
+    Ok(Some(result))
+}
+
+// Parse happlication with angle bracket type notation: f<T>(x)
+fn p_trailing_happ_opt<'db>(
+    state: &mut State<'db>,
+    lead: &RcSyntax<'db>,
+) -> ParseResult<Option<RcSyntax<'db>>> {
+    // Check for opening angle bracket for type
+    if p_langle_opt(state)?.is_none() {
+        return Ok(None);
+    }
+
+    // Parse the module type
+    let module_ty = p_term(state)?;
+
+    // Expect closing angle bracket
+    p_rangle(state)?;
+
+    // Expect opening parenthesis for argument
+    p_lparen(state)?;
+
+    // Parse the argument
+    let argument = p_term(state)?;
+
+    // Expect closing parenthesis
+    p_rparen(state)?;
+
+    // Build happlication: module<module_ty>(argument)
+    Ok(Some(Syntax::happlication_rc(
+        lead.clone(),
+        module_ty,
+        argument,
+    )))
 }
 
 /// Parse a trailing eliminator.
@@ -976,6 +908,16 @@ fn p_trailing_elim_opt<'db>(
     }
     match p_trailing_app_opt(state, lead)? {
         Some(term) => return Ok(Some(term)),
+        None => (),
+    }
+    match p_trailing_happ_opt(state, lead)? {
+        Some(term) => return Ok(Some(term)),
+        None => (),
+    }
+    // Juxtaposition-based application: f x (space-separated)
+    // Try to parse another atom - if successful, it's an application
+    match p_atom_opt(state)? {
+        Some(arg) => return Ok(Some(Syntax::application_rc(lead.clone(), arg))),
         None => (),
     }
     Ok(None)
@@ -1049,11 +991,6 @@ fn p_term<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
 pub fn parse_syntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<RcSyntax<'db>> {
     let mut state = State::new(db, input);
     p_term(&mut state)
-}
-
-pub fn parse_hsyntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<RcSyntax<'db>> {
-    let mut state = State::new(db, input);
-    p_hterm(&mut state)
 }
 
 /// Parse a primitive declaration: prim $Name : Type;
@@ -1279,803 +1216,330 @@ pub fn parse_module<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Index, UniverseLevel};
-    use crate::syn::*;
-    use hwml_support::IntoWithDb;
+    use crate::common::{Index, MetaVariableId, UniverseLevel};
+    use crate::syn::print::print_syntax_to_string;
+    use crate::ConstantId;
+    use crate::Database;
+
+    /// Parse helper - panics with message on failure
+    fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
+        parse_syntax(db, input).unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e))
+    }
 
     #[test]
     fn test_parse_lambda_single_var() {
-        // Test parsing: λ %0 → %0
-        let db = crate::Database::new();
-        let input = "λ %0 → %0";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse lambda: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %0 → %0
-        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(0)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "λ %0 → %0"), Syntax::lambda_rc(v(0)));
     }
 
     #[test]
     fn test_parse_lambda_multiple_vars() {
-        // Test parsing: λ %x %y → %x
-        // This creates nested lambdas: λ %x → (λ %y → %x)
-        // In the innermost body, %x has index 1 (skip over %y to reach %x)
-        let db = crate::Database::new();
-        let input = "λ %x %y → %x";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse lambda: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → λ %y → %x
-        // %x is at index 1 in the innermost scope
-        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(1))));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        // λ %x %y → %x  =>  λ → λ → %1 (nested lambdas, %x at index 1)
+        assert_eq!(
+            parse(&db, "λ %x %y → %x"),
+            Syntax::lambda_rc(Syntax::lambda_rc(v(1)))
+        );
     }
 
     #[test]
     fn test_parse_lambda_with_parens() {
-        // Test parsing: (λ %0 → %0)
-        let db = crate::Database::new();
-        let input = "(λ %0 → %0)";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse lambda with parens: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %0 → %0
-        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(0)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "(λ %0 → %0)"), Syntax::lambda_rc(v(0)));
     }
 
     #[test]
     fn test_parse_pi_simple() {
-        // Test parsing: ∀(%x : 𝒰0) → 𝒰0
-        // Pi binders require parentheses and a type annotation
-        let db = crate::Database::new();
-        let input = "∀(%x : 𝒰0) → 𝒰0";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse pi: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: ∀(%x : 𝒰0) → 𝒰0
-        let expected = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        assert_eq!(parse(&db, "∀(%x : 𝒰0) → 𝒰0"), Syntax::pi_rc(u0(), u0()));
     }
 
     #[test]
     fn test_parse_universe() {
-        // Test parsing: 𝒰0
-        let db = crate::Database::new();
-        let input = "𝒰0";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse universe: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: 𝒰0
-        let expected = Syntax::universe_rc(UniverseLevel::new(0));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        assert_eq!(parse(&db, "𝒰0"), Syntax::universe_rc(UniverseLevel::new(0)));
     }
 
     #[test]
     fn test_parse_pi_multiple_vars() {
-        // Test parsing: ∀(%x : 𝒰0) (%y : 𝒰0) → %x
-        // This creates nested Pi types: ∀(%x : 𝒰0) → ∀(%y : 𝒰0) → %x
-        let input = "∀(%x : 𝒰0) (%y : 𝒰0) → %x";
-        let db = crate::Database::new();
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse pi: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: ∀(%x : 𝒰0) → ∀(%y : 𝒰0) → %x
-        // %x is at index 1 in the innermost scope (skip over %y)
-        let expected = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::pi_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::variable_rc(Index(1)),
-            ),
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let v = |i| Syntax::variable_rc(Index(i));
+        // ∀(%x : 𝒰0) (%y : 𝒰0) → %x  =>  nested Pi, %x at index 1
+        assert_eq!(
+            parse(&db, "∀(%x : 𝒰0) (%y : 𝒰0) → %x"),
+            Syntax::pi_rc(u0(), Syntax::pi_rc(u0(), v(1)))
         );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_application_simple() {
-        // Test parsing: λ %f %x → %f %x
-        // We need variables to be bound, so we use a lambda expression
-        let db = crate::Database::new();
-        let input = "λ %f %x → %f %x";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse application: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %f → λ %x → %f %x
-        // %f is at index 1 (skip over %x), %x is at index 0
-        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::variable_rc(Index(1)),
-            Syntax::variable_rc(Index(0)),
-        )));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        // λ %f %x → %f %x  =>  λ → λ → app(%1, %0)
+        assert_eq!(parse(&db, "λ %f %x → %f %x"), lam(lam(app(v(1), v(0)))));
     }
 
     #[test]
     fn test_parse_application_left_associative() {
-        // Test parsing: λ %f %x %y → %f %x %y
-        // This should parse as: λ %f → λ %x → λ %y → ((%f %x) %y)
-        // Application is left-associative
-        let db = crate::Database::new();
-        let input = "λ %f %x %y → %f %x %y";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse application: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %f → λ %x → λ %y → ((%f %x) %y)
-        // %f is at index 2, %x is at index 1, %y is at index 0
-        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::lambda_rc(
-            Syntax::application_rc(
-                Syntax::application_rc(
-                    Syntax::variable_rc(Index(2)),
-                    Syntax::variable_rc(Index(1)),
-                ),
-                Syntax::variable_rc(Index(0)),
-            ),
-        )));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        // λ %f %x %y → %f %x %y  =>  λ → λ → λ → app(app(%2, %1), %0)
+        assert_eq!(
+            parse(&db, "λ %f %x %y → %f %x %y"),
+            lam(lam(lam(app(app(v(2), v(1)), v(0)))))
+        );
     }
 
     #[test]
     fn test_parse_check() {
-        // Test parsing: (λ %x → %x) : 𝒰0
-        // We need a complete term to check, so we use a lambda
-        let db = crate::Database::new();
-        let input = "(λ %x → %x) : 𝒰0";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse check: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: (λ %x → %x) : 𝒰0
-        let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(
+            parse(&db, "(λ %x → %x) : 𝒰0"),
+            Syntax::check_rc(u0(), Syntax::lambda_rc(v(0)))
         );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_check_with_application() {
-        // Test parsing: (λ %f %x → %f %x) : 𝒰0
-        // Should parse as Check(Lambda(Lambda(Application(%f, %x))), Universe(0))
-        let db = crate::Database::new();
-        let input = "(λ %f %x → %f %x) : 𝒰0";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse check with application: {:?}",
-            result
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        assert_eq!(
+            parse(&db, "(λ %f %x → %f %x) : 𝒰0"),
+            Syntax::check_rc(u0(), lam(lam(app(v(1), v(0)))))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: (λ %f → λ %x → %f %x) : 𝒰0
-        let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
-                Syntax::variable_rc(Index(1)),
-                Syntax::variable_rc(Index(0)),
-            ))),
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_lambda_application() {
-        // Test parsing: λ %x → (λ %y → %y) %x
-        // This applies an inner lambda to a bound variable
-        let db = crate::Database::new();
-        let input = "λ %x → (λ %y → %y) %x";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse lambda application: {:?}",
-            result
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        // λ %x → (λ %y → %y) %x  =>  λ → app(λ → %0, %0)
+        assert_eq!(
+            parse(&db, "λ %x → (λ %y → %y) %x"),
+            lam(app(lam(v(0)), v(0)))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → (λ %y → %y) %x
-        let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-            Syntax::variable_rc(Index(0)),
-        ));
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_metavariable_simple() {
-        // Test parsing: ?[0]
-        use crate::Database;
-        let db = Database::default();
-        let input = "?[0]";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse metavariable: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: ?[0] with ID 0
-        use crate::common::MetaVariableId;
-        let expected = Syntax::metavariable_rc(MetaVariableId(0), vec![]);
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let meta = |id| Syntax::metavariable_rc(MetaVariableId(id), vec![]);
+        assert_eq!(parse(&db, "?[0]"), meta(0));
     }
 
     #[test]
     fn test_parse_metavariable_multiple() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "?[0] ?[1] ?[0]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse multiple metavariables: {:?}",
-            result
+        let db = Database::new();
+        let meta = |id| Syntax::metavariable_rc(MetaVariableId(id), vec![]);
+        let app = |f, x| Syntax::application_rc(f, x);
+        // ?[0] ?[1] ?[0]  =>  app(app(?[0], ?[1]), ?[0])
+        assert_eq!(
+            parse(&db, "?[0] ?[1] ?[0]"),
+            app(app(meta(0), meta(1)), meta(0))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: (?[0] ?[1]) ?[0]
-        // Application is left-associative
-        use crate::common::MetaVariableId;
-        let expected = Syntax::application_rc(
-            Syntax::application_rc(
-                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-                Syntax::metavariable_rc(MetaVariableId(1), vec![]),
-            ),
-            Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_metavariable_in_lambda() {
-        // Test parsing: λ %x → ?[0] %x
-        use crate::Database;
-        let db = Database::default();
-        let input = "λ %x → ?[0] %x";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse metavariable in lambda: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → ?[0] %x
-        use crate::common::MetaVariableId;
-        let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-            Syntax::variable_rc(Index(0)),
-        ));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let meta = |id| Syntax::metavariable_rc(MetaVariableId(id), vec![]);
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        assert_eq!(parse(&db, "λ %x → ?[0] %x"), lam(app(meta(0), v(0))));
     }
 
     #[test]
     fn test_parse_metavariable_ordering() {
-        // Test parsing: ?[0] ?[1] ?[2]
-        let input = "?[0] ?[1] ?[2]";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse metavariable ordering: {:?}",
-            result
+        let db = Database::new();
+        let meta = |id| Syntax::metavariable_rc(MetaVariableId(id), vec![]);
+        let app = |f, x| Syntax::application_rc(f, x);
+        assert_eq!(
+            parse(&db, "?[0] ?[1] ?[2]"),
+            app(app(meta(0), meta(1)), meta(2))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: (?[0] ?[1]) ?[2]
-        use crate::common::MetaVariableId;
-        let expected = Syntax::application_rc(
-            Syntax::application_rc(
-                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-                Syntax::metavariable_rc(MetaVariableId(1), vec![]),
-            ),
-            Syntax::metavariable_rc(MetaVariableId(2), vec![]),
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_metavariable_with_type() {
-        // Test parsing: ?[0] : 𝒰0
-        let input = "?[0] : 𝒰0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse metavariable with type: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ?[0] : 𝒰0
-        use crate::common::MetaVariableId;
-        let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::metavariable_rc(MetaVariableId(0), vec![]),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let meta = |id| Syntax::metavariable_rc(MetaVariableId(id), vec![]);
+        assert_eq!(parse(&db, "?[0] : 𝒰0"), Syntax::check_rc(u0(), meta(0)));
     }
 
     #[test]
     fn test_parse_metavariable_with_substitution() {
-        // Test parsing: ?[0 !0 !1]
-        let input = "?[0 !0 !1]";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse metavariable with substitution: {:?}",
-            result
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(
+            parse(&db, "?[0 !0 !1]"),
+            Syntax::metavariable_rc(MetaVariableId(0), vec![v(0), v(1)])
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ?[0 !0 !1]
-        // !0 at depth 0 means index 0, !1 at depth 0 means index 1
-        use crate::common::MetaVariableId;
-        let expected = Syntax::metavariable_rc(
-            MetaVariableId(0),
-            vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))],
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_metavariable_no_space_between_question_and_bracket() {
-        // Test that "? [0]" (with space) doesn't parse as a metavariable
-        // because ?[ must be a single token
-        let input = "? [0]";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        // This should fail to parse because ? is not a valid token by itself
-        assert!(
-            result.is_err(),
-            "Expected parse error for '? [0]' but got: {:?}",
-            result
-        );
+        let db = Database::new();
+        // "? [0]" should fail - ?[ must be a single token
+        assert!(parse_syntax(&db, "? [0]").is_err());
     }
 
     #[test]
     fn test_parse_constant_simple() {
-        // Test parsing: @42
-        let input = "@42";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse constant: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42 using string interning
-        let expected = Syntax::constant_rc_from(&db, "42");
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@42"), c("42"));
     }
 
     #[test]
     fn test_parse_constant_zero() {
-        // Test parsing: @0
-        let input = "@0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse constant @0: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: @0 using string interning
-        let expected = Syntax::constant_rc_from(&db, "0");
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@0"), c("0"));
     }
 
     #[test]
     fn test_parse_constant_large() {
-        // Test parsing: @123456789
-        let input = "@123456789";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse large constant: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @123456789
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "123456789"));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@123456789"), c("123456789"));
     }
 
     #[test]
     fn test_parse_constant_application() {
-        // Test parsing: @42 @99
-        let input = "@42 @99";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse constant application: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42 @99
-        use crate::syn::ConstantId;
-        let expected = Syntax::application_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let app = |f, x| Syntax::application_rc(f, x);
+        assert_eq!(parse(&db, "@42 @99"), app(c("42"), c("99")));
     }
 
     #[test]
     fn test_parse_constant_with_type() {
-        // Test parsing: @42 : 𝒰0
-        let input = "@42 : 𝒰0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse constant with type: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42 : 𝒰0
-        use crate::syn::ConstantId;
-        let expected = Syntax::check_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@42 : 𝒰0"), Syntax::check_rc(u0(), c("42")));
     }
 
     #[test]
     fn test_parse_constant_in_lambda() {
-        // Test parsing: λ %x → @42 %x
-        let input = "λ %x → @42 %x";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse constant in lambda: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → @42 %x
-        use crate::syn::ConstantId;
-        let expected = Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-            Syntax::variable_rc(Index(0)),
-        ));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        assert_eq!(parse(&db, "λ %x → @42 %x"), lam(app(c("42"), v(0))));
     }
 
     #[test]
     fn test_parse_constant_in_pi() {
-        // Test parsing: ∀(%x : @42) → 𝒰0
-        let input = "∀(%x : @42) → 𝒰0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse constant in pi: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ∀(%x : @42) → 𝒰0
-        use crate::syn::ConstantId;
-        let expected = Syntax::pi_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "∀(%x : @42) → 𝒰0"), Syntax::pi_rc(c("42"), u0()));
     }
 
     #[test]
     fn test_parse_unbound_variable_simple() {
-        let input = "!0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound variable: {:?}",
-            result
-        );
-        let parsed = result.unwrap();
-        let expected = Syntax::variable_rc(Index(0));
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "!0"), v(0));
     }
 
     #[test]
     fn test_parse_unbound_variable_higher() {
-        let input = "!4";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound variable !5: {:?}",
-            result
-        );
-        let parsed = result.unwrap();
-        let expected = Syntax::variable_rc(Index(4));
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "!4"), v(4));
     }
 
     #[test]
     fn test_parse_unbound_variable_in_lambda() {
-        // Test parsing: λ %x → !0
-        // At depth 1, !0 should become index 1
-        let input = "λ %x → !0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound variable in lambda: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → !0
-        // Inside the lambda (depth 1), !0 means index = 1 + 0 = 1
-        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(1)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        // λ %x → !0  =>  at depth 1, !0 becomes index 1
+        assert_eq!(parse(&db, "λ %x → !0"), lam(v(1)));
     }
 
     #[test]
     fn test_parse_unbound_variable_in_nested_lambda() {
-        // Test parsing: λ %x %y → !0
-        // At depth 2, !0 should become index 2
-        let input = "λ %x %y → !0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound variable in nested lambda: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → λ %y → !1
-        // Inside the nested lambda (depth 2), !1 means index = 2 + 1 - 1 = 2
-        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(Index(2))));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        // λ %x %y → !0  =>  at depth 2, !0 becomes index 2
+        assert_eq!(parse(&db, "λ %x %y → !0"), lam(lam(v(2))));
     }
 
     #[test]
     fn test_parse_mixed_bound_and_unbound() {
-        // Test parsing: λ %x %y → %y !0
-        // %y is bound (index 0), !0 is unbound (index 2 at depth 2)
-        let input = "λ %x %y → %y !0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse mixed bound and unbound: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → λ %y → %y !0
-        // %y has index 0, !0 has index 2
-        let expected = Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
-            Syntax::variable_rc(Index(0)),
-            Syntax::variable_rc(Index(2)),
-        )));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
+        // λ %x %y → %y !0  =>  %y is index 0, !0 is index 2
+        assert_eq!(parse(&db, "λ %x %y → %y !0"), lam(lam(app(v(0), v(2)))));
     }
 
     #[test]
     fn test_parse_unbound_variable_in_pi() {
-        // Test parsing: ∀(%x : 𝒰0) → !0
-        // At depth 1, !0 should become index 1
-        let input = "∀(%x : 𝒰0) → !0";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound variable in pi: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ∀(%x : 𝒰0) → !0
-        // Inside the pi (depth 1), !0 means index = 1 + 0 = 1
-        let expected = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::variable_rc(Index(1)),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let v = |i| Syntax::variable_rc(Index(i));
+        // ∀(%x : 𝒰0) → !0  =>  at depth 1, !0 becomes index 1
+        assert_eq!(parse(&db, "∀(%x : 𝒰0) → !0"), Syntax::pi_rc(u0(), v(1)));
     }
 
     #[test]
     fn test_parse_unbound_variable_application() {
-        // Test parsing: !0 !1
-        let input = "!0 !1";
-        use crate::Database;
-        let db = Database::default();
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound variable application: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: !0 !1
-        let expected =
-            Syntax::application_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let app = |f, x| Syntax::application_rc(f, x);
+        assert_eq!(parse(&db, "!0 !1"), app(v(0), v(1)));
     }
 
     #[test]
     fn test_parse_print_roundtrip_unbound() {
-        use crate::syn::print::print_syntax_to_string;
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let lam = |body| Syntax::lambda_rc(body);
+        let app = |f, x| Syntax::application_rc(f, x);
 
-        // Test that parsing and printing unbound variables works correctly
-        // Note: The parser uses named binders (%x, %y) while the printer uses
-        // numeric binders (%0, %1), so we can't do a perfect round-trip.
-        // Instead, we test that parsing works and produces the expected AST.
         let test_cases = vec![
-            ("!0", Syntax::variable_rc(Index(0))),
-            ("!5", Syntax::variable_rc(Index(5))),
-            (
-                "λ %x → !0",
-                Syntax::lambda_rc(Syntax::variable_rc(Index(1))),
-            ),
-            (
-                "λ %x %y → %y !0",
-                Syntax::lambda_rc(Syntax::lambda_rc(Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)),
-                    Syntax::variable_rc(Index(2)),
-                ))),
-            ),
-            (
-                "∀(%x : 𝒰0) → !0",
-                Syntax::pi_rc(
-                    Syntax::universe_rc(UniverseLevel::new(0)),
-                    Syntax::variable_rc(Index(1)),
-                ),
-            ),
-            (
-                "!0 !1",
-                Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)),
-                    Syntax::variable_rc(Index(1)),
-                ),
-            ),
+            ("!0", v(0)),
+            ("!5", v(5)),
+            ("λ %x → !0", lam(v(1))),
+            ("λ %x %y → %y !0", lam(lam(app(v(0), v(2))))),
+            ("∀(%x : 𝒰0) → !0", Syntax::pi_rc(u0(), v(1))),
+            ("!0 !1", app(v(0), v(1))),
         ];
 
-        use crate::Database;
-        let db = Database::default();
         for (input, expected) in test_cases {
-            let parsed = parse_syntax(&db, input).expect(&format!("Failed to parse: {}", input));
-            assert_eq!(
-                parsed, expected,
-                "Parse result mismatch for input: {}",
-                input
-            );
-
-            // Also verify that the printed form can be understood
+            let parsed = parse(&db, input);
+            assert_eq!(parsed, expected, "Parse mismatch for: {}", input);
             let printed = print_syntax_to_string(&db, &parsed);
-            // The printed form should contain !N for unbound variables
             if input.contains("!") {
                 assert!(
                     printed.contains("!"),
-                    "Printed form should contain ! for input: {} (got: {})",
+                    "Should contain ! for: {} (got: {})",
                     input,
                     printed
                 );
@@ -2087,638 +1551,286 @@ mod tests {
 
     #[test]
     fn test_parse_hconstant_simple() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "@42";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse hconstant: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@42"), c("42"));
     }
 
     #[test]
     fn test_parse_hconstant_zero() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: @0
-        let input = "@0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse hconstant @0: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: @0
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "0"));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@0"), c("0"));
     }
 
     #[test]
     fn test_parse_hconstant_large() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: @123456789
-        let input = "@123456789";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse large hconstant: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @123456789
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "123456789"));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@123456789"), c("123456789"));
     }
 
     #[test]
     fn test_parse_hvariable_bound() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %x → %x
-        let input = "λ %x → %x";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse hvariable: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → %x
-        let expected = Syntax::module_rc(Syntax::variable_rc(Index(0)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "mod %x → %x"), Syntax::module_rc(v(0)));
     }
 
     #[test]
     fn test_parse_hvariable_unbound() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: !0
-        let input = "!0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound hvariable: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: !0 (at depth 0, becomes index 0)
-        let expected = Syntax::variable_rc(Index(0));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "!0"), v(0));
     }
 
     #[test]
     fn test_parse_hvariable_unbound_in_lambda() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %x → !0
-                                      // At depth 1, !0 should become index 1
-        let input = "λ %x → !0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse unbound hvariable in lambda: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → !0
-        // Inside the lambda (depth 1), !0 means index = 1 + 0 = 1
-        let expected = Syntax::module_rc(Syntax::variable_rc(Index(1)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        // mod %x → !0  =>  at depth 1, !0 becomes index 1
+        assert_eq!(parse(&db, "mod %x → !0"), Syntax::module_rc(v(1)));
     }
 
     #[test]
     fn test_parse_module_single_var() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %x → %x
-        let input = "λ %x → %x";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse Module: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → %x
-        let expected = Syntax::module_rc(Syntax::variable_rc(Index(0)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "mod %x → %x"), Syntax::module_rc(v(0)));
     }
 
     #[test]
     fn test_parse_module_multiple_vars() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %x %y → %x
-                                      // This creates nested lambdas: λ %x → (λ %y → %x)
-                                      // In the innermost body, %x has index 1 (skip over %y to reach %x)
-        let input = "λ %x %y → %x";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse Module: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → λ %y → %x
-        // %x is at index 1 in the innermost scope
-        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::variable_rc(Index(1))));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let mod_ = |body| Syntax::module_rc(body);
+        // mod %x %y → %x  =>  nested modules, %x at index 1
+        assert_eq!(parse(&db, "mod %x %y → %x"), mod_(mod_(v(1))));
     }
 
     #[test]
     fn test_parse_module_with_parens() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: (λ %x → %x)
-        let input = "(λ %x → %x)";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse Module with parens: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → %x
-        let expected = Syntax::module_rc(Syntax::variable_rc(Index(0)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        assert_eq!(parse(&db, "(mod %x → %x)"), Syntax::module_rc(v(0)));
     }
 
     #[test]
     fn test_parse_happlication_simple() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %f %x → %f %x
-                                      // We need variables to be bound, so we use a lambda expression
-        let input = "λ %f %x → %f %x";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse happlication: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %f → λ %x → %f %x
-        // %f is at index 1 (skip over %x), %x is at index 0
-        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::happlication_rc(
-            Syntax::variable_rc(Index(1)),
-            Syntax::variable_rc(Index(0)),
-        )));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        assert_eq!(parse(&db, "@f<Bit>(@x)"), happ(c("f"), bit(), c("x")));
     }
 
     #[test]
-    fn test_parse_happlication_left_associative() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %f %x %y → %f %x %y
-                                      // This should parse as: λ %f → λ %x → λ %y → ((%f %x) %y)
-                                      // Application is left-associative
-        let input = "λ %f %x %y → %f %x %y";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse happlication: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %f → λ %x → λ %y → ((%f %x) %y)
-        // %f is at index 2, %x is at index 1, %y is at index 0
-        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::module_rc(
-            Syntax::happlication_rc(
-                Syntax::happlication_rc(
-                    Syntax::variable_rc(Index(2)),
-                    Syntax::variable_rc(Index(1)),
-                ),
-                Syntax::variable_rc(Index(0)),
-            ),
-        )));
-
-        assert_eq!(parsed, expected);
+    fn test_parse_happlication_chained() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // @f<Bit>(@x)<Bit>(@y)  =>  happ(happ(f, Bit, x), Bit, y)
+        assert_eq!(
+            parse(&db, "@f<Bit>(@x)<Bit>(@y)"),
+            happ(happ(c("f"), bit(), c("x")), bit(), c("y"))
+        );
     }
 
     #[test]
-    fn test_parse_happlication_constants() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: @42 @99
-        let input = "@42 @99";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse happlication with constants: {:?}",
-            result
+    fn test_parse_happlication_with_harrow_type() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let harrow = |a, b| Syntax::harrow_rc(a, b);
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        assert_eq!(
+            parse(&db, "@f<Bit → Bit>(@x)"),
+            happ(c("f"), harrow(bit(), bit()), c("x"))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42 @99
-        use crate::syn::ConstantId;
-        let expected = Syntax::happlication_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_hcheck_simple() {
-        use crate::Database;
-        let db = Database::default();
-        // Test parsing: (λ %x → %x) : $Bit -> $Bit
-        // The type annotation is a hardware type (meta-level Syntax of type Type)
-        let input = "(λ %x → %x) : $Bit -> $Bit";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse hcheck: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: (λ %x → %x) : $Bit -> $Bit
-        let hw_type = Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc());
-        let expected = Syntax::check_rc(hw_type, Syntax::module_rc(Syntax::variable_rc(Index(0))));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let bit = || Syntax::bit_rc();
+        let harrow = |a, b| Syntax::harrow_rc(a, b);
+        // (mod %x → %x) : Bit -> Bit
+        assert_eq!(
+            parse(&db, "(mod %x → %x) : Bit -> Bit"),
+            Syntax::check_rc(harrow(bit(), bit()), Syntax::module_rc(v(0)))
+        );
     }
 
     #[test]
     fn test_parse_hcheck_with_application() {
-        use crate::Database;
-        let db = Database::default();
-        // Test parsing: (@42 @99) : $Bit
-        // The type annotation is a hardware type
-        let input = "(@42 @99) : $Bit";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse hcheck with application: {:?}",
-            result
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // (@42<Bit>(@99)) : Bit
+        assert_eq!(
+            parse(&db, "(@42<Bit>(@99)) : Bit"),
+            Syntax::check_rc(bit(), happ(c("42"), bit(), c("99")))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: (@42 @99) : $Bit
-        use crate::syn::ConstantId;
-        let expected = Syntax::check_rc(
-            Syntax::bit_rc(),
-            Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
-            ),
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_splice_simple() {
-        // Test parsing: ~@42
-        use crate::Database;
-        let db = Database::default();
-        let input = "~@42";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse splice: {:?}", result);
-
-        let parsed = result.unwrap();
-
-        // Build expected: ~@42 - splice syntax node is gone, just the underlying term
-        use crate::syn::ConstantId;
-        let expected = Syntax::constant_rc(ConstantId::from_with_db(&db, "42"));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        // ~@42 - splice syntax node is gone, just the underlying term
+        assert_eq!(parse(&db, "~@42"), c("42"));
     }
 
     #[test]
     fn test_parse_splice_with_lambda() {
-        // Test parsing: ~(λ %x → %x)
-        use crate::Database;
-        let db = Database::default();
-        let input = "~(λ %x → %x)";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse splice with lambda: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ~(λ %x → %x) - splice syntax node is gone, just the underlying term
-        let expected = Syntax::lambda_rc(Syntax::variable_rc(Index(0)));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        // ~(λ %x → %x) - splice is gone
+        assert_eq!(parse(&db, "~(λ %x → %x)"), lam(v(0)));
     }
 
     #[test]
     fn test_parse_splice_with_universe() {
-        // Test parsing: ~𝒰0
-        use crate::Database;
-        let db = Database::default();
-        let input = "~𝒰0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse splice with universe: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ~𝒰0 - splice syntax node is gone, just the underlying term
-        let expected = Syntax::universe_rc(UniverseLevel::new(0));
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        // ~𝒰0 - splice is gone
+        assert_eq!(parse(&db, "~𝒰0"), u0());
     }
 
     #[test]
-    fn test_parse_hterm_complex_nested() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %f → (λ %x → %f %x) @42
-                                      // This applies an inner lambda to a constant
-        let input = "λ %f → (λ %x → %f %x) @42";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse complex nested hterm: {:?}",
-            result
+    fn test_parse_happlication_in_module() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let v = |i| Syntax::variable_rc(Index(i));
+        let bit = || Syntax::bit_rc();
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // mod %f → @x<Bit>(%f)
+        assert_eq!(
+            parse(&db, "mod %f → @x<Bit>(%f)"),
+            Syntax::module_rc(happ(c("x"), bit(), v(0)))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %f → (λ %x → %f %x) @42
-        use crate::syn::ConstantId;
-        let expected = Syntax::module_rc(Syntax::happlication_rc(
-            Syntax::module_rc(Syntax::happlication_rc(
-                Syntax::variable_rc(Index(1)), // %f
-                Syntax::variable_rc(Index(0)), // %x
-            )),
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-        ));
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
-    fn test_parse_hterm_mixed_bound_unbound() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: λ %x %y → %y !0
-                                      // %y is bound (index 0), !0 is unbound (index 2 at depth 2)
-        let input = "λ %x %y → %y !0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse mixed bound and unbound hterm: {:?}",
-            result
+    fn test_parse_happlication_with_nested_type() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let harrow = |a, b| Syntax::harrow_rc(a, b);
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // @f<Bit → Bit → Bit>(@x)
+        assert_eq!(
+            parse(&db, "@f<Bit → Bit → Bit>(@x)"),
+            happ(c("f"), harrow(bit(), harrow(bit(), bit())), c("x"))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: λ %x → λ %y → %y !0
-        // %y has index 0, !0 has index 2
-        let expected = Syntax::module_rc(Syntax::module_rc(Syntax::happlication_rc(
-            Syntax::variable_rc(Index(0)),
-            Syntax::variable_rc(Index(2)),
-        )));
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
-    fn test_parse_hterm_splice_in_application() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: @42 ~𝒰0
-        let input = "@42 ~𝒰0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse splice in application: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42 ~𝒰0 - splice syntax node is gone, just the underlying term
-        use crate::syn::ConstantId;
-        let expected = Syntax::happlication_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
-
-        assert_eq!(parsed, expected);
+    fn test_parse_happlication_with_splice_arg() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // @42<Bit>(~𝒰0) - splice is gone
+        assert_eq!(parse(&db, "@42<Bit>(~𝒰0)"), happ(c("42"), bit(), u0()));
     }
 
     #[test]
     fn test_parse_hterm_check_with_splice() {
-        use crate::Database;
-        let db = Database::default();
-        // Test parsing: ~@42 : $Bit
-        // The type annotation is a hardware type (meta-level Syntax)
-        let input = "~@42 : $Bit";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse check with splice: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: ~@42 : $Bit - splice syntax node is gone, just the underlying term
-        use crate::syn::ConstantId;
-        let expected = Syntax::check_rc(
-            Syntax::bit_rc(),
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-        );
-
-        assert_eq!(parsed, expected);
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        // ~@42 : Bit - splice is gone
+        assert_eq!(parse(&db, "~@42 : Bit"), Syntax::check_rc(bit(), c("42")));
     }
 
     #[test]
-    fn test_parse_hterm_unbound_variables_multiple() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: !0 !1 !2
-        let input = "!0 !1 !2";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse multiple unbound variables: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-
-        // Build expected: (!0 !1) !2
-        // Application is left-associative
-        let expected = Syntax::happlication_rc(
-            Syntax::happlication_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))),
-            Syntax::variable_rc(Index(2)),
-        );
-
-        assert_eq!(parsed, expected);
+    fn test_parse_happlication_with_unbound_var() {
+        let db = Database::new();
+        let v = |i| Syntax::variable_rc(Index(i));
+        let bit = || Syntax::bit_rc();
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // !0<Bit>(!1)
+        assert_eq!(parse(&db, "!0<Bit>(!1)"), happ(v(0), bit(), v(1)));
     }
 
     #[test]
-    fn test_parse_hterm_parentheses_precedence() {
-        use crate::Database;
-        let db = Database::default(); // Test parsing: @42 (@99 @100)
-                                      // Should parse as: @42 (@99 @100), not (@42 @99) @100
-        let input = "@42 (@99 @100)";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse parentheses precedence: {:?}",
-            result
+    fn test_parse_happlication_nested_in_arg() {
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        let bit = || Syntax::bit_rc();
+        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
+        // @42<Bit>(@99<Bit>(@100))
+        assert_eq!(
+            parse(&db, "@42<Bit>(@99<Bit>(@100))"),
+            happ(c("42"), bit(), happ(c("99"), bit(), c("100")))
         );
-
-        let parsed = result.unwrap();
-
-        // Build expected: @42 (@99 @100)
-        use crate::syn::ConstantId;
-        let expected = Syntax::happlication_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-            Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "100")),
-            ),
-        );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_hterm_roundtrip_examples() {
-        use crate::syn::print::print_syntax_to_string;
-        use crate::Database;
-        let db = Database::default();
-
-        // Test that parsing and printing hterms works correctly
+        let db = Database::new();
         let test_cases = vec![
             "@42",
             "!0",
-            "λ %x → %x",
-            "λ %x %y → %x",
-            "@42 @99",
-            "(λ %x → %x) : @42",
+            "mod %x → %x",
+            "mod %x %y → %x",
+            "@42<Bit>(@99)",
+            "(mod %x → %x) : Bit → Bit",
             "~@42",
-            "λ %x → !0",
-            "!0 !1",
+            "mod %x → !0",
+            "!0<Bit>(!1)",
         ];
 
         for input in test_cases {
-            let parsed = parse_hsyntax(&db, input).expect(&format!("Failed to parse: {}", input));
-
-            // Also verify that the printed form can be understood
+            let parsed = parse(&db, input);
             let printed = print_syntax_to_string(&db, &parsed);
-
-            // The printed form should be parseable
-            let reparsed = parse_hsyntax(&db, &printed);
-            assert!(
-                reparsed.is_ok(),
-                "Failed to reparse printed form of '{}': printed='{}', error={:?}",
-                input,
-                printed,
-                reparsed.err()
-            );
-
-            // The reparsed should equal the original
+            let reparsed = parse(&db, &printed);
             assert_eq!(
-                *reparsed.unwrap(),
-                *parsed,
-                "Round-trip failed for input: {} (printed: {})",
-                input,
-                printed
+                *reparsed, *parsed,
+                "Round-trip failed for: {} (printed: {})",
+                input, printed
             );
         }
     }
 
     #[test]
     fn test_parse_and_print_string_constant() {
-        // Test that parsing and printing string constants works correctly
-        use crate::Database;
-        let db = Database::default();
-        let input = "@hello";
-        let parsed = parse_syntax(&db, input).expect("Failed to parse @hello");
-
-        // Print it back to string
-        use crate::syn::print::print_syntax_to_string;
+        let db = Database::new();
+        let parsed = parse(&db, "@hello");
         let printed = print_syntax_to_string(&db, &parsed);
-
-        // Should print back as @hello
         assert_eq!(printed, "@hello");
     }
 
     #[test]
     fn test_parse_and_print_numeric_constant() {
-        // Test that parsing and printing numeric constants works correctly
-        use crate::Database;
-        let db = Database::default();
-        let input = "@42";
-        let parsed = parse_syntax(&db, input).expect("Failed to parse @42");
-
-        // Print it back to string
-        use crate::syn::print::print_syntax_to_string;
+        let db = Database::new();
+        let parsed = parse(&db, "@42");
         let printed = print_syntax_to_string(&db, &parsed);
-
-        // Should print back as @42
         assert_eq!(printed, "@42");
     }
 
     #[test]
     fn test_string_interning_comprehensive() {
-        // Test that string interning works correctly with multiple constants
-        let test_cases = vec![
-            "@hello", "@world", "@foo", "@bar", "@hello", // Duplicate - should reuse same ID
-        ];
+        let db = Database::new();
+        let test_cases = vec!["@hello", "@world", "@foo", "@bar", "@hello"];
+        let parsed_terms: Vec<_> = test_cases.iter().map(|s| parse(&db, s)).collect();
 
-        use crate::Database;
-        let db = Database::default();
-        let mut parsed_terms = Vec::new();
-        for input in &test_cases {
-            let parsed = parse_syntax(&db, input).expect(&format!("Failed to parse {}", input));
-            parsed_terms.push(parsed);
-        }
-
-        // Print them all back
-        use crate::syn::print::print_syntax_to_string;
         for (i, term) in parsed_terms.iter().enumerate() {
             let printed = print_syntax_to_string(&db, term);
             assert_eq!(printed, test_cases[i]);
         }
 
-        // Test that the first and last @hello have the same ConstantId (string interning working)
+        // Check string interning: first and last @hello should have same ConstantId
         if let (Syntax::Constant(c1), Syntax::Constant(c5)) =
             (parsed_terms[0].as_ref(), parsed_terms[4].as_ref())
         {
-            assert_eq!(
-                c1.name, c5.name,
-                "String interning should reuse the same ID for '@hello'"
-            );
+            assert_eq!(c1.name, c5.name, "String interning should reuse ID");
         } else {
             panic!("Expected constants");
         }
@@ -2726,774 +1838,385 @@ mod tests {
 
     #[test]
     fn test_parse_bit_type() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "$Bit";
-        let result = parse_syntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse Bit type: {:?}", result);
-
-        let parsed = result.unwrap();
-        let expected = Syntax::bit_rc();
-
-        assert_eq!(parsed, expected, "Parsed Bit does not match expected");
+        let db = Database::new();
+        assert_eq!(parse(&db, "Bit"), Syntax::bit_rc());
     }
 
     #[test]
     fn test_parse_zero_constant() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "0";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse Zero constant: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::zero_rc();
-
-        assert_eq!(parsed, expected, "Parsed Zero does not match expected");
+        let db = Database::new();
+        assert_eq!(parse(&db, "0"), Syntax::zero_rc());
     }
 
     #[test]
     fn test_parse_one_constant() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "1";
-        let result = parse_hsyntax(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse One constant: {:?}", result);
-
-        let parsed = result.unwrap();
-        let expected = Syntax::one_rc();
-
-        assert_eq!(parsed, expected, "Parsed One does not match expected");
+        let db = Database::new();
+        assert_eq!(parse(&db, "1"), Syntax::one_rc());
     }
 
     #[test]
     fn test_parse_quoted_zero_one() {
-        use crate::Database;
-        let db = Database::default();
-
-        // Test quoted zero: '0
-        let input = "'0";
-        let result = parse_syntax(&db, input);
-        assert!(result.is_ok(), "Failed to parse quoted zero: {:?}", result);
-
-        let parsed = result.unwrap();
+        let db = Database::new();
         // Quote syntax node is gone - just return the underlying hardware term
-        let expected = Syntax::zero_rc();
-        assert_eq!(
-            parsed, expected,
-            "Parsed quoted Zero does not match expected"
-        );
-
-        // Test quoted one: '1
-        let input = "'1";
-        let result = parse_syntax(&db, input);
-        assert!(result.is_ok(), "Failed to parse quoted one: {:?}", result);
-
-        let parsed = result.unwrap();
-        // Quote syntax node is gone - just return the underlying hardware term
-        let expected = Syntax::one_rc();
-        assert_eq!(
-            parsed, expected,
-            "Parsed quoted One does not match expected"
-        );
+        assert_eq!(parse(&db, "'0"), Syntax::zero_rc());
+        assert_eq!(parse(&db, "'1"), Syntax::one_rc());
     }
 
     #[test]
     fn test_parse_primitives() {
-        use crate::Database;
-        let db = Database::default();
-
-        // Test parsing various primitives
-        let tests = vec![
-            ("$xor", "xor"),
-            ("$and", "and"),
-            ("$or", "or"),
-            ("$not", "not"),
-            ("$custom", "custom"),
-            ("$Add", "Add"),
-        ];
-
-        for (input, expected_name) in tests {
-            let result = parse_hsyntax(&db, input);
-            assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
-
-            let parsed = result.unwrap();
-            let expected = Syntax::prim_rc(expected_name.into_with_db(&db));
-
-            assert_eq!(
-                parsed, expected,
-                "Parsed '{}' does not match expected",
-                input
-            );
-        }
+        let db = Database::new();
+        let prim = |s: &str| Syntax::prim_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "$xor"), prim("xor"));
+        assert_eq!(parse(&db, "$and"), prim("and"));
+        assert_eq!(parse(&db, "$or"), prim("or"));
+        assert_eq!(parse(&db, "$not"), prim("not"));
+        assert_eq!(parse(&db, "$custom"), prim("custom"));
+        assert_eq!(parse(&db, "$Add"), prim("Add"));
     }
 
     #[test]
     fn test_parse_hconstant() {
-        use crate::Database;
-        let db = Database::default();
-
-        // Test parsing hardware constants
-        let tests = vec![
-            ("@Add", "Add"),
-            ("@Multiply", "Multiply"),
-            ("@MyCircuit", "MyCircuit"),
-        ];
-
-        for (input, expected_name) in tests {
-            let result = parse_hsyntax(&db, input);
-            assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
-
-            let parsed = result.unwrap();
-            let expected = Syntax::constant_rc(expected_name.into_with_db(&db));
-
-            assert_eq!(
-                parsed, expected,
-                "Parsed '{}' does not match expected",
-                input
-            );
-        }
+        let db = Database::new();
+        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
+        assert_eq!(parse(&db, "@Add"), c("Add"));
+        assert_eq!(parse(&db, "@Multiply"), c("Multiply"));
+        assert_eq!(parse(&db, "@MyCircuit"), c("MyCircuit"));
     }
 
     #[test]
     fn test_parse_data_constructor_nullary() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "[@Nil]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse data constructor: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::data_constructor_rc(ConstantId::from_with_db(&db, "Nil"), vec![]);
-
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
         assert_eq!(
-            parsed, expected,
-            "Parsed data constructor does not match expected"
+            parse(&db, "[@Nil]"),
+            Syntax::data_constructor_rc(cid("Nil"), vec![])
         );
     }
 
     #[test]
     fn test_parse_data_constructor_unary_simple() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "[@Some @42]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse data constructor: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::data_constructor_rc(
-            ConstantId::from_with_db(&db, "Some"),
-            vec![Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))],
-        );
-
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let c = |s: &str| Syntax::constant_rc(cid(s));
         assert_eq!(
-            parsed, expected,
-            "Parsed data constructor does not match expected"
+            parse(&db, "[@Some @42]"),
+            Syntax::data_constructor_rc(cid("Some"), vec![c("42")])
         );
     }
 
     #[test]
     fn test_parse_data_constructor_unary_lambda() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "[@Some λ %0 → λ %0 → %0]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse data constructor: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::data_constructor_rc(
-            ConstantId::from_with_db(&db, "Some"),
-            vec![Syntax::lambda_rc(Syntax::lambda_rc(Syntax::variable_rc(
-                Index(0),
-            )))],
-        );
-
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        // [@Some λ %0 → λ %0 → %0]
         assert_eq!(
-            parsed, expected,
-            "Parsed data constructor does not match expected"
+            parse(&db, "[@Some λ %0 → λ %0 → %0]"),
+            Syntax::data_constructor_rc(cid("Some"), vec![lam(lam(v(0)))])
         );
     }
 
     #[test]
     fn test_parse_data_constructor_binary_lambda() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "[@Pair (λ %0 → %0) λ %0 → %0]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse data constructor: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::data_constructor_rc(
-            ConstantId::from_with_db(&db, "Pair"),
-            vec![
-                Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-                Syntax::lambda_rc(Syntax::variable_rc(Index(0))),
-            ],
-        );
-
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let v = |i| Syntax::variable_rc(Index(i));
+        let lam = |body| Syntax::lambda_rc(body);
+        // [@Pair (λ %0 → %0) λ %0 → %0]
         assert_eq!(
-            parsed, expected,
-            "Parsed data constructor does not match expected"
+            parse(&db, "[@Pair (λ %0 → %0) λ %0 → %0]"),
+            Syntax::data_constructor_rc(cid("Pair"), vec![lam(v(0)), lam(v(0))])
         );
     }
 
     #[test]
     fn test_case_application() {
-        use crate::Database;
-        let db = Database::default();
-        // Test parsing a case expression with scrutinee
-        let input = "@x case %0 → @Bool { @true => @1 | @false => @0 }";
-
-        let parsed = parse_syntax(&db, input).expect("Failed to parse case expression");
-
-        let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-            Syntax::constant_rc_from(&db, "Bool"),
-            vec![
-                CaseBranch::new(
-                    ConstantId::from_with_db(&db, "true"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
-                ),
-                CaseBranch::new(
-                    ConstantId::from_with_db(&db, "false"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
-                ),
-            ],
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let c = |s: &str| Syntax::constant_rc(cid(s));
+        // @x case %0 → @Bool { @true => @1 | @false => @0 }
+        assert_eq!(
+            parse(&db, "@x case %0 → @Bool { @true => @1 | @false => @0 }"),
+            Syntax::case_rc(
+                c("x"),
+                Syntax::constant_rc_from(&db, "Bool"),
+                vec![
+                    CaseBranch::new(cid("true"), 0, c("1")),
+                    CaseBranch::new(cid("false"), 0, c("0")),
+                ],
+            )
         );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_constructor_only_patterns() {
-        use crate::Database;
-        let db = Database::default();
-
-        // Test that we can only parse constructor patterns, not variables or wildcards
-        let input = "@x case %0 → @Bool { @true => @1 | @false => @0 }";
-
-        let parsed = parse_syntax(&db, input).expect("Failed to parse constructor-only case");
-
-        let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-            Syntax::constant_rc_from(&db, "Bool"),
-            vec![
-                CaseBranch::new(
-                    ConstantId::from_with_db(&db, "true"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
-                ),
-                CaseBranch::new(
-                    ConstantId::from_with_db(&db, "false"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
-                ),
-            ],
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let c = |s: &str| Syntax::constant_rc(cid(s));
+        // Same test as test_case_application
+        assert_eq!(
+            parse(&db, "@x case %0 → @Bool { @true => @1 | @false => @0 }"),
+            Syntax::case_rc(
+                c("x"),
+                Syntax::constant_rc_from(&db, "Bool"),
+                vec![
+                    CaseBranch::new(cid("true"), 0, c("1")),
+                    CaseBranch::new(cid("false"), 0, c("0")),
+                ],
+            )
         );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_type_constructor_simple() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "#[@Bool]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse type constructor: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::type_constructor_rc(ConstantId::from_with_db(&db, "Bool"), vec![]);
-
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
         assert_eq!(
-            parsed, expected,
-            "Parsed type constructor does not match expected"
+            parse(&db, "#[@Bool]"),
+            Syntax::type_constructor_rc(cid("Bool"), vec![])
         );
     }
 
     #[test]
     fn test_parse_type_constructor_with_args() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "#[@List 𝒰0]";
-        let result = parse_syntax(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse type constructor with args: {:?}",
-            result
-        );
-
-        let parsed = result.unwrap();
-        let expected = Syntax::type_constructor_rc(
-            ConstantId::from_with_db(&db, "List"),
-            vec![Syntax::universe_rc(crate::common::UniverseLevel::new(0))],
-        );
-
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
         assert_eq!(
-            parsed, expected,
-            "Parsed type constructor does not match expected"
+            parse(&db, "#[@List 𝒰0]"),
+            Syntax::type_constructor_rc(cid("List"), vec![u0()])
         );
     }
 
     #[test]
     fn test_parse_case_with_type_constructor_motive() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "@x case %0 → #[@Bool] { @true => @1 | @false => @0 }";
-
-        let parsed =
-            parse_syntax(&db, input).expect("Failed to parse case with type constructor motive");
-
-        let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
-            Syntax::type_constructor_rc(ConstantId::from_with_db(&db, "Bool"), vec![]),
-            vec![
-                CaseBranch::new(
-                    ConstantId::from_with_db(&db, "true"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "1")),
-                ),
-                CaseBranch::new(
-                    ConstantId::from_with_db(&db, "false"),
-                    0,
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
-                ),
-            ],
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let c = |s: &str| Syntax::constant_rc(cid(s));
+        // @x case %0 → #[@Bool] { @true => @1 | @false => @0 }
+        assert_eq!(
+            parse(&db, "@x case %0 → #[@Bool] { @true => @1 | @false => @0 }"),
+            Syntax::case_rc(
+                c("x"),
+                Syntax::type_constructor_rc(cid("Bool"), vec![]),
+                vec![
+                    CaseBranch::new(cid("true"), 0, c("1")),
+                    CaseBranch::new(cid("false"), 0, c("0")),
+                ],
+            )
         );
-
-        assert_eq!(parsed, expected);
     }
 
     #[test]
     fn test_parse_case_with_constructor_argument_pattern() {
-        use crate::common::Index;
-        use crate::Database;
-        let db = Database::default();
-
-        // Scrutinee @n, case index %0, pattern @Succ %m, body refers to %m.
-        // The pattern binder %m should be available in the branch body.
-        let input = "@n case %0 → @Nat { @Succ %m => %m }";
-
-        let parsed = parse_syntax(&db, input).expect("Failed to parse case with arg pattern");
-
-        let expected = Syntax::case_rc(
-            Syntax::constant_rc(ConstantId::from_with_db(&db, "n")),
-            Syntax::constant_rc_from(&db, "Nat"),
-            vec![CaseBranch::new(
-                ConstantId::from_with_db(&db, "Succ"),
-                1,
-                // In the branch body, %m should resolve to the innermost binder
-                Syntax::variable_rc(Index(0)),
-            )],
+        let db = Database::new();
+        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let c = |s: &str| Syntax::constant_rc(cid(s));
+        let v = |i| Syntax::variable_rc(Index(i));
+        // @n case %0 → @Nat { @Succ %m => %m }
+        assert_eq!(
+            parse(&db, "@n case %0 → @Nat { @Succ %m => %m }"),
+            Syntax::case_rc(
+                c("n"),
+                Syntax::constant_rc_from(&db, "Nat"),
+                vec![CaseBranch::new(cid("Succ"), 1, v(0))],
+            )
         );
-
-        assert_eq!(parsed, expected);
     }
 
     // ========== MODULE PARSING TESTS ==========
 
     #[test]
     fn test_parse_prim_declaration() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "prim $Nat : U0;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse primitive declaration: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let module = parse_module(&db, "prim $Nat : U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::Primitive(_)));
-        if let Declaration::Primitive(p) = decl {
-            assert_eq!(p.name.name(&db), "Nat");
-        }
+        assert!(
+            matches!(&module.declarations[0], Declaration::Primitive(p) if p.name.name(&db) == "Nat")
+        );
     }
 
     #[test]
     fn test_parse_const_declaration() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "const @zero : @Nat;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse constant declaration: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let module = parse_module(&db, "const @zero : @Nat;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::Constant(_)));
-        if let Declaration::Constant(c) = decl {
-            assert_eq!(c.name.name(&db), "zero");
-        }
+        assert!(
+            matches!(&module.declarations[0], Declaration::Constant(c) if c.name.name(&db) == "zero")
+        );
     }
 
     #[test]
     fn test_parse_tcon_declaration_no_dcons() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "tcon @List (%a : U0) : -> U0;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse type constructor declaration: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let module = parse_module(&db, "tcon @List (%a : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = decl {
-            assert_eq!(tc.name.name(&db), "List");
-        }
+        assert!(
+            matches!(&module.declarations[0], Declaration::TypeConstructor(tc) if tc.name.name(&db) == "List")
+        );
     }
 
     #[test]
     fn test_parse_tcon_declaration_with_dcons() {
-        use crate::Database;
-        let db = Database::default();
-        let input =
-            "tcon @Option (%a : U0) : -> U0 where dcon @None : @Option %a dcon @Some : %a -> @Option %a;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse type constructor with data constructors: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
-        assert_eq!(module.declarations.len(), 1); // 1 tcon containing 2 dcons
-
-        assert!(matches!(
-            &module.declarations[0],
-            Declaration::TypeConstructor(_)
-        ));
+        let db = Database::new();
+        let input = "tcon @Option (%a : U0) : -> U0 where dcon @None : @Option %a dcon @Some : %a -> @Option %a;";
+        let module = parse_module(&db, input).expect("parse failed");
+        assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Option");
             assert_eq!(tc.data_constructors.len(), 2);
             assert_eq!(tc.data_constructors[0].name.name(&db), "None");
             assert_eq!(tc.data_constructors[1].name.name(&db), "Some");
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_module_multiple_declarations() {
-        use crate::Database;
-        let db = Database::default();
+        let db = Database::new();
         let input = r#"
             prim $Nat : U0;
             const @zero : $Nat;
             tcon @Bool : -> U0 where dcon @True : @Bool dcon @False : @Bool;
         "#;
-        let result = parse_module(&db, input);
-
+        let module = parse_module(&db, input).expect("parse failed");
+        assert_eq!(module.declarations.len(), 3);
         assert!(
-            result.is_ok(),
-            "Failed to parse module with multiple declarations: {:?}",
-            result
+            matches!(&module.declarations[0], Declaration::Primitive(p) if p.name.name(&db) == "Nat")
         );
-
-        let module = result.unwrap();
-        assert_eq!(module.declarations.len(), 3); // prim + const + tcon (containing 2 dcons)
-
-        assert!(matches!(&module.declarations[0], Declaration::Primitive(_)));
-        if let Declaration::Primitive(p) = &module.declarations[0] {
-            assert_eq!(p.name.name(&db), "Nat");
-        }
-
-        assert!(matches!(&module.declarations[1], Declaration::Constant(_)));
-        if let Declaration::Constant(c) = &module.declarations[1] {
-            assert_eq!(c.name.name(&db), "zero");
-        }
-
-        assert!(matches!(
-            &module.declarations[2],
-            Declaration::TypeConstructor(_)
-        ));
+        assert!(
+            matches!(&module.declarations[1], Declaration::Constant(c) if c.name.name(&db) == "zero")
+        );
         if let Declaration::TypeConstructor(tc) = &module.declarations[2] {
             assert_eq!(tc.name.name(&db), "Bool");
             assert_eq!(tc.data_constructors.len(), 2);
-            assert_eq!(tc.data_constructors[0].name.name(&db), "True");
-            assert_eq!(tc.data_constructors[1].name.name(&db), "False");
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_empty_module() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "";
-        let result = parse_module(&db, input);
-
-        assert!(result.is_ok(), "Failed to parse empty module: {:?}", result);
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let module = parse_module(&db, "").expect("parse failed");
         assert_eq!(module.declarations.len(), 0);
     }
 
     #[test]
     fn test_parse_parameterized_tcon() {
-        // Test parsing: tcon @Option (%a : U0) : -> U0;
-        use crate::Database;
-        let db = Database::default();
-        let input = "tcon @Option (%a : U0) : -> U0;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse parameterized tcon: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let module = parse_module(&db, "tcon @Option (%a : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = decl {
+        if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Option");
-        }
-
-        // The type should be: ∀ (%0 : 𝒰0) → 𝒰0
-        if let Declaration::TypeConstructor(tc) = decl {
-            let expected_ty = Syntax::universe_rc(UniverseLevel::new(0));
-            assert_eq!(&tc.universe, &expected_ty);
+            assert_eq!(&tc.universe, &u0());
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_parameterized_tcon_with_dcons() {
-        // Test parsing:
-        // tcon @Option (%a : U0) : -> U0 where
-        //     dcon @None : @Option %a
-        //     dcon @Some : %a -> @Option %a;
-        use crate::Database;
-        let db = Database::default();
+        let db = Database::new();
         let input = r#"
             tcon @Option (%a : U0) : -> U0 where
                 dcon @None : @Option %a
                 dcon @Some : %a -> @Option %a;
         "#;
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse parameterized tcon with dcons: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
-        assert_eq!(module.declarations.len(), 1); // tcon containing 2 dcons
-
-        // Check the type constructor
-        let tcon_decl = &module.declarations[0];
-        assert!(matches!(tcon_decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = tcon_decl {
+        let module = parse_module(&db, input).expect("parse failed");
+        assert_eq!(module.declarations.len(), 1);
+        if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Option");
             assert_eq!(tc.data_constructors.len(), 2);
             assert_eq!(tc.data_constructors[0].name.name(&db), "None");
             assert_eq!(tc.data_constructors[1].name.name(&db), "Some");
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_multi_param_tcon() {
-        // Test parsing: tcon @Pair (%a : U0) (%b : U0) : -> U0;
-        use crate::Database;
-        let db = Database::default();
-        let input = "tcon @Pair (%a : U0) (%b : U0) : -> U0;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse multi-param tcon: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let module =
+            parse_module(&db, "tcon @Pair (%a : U0) (%b : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = decl {
+        if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Pair");
-            // The universe should be 𝒰0
-            let expected_ty = Syntax::universe_rc(UniverseLevel::new(0));
-            assert_eq!(&tc.universe, &expected_ty);
+            assert_eq!(&tc.universe, &u0());
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_tcon_no_params() {
-        // Test parsing: tcon @Bool : -> U0;
-        use crate::Database;
-        let db = Database::default();
-        let input = "tcon @Bool : -> U0;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse tcon without params: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let module = parse_module(&db, "tcon @Bool : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = decl {
+        if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Bool");
-            // The type should be just: 𝒰0 (no Pi)
-            let expected_ty = Syntax::universe_rc(UniverseLevel::new(0));
-            assert_eq!(&tc.universe, &expected_ty);
+            assert_eq!(&tc.universe, &u0());
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_dcon_with_params() {
-        // Test parsing:
-        // tcon @List (%a : U0) : -> U0 where
-        //     dcon @Nil : @List %a
-        //     dcon @Cons (%x : %a) (%xs : @List %a) : @List %a;
-        use crate::Database;
-        let db = Database::default();
+        let db = Database::new();
         let input = r#"
             tcon @List (%a : U0) : -> U0 where
                 dcon @Nil : @List %a
                 dcon @Cons (%x : %a) (%xs : @List %a) : @List %a;
         "#;
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse dcon with params: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
-        assert_eq!(module.declarations.len(), 1); // 1 tcon containing 2 dcons
-
-        // Check the type constructor
-        let tcon_decl = &module.declarations[0];
-        assert!(matches!(tcon_decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = tcon_decl {
+        let module = parse_module(&db, input).expect("parse failed");
+        assert_eq!(module.declarations.len(), 1);
+        if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "List");
             assert_eq!(tc.data_constructors.len(), 2);
-
-            // Check @Nil - should have type that references the tcon parameter
             assert_eq!(tc.data_constructors[0].name.name(&db), "Nil");
-
-            // Check @Cons - should have parameters that become Pi types
             assert_eq!(tc.data_constructors[1].name.name(&db), "Cons");
-
-            // The Cons type should be a nested Pi type
-            // ∀ (%0 : !1) (%1 : #[@List !2]) → #[@List !2]
-            // where !1 and !2 reference the tcon parameter %a
+            // Cons type should be a Pi type
             let cons_ty_str = print_syntax_to_string(&db, &tc.data_constructors[1].full_type());
             assert!(cons_ty_str.contains("∀"), "Cons should have Pi type");
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_parse_tcon_with_indices() {
-        // Test parsing: tcon @Vec (%a : U0) : (%n : @Nat) -> U0;
-        use crate::Database;
-        let db = Database::default();
-        let input = "tcon @Vec (%a : U0) : (%n : @Nat) -> U0;";
-        let result = parse_module(&db, input);
-
-        assert!(
-            result.is_ok(),
-            "Failed to parse tcon with indices: {:?}",
-            result
-        );
-
-        let module = result.unwrap();
+        let db = Database::new();
+        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
+        let module =
+            parse_module(&db, "tcon @Vec (%a : U0) : (%n : @Nat) -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
-
-        let decl = &module.declarations[0];
-        assert!(matches!(decl, Declaration::TypeConstructor(_)));
-        if let Declaration::TypeConstructor(tc) = decl {
+        if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Vec");
-            // The universe should be 𝒰0
-            let expected_ty = Syntax::universe_rc(UniverseLevel::new(0));
-            assert_eq!(&tc.universe, &expected_ty);
+            assert_eq!(&tc.universe, &u0());
+        } else {
+            panic!("Expected TypeConstructor");
         }
     }
 
     #[test]
     fn test_module_roundtrip_simple() {
-        use crate::Database;
-        let db = Database::default();
-        let input = "prim $Nat : U0;";
-
-        // Parse
-        let module = parse_module(&db, input).expect("Failed to parse");
-
-        // Print
+        let db = Database::new();
+        let module = parse_module(&db, "prim $Nat : U0;").expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
-
-        // Parse again
-        let module2 = parse_module(&db, &output).expect("Failed to parse printed output");
-
-        // Should be equal
+        let module2 = parse_module(&db, &output).expect("reparse failed");
         assert_eq!(module, module2);
     }
 
     #[test]
     fn test_module_roundtrip_complex() {
-        use crate::Database;
-        let db = Database::default();
+        let db = Database::new();
         let input = r#"prim $Nat : U0;
 prim $Zero : $Nat;
 tcon @Bool : -> U0 where
@@ -3501,56 +2224,35 @@ tcon @Bool : -> U0 where
     dcon @False : @Bool
 ;
 const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
-
-        // Parse
-        let module = parse_module(&db, input).expect("Failed to parse");
-
-        // Print
+        let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
-
-        // Parse again
-        let module2 = parse_module(&db, &output).expect("Failed to parse printed output");
-
-        // Should be equal
+        let module2 = parse_module(&db, &output).expect("reparse failed");
         assert_eq!(module, module2);
     }
 
     #[test]
     fn test_module_roundtrip_with_params() {
-        use crate::Database;
-        let db = Database::default();
+        let db = Database::new();
         let input = r#"tcon @List (%a : U0) : -> U0 where
     dcon @Nil : @List %a
     dcon @Cons (%x : %a) (%xs : @List %a) : @List %a
 ;"#;
-
-        // Parse
-        let module = parse_module(&db, input).expect("Failed to parse");
-
-        // Print
+        let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
-
-        // Parse again
-        let module2 = parse_module(&db, &output).expect("Failed to parse printed output");
-
-        // Should be equal
+        let module2 = parse_module(&db, &output).expect("reparse failed");
         assert_eq!(module, module2);
     }
 
     #[test]
     fn test_print_module_format() {
-        use crate::Database;
-        let db = Database::default();
+        let db = Database::new();
         let input = r#"prim $Nat : U0;
 tcon @List (%a : U0) : -> U0 where
     dcon @Nil : @List %a
     dcon @Cons (%x : %a) (%xs : @List %a) : @List %a
 ;"#;
-
-        let module = parse_module(&db, input).expect("Failed to parse");
+        let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
-
-        // Verify the output contains expected elements
         assert!(output.contains("prim $Nat : 𝒰0;"));
         assert!(output.contains("tcon @List : -> 𝒰0 where"));
         assert!(output.contains("dcon @Nil"));

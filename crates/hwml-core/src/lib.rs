@@ -5,6 +5,7 @@ pub mod declaration;
 pub mod environment;
 pub mod equal;
 pub mod eval;
+pub mod lower;
 pub mod prelude;
 pub mod quote;
 pub mod symbol;

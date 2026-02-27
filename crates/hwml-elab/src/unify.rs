@@ -2,7 +2,6 @@ use futures::future::join_all;
 use futures::join;
 use futures::TryFutureExt;
 use hwml_core::common::{Level, MetaVariableId};
-use hwml_core::equal::is_type_convertible;
 use hwml_core::eval::{self, run_application, run_closure, run_spine};
 use hwml_core::val::Environment;
 use hwml_core::val::LocalEnv;
@@ -296,57 +295,57 @@ pub async fn unify<'db, 'g>(
         }
         // Eta-expansion: Lambda on left, non-lambda on right
         // Unify λx. body with t by unifying body with (t x)
-        // (Value::Lambda(lam), _) => {
-        //     println!("[Unify] Eta-expansion: Lambda on left");
-        //     let Value::Pi(pi) = &*ty else {
-        //         return Err(UnificationError::Generic(
-        //             "Expected Pi type for lambda unification".to_string(),
-        //         ));
-        //     };
+        (Value::Lambda(lam), _) => {
+            println!("[Unify] Eta-expansion: Lambda on left");
+            let Value::Pi(pi) = &*ty else {
+                return Err(UnificationError::Generic(
+                    "Expected Pi type for lambda unification".to_string(),
+                ));
+            };
 
-        //     // Create a fresh variable to instantiate the lambda.
-        //     let var = ctx.tc_env.push_var(pi.source.clone());
+            // Create a fresh variable to instantiate the lambda.
+            let var = ctx.tc_env.push_var(pi.source.clone());
 
-        //     // Instantiate the lambda body with the fresh variable.
-        //     let lhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
+            // Instantiate the lambda body with the fresh variable.
+            let lhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
 
-        //     // Apply the right side to the fresh variable
-        //     let rhs_applied = run_application(ctx.tc_env.values.global, &rhs, var.clone())?;
+            // Apply the right side to the fresh variable
+            let rhs_applied = run_application(ctx.tc_env.values.global, &rhs, var.clone())?;
 
-        //     // Instantiate the codomain type with the fresh variable.
-        //     let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
+            // Instantiate the codomain type with the fresh variable.
+            let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
 
-        //     // Unify the lambda body with the applied right side
-        //     println!("[Unify] Unifying lambda body with applied term");
-        //     Box::pin(unify(ctx, lhs_body, rhs_applied, codomain)).await
-        // }
+            // Unify the lambda body with the applied right side
+            println!("[Unify] Unifying lambda body with applied term");
+            Box::pin(unify(db, ctx, lhs_body, rhs_applied, codomain)).await
+        }
 
         // Eta-expansion: non-lambda on left, Lambda on right
         // Unify t with λx. body by unifying (t x) with body
-        // (_, Value::Lambda(lam)) => {
-        //     println!("[Unify] Eta-expansion: Lambda on right");
-        //     let Value::Pi(pi) = &*ty else {
-        //         return Err(UnificationError::Generic(
-        //             "Expected Pi type for lambda unification".to_string(),
-        //         ));
-        //     };
+        (_, Value::Lambda(lam)) => {
+            println!("[Unify] Eta-expansion: Lambda on right");
+            let Value::Pi(pi) = &*ty else {
+                return Err(UnificationError::Generic(
+                    "Expected Pi type for lambda unification".to_string(),
+                ));
+            };
 
-        //     // Create a fresh variable to instantiate the lambda.
-        //     let var = ctx.tc_env.push_var(pi.source.clone());
+            // Create a fresh variable to instantiate the lambda.
+            let var = ctx.tc_env.push_var(pi.source.clone());
 
-        //     // Apply the right side to the fresh variable
-        //     let lhs_applied = run_application(ctx.tc_env.values.global, &lhs, var.clone())?;
+            // Apply the left side to the fresh variable
+            let lhs_applied = run_application(ctx.tc_env.values.global, &lhs, var.clone())?;
 
-        //     // Instantiate the lambda body with the fresh variable.
-        //     let rhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
+            // Instantiate the lambda body with the fresh variable.
+            let rhs_body = run_closure(ctx.tc_env.values.global, &lam.body, [var.clone()])?;
 
-        //     // Instantiate the codomain type with the fresh variable.
-        //     let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
+            // Instantiate the codomain type with the fresh variable.
+            let codomain = run_closure(ctx.tc_env.values.global, &pi.target, [var])?;
 
-        //     // Unify the lambda body with the applied right side
-        //     println!("[Unify] Unifying applied term with lambda body");
-        //     Box::pin(unify(ctx, lhs_applied, rhs_body, codomain)).await
-        // }
+            // Unify the applied term with the lambda body
+            println!("[Unify] Unifying applied term with lambda body");
+            Box::pin(unify(db, ctx, lhs_applied, rhs_body, codomain)).await
+        }
 
         // Handle TypeConstructor injectivity
         (Value::TypeConstructor(tc1), Value::TypeConstructor(tc2)) => {
@@ -502,8 +501,8 @@ pub async fn unify<'db, 'g>(
             Box::pin(try_solve(db, ctx, depth, &flex.head, lhs, &ty)).await
         }
         (Value::Rigid(r1), Value::Rigid(r2)) => {
-            // Check that the head terms are the same.
-            if r1.head != r2.head {
+            // Check that the head terms are the same (compare levels).
+            if r1.head.level != r2.head.level {
                 return Err(UnificationError::RigidHeadMismatch(
                     format!("{:?}", r1.head),
                     format!("{:?}", r2.head),

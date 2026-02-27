@@ -1,6 +1,6 @@
 use crate::val::{
-    self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HEnvironment,
-    LocalEnv, MetaVariableLookupError, Normal, Rigid, SemTelescope, Value, Value,
+    self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
+    MetaVariableLookupError, Normal, Rigid, SemTelescope, Value,
 };
 use crate::*;
 use std::{
@@ -16,7 +16,6 @@ pub enum Error {
     UnknownTypeConstructor,
     UnknownDataConstructor,
     MetaVariableLookupError(MetaVariableLookupError),
-    BadSplice,
 }
 
 impl From<MetaVariableLookupError> for Error {
@@ -33,7 +32,6 @@ impl Display for Error {
             Error::UnknownConstant => write!(f, "unknown constant"),
             Error::UnknownTypeConstructor => write!(f, "unknown type constructor"),
             Error::UnknownDataConstructor => write!(f, "unknown data constructor"),
-            Error::BadSplice => write!(f, "bad splice"),
             Error::MetaVariableLookupError(e) => e.fmt(f),
         }
     }
@@ -56,70 +54,71 @@ pub fn eval<'db, 'g>(
     stx: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
     match stx {
-        Syntax::Constant(constant) => eval_constant(env, &constant),
-        Syntax::Variable(var) => eval_variable(env, &var),
-        Syntax::Check(chk) => eval_check(env, chk),
+        Syntax::Universe(uni) => eval_universe(env, &uni),
+        Syntax::Lift(lift) => eval_lift(env, lift),
+
         Syntax::Pi(pi) => eval_pi(env, pi),
         Syntax::Lambda(lam) => eval_lambda(env, lam),
+        Syntax::Application(app) => eval_application(env, &app),
+
         Syntax::TypeConstructor(type_constructor) => eval_type_constructor(env, type_constructor),
         Syntax::DataConstructor(data_constructor) => eval_data_constructor(env, data_constructor),
-        Syntax::Application(app) => eval_application(env, &app),
         Syntax::Case(case) => eval_case(env, case),
-        Syntax::Universe(uni) => eval_universe(env, &uni),
-        Syntax::Metavariable(meta) => eval_metavariable(env, meta),
-        Syntax::Prim(prim) => eval_prim(env, prim),
-        // HardwareUniverse constructs
-        Syntax::Bit(_) => eval_bit(env),
-        Syntax::HardwareUniverse(_) => eval_hw_universe(env),
+
+        Syntax::HardwareUniverse(hw) => eval_hardware_universe(env, hw),
+        Syntax::SLift(slift) => eval_slift(env, slift),
+        Syntax::MLift(mlift) => eval_mlift(env, mlift),
+
+        Syntax::SignalUniverse(sig) => eval_signal_universe(env, sig),
+        Syntax::Bit(bit) => eval_bit(env, bit),
+        Syntax::Zero(zero) => eval_zero(env, zero),
+        Syntax::One(one) => eval_one(env, one),
+
+        Syntax::ModuleUniverse(mod_uni) => eval_module_universe(env, mod_uni),
         Syntax::HArrow(harrow) => eval_harrow(env, harrow),
-        Syntax::Lift(lift) => eval_lift(env, lift),
-        Syntax::Quote(quote) => eval_quote(env, quote),
-        Syntax::SignalUniverse(_) | Syntax::ModuleUniverse(_) => {
-            todo!("evaluation of SignalUniverse and ModuleUniverse is not implemented yet")
-        }
+        Syntax::Module(module) => eval_module(env, module),
+        Syntax::HApplication(happ) => eval_happlication(env, happ),
+
+        Syntax::Prim(prim) => eval_prim(env, prim),
+        Syntax::Constant(constant) => eval_constant(env, &constant),
+        Syntax::Variable(var) => eval_variable(env, &var),
+        Syntax::Metavariable(meta) => eval_metavariable(env, meta),
+
+        Syntax::Check(chk) => eval_check(env, chk),
     }
 }
 
-/// Evaluate a constant by eagerly unfolding its definition.
-/// Meta-level constants are always unfolded to their values.
-fn eval_constant<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    constant: &syn::Constant<'db>,
+fn eval_universe<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
+    universe: &syn::Universe<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    // Look up the constant's definition
-    let info = env
-        .global
-        .constant(constant.name)
-        .map_err(|_| Error::UnknownConstant)?;
-
-    // Evaluate the constant's body in an empty local environment
-    // (constants are top-level definitions with no free variables)
-    let mut unfold_env = Environment {
-        global: env.global,
-        local: LocalEnv::new(),
-    };
-    eval(&mut unfold_env, &info.value)
+    Ok(Rc::new(Value::universe(universe.level)))
 }
 
-fn eval_prim<'db, 'g>(
-    _env: &mut Environment<'db, 'g>,
-    prim: &syn::Prim<'db>,
+fn eval_lift<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    lift: &syn::Lift<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    Ok(Rc::new(Value::Prim(prim.name)))
+    let ty = eval(env, &lift.ty)?;
+    Ok(Rc::new(Value::lift(ty)))
 }
 
-fn eval_variable<'db, 'g>(
+fn eval_pi<'db, 'g>(
     env: &mut Environment<'db, 'g>,
-    var: &syn::Variable<'db>,
+    pi: &syn::Pi<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    Ok(env.get(var.index.to_level(env.depth())).clone())
+    let source = eval(env, &pi.source)?;
+    let target = Closure::new(env.local.clone(), pi.target.clone());
+    Ok(Rc::new(Value::pi(source, target)))
 }
 
-fn eval_check<'db, 'g>(
+fn eval_lambda<'db, 'g>(
     env: &mut Environment<'db, 'g>,
-    chk: &syn::Check<'db>,
+    lambda: &syn::Lambda<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    eval(env, &chk.term)
+    Ok(Rc::new(Value::Lambda(dom::Lambda {
+        body: Closure::new(env.local.clone(), lambda.body.clone()),
+    })))
 }
 
 fn eval_type_constructor<'db, 'g>(
@@ -155,29 +154,124 @@ fn eval_data_constructor<'db, 'g>(
     Ok(Rc::new(data_value))
 }
 
-fn eval_pi<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    pi: &syn::Pi<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
-    let source = eval(env, &pi.source)?;
-    let target = Closure::new(env.local.clone(), pi.target.clone());
-    Ok(Rc::new(Value::pi(source, target)))
-}
-
-fn eval_lambda<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    lambda: &syn::Lambda<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
-    Ok(Rc::new(Value::Lambda(dom::Lambda {
-        body: Closure::new(env.local.clone(), lambda.body.clone()),
-    })))
-}
-
-fn eval_universe<'db, 'g>(
+fn eval_hardware_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
-    universe: &syn::Universe<'db>,
+    _: &syn::HardwareUniverse<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    Ok(Rc::new(Value::universe(universe.level)))
+    Ok(Rc::new(Value::hardware_universe()))
+}
+
+fn eval_slift<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    slift: &syn::SLift<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    let ty = eval(env, &slift.ty)?;
+    Ok(Rc::new(Value::slift(ty)))
+}
+
+fn eval_mlift<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    mlift: &syn::MLift<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    let ty = eval(env, &mlift.ty)?;
+    Ok(Rc::new(Value::mlift(ty)))
+}
+
+fn eval_signal_universe<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
+    _: &syn::SignalUniverse<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::signal_universe()))
+}
+
+fn eval_bit<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
+    _: &syn::Bit<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::bit()))
+}
+
+fn eval_zero<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
+    _: &syn::Zero<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::zero()))
+}
+
+fn eval_one<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
+    _: &syn::One<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::one()))
+}
+
+fn eval_module_universe<'db, 'g>(
+    _: &mut Environment<'db, 'g>,
+    _: &syn::ModuleUniverse<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::module_universe()))
+}
+
+fn eval_harrow<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    harrow: &syn::HArrow<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    let source = eval(env, &harrow.source)?;
+    let target = Closure::new(env.local.clone(), harrow.target.clone());
+    Ok(Rc::new(Value::harrow(source, target)))
+}
+
+fn eval_module<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    module: &syn::Module<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::module(Closure::new(
+        env.local.clone(),
+        module.body.clone(),
+    ))))
+}
+
+fn eval_happlication<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    happ: &syn::HApplication<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    let module = eval(env, &happ.module)?;
+    let module_ty = eval(env, &happ.module_ty)?;
+    let arg = eval(env, &happ.argument)?;
+    Ok(Rc::new(Value::happlication(module, module_ty, arg)))
+}
+
+fn eval_prim<'db, 'g>(
+    _env: &mut Environment<'db, 'g>,
+    prim: &syn::Prim<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(Rc::new(Value::Prim(prim.name)))
+}
+
+fn eval_constant<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    constant: &syn::Constant<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Look up the constant's definition
+    let info = env
+        .global
+        .constant(constant.name)
+        .map_err(|_| Error::UnknownConstant)?;
+
+    // Evaluate the constant's body in an empty local environment
+    // (constants are top-level definitions with no free variables)
+    let mut unfold_env = Environment {
+        global: env.global,
+        local: LocalEnv::new(),
+    };
+    eval(&mut unfold_env, &info.value)
+}
+
+fn eval_variable<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    var: &syn::Variable<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    Ok(env.get(var.index.to_level(env.depth())).clone())
 }
 
 fn eval_metavariable<'db, 'g>(
@@ -212,204 +306,67 @@ fn eval_metavariable<'db, 'g>(
     Ok(Rc::new(Value::Flex(flex)))
 }
 
-// ============================================================================
-// HardwareUniverse Construct Evaluation
-// ============================================================================
-
-/// Evaluate the Bit type.
-/// Bit : Type
-fn eval_bit<'db, 'g>(_env: &mut Environment<'db, 'g>) -> Result<Rc<Value<'db>>, Error> {
-    Ok(Rc::new(Value::bit()))
-}
-
-/// Evaluate the Type type.
-/// Type : Type
-fn eval_hw_universe<'db, 'g>(_env: &mut Environment<'db, 'g>) -> Result<Rc<Value<'db>>, Error> {
-    Ok(Rc::new(Value::HardwareUniverse()))
-}
-
-/// Evaluate a hardware arrow type.
-/// (a -> b) : Type when a, b : Type
-fn eval_harrow<'db, 'g>(
+fn eval_check<'db, 'g>(
     env: &mut Environment<'db, 'g>,
-    harrow: &syn::HArrow<'db>,
+    chk: &syn::Check<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    let source = eval(env, &harrow.source)?;
-    let target = eval(env, &harrow.target)?;
-    Ok(Rc::new(Value::harrow(source, target)))
+    eval(env, &chk.term)
 }
 
-/// Evaluate a lifted hardware type.
-/// ^ht : Type when ht : Type
-fn eval_lift<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    lift: &syn::Lift<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
-    let hw_type = eval(env, &lift.tm)?;
-    Ok(Rc::new(Value::lift(hw_type)))
-}
-
-/// Evaluate a quoted hardware term.
-/// 'circuit : ^ht when circuit : HWTerm ht
-fn eval_quote<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    quote: &syn::Quote<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
-    // Evaluate the hardware term to a hardware value
-    let mut henv = HEnvironment::new();
-    let hw_value = eval_hardware(&mut henv, env, &quote.tm)?;
-    Ok(Rc::new(Value::quote(hw_value)))
-}
-
-/// Evaluate hardware term to hardware value.
-/// This performs proper normalization including beta-reduction and primitive operations.
-pub fn eval_hardware<'db, 'g>(
-    henv: &mut HEnvironment<'db>,
-    env: &mut Environment<'db, 'g>,
-    hsyntax: &syn::Syntax<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
-    match hsyntax {
-        // Canonical bit values
-        syn::Syntax::Zero(_) => Ok(Rc::new(Value::Zero)),
-        syn::Syntax::One(_) => Ok(Rc::new(Value::One)),
-
-        // HardwareUniverse variable - look up in hardware environment
-        syn::Syntax::HVariable(var) => {
-            let level = var.index.to_level(henv.depth());
-            henv.get(level).cloned().ok_or(Error::BadApplication)
-        }
-
-        // HardwareUniverse constant - treat as neutral
-        syn::Syntax::HConstant(hconst) => {
-            // HardwareUniverse constants are references to user-defined hardware functions
-            // They evaluate to neutral values (like variables)
-            Ok(Rc::new(Value::HConstant(hconst.name)))
-        }
-
-        // Lambda: create a closure
-        syn::Syntax::Module(lam) => {
-            // Capture both the current hardware environment and the current
-            // meta-level local environment. This ensures that splices inside
-            // the lambda body that reference meta-level variables (e.g. in
-            // recursive generators) continue to see the correct environment
-            // when the closure is later applied during evaluation/quotation.
-            Ok(Rc::new(Value::Module(
-                henv.clone(),
-                env.local.clone(),
-                lam.body.clone(),
-            )))
-        }
-
-        // Application: evaluate and potentially beta-reduce
-        syn::Syntax::HApplication(app) => {
-            let fun = eval_hardware(henv, env, &app.function)?;
-            let arg = eval_hardware(henv, env, &app.argument)?;
-            apply_hardware(henv, env, fun, arg)
-        }
-
-        // Splice: THE BRIDGE from meta to hardware
-        syn::Syntax::Splice(splice) => {
-            let meta_val = eval(env, &splice.term)?;
-
-            match &*meta_val {
-                // Success: The meta-computation produced a Quote value
-                Value::Quote(hw_value) => Ok(hw_value.clone()),
-
-                // Stuck: The meta-computation hit a neutral (variable/metavar)
-                // Embed it as a neutral in the hardware value
-                Value::Rigid(_) | Value::Flex(_) => Ok(Rc::new(Value::splce(splice.term.clone()))),
-
-                // Type error: splicing something that's not code or neutral
-                _ => Err(Error::BadSplice),
-            }
-        }
-
-        // Type check: just evaluate the term
-        syn::Syntax::HCheck(check) => eval_hardware(henv, env, &check.term),
-
-        // HardwareUniverse primitive reference
-        syn::Syntax::HPrim(hprim) => Ok(Rc::new(Value::HPrim(hprim.name))),
-    }
-}
-
-/// Apply a hardware function to an argument (during evaluation).
-/// This is used internally when evaluating hardware applications.
-fn apply_hardware<'db, 'g>(
-    _henv: &mut HEnvironment<'db>,
-    env: &mut Environment<'db, 'g>,
-    fun: Rc<Value<'db>>,
+/// Perform the application of a rigid neutral to an argument.
+fn apply_rigid<'db>(
+    global: &GlobalEnv<'db>,
+    rigid: &Rigid<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    match &*fun {
-        // Beta-reduction: apply lambda
-        Value::Module(closure) => run_hclosure(env.global, closure, [arg]),
-
-        // Neutral application: create HApp
-        Value::HVariable(_)
-        | Value::Splice(_)
-        | Value::HConstant(_)
-        | Value::HPrim(_)
-        | Value::HApp(_, _) => Ok(Rc::new(Value::happ(fun, arg))),
-
-        // Type error: trying to apply non-function
-        _ => Err(Error::BadApplication),
-    }
-}
-
-/// Run a hardware closure with arguments.
-/// This is analogous to `run_closure` for meta-level closures.
-///
-/// HardwareUniverse closures store syntax + an environment. To apply them, we:
-/// 1. Clone the closure's hardware environment
-/// 2. Extend it with the arguments
-/// 3. Re-evaluate the body
-///
-pub fn run_hclosure<'db, T>(
-    global: &GlobalEnv<'db>,
-    closure: &dom::HClosure<'db>,
-    args: T,
-) -> Result<Rc<Value<'db>>, Error>
-where
-    T: IntoIterator<Item = Rc<Value<'db>>>,
-{
-    let mut henv = closure.env.clone();
-    for arg in args {
-        henv.push(arg);
-    }
-    let mut meta_env = Environment {
-        global,
-        // Reuse the captured meta-level local environment so that splices
-        // inside the hardware closure body can correctly reference
-        // meta-level variables that were in scope when the closure was
-        // created (e.g. the `%m` in the `@Succ %m` branch of QueueGen).
-        local: closure.local.clone(),
+    // If the operator is not pi-typed, bail.
+    let Value::Pi(pi) = rigid.ty.as_ref() else {
+        return Err(Error::BadApplication);
     };
-    eval_hardware(&mut henv, &mut meta_env, &closure.body)
+
+    // Use the pi type of the neutral to compute typing information.
+    let source_ty = pi.source.clone();
+    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
+
+    // Build the application eliminator.
+    let arg_normal = Normal::new(source_ty, arg);
+    let eliminator = Eliminator::application(arg_normal);
+
+    // Extend the spine with the application.
+    let mut spine = rigid.spine.clone();
+    spine.push(eliminator);
+
+    // Create the new rigid neutral.
+    let new_rigid = Rigid::new(rigid.head.clone(), spine, target_ty);
+    Ok(Rc::new(Value::Rigid(new_rigid)))
 }
 
-/// Apply a hardware value to an argument (in the value domain).
-/// This is the hardware equivalent of `run_application`.
-///
-/// Used during quotation to apply hardware lambdas to fresh variables.
-pub fn apply_Value<'db>(
+/// Perform the application of a flexible neutral to an argument.
+fn apply_flex<'db>(
     global: &GlobalEnv<'db>,
-    fun: &Value<'db>,
+    flex: &Flex<'db>,
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    match fun {
-        // Beta-reduction: apply lambda via run_hclosure
-        Value::Module(closure) => run_hclosure(global, closure, [arg]),
+    // If the operator is not pi-typed, bail.
+    let Value::Pi(pi) = flex.ty.as_ref() else {
+        return Err(Error::BadApplication);
+    };
 
-        // Neutral application: create HApp node
-        Value::HVariable(_)
-        | Value::Splice(_)
-        | Value::HConstant(_)
-        | Value::HPrim(_)
-        | Value::HApp(_, _) => Ok(Rc::new(Value::happ(Rc::new(fun.clone()), arg))),
+    // Use the pi type of the neutral to compute typing information.
+    let source_ty = pi.source.clone();
+    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
 
-        // Type error: trying to apply non-function
-        _ => Err(Error::BadApplication),
-    }
+    // Build the application eliminator.
+    let arg_normal = Normal::new(source_ty, arg);
+    let eliminator = Eliminator::application(arg_normal);
+
+    // Extend the spine with the application.
+    let mut spine = flex.spine.clone();
+    spine.push(eliminator);
+
+    // Create the new flex neutral.
+    let new_flex = Flex::new(flex.head.clone(), spine, target_ty);
+    Ok(Rc::new(Value::Flex(new_flex)))
 }
 
 fn eval_application<'db, 'g>(
@@ -443,62 +400,6 @@ pub fn apply_lambda<'db>(
     arg: Rc<Value<'db>>,
 ) -> Result<Rc<Value<'db>>, Error> {
     run_closure(global, &lambda.body, [arg])
-}
-
-/// Perform the application of a rigid neutral to an argument.
-fn apply_rigid<'db>(
-    global: &GlobalEnv<'db>,
-    rigid: &Rigid<'db>,
-    arg: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
-    // If the operator is not pi-typed, bail.
-    let Value::Pi(pi) = rigid.ty.as_ref() else {
-        return Err(Error::BadApplication);
-    };
-
-    // Use the pi type of the neutral to compute typing information.
-    let source_ty = pi.source.clone();
-    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
-
-    // Build the application eliminator.
-    let arg_normal = Normal::new(source_ty, arg);
-    let eliminator = Eliminator::application(arg_normal);
-
-    // Extend the spine with the application.
-    let mut spine = rigid.spine.clone();
-    spine.push(eliminator);
-
-    // Create the new rigid neutral.
-    let new_rigid = Rigid::new(rigid.head, spine, target_ty);
-    Ok(Rc::new(Value::Rigid(new_rigid)))
-}
-
-/// Perform the application of a flexible neutral to an argument.
-fn apply_flex<'db>(
-    global: &GlobalEnv<'db>,
-    flex: &Flex<'db>,
-    arg: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
-    // If the operator is not pi-typed, bail.
-    let Value::Pi(pi) = flex.ty.as_ref() else {
-        return Err(Error::BadApplication);
-    };
-
-    // Use the pi type of the neutral to compute typing information.
-    let source_ty = pi.source.clone();
-    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
-
-    // Build the application eliminator.
-    let arg_normal = Normal::new(source_ty, arg);
-    let eliminator = Eliminator::application(arg_normal);
-
-    // Extend the spine with the application.
-    let mut spine = flex.spine.clone();
-    spine.push(eliminator);
-
-    // Create the new flex neutral.
-    let new_flex = Flex::new(flex.head.clone(), spine, target_ty);
-    Ok(Rc::new(Value::Flex(new_flex)))
 }
 
 fn eval_case<'db, 'g>(
@@ -588,7 +489,7 @@ fn run_case_on_rigid<'db>(
     spine.push(eliminator);
 
     // Create the new rigid neutral.
-    let new_rigid = Rigid::new(rigid.head, spine, final_ty);
+    let new_rigid = Rigid::new(rigid.head.clone(), spine, final_ty);
     Ok(Rc::new(Value::Rigid(new_rigid)))
 }
 

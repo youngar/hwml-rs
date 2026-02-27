@@ -168,7 +168,7 @@ fn rename_eliminator<'db>(
             let arg_normal = val::Normal::new(arg_ty, arg_value);
             Ok(Eliminator::application(arg_normal))
         }
-        Eliminator::Case(c) => {
+        Eliminator::Case(_c) => {
             // Currently don't support renaming cases - we currently need to
             // know the binder depth of the motive, and we are reading that
             // off the type.  We will probably rework the motive.
@@ -299,8 +299,7 @@ fn solve<'db>(
     let depth = spine.len();
 
     // Quote the body back to syntax.
-    let mut rhs_syntax =
-        quote::quote(_db, global, depth, &ty, &rhs).map_err(UnificationError::Quote)?;
+    let mut rhs_syntax = quote::quote(global, depth, &rhs, &ty).map_err(UnificationError::Quote)?;
 
     // Wrap the syntax in binders.
     for _ in 0..depth {
@@ -310,7 +309,7 @@ fn solve<'db>(
     println!("Solved metavariable: {:?}", rhs_syntax);
 
     // Evaluate the solution back to a value.
-    let rhs_value = eval::eval(
+    let _rhs_value = eval::eval(
         &mut Environment {
             global,
             local: LocalEnv::new(),
@@ -427,7 +426,7 @@ pub fn unify<'db>(
             unify(db, global, mctx, depth + 1, l1_body, l2_body)
         }
         (Value::Universe(u1), Value::Universe(u2)) => {
-            if u1 != u2 {
+            if u1.level != u2.level {
                 return Err(UnificationError::Mismatch(lhs, rhs));
             }
             Ok(())

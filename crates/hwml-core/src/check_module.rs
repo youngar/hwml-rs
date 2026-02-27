@@ -9,11 +9,11 @@ use crate::declaration::{
     Constant, Declaration, Module, Primitive, TypeConstructor as DeclTypeConstructor,
 };
 use crate::eval;
-use crate::syn::{ConstantId, Syntax, Telescope};
+use crate::syn::{Syntax, Telescope};
 use crate::val::{
-    ConstantInfo, DataConstructorInfo, GlobalEnv, HardwareConstantInfo, HardwarePrimitiveInfo,
-    PrimitiveInfo, TypeConstructorInfo, Value,
+    ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
+use crate::ConstantId;
 use std::rc::Rc;
 
 /// Errors that can occur during module checking.
@@ -232,7 +232,7 @@ fn is_hardware_type_syntax<'db>(ty: &Syntax<'db>) -> bool {
 /// Returns None if the type is not a Lift.
 pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a Rc<Value<'db>>> {
     match ty {
-        Value::Lift(inner) => Some(inner),
+        Value::Lift(lift) => Some(&lift.ty),
         _ => None,
     }
 }

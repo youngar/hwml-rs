@@ -1,40 +1,7 @@
 use crate::common::{Index, MetaVariableId, UniverseLevel};
-use crate::symbol::InternedString;
-use hwml_support::{FromWithDb, IntoWithDb, LineInfo};
-use salsa::Database;
-use std::{fmt, marker::PhantomData, rc::Rc};
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct ConstantId<'db>(pub InternedString<'db>);
-
-impl<'db> ConstantId<'db> {
-    /// Create a new ConstantId from an interned string.
-    pub fn new(interned: InternedString<'db>) -> Self {
-        ConstantId(interned)
-    }
-
-    /// Get the interned string for this constant.
-    pub fn interned(&self) -> InternedString<'db> {
-        self.0
-    }
-
-    /// Get the string name for this constant.
-    pub fn name(&self, db: &'db dyn Database) -> &str {
-        self.0.text(db)
-    }
-}
-
-impl<'db, T> FromWithDb<'db, T> for ConstantId<'db>
-where
-    T: IntoWithDb<'db, InternedString<'db>>,
-{
-    fn from_with_db<Db>(db: &'db Db, value: T) -> Self
-    where
-        Db: salsa::Database + ?Sized,
-    {
-        ConstantId::new(value.into_with_db(db))
-    }
-}
+use crate::ConstantId;
+use hwml_support::IntoWithDb;
+use std::{marker::PhantomData, rc::Rc};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Telescope<'db> {
@@ -315,12 +282,20 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::module(body))
     }
 
-    pub fn happlication(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Syntax<'db> {
-        Syntax::HApplication(HApplication::new(function, argument))
+    pub fn happlication(
+        module: RcSyntax<'db>,
+        module_ty: RcSyntax<'db>,
+        argument: RcSyntax<'db>,
+    ) -> Syntax<'db> {
+        Syntax::HApplication(HApplication::new(module, module_ty, argument))
     }
 
-    pub fn happlication_rc(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> RcSyntax<'db> {
-        Rc::new(Syntax::happlication(function, argument))
+    pub fn happlication_rc(
+        module: RcSyntax<'db>,
+        module_ty: RcSyntax<'db>,
+        argument: RcSyntax<'db>,
+    ) -> RcSyntax<'db> {
+        Rc::new(Syntax::happlication(module, module_ty, argument))
     }
 
     pub fn prim(name: ConstantId<'db>) -> Syntax<'db> {
@@ -711,13 +686,22 @@ impl<'db> Module<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct HApplication<'db> {
-    pub function: RcSyntax<'db>,
+    pub module: RcSyntax<'db>,
+    pub module_ty: RcSyntax<'db>,
     pub argument: RcSyntax<'db>,
 }
 
 impl<'db> HApplication<'db> {
-    pub fn new(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> HApplication<'db> {
-        HApplication { function, argument }
+    pub fn new(
+        module: RcSyntax<'db>,
+        module_ty: RcSyntax<'db>,
+        argument: RcSyntax<'db>,
+    ) -> HApplication<'db> {
+        HApplication {
+            module,
+            module_ty,
+            argument,
+        }
     }
 }
 

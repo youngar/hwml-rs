@@ -102,19 +102,8 @@ fn run_core(args: Args) {
                 hwml_core::declaration::Declaration::Primitive(p) => {
                     println!("  - prim {}: {:?}", p.name.name(&db), p.ty);
                 }
-                hwml_core::declaration::Declaration::HardwarePrimitive(hp) => {
-                    println!("  - hprim {}: {:?}", hp.name.name(&db), hp.ty);
-                }
                 hwml_core::declaration::Declaration::Constant(c) => {
                     println!("  - const {}: {:?} = {:?}", c.name.name(&db), c.ty, c.value);
-                }
-                hwml_core::declaration::Declaration::HardwareConstant(hc) => {
-                    println!(
-                        "  - hconst {}: {:?} = {:?}",
-                        hc.name.name(&db),
-                        hc.ty,
-                        hc.value
-                    );
                 }
                 hwml_core::declaration::Declaration::TypeConstructor(tc) => {
                     println!(
@@ -135,17 +124,9 @@ fn run_core(args: Args) {
                 print!("  prim ${} : ", p.name.name(&db));
                 hwml_core::syn::dump_syntax(&db, &p.ty);
             }
-            hwml_core::declaration::Declaration::HardwarePrimitive(hp) => {
-                print!("  hprim ${} : ", hp.name.name(&db));
-                hwml_core::syn::dump_syntax(&db, &hp.ty);
-            }
             hwml_core::declaration::Declaration::Constant(c) => {
                 print!("  const @{} : ", c.name.name(&db));
                 hwml_core::syn::dump_syntax(&db, &c.ty);
-            }
-            hwml_core::declaration::Declaration::HardwareConstant(hc) => {
-                print!("  hconst ${} : ", hc.name.name(&db));
-                hwml_core::syn::dump_syntax(&db, &hc.ty);
             }
             hwml_core::declaration::Declaration::TypeConstructor(tc) => {
                 print!("  tcon @{} : ", tc.name.name(&db));
