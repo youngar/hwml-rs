@@ -156,10 +156,6 @@ pub enum Token {
     DCon,
     #[token("where", priority = 5)]
     Where,
-    #[token("~", priority = 4)]
-    Tilde,
-    #[token("'", priority = 4)]
-    Quote,
 }
 
 impl fmt::Display for Token {
@@ -724,16 +720,6 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             Token::Primitive(name) => {
                 state.advance_token();
                 Ok(Some(Syntax::prim_rc_from(state.db(), &name)))
-            }
-            Token::Tilde => {
-                // Splice is transparent - just parse the following atom
-                state.advance_token();
-                p_atom_opt(state)
-            }
-            Token::Quote => {
-                // Quote is transparent - just parse the following atom
-                state.advance_token();
-                p_atom_opt(state)
             }
             _ => Ok(None),
         },
@@ -1677,31 +1663,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_splice_simple() {
-        let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
-        // ~@42 - splice syntax node is gone, just the underlying term
-        assert_eq!(parse(&db, "~@42"), c("42"));
-    }
-
-    #[test]
-    fn test_parse_splice_with_lambda() {
-        let db = Database::new();
-        let v = |i| Syntax::variable_rc(Index(i));
-        let lam = |body| Syntax::lambda_rc(body);
-        // ~(λ %x → %x) - splice is gone
-        assert_eq!(parse(&db, "~(λ %x → %x)"), lam(v(0)));
-    }
-
-    #[test]
-    fn test_parse_splice_with_universe() {
-        let db = Database::new();
-        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
-        // ~𝒰0 - splice is gone
-        assert_eq!(parse(&db, "~𝒰0"), u0());
-    }
-
-    #[test]
     fn test_parse_happlication_in_module() {
         let db = Database::new();
         let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
@@ -1727,26 +1688,6 @@ mod tests {
             parse(&db, "@f<Bit → Bit → Bit>(@x)"),
             happ(c("f"), harrow(bit(), harrow(bit(), bit())), c("x"))
         );
-    }
-
-    #[test]
-    fn test_parse_happlication_with_splice_arg() {
-        let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
-        let bit = || Syntax::bit_rc();
-        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
-        let happ = |m, ty, x| Syntax::happlication_rc(m, ty, x);
-        // @42<Bit>(~𝒰0) - splice is gone
-        assert_eq!(parse(&db, "@42<Bit>(~𝒰0)"), happ(c("42"), bit(), u0()));
-    }
-
-    #[test]
-    fn test_parse_hterm_check_with_splice() {
-        let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(ConstantId::from_with_db(&db, s));
-        let bit = || Syntax::bit_rc();
-        // ~@42 : Bit - splice is gone
-        assert_eq!(parse(&db, "~@42 : Bit"), Syntax::check_rc(bit(), c("42")));
     }
 
     #[test]
@@ -1782,7 +1723,6 @@ mod tests {
             "mod %x %y → %x",
             "@42<Bit>(@99)",
             "(mod %x → %x) : Bit → Bit",
-            "~@42",
             "mod %x → !0",
             "!0<Bit>(!1)",
         ];
@@ -1852,14 +1792,6 @@ mod tests {
     fn test_parse_one_constant() {
         let db = Database::new();
         assert_eq!(parse(&db, "1"), Syntax::one_rc());
-    }
-
-    #[test]
-    fn test_parse_quoted_zero_one() {
-        let db = Database::new();
-        // Quote syntax node is gone - just return the underlying hardware term
-        assert_eq!(parse(&db, "'0"), Syntax::zero_rc());
-        assert_eq!(parse(&db, "'1"), Syntax::one_rc());
     }
 
     #[test]
