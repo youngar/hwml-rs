@@ -184,7 +184,25 @@ pub fn rename<'db>(
         Value::TypeConstructor(tcon) => {
             rename_type_constructor_instance(db, global, meta, renaming, tcon, value)
         }
+        // Hardware-level types
+        Value::Lift(lift) => rename_lift_instance(db, global, meta, renaming, lift, value),
+        Value::HardwareUniverse(_) => rename_hwuniverse_instance(db, global, meta, renaming, value),
+        Value::SignalUniverse(_) => {
+            rename_signal_universe_instance(db, global, meta, renaming, value)
+        }
+        Value::ModuleUniverse(_) => {
+            rename_module_universe_instance(db, global, meta, renaming, value)
+        }
+        Value::SLift(slift) => rename_slift_instance(db, global, meta, renaming, slift, value),
+        Value::MLift(mlift) => rename_mlift_instance(db, global, meta, renaming, mlift, value),
+        Value::Bit(_) => rename_bit_instance(db, global, meta, renaming, value),
+        Value::HArrow(harrow) => rename_harrow_instance(db, global, meta, renaming, harrow, value),
+        // Neutral types
+        Value::Prim(_) | Value::Constant(_) => {
+            rename_neutral_instance(db, global, meta, renaming, value)
+        }
         Value::Rigid(rigid) => rename_rigid_instance(db, global, meta, renaming, rigid, value),
+        Value::Flex(flex) => rename_flex_instance(db, global, meta, renaming, flex, value),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
             ty: ty.clone(),
@@ -232,9 +250,212 @@ fn rename_rigid_instance<'db>(
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match value {
         Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: Rc::new(value.clone()),
             ty: Rc::new(Value::Rigid(ty.clone())),
+        }),
+    }
+}
+
+fn rename_flex_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    ty: &val::Flex<'db>,
+    value: &Value<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match value {
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: Rc::new(value.clone()),
+            ty: Rc::new(Value::Flex(ty.clone())),
+        }),
+    }
+}
+
+fn rename_neutral_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match &**value {
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: value.clone(),
+        }),
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Hardware-Level Instance Functions
+////////////////////////////////////////////////////////////////////////////////
+
+fn rename_lift_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    lift: &val::Lift<'db>,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    // Lift's inner type determines what kind of values we expect
+    match lift.ty.as_ref() {
+        Value::SLift(slift) => rename_slift_instance(db, global, meta, renaming, slift, value),
+        Value::MLift(mlift) => rename_mlift_instance(db, global, meta, renaming, mlift, value),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::Lift(lift.clone())),
+        }),
+    }
+}
+
+fn rename_hwuniverse_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    // HardwareUniverse has two type constructors: SLift and MLift
+    match &**value {
+        Value::SLift(slift) => rename_slift(db, global, meta, renaming, slift),
+        Value::MLift(mlift) => rename_mlift(db, global, meta, renaming, mlift),
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::HardwareUniverse(val::HardwareUniverse::new())),
+        }),
+    }
+}
+
+fn rename_signal_universe_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    // SignalUniverse has Bit as its type constructor
+    match &**value {
+        Value::Bit(_) => Ok(Syntax::bit_rc()),
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::SignalUniverse(val::SignalUniverse::new())),
+        }),
+    }
+}
+
+fn rename_module_universe_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    // ModuleUniverse has HArrow as its type constructor
+    match &**value {
+        Value::HArrow(harrow) => rename_harrow(db, global, meta, renaming, harrow),
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::ModuleUniverse(val::ModuleUniverse::new())),
+        }),
+    }
+}
+
+fn rename_slift_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    slift: &val::SLift<'db>,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    // SLift wraps a signal type (like Bit)
+    match slift.ty.as_ref() {
+        Value::Bit(_) => rename_bit_instance(db, global, meta, renaming, value),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::SLift(slift.clone())),
+        }),
+    }
+}
+
+fn rename_mlift_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    mlift: &val::MLift<'db>,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    // MLift wraps a module type (like HArrow)
+    match mlift.ty.as_ref() {
+        Value::HArrow(harrow) => rename_harrow_instance(db, global, meta, renaming, harrow, value),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::MLift(mlift.clone())),
+        }),
+    }
+}
+
+fn rename_bit_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match &**value {
+        Value::Zero(_) => Ok(Syntax::zero_rc()),
+        Value::One(_) => Ok(Syntax::one_rc()),
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::Bit(val::Bit::new())),
+        }),
+    }
+}
+
+fn rename_harrow_instance<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    harrow: &val::HArrow<'db>,
+    value: &Rc<Value<'db>>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    match &**value {
+        Value::Module(module) => rename_module(db, global, meta, renaming, harrow, module),
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: value.clone(),
+            ty: Rc::new(Value::HArrow(harrow.clone())),
         }),
     }
 }
@@ -254,6 +475,16 @@ pub fn rename_type<'db>(
         Value::Universe(universe) => rename_universe(db, global, meta, renaming, universe),
         Value::Pi(pi) => rename_pi(db, global, meta, renaming, pi),
         Value::TypeConstructor(tcon) => rename_type_constructor(db, global, meta, renaming, tcon),
+        Value::Lift(lift) => rename_lift(db, global, meta, renaming, lift),
+        Value::HardwareUniverse(_) => Ok(Syntax::hardware_rc()),
+        Value::SLift(slift) => rename_slift(db, global, meta, renaming, slift),
+        Value::MLift(mlift) => rename_mlift(db, global, meta, renaming, mlift),
+        Value::SignalUniverse(_) => Ok(Syntax::signal_universe_rc()),
+        Value::Bit(_) => Ok(Syntax::bit_rc()),
+        Value::ModuleUniverse(_) => Ok(Syntax::module_universe_rc()),
+        Value::HArrow(harrow) => rename_harrow(db, global, meta, renaming, harrow),
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
         Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::NotAType(Rc::new(value.clone()))),
@@ -309,6 +540,56 @@ fn rename_type_constructor<'db>(
     Ok(Syntax::type_constructor_rc(tcon.constructor, syn_args))
 }
 
+fn rename_lift<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    lift: &val::Lift<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let ty = rename_type(db, global, meta, renaming, &lift.ty)?;
+    Ok(Syntax::lift_rc(ty))
+}
+
+fn rename_slift<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    slift: &val::SLift<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let ty = rename_type(db, global, meta, renaming, &slift.ty)?;
+    Ok(Syntax::slift_rc(ty))
+}
+
+fn rename_mlift<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    mlift: &val::MLift<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let ty = rename_type(db, global, meta, renaming, &mlift.ty)?;
+    Ok(Syntax::mlift_rc(ty))
+}
+
+fn rename_harrow<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    harrow: &val::HArrow<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let sem_source = &harrow.source;
+    let sem_target_closure = &harrow.target;
+    let syn_source = rename_type(db, global, meta, renaming, &sem_source)?;
+    let syn_target = renaming.under_binder(sem_source.clone(), |renaming, var| {
+        let sem_target = eval::run_closure(global, &sem_target_closure, [var])?;
+        rename_type(db, global, meta, renaming, &sem_target)
+    })?;
+    Ok(Syntax::harrow_rc(syn_source, syn_target))
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Terms
 ////////////////////////////////////////////////////////////////////////////////
@@ -333,6 +614,36 @@ fn rename_lambda<'db>(
             rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
         })?;
     Ok(Rc::new(Syntax::lambda(syn_body)))
+}
+
+fn rename_module<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    sem_harrow: &val::HArrow<'db>,
+    sem_module: &val::Module<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    let val::HArrow {
+        source: sem_source,
+        target: sem_target_closure,
+    } = sem_harrow;
+    let syn_body: Rc<Syntax<'db>> =
+        renaming.under_binder(sem_source.clone(), |renaming, var| {
+            let sem_body_ty: Rc<Value<'db>> =
+                eval::run_closure(global, sem_target_closure, [var.clone()])?;
+            let sem_body: Rc<Value<'db>> = eval::run_closure(global, &sem_module.body, [var])?;
+            rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
+        })?;
+    Ok(Syntax::module_rc(syn_body))
+}
+
+fn rename_prim<'db>(prim: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
+    Ok(Syntax::prim_rc(*prim))
+}
+
+fn rename_constant<'db>(constant: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
+    Ok(Syntax::constant_rc(*constant))
 }
 
 fn rename_rigid<'db>(
