@@ -23,7 +23,7 @@ struct Args {
     emit_verilog: bool,
 
     /// Skip type checking in core mode.
-    #[arg(long = "skip-chec")]
+    #[arg(long = "skip-check")]
     skip_check: bool,
 
     /// Input file to read.
@@ -38,43 +38,39 @@ fn main() {
     }
 
     if args.core {
-        run_core(args);
+        return run_core(args);
+    }
+
+    let path = args.file.canonicalize().unwrap();
+    let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
+    let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
+
+    let Some(program) = parse_result else {
+        println!("Failed to parse");
         return;
-    }
+    };
 
-    #[cfg(feature = "surface")]
-    {
-        let path = args.file.canonicalize().unwrap();
-        let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
-        let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
+    println!("=========================");
+    println!("AST");
+    println!("=========================");
+    println!("{program:#?}");
 
-        let Some(program) = parse_result else {
-            println!("Failed to parse");
+    let db = hwml_core::Database::new();
+
+    let global_env = match hwml_elab::elab_program(&db, &program) {
+        Ok(g) => g,
+        Err(e) => {
+            println!("Failed to elaborate: {:#?}", e);
             return;
-        };
-        println!("Program: {program:?}");
-        let db = hwml_core::Database::new();
-        //let elab_result = hwml_elab::go(&db, program);
-        //let Ok(module) = elab_result else {
-        //    println!("Failed to elaborate");
-        //    return;
-        //};
-        //println!("Elaborated:");
-        //for decl in module.declarations() {
-        //    println!("{decl:?}");
-        //}
+        }
+    };
 
-        println!("Done.")
-    }
-
-    #[cfg(not(feature = "surface"))]
-    {
-        eprintln!("Error: Surface syntax support not enabled.");
-        eprintln!(
-            "Use --core flag for core syntax, or rebuild with: cargo build --features surface"
-        );
-        std::process::exit(1);
-    }
+    // println!("=========================");
+    // println!("Elaborated");
+    // println!("=========================");
+    // for decl in module.declarations() {
+    //     println!("{decl:?}");
+    // }
 }
 
 fn run_core(args: Args) {

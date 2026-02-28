@@ -89,7 +89,7 @@ pub enum Token {
     #[token("~", priority = 5)]
     Splice,
     #[token("^", priority = 5)]
-    Raise,
+    Lift,
     #[token(",", priority = 4)]
     Comma,
     #[token(".", priority = 4)]
@@ -112,7 +112,7 @@ pub enum Token {
     BlockComment,
     #[regex(r"[0-9]+", priority = 3)]
     Number,
-    // Brackets, semicolons, commas, periods, quote, splice, and raise should break up identifiers.
+    // Brackets, semicolons, commas, periods, quote, splice, and lift should break up identifiers.
     #[regex(r"[^\p{gc=Separator}\p{gc=Control}{}()\[\];,\.'~^]+", priority = 2)]
     Ident,
     // Any valid UTF-8 character is treated as some unknown kind of whitespace.

@@ -44,7 +44,7 @@ pub enum Expression {
     Id(Id),
     Quote(Quote),
     Splice(Splice),
-    Raise(Raise),
+    Lift(Lift),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -164,6 +164,6 @@ pub struct Splice {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
-pub struct Raise {
+pub struct Lift {
     pub expr: Box<Expression>,
 }
