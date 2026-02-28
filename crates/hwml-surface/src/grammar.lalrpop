@@ -60,7 +60,7 @@ Expr3: Box<Expression> = {
   <n:Num> => Box::new(Expression::Num(n)),
   <q:Quote> => Box::new(Expression::Quote(q)),
   <s:Splice> => Box::new(Expression::Splice(s)),
-  <r:Raise> => Box::new(Expression::Raise(r)),
+  <r:Lift> => Box::new(Expression::Lift(r)),
 };
 
 // (x1 .. xn : X) (y1 .. yn : Y) -> Z
@@ -185,8 +185,8 @@ Splice: Splice = {
   "~" <expr:Expr3> => Splice::new(expr)
 };
 
-Raise: Raise = {
-  "^" <expr:Expr3> => Raise::new(expr)
+Lift: Lift = {
+  "^" <expr:Expr3> => Lift::new(expr)
 };
 
 MatchClauses: Vec<MatchClause> = {
@@ -245,7 +245,7 @@ extern {
     "_" => Token::Underscore,
     "'" => Token::Quote,
     "~" => Token::Splice,
-    "^" => Token::Raise,
+    "^" => Token::Lift,
     "num" => Token::Number,
     "id" => Token::Ident,
     "error" => Token::Error,

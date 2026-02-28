@@ -2,7 +2,6 @@ pub mod check;
 pub mod check_module;
 pub mod common;
 pub mod declaration;
-pub mod environment;
 pub mod equal;
 pub mod eval;
 pub mod lower;
