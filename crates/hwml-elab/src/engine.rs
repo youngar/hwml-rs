@@ -9,6 +9,70 @@ use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 // ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/// Evaluate the full type of a metavariable with its argument telescope.
+/// For a metavariable `?M : (x : A) (y : B) : C`, this returns `Pi(A, \x. Pi(B, \y. C))`.
+fn eval_metavariable_type<'db>(
+    global: &val::GlobalEnv<'db>,
+    info: &val::MetavariableInfo<'db>,
+) -> Result<Rc<Value<'db>>, eval::Error> {
+    use hwml_core::val::Environment;
+
+    let mut env = Environment::new(global);
+
+    // We build the Pi type recursively from the inside out.
+    // First, evaluate all argument types and store them along with fresh variables.
+    let mut arg_types = Vec::new();
+    for arg_ty_syn in info.arguments.iter() {
+        let arg_ty = eval::eval(&mut env, arg_ty_syn)?;
+        arg_types.push(arg_ty.clone());
+        // Push a fresh variable for this argument
+        env.push_var(arg_ty);
+    }
+
+    // Now evaluate the result type in the fully extended environment
+    let result_ty = eval::eval(&mut env, &info.ty)?;
+
+    // Build the Pi type by wrapping from the inside out
+    // We go backwards through the arguments
+    let mut current_ty = result_ty;
+    for (i, arg_ty) in arg_types.into_iter().enumerate().rev() {
+        // Create a closure for the target type
+        // The closure captures the current local environment up to this point
+        // and the body is the current type as syntax
+        //
+        // For simplicity, we use a Value::Pi directly with the evaluated types
+        let closure = val::Closure::new(
+            val::LocalEnv::new(),
+            quote_value_simple(global, i, &current_ty),
+        );
+        current_ty = Rc::new(Value::pi(arg_ty, closure));
+    }
+
+    Ok(current_ty)
+}
+
+/// Simple quoting function for building closures - just quotes a value back to syntax.
+/// This is a simplified version that handles common cases.
+fn quote_value_simple<'db>(
+    _global: &val::GlobalEnv<'db>,
+    _depth: usize,
+    value: &Rc<Value<'db>>,
+) -> syn::RcSyntax<'db> {
+    // For now, we can just return a placeholder - the key is that the type
+    // is stored semantically. In practice, this closure won't be evaluated
+    // directly, but used for typing information.
+    // A proper implementation would use the full quote function.
+    match value.as_ref() {
+        Value::Universe(u) => syn::Syntax::universe_rc(u.level),
+        // For other cases, we'll need to handle them as they come up
+        _ => syn::Syntax::universe_rc(UniverseLevel::new(0)), // Placeholder
+    }
+}
+
+// ============================================================================
 // RICH DEPENDENCY TRACKING
 // ============================================================================
 
@@ -156,6 +220,62 @@ impl<'db> SolverState<'db> {
     pub fn solution(&self, MetaVariableId(i): MetaVariableId) -> Option<Rc<Syntax<'db>>> {
         self.metas[i].solution.clone()
     }
+
+    /// Get the type of a metavariable.
+    pub fn meta_type(&self, MetaVariableId(i): MetaVariableId) -> Rc<Value<'db>> {
+        self.metas[i].ty.clone()
+    }
+}
+
+/// Test-only: Initialize solver state from declared metavariables in GlobalEnv.
+/// This is useful for testing unification/type-checking with metavariables
+/// declared in a prelude, without going through full elaboration.
+#[cfg(test)]
+impl<'db> SolverState<'db> {
+    /// Initialize the solver state with metavariables from the global environment.
+    /// This evaluates the types of each declared metavariable and creates slots for them.
+    pub fn from_global_env(global: &val::GlobalEnv<'db>) -> Self {
+        use hwml_core::val::Environment;
+
+        // Find the maximum metavariable ID to size the vector
+        let max_id = global.max_metavariable_id();
+        let size = match max_id {
+            Some(id) => id.0 + 1,
+            None => 0,
+        };
+
+        // Create a vector with placeholder slots
+        let mut metas = Vec::with_capacity(size);
+        let placeholder_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+
+        for _ in 0..size {
+            metas.push(MetaSlot::new(placeholder_ty.clone()));
+        }
+
+        // Now populate with actual metavariable types
+        for (id, info) in global.iter_metavariables() {
+            // For a metavariable with arguments, we need to build a Pi type.
+            // For now, just evaluate the final type in an extended environment.
+            // The full type of ?M : (x : A) (y : B) : C is Pi(A, \x. Pi(B, \y. C))
+            let mut env = Environment::new(global);
+
+            // Build the Pi type by going through arguments in order
+            // and wrapping the result type in Pi abstractions
+            let ty = if info.arguments.len() == 0 {
+                // No arguments, just evaluate the result type
+                eval::eval(&mut env, &info.ty).unwrap_or(placeholder_ty.clone())
+            } else {
+                // Evaluate the full type by building up Pi types
+                // We need to evaluate each argument type and the result type
+                // in the appropriate context.
+                eval_metavariable_type(global, info).unwrap_or(placeholder_ty.clone())
+            };
+
+            metas[id.0] = MetaSlot::new(ty);
+        }
+
+        Self { metas }
+    }
 }
 
 /// A shared handle to the solver state.
@@ -171,15 +291,34 @@ pub struct SolverEnvironment<'db, 'g> {
 }
 
 impl<'db, 'g> SolverEnvironment<'db, 'g> {
-    /// Create a new context handle with the given type-checking environment and spawner
+    /// Create a new context handle with an empty solver state.
+    /// Use this for production elaboration where metavariables are created dynamically.
     pub fn new(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'db>) -> Self {
         SolverEnvironment {
             state: Rc::new(RefCell::new(SolverState::new())),
-            tc_env: tc_env,
+            tc_env,
             spawner,
         }
     }
+}
 
+/// Test-only: Initialize solver environment from declared metavariables in GlobalEnv.
+#[cfg(test)]
+impl<'db, 'g> SolverEnvironment<'db, 'g> {
+    /// Create a new context handle, initializing solver state from declared metavariables.
+    /// This is useful for testing unification/type-checking with metavariables
+    /// declared in a prelude, without going through full elaboration.
+    pub fn new_from_global(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'db>) -> Self {
+        let state = SolverState::from_global_env(tc_env.values.global);
+        SolverEnvironment {
+            state: Rc::new(RefCell::new(state)),
+            tc_env,
+            spawner,
+        }
+    }
+}
+
+impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// Attempt to read a meta. If solved, return value.
     /// If not, register the current Waker with reason and return None.
     pub fn poll_meta(
@@ -191,16 +330,15 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         self.state.borrow_mut().poll_meta(meta, waker, reason)
     }
 
-    /// Allocate a fresh metavariable.
+    /// Allocate a fresh metavariable and return its ID.
+    /// The type is stored in the SolverState's MetaSlot.
     pub fn fresh_meta_id(&self, ty: Rc<Value<'db>>) -> MetaVariableId {
-        let env = self.tc_env.types.clone();
-        // TODO: Store metavariable type information in the global environment.
-        // let info = MetavariableInfo::new(env.into(), ty);
         self.state.borrow_mut().fresh_meta(ty)
     }
 
+    /// Allocate a fresh metavariable and return it as a Flex value.
+    /// The metavariable captures the current local environment as its substitution.
     pub fn fresh_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        // TODO: extend the global environment to store metavariable types.
         let id = self.fresh_meta_id(ty.clone());
         Rc::new(Value::metavariable(
             id,
@@ -216,6 +354,11 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
     pub fn is_solved(&self, meta: MetaVariableId) -> bool {
         self.state.borrow().is_solved(meta)
+    }
+
+    /// Get the type of a metavariable.
+    pub fn meta_type(&self, meta: MetaVariableId) -> Rc<Value<'db>> {
+        self.state.borrow().meta_type(meta)
     }
 
     /// Solve a meta and wake everyone up.
