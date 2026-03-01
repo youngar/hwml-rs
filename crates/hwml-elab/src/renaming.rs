@@ -108,7 +108,8 @@ pub fn invert_substitution<'db, 'g>(
     for (i, x) in substitution.iter().enumerate() {
         let x = force(ctx, x.clone())?;
         match &*x {
-            Value::Rigid(r) if !r.spine.is_empty() => {
+            // A plain variable has an empty spine (no eliminators applied)
+            Value::Rigid(r) if r.spine.is_empty() => {
                 if let Some(j) = renaming.map.get(&r.head.level) {
                     return Err(InversionError::NonLinearVariable(j.into(), i, x));
                 }
@@ -230,14 +231,26 @@ fn rename_pi_instance<'db>(
 }
 
 fn rename_type_constructor_instance<'db>(
-    _db: &'db dyn salsa::Database,
-    _global: &GlobalEnv<'db>,
-    _meta: MetaVariableId,
-    _renaming: &mut Renaming,
-    _ty: &val::TypeConstructor<'db>,
-    _value: &Value<'db>,
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    tcon: &val::TypeConstructor<'db>,
+    value: &Value<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
-    todo!();
+    match value {
+        Value::DataConstructor(dcon) => {
+            rename_data_constructor(db, global, meta, renaming, tcon, dcon)
+        }
+        Value::Prim(prim) => rename_prim(prim),
+        Value::Constant(constant) => rename_constant(constant),
+        Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
+        Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
+        _ => Err(Error::IllTyped {
+            tm: Rc::new(value.clone()),
+            ty: Rc::new(Value::TypeConstructor(tcon.clone())),
+        }),
+    }
 }
 
 fn rename_rigid_instance<'db>(
@@ -748,14 +761,131 @@ fn rename_application<'db>(
 }
 
 fn rename_case<'db>(
-    _db: &'db dyn salsa::Database,
-    _global: &GlobalEnv<'db>,
-    _meta: MetaVariableId,
-    _renaming: &mut Renaming,
-    _head: RcSyntax<'db>,
-    _case: &val::Case<'db>,
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    meta: MetaVariableId,
+    renaming: &mut Renaming,
+    head: RcSyntax<'db>,
+    case: &val::Case<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
-    todo!();
+    let type_info = global.type_constructor(case.type_constructor)?.clone();
+    let num_parameters = type_info.num_parameters();
+
+    let parameters = &case.parameters;
+    let index_bindings = type_info.arguments.bindings[num_parameters..].to_vec();
+    let index_telescope = syn::Telescope::from(index_bindings);
+    let index_tys = eval::eval_telescope(global, parameters.clone(), &index_telescope)?;
+
+    let mut branches = Vec::new();
+    for branch in &case.branches {
+        let data_info = global.data_constructor(branch.constructor)?.clone();
+
+        // Create an instance of this data constructor
+        let dcon_arg_tys = eval::eval_telescope(global, parameters.clone(), &data_info.arguments)?;
+        let mut dcon_args = Vec::new();
+        for ty in dcon_arg_tys.types {
+            dcon_args.push(Rc::new(Value::variable(
+                Level::new(renaming.source_depth() + dcon_args.len()),
+                ty,
+            )));
+        }
+        let mut dcon_env = LocalEnv::new();
+        dcon_env.extend(parameters.clone());
+        let dcon_ty_clos = val::Closure::new(dcon_env, data_info.ty.clone());
+        let dcon_ty = eval::run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
+        let Value::TypeConstructor(tcon) = &*dcon_ty else {
+            return Err(Error::IllTyped {
+                tm: dcon_ty.clone(),
+                ty: Rc::new(Value::universe(common::UniverseLevel::new(0))),
+            });
+        };
+        let dcon_val = Rc::new(Value::data_constructor(
+            branch.constructor,
+            dcon_args.clone(),
+        ));
+
+        // Create the arguments to the motive
+        let mut motive_args = tcon.arguments[type_info.num_parameters..].to_vec();
+        motive_args.push(dcon_val);
+        let branch_ty = eval::run_closure(global, &case.motive, motive_args)?;
+
+        // Evaluate the branch body closure
+        let branch_val = eval::run_closure(global, &branch.body, dcon_args)?;
+
+        // Rename the branch body with extended renaming
+        // We need to extend the renaming for the constructor arguments
+        let branch_syn = {
+            // Temporarily extend renaming depth for each constructor argument
+            let original_depth = renaming.depth;
+            for i in 0..branch.arity {
+                let src_level = Level::new(original_depth + i);
+                let tgt_level = Level::new(renaming.map.len());
+                renaming.map.insert(src_level, tgt_level);
+            }
+            renaming.depth = original_depth + branch.arity;
+
+            let result = rename(db, global, meta, renaming, &branch_ty, &branch_val)?;
+
+            // Restore the renaming
+            for i in 0..branch.arity {
+                let src_level = Level::new(original_depth + i);
+                renaming.map.remove(&src_level);
+            }
+            renaming.depth = original_depth;
+
+            result
+        };
+
+        branches.push(syn::CaseBranch::new(
+            branch.constructor,
+            branch.arity,
+            branch_syn,
+        ));
+    }
+
+    // Read back the motive
+    let mut motive_args = Vec::new();
+    for ty in index_tys.types {
+        motive_args.push(Rc::new(Value::variable(
+            Level::new(renaming.source_depth() + motive_args.len()),
+            ty,
+        )));
+    }
+    let scrutinee_ty = Rc::new(Value::type_constructor(
+        case.type_constructor,
+        case.parameters.clone(),
+    ));
+    let scrutinee_var = Rc::new(Value::variable(
+        Level::new(renaming.source_depth()),
+        scrutinee_ty,
+    ));
+    motive_args.push(scrutinee_var);
+    let motive_args_len = motive_args.len();
+    let sem_motive_result = eval::run_closure(global, &case.motive, motive_args)?;
+
+    // Rename the motive with extended depth
+    let syn_motive = {
+        let original_depth = renaming.depth;
+        for i in 0..(1 + motive_args_len) {
+            let src_level = Level::new(original_depth + i);
+            let tgt_level = Level::new(renaming.map.len());
+            renaming.map.insert(src_level, tgt_level);
+        }
+        renaming.depth = original_depth + 1 + motive_args_len;
+
+        let result = rename_type(db, global, meta, renaming, &sem_motive_result)?;
+
+        // Restore the renaming
+        for i in 0..(1 + motive_args_len) {
+            let src_level = Level::new(original_depth + i);
+            renaming.map.remove(&src_level);
+        }
+        renaming.depth = original_depth;
+
+        result
+    };
+
+    Ok(Syntax::case_rc(head, syn_motive, branches))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -810,4 +940,171 @@ fn rename_substitution<'db>(
         env.push(sem_arg.clone());
     }
     Ok(syn_substitution)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Tests
+////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hwml_core::syn::print::print_syntax_to_string;
+    use hwml_core::test_utils::eval_str;
+    use hwml_core::Database;
+
+    /// Test context with database and global environment for concise tests.
+    struct Ctx<'db> {
+        db: &'db Database,
+        global: GlobalEnv<'db>,
+    }
+
+    impl<'db> Ctx<'db> {
+        fn new(db: &'db Database) -> Self {
+            Self {
+                db,
+                global: GlobalEnv::new(),
+            }
+        }
+
+        /// Parse and evaluate a string to a value
+        fn eval(&self, input: &'db str) -> Rc<Value<'db>> {
+            eval_str(self.db, &self.global, input)
+        }
+
+        /// Create an identity renaming at depth 0 (empty map)
+        fn identity_renaming(&self) -> Renaming {
+            Renaming::new(0)
+        }
+
+        /// Create a dummy MetaVariableId for testing
+        fn dummy_meta(&self) -> MetaVariableId {
+            MetaVariableId(0)
+        }
+
+        /// Parse, evaluate term and type, rename the term at the type, return string
+        fn rename_at(&self, term: &'db str, ty: &'db str) -> String {
+            let term_val = self.eval(term);
+            let ty_val = self.eval(ty);
+            let mut renaming = self.identity_renaming();
+            let syntax = rename(
+                self.db,
+                &self.global,
+                self.dummy_meta(),
+                &mut renaming,
+                &ty_val,
+                &term_val,
+            )
+            .expect("rename failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Parse, evaluate a type, and rename_type, returning a string
+        fn rename_type_str(&self, term: &'db str) -> String {
+            let val = self.eval(term);
+            let mut renaming = self.identity_renaming();
+            let syntax = rename_type(
+                self.db,
+                &self.global,
+                self.dummy_meta(),
+                &mut renaming,
+                &val,
+            )
+            .expect("rename_type failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+    }
+
+    // =========================================================================
+    // Type Renaming Tests
+    // =========================================================================
+
+    #[test]
+    fn test_rename_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("U0"), "𝒰0");
+        assert_eq!(c.rename_type_str("U1"), "𝒰1");
+    }
+
+    #[test]
+    fn test_rename_hardware_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("HardwareType"), "HardwareType");
+        assert_eq!(c.rename_type_str("SignalType"), "SignalType");
+        assert_eq!(c.rename_type_str("ModuleType"), "ModuleType");
+    }
+
+    #[test]
+    fn test_rename_bit() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("Bit"), "Bit");
+    }
+
+    #[test]
+    fn test_rename_pi_types() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("∀ (%x : U0) → U0"), "∀ (%0 : 𝒰0) → 𝒰0");
+        assert_eq!(
+            c.rename_type_str("∀ (%x : U0) (%y : U0) → U0"),
+            "∀ (%0 : 𝒰0) (%1 : 𝒰0) → 𝒰0"
+        );
+    }
+
+    #[test]
+    fn test_rename_harrow_types() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("Bit → Bit"), "Bit → Bit");
+    }
+
+    #[test]
+    fn test_rename_lift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("^Bit"), "^Bit");
+    }
+
+    #[test]
+    fn test_rename_slift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("^sBit"), "^sBit");
+    }
+
+    #[test]
+    fn test_rename_mlift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_type_str("^m(Bit → Bit)"), "^m(Bit → Bit)");
+    }
+
+    // =========================================================================
+    // Instance Renaming Tests
+    // =========================================================================
+
+    #[test]
+    fn test_rename_bit_values() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_at("0", "Bit"), "0");
+        assert_eq!(c.rename_at("1", "Bit"), "1");
+    }
+
+    #[test]
+    fn test_rename_lambda() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
+    }
+
+    #[test]
+    fn test_rename_module() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.rename_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
+    }
 }
