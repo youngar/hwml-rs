@@ -604,3 +604,372 @@ where
     }
     Ok(SemTelescope { types })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quote::{quote, type_quote};
+    use crate::syn::parse::parse_syntax;
+    use crate::syn::print::print_syntax_to_string;
+    use crate::syn::RcSyntax;
+    use crate::Database;
+
+    /// Test helper context
+    struct Ctx<'db> {
+        db: &'db Database,
+        global: GlobalEnv<'db>,
+    }
+
+    impl<'db> Ctx<'db> {
+        fn new(db: &'db Database) -> Self {
+            Self {
+                db,
+                global: GlobalEnv::new(),
+            }
+        }
+
+        /// Parse a string into syntax
+        fn parse(&self, input: &'db str) -> RcSyntax<'db> {
+            parse_syntax(self.db, input).unwrap_or_else(|e| panic!("parse failed: {:?}", e))
+        }
+
+        /// Evaluate a syntax term and return the result
+        fn eval(&self, stx: &Syntax<'db>) -> Rc<Value<'db>> {
+            let mut env = Environment {
+                global: &self.global,
+                local: LocalEnv::new(),
+            };
+            super::eval(&mut env, stx).expect("eval failed")
+        }
+
+        /// Parse, evaluate, and quote back at a type (parsed), returning a string
+        fn eval_at(&self, term: &'db str, ty: &'db str) -> String {
+            let stx = self.parse(term);
+            let ty_stx = self.parse(ty);
+            let ty_val = self.eval(&ty_stx);
+            let val = self.eval(&stx);
+            let syntax = quote(&self.global, 0, &val, &ty_val).expect("quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Parse, evaluate a type, and type-quote, returning a string
+        fn eval_type(&self, term: &'db str) -> String {
+            let stx = self.parse(term);
+            let val = self.eval(&stx);
+            let syntax = type_quote(&self.global, 0, &val).expect("type_quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+    }
+
+    // =========================================================================
+    // Basic Type Evaluation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_eval_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Universe evaluates to itself
+        assert_eq!(c.eval_type("U0"), "𝒰0");
+        assert_eq!(c.eval_type("U1"), "𝒰1");
+    }
+
+    #[test]
+    fn test_eval_hardware_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_type("HardwareType"), "HardwareType");
+        assert_eq!(c.eval_type("SignalType"), "SignalType");
+        assert_eq!(c.eval_type("ModuleType"), "ModuleType");
+    }
+
+    #[test]
+    fn test_eval_bit() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_type("Bit"), "Bit");
+    }
+
+    #[test]
+    fn test_eval_bit_values() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_at("0", "Bit"), "0");
+        assert_eq!(c.eval_at("1", "Bit"), "1");
+    }
+
+    #[test]
+    fn test_eval_pi() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // ∀ (x : U0) → U0
+        assert_eq!(c.eval_type("∀ (%x : U0) → U0"), "∀ (%0 : 𝒰0) → 𝒰0");
+    }
+
+    #[test]
+    fn test_eval_harrow() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_type("Bit → Bit"), "Bit → Bit");
+    }
+
+    #[test]
+    fn test_eval_lift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_type("^U0"), "^𝒰0");
+    }
+
+    #[test]
+    fn test_eval_slift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_type("^sBit"), "^sBit");
+    }
+
+    #[test]
+    fn test_eval_mlift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.eval_type("^m(Bit → Bit)"), "^m(Bit → Bit)");
+    }
+
+    // =========================================================================
+    // Lambda and Application Tests
+    // =========================================================================
+
+    #[test]
+    fn test_eval_lambda_identity() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // λ x → x at ∀ (x : U0) → U0
+        assert_eq!(c.eval_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
+    }
+
+    #[test]
+    fn test_eval_lambda_beta_reduction() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // (λ x → x) U0  should reduce to U0
+        assert_eq!(c.eval_type("(λ %x → %x) U0"), "𝒰0");
+    }
+
+    #[test]
+    fn test_eval_lambda_const_beta_reduction() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // (λ x → 0) 1  should reduce to 0
+        assert_eq!(c.eval_at("(λ %x → 0) 1", "Bit"), "0");
+    }
+
+    #[test]
+    fn test_eval_nested_lambda_beta_reduction() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // (λ x y → x) 0 1  should reduce to 0  (returns first arg)
+        assert_eq!(c.eval_at("(λ %x %y → %x) 0 1", "Bit"), "0");
+    }
+
+    #[test]
+    fn test_eval_second_projection() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // (λ x y → y) 0 1  should reduce to 1
+        assert_eq!(c.eval_at("(λ %x %y → %y) 0 1", "Bit"), "1");
+    }
+
+    // =========================================================================
+    // Module and HApplication Tests
+    // =========================================================================
+
+    #[test]
+    fn test_eval_module_identity() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // mod x → x
+        assert_eq!(c.eval_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
+    }
+
+    #[test]
+    fn test_eval_module_const() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // mod x → 0
+        assert_eq!(c.eval_at("mod %x → 0", "Bit → Bit"), "mod %0 → 0");
+    }
+
+    // =========================================================================
+    // Variable Evaluation Tests
+    // =========================================================================
+
+    // =========================================================================
+    // Neutral Term Tests (using lambdas to build environments)
+    // =========================================================================
+
+    #[test]
+    fn test_eval_variable_in_env() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // (λ x → x) 0  should give 0 (variable lookup in env)
+        assert_eq!(c.eval_at("(λ %x → %x) 0", "Bit"), "0");
+    }
+
+    #[test]
+    fn test_eval_variable_captures() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // (λ x → (λ y → x)) 0 1  should give 0 (captured variable)
+        assert_eq!(c.eval_at("(λ %x → (λ %y → %x)) 0 1", "Bit"), "0");
+        // Alternative: (λ x y → x) 0 1  should reduce to 0 (first argument)
+        assert_eq!(c.eval_at("(λ %x %y → %x) 0 1", "Bit"), "0");
+        // (λ x y → y) 0 1  should reduce to 1 (second argument)
+        assert_eq!(c.eval_at("(λ %x %y → %y) 0 1", "Bit"), "1");
+    }
+
+    #[test]
+    fn test_eval_application_neutral() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // λ f → f ^Bit  - the body (f ^Bit) is a neutral application
+        // where f is a function variable of type ∀ (%x : U0) → U0 (a Pi type!)
+        // Note: A → B parses as HArrow, not Pi. Must use ∀ (%x : A) → B for Pi.
+        // When quoted, the result should be λ %0 → %0[^Bit]
+        assert_eq!(
+            c.eval_at("λ %f → %f ^Bit", "∀ (%f : ∀ (%x : U0) → U0) → U0"),
+            "λ %0 → %0[^Bit]"
+        );
+    }
+
+    // =========================================================================
+    // Metavariable Evaluation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_eval_metavariable_no_args() {
+        // A metavariable with no arguments evaluates to a Flex neutral
+        use crate::common::MetaVariableId;
+        use crate::val::GlobalEnv;
+
+        let db = Database::new();
+        let mut global = GlobalEnv::new();
+
+        // Declare ?[0] : U0
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+
+        let mut env = Environment::new(&global);
+        let meta_stx = Syntax::metavariable(meta_id, vec![]);
+        let result = eval(&mut env, &meta_stx).expect("eval should succeed");
+
+        // Should be a Flex neutral
+        match &*result {
+            Value::Flex(flex) => {
+                assert_eq!(flex.head.id, meta_id);
+                assert_eq!(flex.head.local.depth(), 0); // No arguments
+                assert!(flex.spine.is_empty());
+            }
+            _ => panic!("Expected Flex, got {:?}", result),
+        }
+
+        // Quote and check printed form
+        let quoted =
+            crate::quote::quote(&global, 0, &result, &Value::universe(UniverseLevel::new(0)))
+                .expect("quote should succeed");
+        assert_eq!(
+            crate::syn::print::print_syntax_to_string(&db, &quoted),
+            "?[0]"
+        );
+    }
+
+    #[test]
+    fn test_eval_metavariable_with_args() {
+        // A metavariable with arguments evaluates to a Flex neutral with a local env
+        use crate::common::{Level, MetaVariableId};
+        use crate::val::GlobalEnv;
+
+        let db = Database::new();
+        let mut global = GlobalEnv::new();
+
+        // Declare ?[0] (%x : U0) : U0
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(
+            meta_id,
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+
+        let mut env = Environment::new(&global);
+        // ?[0 ^Bit] - apply metavariable to ^Bit
+        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
+        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit]);
+        let result = eval(&mut env, &meta_stx).expect("eval should succeed");
+
+        // Should be a Flex neutral with the argument in its local env
+        match &*result {
+            Value::Flex(flex) => {
+                assert_eq!(flex.head.id, meta_id);
+                assert_eq!(flex.head.local.depth(), 1);
+                // The argument should be ^Bit (a Lift value containing Bit)
+                match &**flex.head.local.get(Level::new(0)) {
+                    Value::Lift(lift) => {
+                        assert!(matches!(&*lift.ty, Value::Bit(_)));
+                    }
+                    other => panic!("Expected Lift, got {:?}", other),
+                }
+            }
+            _ => panic!("Expected Flex, got {:?}", result),
+        }
+
+        // Quote and check printed form
+        let quoted =
+            crate::quote::quote(&global, 0, &result, &Value::universe(UniverseLevel::new(0)))
+                .expect("quote should succeed");
+        assert_eq!(
+            crate::syn::print::print_syntax_to_string(&db, &quoted),
+            "?[0 ^Bit]"
+        );
+    }
+
+    #[test]
+    fn test_eval_metavariable_application() {
+        // Applying a Flex neutral to an argument adds to its spine
+        use crate::common::MetaVariableId;
+        use crate::val::GlobalEnv;
+
+        let db = Database::new();
+        let mut global = GlobalEnv::new();
+
+        // Declare ?[0] : ∀ (%x : U0) → U0
+        let meta_id = MetaVariableId(0);
+        let pi_ty = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        global.add_metavariable(meta_id, vec![], pi_ty);
+
+        let mut env = Environment::new(&global);
+        // (?[0])[^Bit] - apply metavariable to ^Bit
+        let meta_stx = Syntax::metavariable_rc(meta_id, vec![]);
+        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
+        let app_stx = Syntax::application(meta_stx, lift_bit);
+        let result = eval(&mut env, &app_stx).expect("eval should succeed");
+
+        // Should be a Flex neutral with the application in its spine
+        match &*result {
+            Value::Flex(flex) => {
+                assert_eq!(flex.head.id, meta_id);
+                assert_eq!(flex.spine.len(), 1);
+            }
+            _ => panic!("Expected Flex, got {:?}", result),
+        }
+
+        // Quote and check printed form
+        let quoted =
+            crate::quote::quote(&global, 0, &result, &Value::universe(UniverseLevel::new(0)))
+                .expect("quote should succeed");
+        assert_eq!(
+            crate::syn::print::print_syntax_to_string(&db, &quoted),
+            "?[0][^Bit]"
+        );
+    }
+}

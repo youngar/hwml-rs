@@ -79,6 +79,8 @@ pub fn equate_lift_instances<'db>(
     match lift.ty.as_ref() {
         Value::SLift(slift) => equate_slift_instances(global, depth, lhs, rhs, slift),
         Value::MLift(mlift) => equate_mlift_instances(global, depth, lhs, rhs, mlift),
+        // ^Bit evaluates to Lift(Bit) directly, not Lift(SLift(Bit))
+        Value::Bit(bit) => equate_bit_instances(global, depth, lhs, rhs, bit),
         _ => Err(Error::IllTyped),
     }
 }
@@ -321,6 +323,9 @@ pub fn type_equiv<'db>(
         // SLift and MLift are hardware type constructors
         (Value::SLift(lhs), Value::SLift(rhs)) => slift_equiv(global, depth, lhs, rhs),
         (Value::MLift(lhs), Value::MLift(rhs)) => mlift_equiv(global, depth, lhs, rhs),
+
+        // Bit is a hardware type (equivalent types if both are Bit)
+        (Value::Bit(_), Value::Bit(_)) => Ok(()),
 
         _ => Err(Error::NotConvertible),
     }
@@ -921,5 +926,119 @@ pub fn equate_levels<'db>(
         Ok(())
     } else {
         Err(Error::NotConvertible)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{MetaVariableId, UniverseLevel};
+    use crate::syn::Syntax;
+    use crate::val::{GlobalEnv, LocalEnv, Spine};
+    use std::rc::Rc;
+
+    // =========================================================================
+    // Metavariable Equality Tests
+    // =========================================================================
+
+    #[test]
+    fn test_equate_metavariable_ids_same() {
+        let global = GlobalEnv::new();
+        let id = MetaVariableId(0);
+        assert!(equate_metavariable_ids(&global, 0, id, id).is_ok());
+    }
+
+    #[test]
+    fn test_equate_metavariable_ids_different() {
+        let global = GlobalEnv::new();
+        let id1 = MetaVariableId(0);
+        let id2 = MetaVariableId(1);
+        assert!(equate_metavariable_ids(&global, 0, id1, id2).is_err());
+    }
+
+    #[test]
+    fn test_equate_flexes_same_meta_empty_spine() {
+        let mut global = GlobalEnv::new();
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+
+        let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
+        let flex1 = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
+        let flex2 = val::Flex::new(meta_val, Spine::empty(), u0_ty);
+
+        assert!(equate_flexes(&global, 0, &flex1, &flex2).is_ok());
+    }
+
+    #[test]
+    fn test_equate_flexes_different_metas() {
+        let mut global = GlobalEnv::new();
+        let meta_id1 = MetaVariableId(0);
+        let meta_id2 = MetaVariableId(1);
+        global.add_metavariable(meta_id1, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(meta_id2, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+
+        let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let flex1 = val::Flex::new(
+            val::MetaVariable::new(meta_id1, LocalEnv::new()),
+            Spine::empty(),
+            u0_ty.clone(),
+        );
+        let flex2 = val::Flex::new(
+            val::MetaVariable::new(meta_id2, LocalEnv::new()),
+            Spine::empty(),
+            u0_ty,
+        );
+
+        assert!(equate_flexes(&global, 0, &flex1, &flex2).is_err());
+    }
+
+    #[test]
+    fn test_equate_flex_instances() {
+        // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
+        let mut global = GlobalEnv::new();
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+
+        let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
+        let flex_ty = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
+
+        // Two identical Flex values should be equal when typed by a Flex
+        let lhs = Value::Flex(flex_ty.clone());
+        let rhs = Value::Flex(flex_ty.clone());
+
+        assert!(equate_flex_instances(&global, 0, &lhs, &rhs, &flex_ty).is_ok());
+    }
+
+    // =========================================================================
+    // Type Equivalence Tests
+    // =========================================================================
+
+    #[test]
+    fn test_type_equiv_universes() {
+        let global = GlobalEnv::new();
+        let u0 = Value::universe(UniverseLevel::new(0));
+        let u1 = Value::universe(UniverseLevel::new(1));
+
+        // Same universe levels are equivalent
+        assert!(type_equiv(&global, 0, &u0, &u0).is_ok());
+        assert!(type_equiv(&global, 0, &u1, &u1).is_ok());
+
+        // Different universe levels are not equivalent
+        assert!(type_equiv(&global, 0, &u0, &u1).is_err());
+    }
+
+    #[test]
+    fn test_type_equiv_lift() {
+        let global = GlobalEnv::new();
+        // Lift types contain hardware types (SLift or MLift)
+        // ^$Bit is Lift(SLift(Bit))
+        let slift_bit = Rc::new(Value::slift(Rc::new(Value::bit())));
+        let lift_bit = Value::lift(slift_bit.clone());
+        let lift_bit2 = Value::lift(Rc::new(Value::slift(Rc::new(Value::bit()))));
+
+        // Same lifted types are equivalent
+        assert!(type_equiv(&global, 0, &lift_bit, &lift_bit2).is_ok());
     }
 }

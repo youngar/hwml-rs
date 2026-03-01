@@ -256,8 +256,33 @@ pub fn quote_bit_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::HApplication(happ) => quote_happlication(global, depth, happ),
         _ => Err(Error::IllTyped),
     }
+}
+
+/// Quote an HApplication (hardware application).
+/// An HApplication is `m<T>(x)` where m is a module, T is its domain type, and x is the argument.
+pub fn quote_happlication<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    happ: &val::HApplication<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    let module = quote(global, depth, &happ.module, &happ.module_ty)?;
+    let domain_ty = match happ.module_ty.as_ref() {
+        Value::HArrow(harrow) => type_quote(global, depth, &harrow.source)?,
+        _ => return Err(Error::IllTyped),
+    };
+    let argument = quote(
+        global,
+        depth,
+        &happ.argument,
+        match happ.module_ty.as_ref() {
+            Value::HArrow(harrow) => harrow.source.as_ref(),
+            _ => return Err(Error::IllTyped),
+        },
+    )?;
+    Ok(Syntax::happlication_rc(module, domain_ty, argument))
 }
 
 /// Quote an instance of SignalUniverse (a signal type).
@@ -789,4 +814,509 @@ fn quote_case_eliminator<'db>(
     let syn_motive = type_quote(global, depth + 1 + motive_args_len, &sem_motive_result)?;
 
     Ok(Syntax::case_rc(syn_scrutinee, syn_motive, branches))
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{Index, Level, UniverseLevel};
+    use crate::eval;
+    use crate::syn::parse::parse_syntax;
+    use crate::syn::print::print_syntax_to_string;
+    use crate::val::{DataConstructorInfo, TypeConstructorInfo};
+    use crate::Database;
+    use hwml_support::salsa::IntoWithDb;
+
+    // =========================================================================
+    // Test Context Helper
+    // =========================================================================
+
+    /// Test context with database and global environment for concise tests.
+    struct Ctx<'db> {
+        db: &'db Database,
+        global: GlobalEnv<'db>,
+    }
+
+    impl<'db> Ctx<'db> {
+        fn new(db: &'db Database) -> Self {
+            Self {
+                db,
+                global: GlobalEnv::new(),
+            }
+        }
+
+        /// Parse and evaluate a string to a value
+        fn eval(&self, input: &'db str) -> Rc<Value<'db>> {
+            let stx = parse_syntax(self.db, input).expect("parse failed");
+            let mut env = Environment {
+                global: &self.global,
+                local: LocalEnv::new(),
+            };
+            eval::eval(&mut env, &stx).expect("eval failed")
+        }
+
+        /// Parse, evaluate term and type, quote the term at the type, return string
+        fn quote_at(&self, term: &'db str, ty: &'db str) -> String {
+            let term_val = self.eval(term);
+            let ty_val = self.eval(ty);
+            let syntax = quote(&self.global, 0, &term_val, &ty_val).expect("quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Parse, evaluate a type, and type-quote, returning a string
+        fn quote_type(&self, term: &'db str) -> String {
+            let val = self.eval(term);
+            let syntax = type_quote(&self.global, 0, &val).expect("type_quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Quote a value at a type and return the printed string
+        fn q(&self, value: &Value<'db>, ty: &Value<'db>) -> String {
+            let syntax = quote(&self.global, 0, value, ty).expect("quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Quote a value at a type at a specific depth and return the printed string
+        fn q_depth(&self, depth: usize, value: &Value<'db>, ty: &Value<'db>) -> String {
+            let syntax = quote(&self.global, depth, value, ty).expect("quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Quote a type and return the printed string
+        fn tq(&self, ty: &Value<'db>) -> String {
+            let syntax = type_quote(&self.global, 0, ty).expect("type_quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        /// Quote a type at a specific depth and return the printed string
+        fn tq_depth(&self, depth: usize, ty: &Value<'db>) -> String {
+            let syntax = type_quote(&self.global, depth, ty).expect("type_quote failed");
+            print_syntax_to_string(self.db, &syntax)
+        }
+
+        // Common type constructors
+        fn u0(&self) -> Rc<Value<'db>> {
+            Rc::new(Value::universe(UniverseLevel::new(0)))
+        }
+        fn bit(&self) -> Rc<Value<'db>> {
+            Rc::new(Value::bit())
+        }
+
+        /// Create Bit → Bit HArrow type
+        fn harrow_bit_bit(&self) -> Value<'db> {
+            Value::harrow(self.bit(), Closure::new(LocalEnv::new(), Syntax::bit_rc()))
+        }
+
+        /// Create ∀ (x : U0) → U0 Pi type
+        fn pi_u0_u0(&self) -> Value<'db> {
+            Value::pi(
+                self.u0(),
+                Closure::new(LocalEnv::new(), Syntax::universe_rc(UniverseLevel::new(0))),
+            )
+        }
+
+        /// Create identity closure (returns variable at index 0)
+        fn identity_closure(&self) -> Closure<'db> {
+            Closure::new(LocalEnv::new(), Syntax::variable_rc(Index(0)))
+        }
+    }
+
+    // =========================================================================
+    // Type Universe Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Software universes
+        assert_eq!(c.quote_type("U0"), "𝒰0");
+        assert_eq!(c.quote_type("U1"), "𝒰1");
+        // Hardware universes
+        assert_eq!(c.quote_type("HardwareType"), "HardwareType");
+        assert_eq!(c.quote_type("SignalType"), "SignalType");
+        assert_eq!(c.quote_type("ModuleType"), "ModuleType");
+    }
+
+    // =========================================================================
+    // Hardware Type Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_bit() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.quote_type("Bit"), "Bit");
+    }
+
+    #[test]
+    fn test_quote_harrow() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.quote_type("Bit → Bit"), "Bit → Bit");
+        // Chained: Bit → Bit → Bit
+        assert_eq!(c.quote_type("Bit → Bit → Bit"), "Bit → Bit → Bit");
+    }
+
+    #[test]
+    fn test_quote_slift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.quote_type("^sBit"), "^sBit");
+        // Nested: ^s^sBit
+        assert_eq!(c.quote_type("^s^sBit"), "^s^sBit");
+    }
+
+    #[test]
+    fn test_quote_mlift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.quote_type("^m(Bit → Bit)"), "^m(Bit → Bit)");
+        // Nested: ^m^m(Bit → Bit)
+        assert_eq!(c.quote_type("^m^m(Bit → Bit)"), "^m^m(Bit → Bit)");
+    }
+
+    // =========================================================================
+    // Value Quotation Tests (values at their types)
+    // =========================================================================
+
+    #[test]
+    fn test_quote_bit_values() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        assert_eq!(c.quote_at("0", "Bit"), "0");
+        assert_eq!(c.quote_at("1", "Bit"), "1");
+    }
+
+    #[test]
+    fn test_quote_type_at_universe() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // U0 is a value of type U1
+        assert_eq!(c.quote_at("U0", "U1"), "𝒰0");
+        // Bit is a value of type SignalType
+        assert_eq!(c.quote_at("Bit", "SignalType"), "Bit");
+        // HArrow is a value of type ModuleType
+        assert_eq!(c.quote_at("Bit → Bit", "ModuleType"), "Bit → Bit");
+    }
+
+    // =========================================================================
+    // Lambda/Module Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_modules() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Identity: mod x → x
+        assert_eq!(c.quote_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
+        // Constant: mod x → 0
+        assert_eq!(c.quote_at("mod %x → 0", "Bit → Bit"), "mod %0 → 0");
+    }
+
+    #[test]
+    fn test_quote_lambdas() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Identity: λ x → x
+        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
+    }
+
+    // =========================================================================
+    // Pi Type Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_pi_types() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Simple: ∀ (x : U0) → U0
+        assert_eq!(c.quote_type("∀ (%x : U0) → U0"), "∀ (%0 : 𝒰0) → 𝒰0");
+        // Nested Pi collapses: ∀ (%0 : U0) (%1 : U0) → U0
+        assert_eq!(
+            c.quote_type("∀ (%x : U0) (%y : U0) → U0"),
+            "∀ (%0 : 𝒰0) (%1 : 𝒰0) → 𝒰0"
+        );
+        // Dependent: ∀ (A : U0) → A
+        assert_eq!(c.quote_type("∀ (%A : U0) → %A"), "∀ (%0 : 𝒰0) → %0");
+    }
+
+    // =========================================================================
+    // Lift Type Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_lift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // ^(^sBit)
+        assert_eq!(c.quote_type("^^sBit"), "^^sBit");
+        // ^(∀ (x : U0) → U0) - Pi inside Lift
+        assert_eq!(c.quote_type("^∀ (%x : U0) → U0"), "^∀ (%0 : 𝒰0) → 𝒰0");
+    }
+
+    // =========================================================================
+    // Neutral Term Quotation Tests (Rigid - variables)
+    // =========================================================================
+
+    #[test]
+    fn test_quote_variables() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Variable at level 1, quoted at depth 2 → Index(0) → prints as "!0" (unbound)
+        let bit_var = Value::variable(Level::new(1), c.bit());
+        assert_eq!(c.q_depth(2, &bit_var, &Value::bit()), "!0");
+        // Same for universe-typed variable
+        let u0_var = Value::variable(Level::new(1), c.u0());
+        assert_eq!(
+            c.q_depth(2, &u0_var, &Value::universe(UniverseLevel::new(0))),
+            "!0"
+        );
+    }
+
+    #[test]
+    fn test_quote_constant_and_prim() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let u0 = Value::universe(UniverseLevel::new(0));
+        // Constant: @myConst
+        let cid = "myConst".into_with_db(&db);
+        assert_eq!(c.q(&Value::constant(cid), &u0), "@myConst");
+        // Primitive: $Nat
+        let pid = "Nat".into_with_db(&db);
+        assert_eq!(c.q(&Value::prim(pid), &u0), "$Nat");
+    }
+
+    // =========================================================================
+    // Eta-Expansion Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_eta_expansion() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Pi types eta-expand neutrals: f : A → B becomes λx. f x
+        let pi_ty = c.pi_u0_u0();
+        let var = Value::variable(Level::new(0), Rc::new(pi_ty.clone()));
+        // λ %0 → %0[%0] (function applied to its argument)
+        assert_eq!(c.q(&var, &pi_ty), "λ %0 → %0[%0]");
+
+        // HArrow types do NOT eta-expand neutrals
+        let harrow_ty = c.harrow_bit_bit();
+        let harrow_var = Value::variable(Level::new(1), Rc::new(harrow_ty.clone()));
+        // Quote at depth 2: prints as !0 (no eta-expansion)
+        assert_eq!(c.q_depth(2, &harrow_var, &harrow_ty), "!0");
+    }
+
+    // =========================================================================
+    // Type Constructor Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_type_constructors() {
+        let db = Database::new();
+        let mut global = GlobalEnv::new();
+        let u0 = Value::universe(UniverseLevel::new(0));
+
+        // No args: #[@Nat]
+        let nat_id = "Nat".into_with_db(&db);
+        global.add_type_constructor(
+            nat_id,
+            TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
+        );
+        let nat = Value::type_constructor(nat_id, vec![]);
+        let syntax = quote(&global, 0, &nat, &u0).expect("quote");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "#[@Nat]");
+
+        // With args: #[@Vec Bit]
+        let vec_id = "Vec".into_with_db(&db);
+        global.add_type_constructor(
+            vec_id,
+            TypeConstructorInfo::new(
+                vec![Syntax::universe_rc(UniverseLevel::new(0))],
+                1,
+                UniverseLevel::new(0),
+            ),
+        );
+        let vec_bit = Value::type_constructor(vec_id, vec![Rc::new(Value::bit())]);
+        let syntax = quote(&global, 0, &vec_bit, &u0).expect("quote");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "#[@Vec Bit]");
+    }
+
+    // =========================================================================
+    // Data Constructor Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_data_constructors() {
+        let db = Database::new();
+        let mut global = GlobalEnv::new();
+
+        // Register Unit type and tt constructor
+        let unit_id = "Unit".into_with_db(&db);
+        global.add_type_constructor(
+            unit_id,
+            TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
+        );
+        let tt_id = "tt".into_with_db(&db);
+        global.add_data_constructor(
+            tt_id,
+            DataConstructorInfo::new(vec![], Syntax::type_constructor_rc(unit_id, vec![])),
+        );
+
+        let unit_tcon = crate::val::TypeConstructor::new(unit_id, vec![]);
+        let tt_dcon = Value::data_constructor(tt_id, vec![]);
+        let syntax = quote_data_constructor(
+            &global,
+            0,
+            match &tt_dcon {
+                Value::DataConstructor(d) => d,
+                _ => panic!(),
+            },
+            &unit_tcon,
+        )
+        .expect("quote");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "[@tt]");
+    }
+
+    // =========================================================================
+    // Metavariable Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_metavariables() {
+        use crate::common::MetaVariableId;
+        let db = Database::new();
+        let mut global = GlobalEnv::new();
+        let u0 = Value::universe(UniverseLevel::new(0));
+        let u0_rc = Rc::new(u0.clone());
+
+        // No args: ?[0]
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_rc.clone());
+        let syntax = quote(&global, 0, &meta, &u0).expect("quote");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
+
+        // With args: ?[1 Bit]
+        let meta_id2 = MetaVariableId(1);
+        global.add_metavariable(
+            meta_id2,
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        let mut local = LocalEnv::new();
+        local.push(Rc::new(Value::bit()));
+        let meta2 = Value::metavariable(meta_id2, local, u0_rc);
+        let syntax = quote(&global, 0, &meta2, &u0).expect("quote");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "?[1 Bit]");
+    }
+
+    // =========================================================================
+    // Mixed Depth and Complex Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_nested_binder_depths() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+
+        // ∀ (A : U0) → ∀ (x : A) → A
+        let inner = Syntax::pi_rc(
+            Syntax::variable_rc(Index(0)), // domain is A
+            Syntax::variable_rc(Index(1)), // codomain is A
+        );
+        let outer = Value::pi(c.u0(), Closure::new(LocalEnv::new(), inner));
+        assert_eq!(c.tq(&outer), "∀ (%0 : 𝒰0) (%1 : %0) → %0");
+    }
+
+    #[test]
+    fn test_quote_lift_with_neutral() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+
+        // ^s(x) where x is a variable
+        let var = Value::variable(Level::new(0), Rc::new(Value::signal_universe()));
+        let slift = Value::slift(Rc::new(var));
+        assert_eq!(c.tq_depth(1, &slift), "^s!0");
+    }
+
+    // =========================================================================
+    // HApplication Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_happlication() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+
+        // Create id<Bit>(0) - identity module applied to 0
+        // First, the module type: Bit → Bit
+        let harrow_ty = c.harrow_bit_bit();
+        // The identity module: mod x → x
+        let id_mod = Value::module(c.identity_closure());
+        // Apply it to zero: id<Bit>(0)
+        let happ = Value::happlication(
+            Rc::new(id_mod),
+            Rc::new(harrow_ty.clone()),
+            Rc::new(Value::zero()),
+        );
+        // The result type is Bit (codomain of harrow applied to zero)
+        // Note: printer doesn't parenthesize the module
+        assert_eq!(c.q(&happ, &Value::bit()), "mod %0 → %0<Bit>(0)");
+    }
+
+    // =========================================================================
+    // String-Based Neutral Quotation Tests (using lambda pattern)
+    // =========================================================================
+
+    #[test]
+    fn test_quote_neutral_via_lambda() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // λ f → f ^Bit - the body (f ^Bit) is a neutral application
+        // Note: A → B parses as HArrow, not Pi. Use ∀ (%x : A) → B for Pi.
+        assert_eq!(
+            c.quote_at("λ %f → %f ^Bit", "∀ (%f : ∀ (%x : U0) → U0) → U0"),
+            "λ %0 → %0[^Bit]"
+        );
+    }
+
+    #[test]
+    fn test_quote_neutral_variable_in_lambda() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // λ x → x at type ∀ (x : Bit) → Bit gives λ %0 → %0
+        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : Bit) → Bit"), "λ %0 → %0");
+    }
+
+    #[test]
+    fn test_quote_neutral_nested_application() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // λ f → λ g → f (g ^Bit) - nested neutral applications
+        // f : ∀ (x : U0) → U0, g : ∀ (x : U0) → U0
+        // Note: printer collapses nested lambdas into multi-binder form
+        assert_eq!(
+            c.quote_at(
+                "λ %f → λ %g → %f (%g ^Bit)",
+                "∀ (%f : ∀ (%x : U0) → U0) (%g : ∀ (%x : U0) → U0) → U0"
+            ),
+            "λ %0 %1 → %0[%1[^Bit]]"
+        );
+    }
+
+    #[test]
+    fn test_quote_module_neutral() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // mod x → x at type Bit → Bit
+        assert_eq!(c.quote_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
+        // mod x → 0 (constant module)
+        assert_eq!(c.quote_at("mod %x → 0", "Bit → Bit"), "mod %0 → 0");
+    }
 }
