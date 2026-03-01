@@ -154,6 +154,8 @@ pub enum Token {
     TCon,
     #[token("dcon", priority = 5)]
     DCon,
+    #[token("meta", priority = 5)]
+    Meta,
     #[token("where", priority = 5)]
     Where,
 }
@@ -1175,12 +1177,55 @@ fn p_tcon_decl<'db>(state: &mut State<'db>) -> ParseResult<Vec<Declaration<'db>>
     Ok(vec![tcon_decl])
 }
 
+/// Parse a metavariable declaration: meta ?[id] (%x : T1) (%y : T2) : Type;
+/// The arguments telescope is optional.
+fn p_meta_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
+    // Expect 'meta' token
+    p_token(state, Token::Meta, Error::Other)?;
+
+    // Expect '?['
+    p_token(state, Token::LQuestionBracket, Error::Other)?;
+
+    // Parse the metavariable ID
+    let id = p_metavariable_id(state)?;
+
+    // Expect ']'
+    p_token(state, Token::RBracket, Error::MissingRBracket)?;
+
+    // Save the current depth to restore later
+    let depth = state.names_depth();
+
+    // Parse optional argument binders: (%x : T1) (%y : T2) ...
+    let arguments = match p_telescope(state) {
+        Ok(tys) => tys,
+        Err(e) => {
+            state.reset_names(depth);
+            return Err(e);
+        }
+    };
+
+    // Expect ':'
+    p_token(state, Token::Colon, Error::MissingColon)?;
+
+    // Parse the type
+    let ty = p_term(state)?;
+
+    // Reset the name environment
+    state.reset_names(depth);
+
+    // Expect ';'
+    p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
+
+    Ok(Declaration::metavariable(id, arguments.into(), ty))
+}
+
 /// Parse a single declaration.
 fn p_declaration<'db>(state: &mut State<'db>) -> ParseResult<Option<Vec<Declaration<'db>>>> {
     match state.peek_token() {
         Some(Ok(Token::Prim)) => Ok(Some(vec![p_prim_decl(state)?])),
         Some(Ok(Token::Const)) => Ok(Some(vec![p_const_decl(state)?])),
         Some(Ok(Token::TCon)) => Ok(Some(p_tcon_decl(state)?)),
+        Some(Ok(Token::Meta)) => Ok(Some(vec![p_meta_decl(state)?])),
         Some(Err(err)) => Err(err.clone()),
         _ => Ok(None),
     }

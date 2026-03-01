@@ -1,5 +1,5 @@
 use crate::{
-    declaration::{self, Declaration, Primitive},
+    declaration::{self, Declaration, Metavariable as DeclMetavariable, Primitive},
     syn::*,
     ConstantId,
 };
@@ -112,6 +112,7 @@ fn print_declaration<'db, R: Render>(
         Declaration::Primitive(prim) => print_primitive(db, prim, p),
         Declaration::Constant(c) => print_constant(db, c, p),
         Declaration::TypeConstructor(tc) => print_type_constructor(db, tc, p),
+        Declaration::Metavariable(meta) => print_metavariable(db, meta, p),
     }
 }
 
@@ -177,6 +178,31 @@ pub fn print_type_constructor<'db, R: Render>(
             p.hard_break()?;
         }
     }
+    p.text(";")?;
+    Ok(())
+}
+
+pub fn print_metavariable<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    meta: &DeclMetavariable<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    p.text("meta ?[")?;
+    p.text_owned(format!("{}", meta.id.0))?;
+    p.text("]")?;
+    let mut st = State::new();
+    // Print argument telescope
+    for arg_ty in meta.arguments.iter() {
+        p.text(" (")?;
+        p.text("%")?;
+        p.text_owned(format!("{}", st.depth))?;
+        p.text(" : ")?;
+        arg_ty.print(db, st, p)?;
+        p.text(")")?;
+        st = st.inc_depth();
+    }
+    p.text(" : ")?;
+    meta.ty.print(db, st, p)?;
     p.text(";")?;
     Ok(())
 }
