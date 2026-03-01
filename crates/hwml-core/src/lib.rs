@@ -13,6 +13,8 @@ pub mod syn;
 pub mod unify;
 pub mod val;
 
+pub mod test_utils;
+
 pub use common::*;
 pub use syn::Syntax;
 pub use val::Value;

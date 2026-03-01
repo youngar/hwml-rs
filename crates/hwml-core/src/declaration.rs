@@ -1,5 +1,5 @@
 use crate::syn::*;
-use crate::ConstantId;
+use crate::{ConstantId, MetaVariableId};
 
 /// A primitive declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -88,6 +88,22 @@ impl<'db> DataConstructor<'db> {
     }
 }
 
+/// A metavariable declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Metavariable<'db> {
+    pub id: MetaVariableId,
+    /// The telescope of argument types (the substitution context).
+    pub arguments: Telescope<'db>,
+    /// The final type of the metavariable.
+    pub ty: RcSyntax<'db>,
+}
+
+impl<'db> Metavariable<'db> {
+    pub fn new(id: MetaVariableId, arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
+        Metavariable { id, arguments, ty }
+    }
+}
+
 /// A declaration in a module.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Declaration<'db> {
@@ -97,6 +113,8 @@ pub enum Declaration<'db> {
     Constant(Constant<'db>),
     /// A type constructor, along with its data constructors.
     TypeConstructor(TypeConstructor<'db>),
+    /// A metavariable declaration.
+    Metavariable(Metavariable<'db>),
 }
 
 impl<'db> Declaration<'db> {
@@ -114,6 +132,10 @@ impl<'db> Declaration<'db> {
         universe: RcSyntax<'db>,
     ) -> Self {
         Declaration::TypeConstructor(TypeConstructor::new(name, data_constructors, universe))
+    }
+
+    pub fn metavariable(id: MetaVariableId, arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
+        Declaration::Metavariable(Metavariable::new(id, arguments, ty))
     }
 }
 

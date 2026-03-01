@@ -869,6 +869,18 @@ impl<'db> GlobalEnv<'db> {
             .get(&id)
             .ok_or(MetaVariableLookupError { id })
     }
+
+    /// Iterate over all metavariables in the global environment.
+    pub fn iter_metavariables(
+        &self,
+    ) -> impl Iterator<Item = (&MetaVariableId, &MetavariableInfo<'db>)> {
+        self.metavariables.iter()
+    }
+
+    /// Get the maximum metavariable ID in the global environment, or None if empty.
+    pub fn max_metavariable_id(&self) -> Option<MetaVariableId> {
+        self.metavariables.keys().max().copied()
+    }
 }
 
 #[derive(Clone, Debug)]
