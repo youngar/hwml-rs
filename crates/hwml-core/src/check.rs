@@ -428,9 +428,17 @@ pub fn type_check<'db, 'g>(
         Syntax::TypeConstructor(tc) => type_check_type_constructor(env, tc, ty),
         Syntax::DataConstructor(dc) => type_check_data_constructor(env, dc, ty),
 
-        // HardwareUniverse constructs
+        // Signal types (Bit) live in SignalUniverse
         Syntax::Bit(_) => type_check_bit(env, ty),
+        // Module types (HArrow) live in ModuleUniverse
         Syntax::HArrow(harrow) => type_check_harrow(env, harrow, ty),
+        // Hardware types (SLift, MLift) live in HardwareUniverse
+        Syntax::SLift(slift) => type_check_slift(env, slift, ty),
+        Syntax::MLift(mlift) => type_check_mlift(env, mlift, ty),
+
+        // Bit values (0 and 1) can be checked against ^(Sig Bit)
+        Syntax::Zero(zero) => type_check_zero(env, zero, ty),
+        Syntax::One(one) => type_check_one(env, one, ty),
 
         _ => type_check_synth_term(env, term, ty),
     }
@@ -631,23 +639,165 @@ fn type_check_harrow<'db, 'g>(
     }
 }
 
-/// Check that a term is a valid hardware type (has type Type).
+/// Check that SLift (Sig) is valid against the expected type.
+/// SLift wraps a signal type to make a hardware type: Sig s : HType where s : SType
+fn type_check_slift<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    slift: &syn::SLift<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    match ty {
+        Value::HardwareUniverse(_) => {
+            // The inner type must be a valid signal type
+            check_signal_type(env, &slift.ty)
+        }
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::SLift(slift.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
+/// Check that MLift (Mod) is valid against the expected type.
+/// MLift wraps a module type to make a hardware type: Mod m : HType where m : MType
+fn type_check_mlift<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    mlift: &syn::MLift<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    match ty {
+        Value::HardwareUniverse(_) => {
+            // The inner type must be a valid module type
+            check_module_type(env, &mlift.ty)
+        }
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::MLift(mlift.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
+/// Check that `0` (Zero) is valid against the expected type.
+/// Zero values can be checked against ^(Sig Bit) (a Lift containing an SLift of Bit).
+fn type_check_zero<'db, 'g>(
+    _env: &mut TCEnvironment<'db, 'g>,
+    zero: &syn::Zero<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    // The expected type must be ^(Sig Bit), which is Lift(SLift(Bit))
+    match ty {
+        Value::Lift(lift) => match lift.ty.as_ref() {
+            Value::SLift(slift) => match slift.ty.as_ref() {
+                Value::Bit(_) => Ok(()),
+                _ => Err(Error::BadCtor {
+                    tm: Rc::new(Syntax::Zero(zero.clone())),
+                    ty_exp: Rc::new(ty.clone()),
+                }),
+            },
+            _ => Err(Error::BadCtor {
+                tm: Rc::new(Syntax::Zero(zero.clone())),
+                ty_exp: Rc::new(ty.clone()),
+            }),
+        },
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Zero(zero.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
+/// Check that `1` (One) is valid against the expected type.
+/// One values can be checked against ^(Sig Bit) (a Lift containing an SLift of Bit).
+fn type_check_one<'db, 'g>(
+    _env: &mut TCEnvironment<'db, 'g>,
+    one: &syn::One<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    // The expected type must be ^(Sig Bit), which is Lift(SLift(Bit))
+    match ty {
+        Value::Lift(lift) => match lift.ty.as_ref() {
+            Value::SLift(slift) => match slift.ty.as_ref() {
+                Value::Bit(_) => Ok(()),
+                _ => Err(Error::BadCtor {
+                    tm: Rc::new(Syntax::One(one.clone())),
+                    ty_exp: Rc::new(ty.clone()),
+                }),
+            },
+            _ => Err(Error::BadCtor {
+                tm: Rc::new(Syntax::One(one.clone())),
+                ty_exp: Rc::new(ty.clone()),
+            }),
+        },
+        _ => Err(Error::BadCtor {
+            tm: Rc::new(Syntax::One(one.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        }),
+    }
+}
+
+/// Check that a term is a valid hardware type (has type HType).
+/// Hardware types are:
+/// - SLift(s) where s : SType (signal types wrapped to hardware)
+/// - MLift(m) where m : MType (module types wrapped to hardware)
+/// - neutrals that have type HardwareUniverse
 fn check_hwtype<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
-    // HardwareUniverse types are: Bit, HArrow, or neutrals
     match term {
-        Syntax::Bit(_) => Ok(()),
-        Syntax::HArrow(harrow) => {
-            check_hwtype(env, &harrow.source)?;
-            check_hwtype(env, &harrow.target)
-        }
-        // Variables and other neutrals - synthesize and check for Type
+        // SLift wraps a signal type to make a hardware type: Sig s : HType where s : SType
+        Syntax::SLift(slift) => check_signal_type(env, &slift.ty),
+        // MLift wraps a module type to make a hardware type: Mod m : HType where m : MType
+        Syntax::MLift(mlift) => check_module_type(env, &mlift.ty),
+        // Variables and other neutrals - synthesize and check for HardwareUniverse
         _ => {
             let ty = type_synth(env, term)?;
             match &*ty {
                 Value::HardwareUniverse(_) => Ok(()),
+                _ => Err(Error::BadType {
+                    tm: Rc::new(term.clone()),
+                }),
+            }
+        }
+    }
+}
+
+/// Check that a term is a valid signal type (has type SType).
+/// Signal types are: Bit, or neutrals that have type SignalUniverse.
+fn check_signal_type<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    term: &Syntax<'db>,
+) -> Result<(), Error<'db>> {
+    match term {
+        Syntax::Bit(_) => Ok(()),
+        _ => {
+            let ty = type_synth(env, term)?;
+            match &*ty {
+                Value::SignalUniverse(_) => Ok(()),
+                _ => Err(Error::BadType {
+                    tm: Rc::new(term.clone()),
+                }),
+            }
+        }
+    }
+}
+
+/// Check that a term is a valid module type (has type MType).
+/// Module types are: HArrow, or neutrals that have type ModuleUniverse.
+fn check_module_type<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    term: &Syntax<'db>,
+) -> Result<(), Error<'db>> {
+    match term {
+        Syntax::HArrow(harrow) => {
+            // HArrow components must be hardware types
+            check_hwtype(env, &harrow.source)?;
+            check_hwtype(env, &harrow.target)
+        }
+        _ => {
+            let ty = type_synth(env, term)?;
+            match &*ty {
+                Value::ModuleUniverse(_) => Ok(()),
                 _ => Err(Error::BadType {
                     tm: Rc::new(term.clone()),
                 }),
@@ -769,8 +919,18 @@ pub fn check_type<'db, 'g>(
         return Ok(());
     }
 
-    // HardwareUniverse types (Bit, HArrow) are valid types that live in Type
-    if matches!(term, Syntax::Bit(_) | Syntax::HArrow(_)) {
+    // Signal types (Bit) are valid types - they live in SType
+    if let Syntax::Bit(_) = term {
+        return check_signal_type(env, term);
+    }
+
+    // Module types (HArrow) are valid types - they live in MType
+    if let Syntax::HArrow(harrow) = term {
+        return check_module_type(env, &Syntax::HArrow(harrow.clone()));
+    }
+
+    // SLift/MLift (hardware types) are valid types - they live in HType
+    if matches!(term, Syntax::SLift(_) | Syntax::MLift(_)) {
         return check_hwtype(env, term);
     }
 
@@ -840,7 +1000,7 @@ fn check_type_constructor_type<'db, 'g>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::UniverseLevel;
+    use crate::common::{Index, UniverseLevel};
     use crate::syn::parse::parse_syntax;
     use crate::syn::RcSyntax;
     use crate::ConstantId;
@@ -869,8 +1029,8 @@ mod tests {
         let global = val::GlobalEnv::new();
         let mut env = make_env(&global);
 
-        // ^Bit - a lifted hardware type
-        let lift_bit = parse(&db, "^Bit");
+        // ^(^s Bit) - a lifted hardware type (Lift containing SLift containing Bit)
+        let lift_bit = parse(&db, "^(^s Bit)");
         assert!(check_meta_type(&mut env, &lift_bit).is_ok());
     }
 
@@ -934,26 +1094,27 @@ mod tests {
         assert!(check_type(&mut env, &pi).is_ok());
     }
 
-    /// Test that check_type accepts Bit (hardware type).
+    /// Test that check_type accepts Bit (signal type - lives in SignalUniverse).
     #[test]
     fn test_check_type_accepts_bit() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&global);
 
+        // Bit is a signal type (SType), so it's a valid type
         let bit = parse(&db, "Bit");
         assert!(check_type(&mut env, &bit).is_ok());
     }
 
-    /// Test that check_type accepts HArrow (hardware arrow type).
+    /// Test that check_type accepts HArrow (module type).
     #[test]
     fn test_check_type_accepts_harrow() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&global);
 
-        // Bit → Bit
-        let harrow = parse(&db, "Bit -> Bit");
+        // ^s Bit -> ^s Bit : MType (module type with hardware type components)
+        let harrow = parse(&db, "^s Bit -> ^s Bit");
         assert!(check_type(&mut env, &harrow).is_ok());
     }
 
@@ -964,8 +1125,8 @@ mod tests {
         let global = val::GlobalEnv::new();
         let mut env = make_env(&global);
 
-        // ^Bit
-        let lift = parse(&db, "^Bit");
+        // ^(^s Bit) : Type (lifted hardware type)
+        let lift = parse(&db, "^(^s Bit)");
         assert!(check_type(&mut env, &lift).is_ok());
     }
 
@@ -995,8 +1156,8 @@ mod tests {
         let global = val::GlobalEnv::new();
         let mut env = make_env(&global);
 
-        // ^Bit : 𝒰0
-        let lift = parse(&db, "^Bit");
+        // ^(^s Bit) : 𝒰0 - Lift of SLift of Bit
+        let lift = parse(&db, "^(^s Bit)");
         let ty = type_synth(&mut env, &lift).expect("should synthesize");
 
         match &*ty {
@@ -1134,8 +1295,8 @@ mod tests {
         let global = val::GlobalEnv::new();
         let mut env = make_env(&global);
 
-        // Bit → Bit
-        let harrow = parse(&db, "Bit -> Bit");
+        // ^s Bit -> ^s Bit : MType (HArrow with hardware type components)
+        let harrow = parse(&db, "^s Bit -> ^s Bit");
         let module_universe = Value::ModuleUniverse(val::ModuleUniverse::new());
 
         assert!(type_check(&mut env, &harrow, &module_universe).is_ok());
@@ -1162,15 +1323,151 @@ mod tests {
         // Push f into the environment
         env.push_var(pi_val);
 
-        // Now apply f to (^Bit) which has type 𝒰0
+        // Now apply f to (^(^s Bit)) which has type 𝒰0
         // Note: We use manual AST construction for the variable reference
         // because the parser requires named variables to be in its name context.
-        let lift_bit = parse(&db, "^Bit");
+        let lift_bit = parse(&db, "^(^s Bit)");
         let app = Syntax::application_rc(Syntax::variable_rc(crate::common::Index(0)), lift_bit);
 
         let ty = type_synth(&mut env, &app).expect("should synthesize");
 
         // The result should be 𝒰0
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    // ========== Metavariable type synthesis tests ==========
+
+    /// Test that metavariables without arguments synthesize to their declared type.
+    #[test]
+    fn test_synth_metavariable_no_args() {
+        use crate::common::MetaVariableId;
+
+        let _db = Database::default();
+        let mut global = val::GlobalEnv::new();
+
+        // Declare ?[0] : U0
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+
+        let mut env = make_env(&global);
+
+        // ?[0] should synthesize to U0
+        let meta_stx = Syntax::metavariable(meta_id, vec![]);
+        let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
+
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    /// Test that metavariables with arguments synthesize with substitution applied.
+    #[test]
+    fn test_synth_metavariable_with_args() {
+        use crate::common::MetaVariableId;
+
+        let db = Database::default();
+        let mut global = val::GlobalEnv::new();
+
+        // Declare ?[0] (%x : U0) : U0
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(
+            meta_id,
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+
+        let mut env = make_env(&global);
+
+        // ?[0 ^(^s Bit)] should synthesize to U0
+        let lift_bit = parse(&db, "^(^s Bit)");
+        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit]);
+        let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
+
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+    }
+
+    /// Test that metavariable with wrong number of arguments fails.
+    #[test]
+    fn test_synth_metavariable_wrong_arg_count() {
+        use crate::common::MetaVariableId;
+
+        let _db = Database::default();
+        let mut global = val::GlobalEnv::new();
+
+        // Declare ?[0] (%x : U0) : U0 (expects 1 argument)
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(
+            meta_id,
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+
+        let mut env = make_env(&global);
+
+        // ?[0] with no arguments should fail
+        let meta_stx = Syntax::metavariable(meta_id, vec![]);
+        assert!(type_synth(&mut env, &meta_stx).is_err());
+    }
+
+    /// Test that metavariable with wrong argument type fails.
+    #[test]
+    fn test_synth_metavariable_wrong_arg_type() {
+        use crate::common::MetaVariableId;
+
+        let db = Database::default();
+        let mut global = val::GlobalEnv::new();
+
+        // Declare ?[0] (%x : ^Bit) : U0 (expects lifted bit type)
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(
+            meta_id,
+            vec![Syntax::lift_rc(Syntax::bit_rc())],
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+
+        let mut env = make_env(&global);
+
+        // ?[0 U0] with universe instead of ^Bit should fail
+        let u0 = parse(&db, "U0");
+        let meta_stx = Syntax::metavariable(meta_id, vec![u0]);
+        assert!(type_synth(&mut env, &meta_stx).is_err());
+    }
+
+    /// Test that dependent metavariables synthesize correctly.
+    #[test]
+    fn test_synth_metavariable_dependent() {
+        use crate::common::MetaVariableId;
+
+        let db = Database::default();
+        let mut global = val::GlobalEnv::new();
+
+        // Declare ?[0] (%A : U0) (%x : %A) : U0
+        // The second argument type depends on the first argument
+        let meta_id = MetaVariableId(0);
+        global.add_metavariable(
+            meta_id,
+            vec![
+                Syntax::universe_rc(UniverseLevel::new(0)), // %A : U0
+                Syntax::variable_rc(Index(0)),              // %x : %A (references %A)
+            ],
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+
+        let mut env = make_env(&global);
+
+        // ?[0 ^(^s Bit) (0 : ^(^s Bit))] - provide ^(^s Bit) for A, and a bit value 0 for x
+        let lift_bit = parse(&db, "^(^s Bit)");
+        let zero = Syntax::check_rc(lift_bit.clone(), Syntax::zero_rc());
+        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit, zero]);
+        let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
+
         match &*ty {
             Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
             _ => panic!("Expected Universe, got {:?}", ty),

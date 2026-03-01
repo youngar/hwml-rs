@@ -342,11 +342,82 @@ pub fn unify_elim<'db>(
             a1.argument.value.clone(),
             a2.argument.value.clone(),
         ),
-        (val::Eliminator::Case(_c1), val::Eliminator::Case(_c2)) => {
-            todo!("implement unification for cases.")
+        (val::Eliminator::Case(c1), val::Eliminator::Case(c2)) => {
+            unify_case(db, global, mctx, depth, c1, c2)
         }
         (e1, e2) => Err(UnificationError::MismatchEliminator(e1.clone(), e2.clone())),
     }
+}
+
+/// Unify two Case eliminators
+fn unify_case<'db>(
+    db: &'db dyn salsa::Database,
+    global: &val::GlobalEnv<'db>,
+    mctx: &mut MetaContext<'db>,
+    depth: usize,
+    c1: &val::Case<'db>,
+    c2: &val::Case<'db>,
+) -> UnificationResult<'db, ()> {
+    // Placeholder type for fresh variables (we don't track precise types in this unifier)
+    let placeholder_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+
+    // 1. Check type constructors match
+    if c1.type_constructor != c2.type_constructor {
+        // Use Mismatch with placeholder values to indicate the case mismatch
+        let v1 = Rc::new(Value::Constant(c1.type_constructor));
+        let v2 = Rc::new(Value::Constant(c2.type_constructor));
+        return Err(UnificationError::Mismatch(v1, v2));
+    }
+
+    // 2. Check parameters count and unify pairwise
+    if c1.parameters.len() != c2.parameters.len() {
+        // Parameters count mismatch - report as spine mismatch
+        return Err(UnificationError::MismatchSpine(
+            val::Spine::empty(),
+            val::Spine::empty(),
+        ));
+    }
+    for (p1, p2) in c1.parameters.iter().zip(c2.parameters.iter()) {
+        unify(db, global, mctx, depth, p1.clone(), p2.clone())?;
+    }
+
+    // 3. Unify motives by applying to a fresh variable
+    let scrutinee_var = Rc::new(Value::variable(Level(depth), placeholder_ty.clone()));
+    let motive1 = eval::run_closure(global, &c1.motive, [scrutinee_var.clone()])?;
+    let motive2 = eval::run_closure(global, &c2.motive, [scrutinee_var])?;
+    unify(db, global, mctx, depth + 1, motive1, motive2)?;
+
+    // 4. Check branches count and unify each
+    if c1.branches.len() != c2.branches.len() {
+        return Err(UnificationError::MismatchSpine(
+            val::Spine::empty(),
+            val::Spine::empty(),
+        ));
+    }
+
+    for (b1, b2) in c1.branches.iter().zip(c2.branches.iter()) {
+        if b1.constructor != b2.constructor {
+            let v1 = Rc::new(Value::Constant(b1.constructor));
+            let v2 = Rc::new(Value::Constant(b2.constructor));
+            return Err(UnificationError::Mismatch(v1, v2));
+        }
+        if b1.arity != b2.arity {
+            return Err(UnificationError::MismatchSpine(
+                val::Spine::empty(),
+                val::Spine::empty(),
+            ));
+        }
+
+        // Create fresh variables for constructor arguments
+        let args: Vec<_> = (0..b1.arity)
+            .map(|i| Rc::new(Value::variable(Level(depth + i), placeholder_ty.clone())))
+            .collect();
+        let body1 = eval::run_closure(global, &b1.body, args.clone())?;
+        let body2 = eval::run_closure(global, &b2.body, args)?;
+        unify(db, global, mctx, depth + b1.arity, body1, body2)?;
+    }
+
+    Ok(())
 }
 
 pub fn unify_spine<'db>(
@@ -431,6 +502,50 @@ pub fn unify<'db>(
             }
             Ok(())
         }
+        // Hardware universes - structural equality
+        (Value::HardwareUniverse(_), Value::HardwareUniverse(_)) => Ok(()),
+        (Value::SignalUniverse(_), Value::SignalUniverse(_)) => Ok(()),
+        (Value::ModuleUniverse(_), Value::ModuleUniverse(_)) => Ok(()),
+        // Bit type - structural equality
+        (Value::Bit(_), Value::Bit(_)) => Ok(()),
+        // Bit values - structural equality
+        (Value::Zero(_), Value::Zero(_)) => Ok(()),
+        (Value::One(_), Value::One(_)) => Ok(()),
+        // HArrow - unify source and target (target is a closure)
+        (Value::HArrow(h1), Value::HArrow(h2)) => {
+            unify(
+                db,
+                global,
+                mctx,
+                depth,
+                h1.source.clone(),
+                h2.source.clone(),
+            )?;
+            // Target is a closure - run both under a fresh variable
+            let var = Rc::new(Value::variable(Level::new(depth), h1.source.clone()));
+            let h1_target = eval::run_closure(global, &h1.target, [var.clone()])?;
+            let h2_target = eval::run_closure(global, &h2.target, [var])?;
+            unify(db, global, mctx, depth + 1, h1_target, h2_target)
+        }
+        // Module - compare closure bodies under a fresh variable
+        (Value::Module(m1), Value::Module(m2)) => {
+            let var = Rc::new(Value::variable(Level::new(depth), Rc::new(Value::bit())));
+            let m1_body = eval::run_closure(global, &m1.body, [var.clone()])?;
+            let m2_body = eval::run_closure(global, &m2.body, [var])?;
+            unify(db, global, mctx, depth + 1, m1_body, m2_body)
+        }
+        // Lift types - unify the inner type
+        (Value::Lift(l1), Value::Lift(l2)) => {
+            unify(db, global, mctx, depth, l1.ty.clone(), l2.ty.clone())
+        }
+        // SLift types - unify the inner type
+        (Value::SLift(s1), Value::SLift(s2)) => {
+            unify(db, global, mctx, depth, s1.ty.clone(), s2.ty.clone())
+        }
+        // MLift types - unify the inner type
+        (Value::MLift(m1), Value::MLift(m2)) => {
+            unify(db, global, mctx, depth, m1.ty.clone(), m2.ty.clone())
+        }
         (Value::TypeConstructor(t1), Value::TypeConstructor(t2)) => {
             // Check that the type constructor constants are the same.
             if t1.constructor != t2.constructor {
@@ -509,5 +624,218 @@ pub fn unify<'db>(
             f.ty.clone(),
         ),
         _ => Err(UnificationError::Mismatch(lhs, rhs)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::syn::parse::parse_syntax;
+    use crate::Database;
+
+    /// Test helper context
+    struct Ctx<'db> {
+        db: &'db Database,
+        global: val::GlobalEnv<'db>,
+    }
+
+    impl<'db> Ctx<'db> {
+        fn new(db: &'db Database) -> Self {
+            Ctx {
+                db,
+                global: val::GlobalEnv::new(),
+            }
+        }
+
+        fn parse(&self, s: &'db str) -> Rc<Syntax<'db>> {
+            parse_syntax(self.db, s).expect("parse failed")
+        }
+
+        fn eval(&self, stx: &Syntax<'db>) -> Rc<Value<'db>> {
+            let mut env = Environment {
+                global: &self.global,
+                local: LocalEnv::new(),
+            };
+            eval::eval(&mut env, stx).expect("eval failed")
+        }
+
+        fn parse_eval(&self, s: &'db str) -> Rc<Value<'db>> {
+            let stx = self.parse(s);
+            self.eval(&stx)
+        }
+
+        /// Unify two terms (as strings) and return Ok(()) if successful
+        fn unify_terms(
+            &self,
+            mctx: &mut MetaContext<'db>,
+            a: &'db str,
+            b: &'db str,
+        ) -> UnificationResult<'db, ()> {
+            let va = self.parse_eval(a);
+            let vb = self.parse_eval(b);
+            unify(self.db, &self.global, mctx, 0, va, vb)
+        }
+    }
+
+    // =========================================================================
+    // Basic Unification Tests
+    // =========================================================================
+
+    #[test]
+    fn test_unify_same_universe() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "U0", "U0").is_ok());
+        assert!(c.unify_terms(&mut mctx, "U1", "U1").is_ok());
+    }
+
+    #[test]
+    fn test_unify_different_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "U0", "U1").is_err());
+    }
+
+    #[test]
+    fn test_unify_same_bit() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "Bit", "Bit").is_ok());
+    }
+
+    #[test]
+    fn test_unify_bit_values() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "0", "0").is_ok());
+        assert!(c.unify_terms(&mut mctx, "1", "1").is_ok());
+        assert!(c.unify_terms(&mut mctx, "0", "1").is_err());
+    }
+
+    #[test]
+    fn test_unify_same_pi() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c
+            .unify_terms(&mut mctx, "∀ (%x : U0) → U0", "∀ (%y : U0) → U0")
+            .is_ok());
+    }
+
+    #[test]
+    fn test_unify_different_pi() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c
+            .unify_terms(&mut mctx, "∀ (%x : U0) → U0", "∀ (%y : U1) → U0")
+            .is_err());
+    }
+
+    #[test]
+    fn test_unify_same_harrow() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "Bit → Bit", "Bit → Bit").is_ok());
+    }
+
+    // =========================================================================
+    // Lambda/Eta Unification Tests
+    // =========================================================================
+
+    #[test]
+    fn test_unify_lambdas() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        // Two identity lambdas should unify
+        assert!(c.unify_terms(&mut mctx, "λ %x → %x", "λ %y → %y").is_ok());
+    }
+
+    #[test]
+    fn test_unify_different_lambdas() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        // λx→x vs λx→U0 should fail
+        assert!(c.unify_terms(&mut mctx, "λ %x → %x", "λ %y → U0").is_err());
+    }
+
+    // =========================================================================
+    // Hardware Type Unification Tests
+    // =========================================================================
+
+    #[test]
+    fn test_unify_hardware_universes() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c
+            .unify_terms(&mut mctx, "HardwareType", "HardwareType")
+            .is_ok());
+        assert!(c.unify_terms(&mut mctx, "SignalType", "SignalType").is_ok());
+        assert!(c.unify_terms(&mut mctx, "ModuleType", "ModuleType").is_ok());
+        // Different hardware universes should fail
+        assert!(c
+            .unify_terms(&mut mctx, "HardwareType", "SignalType")
+            .is_err());
+    }
+
+    #[test]
+    fn test_unify_lift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "^Bit", "^Bit").is_ok());
+        assert!(c.unify_terms(&mut mctx, "^U0", "^U0").is_ok());
+    }
+
+    #[test]
+    fn test_unify_slift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c.unify_terms(&mut mctx, "^sBit", "^sBit").is_ok());
+    }
+
+    #[test]
+    fn test_unify_mlift() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        assert!(c
+            .unify_terms(&mut mctx, "^m(Bit → Bit)", "^m(Bit → Bit)")
+            .is_ok());
+    }
+
+    // =========================================================================
+    // Module Unification Tests
+    // =========================================================================
+
+    #[test]
+    fn test_unify_modules() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        // Two identity modules should unify
+        assert!(c
+            .unify_terms(&mut mctx, "mod %x → %x", "mod %y → %y")
+            .is_ok());
+    }
+
+    #[test]
+    fn test_unify_different_modules() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        let mut mctx = MetaContext::new();
+        // mod x→x vs mod x→0 should fail
+        assert!(c
+            .unify_terms(&mut mctx, "mod %x → %x", "mod %y → 0")
+            .is_err());
     }
 }

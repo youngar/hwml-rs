@@ -6,7 +6,7 @@
 
 use crate::check::{check_type, type_check, TCEnvironment};
 use crate::declaration::{
-    Constant, Declaration, Module, Primitive, TypeConstructor as DeclTypeConstructor,
+    Constant, Declaration, Metavariable, Module, Primitive, TypeConstructor as DeclTypeConstructor,
 };
 use crate::eval;
 use crate::syn::{Syntax, Telescope};
@@ -76,6 +76,9 @@ pub fn check_module<'db>(
             }
             Declaration::TypeConstructor(tcon) => {
                 check_type_constructor(&mut global_env, tcon)?;
+            }
+            Declaration::Metavariable(meta) => {
+                check_metavariable(&mut global_env, meta)?;
             }
         }
     }
@@ -189,6 +192,37 @@ fn check_type_constructor<'db>(
     Ok(())
 }
 
+/// Check a metavariable declaration and add it to the global environment.
+fn check_metavariable<'db>(
+    global: &mut GlobalEnv<'db>,
+    meta: &Metavariable<'db>,
+) -> Result<(), Error<'db>> {
+    // Create a type-checking environment
+    let mut tc_env = TCEnvironment {
+        values: crate::val::Environment::new(global),
+        types: Vec::new(),
+    };
+
+    // Check each argument type in the telescope
+    for arg_ty in meta.arguments.iter() {
+        // Check that the argument type is valid
+        check_type(&mut tc_env, arg_ty)?;
+
+        // Evaluate the type and extend the environment with a fresh variable
+        // This pushes to both tc_env.values and tc_env.types, keeping them in sync
+        let arg_ty_val = eval::eval(&mut tc_env.values, arg_ty)?;
+        tc_env.push_var(arg_ty_val);
+    }
+
+    // Check that the metavariable's type is valid in the extended context
+    check_type(&mut tc_env, &meta.ty)?;
+
+    // Add the metavariable to the global environment
+    global.add_metavariable(meta.id, meta.arguments.clone(), meta.ty.clone());
+
+    Ok(())
+}
+
 /// Determine if a type represents a hardware-level constant.
 ///
 /// HardwareUniverse constants have types that:
@@ -234,5 +268,28 @@ pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a Rc<Val
     match ty {
         Value::Lift(lift) => Some(&lift.ty),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::syn::parse::parse_module;
+    use crate::Database;
+
+    #[test]
+    fn test_check_dependent_metavariable() {
+        // Test that dependent metavariables are parsed and type-checked correctly.
+        // A dependent metavariable: ?[0] : (A : U0) -> A -> U0
+        // The type of the second argument (%x : %A) references the first argument.
+        let db = Database::default();
+        let input = "prim $Nat : U0; meta ?[0] (%A : U0) (%x : %A) : U0;";
+        let module = parse_module(&db, input).expect("Failed to parse module");
+        let result = check_module(&module, GlobalEnv::new());
+        assert!(
+            result.is_ok(),
+            "Dependent metavariable should type-check: {:?}",
+            result.err()
+        );
     }
 }
