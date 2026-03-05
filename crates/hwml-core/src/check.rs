@@ -1,15 +1,20 @@
-use crate::common::Level;
+use crate::common::{ConstantId, Level};
 use crate::equal;
 use crate::eval;
+use crate::pattern_unify;
+use crate::quote;
 use crate::syn as stx;
 use crate::syn;
 use crate::syn::Syntax;
 use crate::val;
-use crate::val::{Closure, Environment, LocalEnv, Value};
+use crate::val::{Environment, LocalEnv, Value};
+use salsa::Database;
+use std::collections::HashSet;
 use std::rc::Rc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TCEnvironment<'db, 'g> {
+    pub db: &'db dyn Database,
     pub values: val::Environment<'db, 'g>,
     pub types: Vec<Rc<Value<'db>>>,
 }
@@ -68,6 +73,24 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
             self.types.push(ty);
         }
     }
+
+    /// Apply substitutions from pattern unification.
+    /// Mutates variables to let-bindings and re-evaluates dependent types.
+    pub fn apply_subst(&mut self, solutions: &[(Level, Rc<Value<'db>>)]) -> Result<(), Error<'db>> {
+        for (level, value) in solutions {
+            self.values.set(*level, value.clone());
+        }
+
+        for k in 0..self.types.len() {
+            let quoted_ty = quote::type_quote(self.values.global, k, &self.types[k])?;
+            let mut historical_env = self.values.clone();
+            historical_env.truncate(k);
+            let new_ty = eval::eval(&mut historical_env, &quoted_ty)?;
+            self.types[k] = new_ty;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +122,16 @@ pub enum Error<'db> {
     EvaluationFailure(eval::Error),
     LookupError(val::LookupError<'db>),
     MatchOnNonDatatype(Rc<Value<'db>>),
+    QuoteError(quote::Error<'db>),
+    PatternUnifyError(pattern_unify::Error<'db>),
+    PatternUnifyStuck {
+        tm: Rc<Syntax<'db>>,
+        meta_id: crate::common::MetaVariableId,
+    },
+    NonExhaustiveMatch {
+        tm: Rc<Syntax<'db>>,
+        missing: Vec<String>,
+    },
 }
 
 impl<'db> From<eval::Error> for Error<'db> {
@@ -106,6 +139,88 @@ impl<'db> From<eval::Error> for Error<'db> {
         Error::EvaluationFailure(e)
     }
 }
+
+impl<'db> From<quote::Error<'db>> for Error<'db> {
+    fn from(e: quote::Error<'db>) -> Self {
+        Error::QuoteError(e)
+    }
+}
+
+impl<'db> From<pattern_unify::Error<'db>> for Error<'db> {
+    fn from(e: pattern_unify::Error<'db>) -> Self {
+        Error::PatternUnifyError(e)
+    }
+}
+
+impl<'db> std::fmt::Display for Error<'db> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::BadSynth { tm } => {
+                write!(f, "cannot infer type for term: {tm:?}")
+            }
+            Error::BadType { tm } => {
+                write!(f, "expected a type, but got: {tm:?}")
+            }
+            Error::BadElim { tm, ty_got } => {
+                write!(
+                    f,
+                    "bad elimination: cannot apply or match on term of type {ty_got:?}\n  in: {tm:?}"
+                )
+            }
+            Error::BadCtor { tm, ty_exp } => {
+                write!(
+                    f,
+                    "constructor does not match expected type {ty_exp:?}\n  in: {tm:?}"
+                )
+            }
+            Error::BadCheck { tm, ty_exp, ty_got } => {
+                write!(
+                    f,
+                    "type mismatch:\n  expected: {ty_exp:?}\n  got: {ty_got:?}\n  in: {tm:?}"
+                )
+            }
+            Error::EvaluationFailure(e) => {
+                write!(f, "evaluation failed: {e:?}")
+            }
+            Error::LookupError(e) => {
+                write!(f, "lookup error: {e:?}")
+            }
+            Error::MatchOnNonDatatype(ty) => {
+                write!(f, "cannot pattern match on non-datatype: {ty:?}")
+            }
+            Error::QuoteError(e) => {
+                write!(f, "quotation error: {e:?}")
+            }
+            Error::PatternUnifyError(e) => {
+                write!(f, "pattern unification failed: {e}")
+            }
+            Error::PatternUnifyStuck { meta_id, .. } => {
+                write!(
+                    f,
+                    "pattern match blocked on unsolved metavariable ?{}\n\
+                     help: add a type annotation to resolve the ambiguity",
+                    meta_id.0
+                )
+            }
+            Error::NonExhaustiveMatch { missing, .. } => {
+                write!(f, "non-exhaustive pattern match\n  missing constructor")?;
+                if missing.len() > 1 {
+                    write!(f, "s")?;
+                }
+                write!(f, ": ")?;
+                for (i, name) in missing.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "@{}", name)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<'db> std::error::Error for Error<'db> {}
 
 use std::result::Result;
 
@@ -141,7 +256,6 @@ pub fn type_synth<'db, 'g>(
         Syntax::Prim(prim) => type_synth_prim(env, prim),
         Syntax::Check(check) => type_synth_check(env, check),
         Syntax::Application(application) => type_synth_application(env, application),
-        Syntax::Case(case) => type_synth_case(env, case),
         Syntax::Metavariable(metavariable) => type_synth_metavariable(env, metavariable),
 
         // Universe: U_n : U_(n+1)
@@ -155,6 +269,12 @@ pub fn type_synth<'db, 'g>(
         // HardwareUniverse constructs - Lift is the only one that can be synthesized
         // Bit, HArrow, and Quote need to be checked against expected types
         Syntax::Lift(lift) => type_synth_lift(env, lift),
+
+        // Eq type can synthesize: Eq A x y : U_i if A : U_i
+        Syntax::Eq(eq) => type_synth_eq(env, eq),
+
+        // Transport is an eliminator and synthesizes its type
+        Syntax::Transport(transport) => type_synth_transport(env, transport),
 
         _ => Err(Error::BadSynth {
             tm: Rc::new(term.clone()),
@@ -299,121 +419,131 @@ pub fn type_synth_application<'db, 'g>(
     run_closure(&env, &pi.target, [arg])
 }
 
-/// Synthesize the type of a case expression.
-pub fn type_synth_case<'db, 'g>(
+pub fn type_check_case<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     case: &syn::Case<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
-    // First synthesize the type of the scrutinee.
-    let scrutinee_ty = type_synth(env, &case.expr)?;
+    expected_type: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    let scrutinee_level = case.scrutinee.index.to_level(env.depth());
+    let scrutinee_ty = env.type_of(scrutinee_level).clone();
 
-    let motive_clos = Closure::new(env.values.local.clone(), case.motive.clone());
-
-    // Ensure that the term being matched is a datatype.
     let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
         return Err(Error::BadElim {
             tm: Rc::new(Syntax::Case(case.clone())),
             ty_got: scrutinee_ty,
         });
     };
-    let constructor = type_constructor.constructor;
 
-    // Get the type constructor info.
-    let type_info = env
+    let tcon_info = env
         .values
         .global
         .type_constructor(type_constructor.constructor)
         .map_err(Error::LookupError)?;
 
-    // Get the number of parameters.
-    let num_parameters = type_info.num_parameters();
+    let tcon_args: Vec<_> = type_constructor.arguments.iter().cloned().collect();
+    let all_constructors = tcon_info.constructors().to_vec();
+    let user_provided: HashSet<ConstantId<'db>> =
+        case.branches.iter().map(|b| b.constructor).collect();
 
-    // Create an array of parameters.
-    let parameters = type_constructor
-        .iter()
-        .take(num_parameters)
-        .cloned()
-        .collect::<Vec<_>>();
+    let base_depth = env.depth();
+    let mut required_constructors: Vec<ConstantId<'db>> = Vec::new();
 
-    // First, create variables for the indices.
-    let index_bindings = type_info.indices().to_vec();
-    let index_telescope = crate::syn::Telescope::from(index_bindings);
-    let index_tys = eval::eval_telescope(env.values.global, parameters.clone(), &index_telescope)?;
+    for &dcon_id in &all_constructors {
+        let dcon_info = env
+            .values
+            .global
+            .data_constructor(dcon_id)
+            .map_err(Error::LookupError)?;
 
-    // Check that the motive returns a type.
-    // TODO: we really need to check the arity of the motive.
-    {
-        // Push each index in to the environment, while building up
-        let depth = env.depth();
-        let mut scrutinee_ty_args = parameters.clone();
-        let mut motive_args = Vec::new();
-        for ty in index_tys.types {
-            let var = env.push_var(ty);
-            scrutinee_ty_args.push(var.clone());
-            motive_args.push(var);
+        let outcome = pattern_unify::unify_pattern(
+            env.values.global,
+            &tcon_info,
+            &tcon_args,
+            dcon_id,
+            &dcon_info,
+            base_depth,
+        )?;
+
+        match outcome {
+            pattern_unify::PatternUnifyOutcome::Success(_) => {
+                required_constructors.push(dcon_id);
+            }
+            pattern_unify::PatternUnifyOutcome::Conflict => {}
+            pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
+                return Err(Error::PatternUnifyStuck {
+                    tm: Rc::new(Syntax::Case(case.clone())),
+                    meta_id,
+                });
+            }
         }
-
-        // Create a variable for the scrutinee.
-        let scrutinee_ty = Rc::new(Value::type_constructor(
-            type_constructor.constructor,
-            scrutinee_ty_args,
-        ));
-        let scrutinee_var = env.push_var(scrutinee_ty);
-        motive_args.push(scrutinee_var);
-
-        // Check that the motive returns a type.
-        check_type(env, &case.motive)?;
-        env.truncate(depth);
     }
 
-    // Check the types of the branches.
+    let missing: Vec<String> = required_constructors
+        .iter()
+        .filter(|c| !user_provided.contains(c))
+        .map(|c| c.name(env.db).to_string())
+        .collect();
+
+    if !missing.is_empty() {
+        return Err(Error::NonExhaustiveMatch {
+            tm: Rc::new(Syntax::Case(case.clone())),
+            missing,
+        });
+    }
     for branch in &case.branches {
-        let data_info = env
+        let dcon_info = env
             .values
             .global
             .data_constructor(branch.constructor)
             .map_err(Error::LookupError)?;
 
-        let depth = env.depth();
+        let branch_depth = env.depth();
 
-        // Create fresh variables for the data constructor arguments.
-        let dcon_arg_tys =
-            eval::eval_telescope(env.values.global, parameters.clone(), &data_info.arguments)?;
-        let mut dcon_args: Vec<Rc<Value<'_>>> = Vec::new();
-        for ty in dcon_arg_tys.types {
-            let var = env.push_var(ty);
-            dcon_args.push(var);
+        // Run pattern unification for this branch
+        let outcome = pattern_unify::unify_pattern(
+            env.values.global,
+            &tcon_info,
+            &tcon_args,
+            branch.constructor,
+            &dcon_info,
+            branch_depth,
+        )?;
+
+        match outcome {
+            pattern_unify::PatternUnifyOutcome::Success(result) => {
+                for binding in &result.new_bindings {
+                    env.push_var(binding.ty.clone());
+                }
+
+                env.apply_subst(&result.solutions)?;
+
+                let refined_expected_type = if result.solutions.is_empty() {
+                    Rc::new(expected_type.clone())
+                } else {
+                    let quoted_expected =
+                        quote::type_quote(env.values.global, branch_depth, expected_type)?;
+                    let mut eval_env = env.values.clone();
+                    eval::eval(&mut eval_env, &quoted_expected)?
+                };
+
+                type_check(env, &branch.body, &refined_expected_type)?;
+                env.truncate(branch_depth);
+            }
+
+            pattern_unify::PatternUnifyOutcome::Conflict => {
+                continue;
+            }
+
+            pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
+                return Err(Error::PatternUnifyStuck {
+                    tm: Rc::new(Syntax::Case(case.clone())),
+                    meta_id,
+                });
+            }
         }
-
-        // Create the data constructor value.
-        let dcon_val = Rc::new(Value::data_constructor(constructor, dcon_args.clone()));
-        let mut branch_motive_args =
-            type_constructor.arguments[type_info.num_parameters()..].to_vec();
-        branch_motive_args.push(dcon_val);
-
-        // Evaluate the motive to get the type of the branch body.
-        let branch_ty = eval::run_closure(env.values.global, &motive_clos, branch_motive_args)?;
-
-        // Check the branch body against the motive.
-        type_check(env, &branch.body, &branch_ty)?;
-
-        // Reset the environment.
-        env.truncate(depth);
     }
 
-    // Check that the scrutinee is the right type.
-    //let scrutinee_ty = type_synth(env, &case.expr)?;
-    let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
-        return Err(Error::MatchOnNonDatatype(scrutinee_ty));
-    };
-
-    // We will evaluate the motive, reading the indices off of the type of the
-    // scrutinee, and finally passing in the scrutinee itself.
-    let scrutinee = eval(env, &case.expr)?;
-    let mut motive_args = type_constructor.arguments[type_info.num_parameters()..].to_vec();
-    motive_args.push(scrutinee);
-    let ty = eval::run_closure(env.values.global, &motive_clos, motive_args)?;
-    Ok(ty)
+    Ok(())
 }
 
 /// Check types of terms against an expected type.
@@ -427,6 +557,7 @@ pub fn type_check<'db, 'g>(
         Syntax::Lambda(lam) => type_check_lambda(env, lam, ty),
         Syntax::TypeConstructor(tc) => type_check_type_constructor(env, tc, ty),
         Syntax::DataConstructor(dc) => type_check_data_constructor(env, dc, ty),
+        Syntax::Case(case) => type_check_case(env, case, ty),
 
         // Signal types (Bit) live in SignalUniverse
         Syntax::Bit(_) => type_check_bit(env, ty),
@@ -440,6 +571,10 @@ pub fn type_check<'db, 'g>(
         Syntax::Zero(zero) => type_check_zero(env, zero, ty),
         Syntax::One(one) => type_check_one(env, one, ty),
 
+        // Equality types and proofs
+        Syntax::Eq(eq) => type_check_eq(env, eq, ty),
+        Syntax::Refl(_) => type_check_refl(env, term, ty),
+        // Transport is an eliminator - it synthesizes, so falls through to type_check_synth_term
         _ => type_check_synth_term(env, term, ty),
     }
 }
@@ -806,6 +941,122 @@ fn check_module_type<'db, 'g>(
     }
 }
 
+fn type_check_eq<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    eq: &syn::EqType<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    let Value::Universe(_) = ty else {
+        return Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Eq(eq.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        });
+    };
+
+    check_type(env, &eq.ty)?;
+    let sem_ty = eval(env, &eq.ty)?;
+    type_check(env, &eq.lhs, &sem_ty)?;
+    type_check(env, &eq.rhs, &sem_ty)?;
+
+    Ok(())
+}
+
+fn type_synth_eq<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    eq: &syn::EqType<'db>,
+) -> Result<Rc<Value<'db>>, Error<'db>> {
+    check_type(env, &eq.ty)?;
+    let ty_ty = type_synth(env, &eq.ty)?;
+
+    let Value::Universe(universe) = ty_ty.as_ref() else {
+        return Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Eq(eq.clone())),
+            ty_exp: ty_ty,
+        });
+    };
+
+    let sem_ty = eval(env, &eq.ty)?;
+    type_check(env, &eq.lhs, &sem_ty)?;
+    type_check(env, &eq.rhs, &sem_ty)?;
+
+    Ok(Rc::new(Value::universe(universe.level)))
+}
+
+fn type_check_refl<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    term: &Syntax<'db>,
+    ty: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    let Value::EqType(eq_ty) = ty else {
+        return Err(Error::BadCtor {
+            tm: Rc::new(term.clone()),
+            ty_exp: Rc::new(ty.clone()),
+        });
+    };
+
+    equal::equate(
+        env.values.global,
+        env.depth(),
+        &eq_ty.lhs,
+        &eq_ty.rhs,
+        &eq_ty.ty,
+    )
+    .map_err(|_| Error::BadCtor {
+        tm: Rc::new(term.clone()),
+        ty_exp: Rc::new(ty.clone()),
+    })
+}
+
+fn type_synth_transport<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    transport: &syn::Transport<'db>,
+) -> Result<Rc<Value<'db>>, Error<'db>> {
+    let proof_ty = type_synth(env, &transport.proof)?;
+    let Value::EqType(eq_ty) = &*proof_ty else {
+        return Err(Error::BadSynth {
+            tm: Rc::new(Syntax::Transport(transport.clone())),
+        });
+    };
+
+    let (arity, innermost_body) = count_closure_arity(&transport.motive);
+
+    for _ in 0..arity {
+        env.push_var(eq_ty.ty.clone());
+    }
+
+    let motive_check_result = check_type(env, &innermost_body);
+
+    for _ in 0..arity {
+        env.pop();
+    }
+
+    motive_check_result?;
+
+    let motive_closure = val::Closure::new(env.values.local.clone(), innermost_body.clone());
+    let p_of_x = run_closure(env, &motive_closure, [eq_ty.lhs.clone()])?;
+
+    type_check(env, &transport.value, &p_of_x)?;
+
+    let p_of_y = run_closure(env, &motive_closure, [eq_ty.rhs.clone()])?;
+
+    Ok(p_of_y)
+}
+
+fn count_closure_arity<'db>(closure: &syn::Closure<'db>) -> (usize, syn::RcSyntax<'db>) {
+    let mut arity = 1;
+    let mut current = &closure.body;
+
+    loop {
+        match &**current {
+            Syntax::Closure(inner) => {
+                arity += 1;
+                current = &inner.body;
+            }
+            _ => return (arity, current.clone()),
+        }
+    }
+}
+
 // Synthesize a type for the term, then check for equality against the expected type.
 pub fn type_check_synth_term<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
@@ -934,6 +1185,11 @@ pub fn check_type<'db, 'g>(
         return check_hwtype(env, term);
     }
 
+    // Equality types are valid types - they live in universes
+    if let Syntax::Eq(eq) = term {
+        return check_eq_type(env, eq);
+    }
+
     // Otherwise, synthesize a type for the term, which must be a universe.
     let ty = type_synth(env, term)?;
     if let Value::Universe(_) = &*ty {
@@ -944,6 +1200,17 @@ pub fn check_type<'db, 'g>(
     Err(Error::BadType {
         tm: Rc::new(term.clone()),
     })
+}
+
+fn check_eq_type<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    eq: &stx::EqType<'db>,
+) -> Result<(), Error<'db>> {
+    check_type(env, &eq.ty)?;
+    let sem_ty = eval(env, &eq.ty)?;
+    type_check(env, &eq.lhs, &sem_ty)?;
+    type_check(env, &eq.rhs, &sem_ty)?;
+    Ok(())
 }
 
 /// Check that a pi is a valid type.
@@ -1003,13 +1270,33 @@ mod tests {
     use crate::common::{Index, UniverseLevel};
     use crate::syn::parse::parse_syntax;
     use crate::syn::RcSyntax;
+
+    use crate::val::Closure;
     use crate::ConstantId;
     use crate::Database;
-    use hwml_support::FromWithDb;
+    use hwml_support::{FromWithDb, IntoWithDb};
+
+    // ========== Prelude definitions ==========
+
+    use crate::test_utils::{eval_str, load_prelude, NAT_PRELUDE, VEC_PRELUDE};
+
+    /// Create a GlobalEnv with Nat type defined.
+    fn make_nat_global<'db>(db: &'db Database) -> val::GlobalEnv<'db> {
+        load_prelude(db, NAT_PRELUDE)
+    }
+
+    /// Create a GlobalEnv with Nat and Vec types defined.
+    fn make_vec_global<'db>(db: &'db Database) -> val::GlobalEnv<'db> {
+        load_prelude(db, VEC_PRELUDE)
+    }
 
     /// Helper to create a TCEnvironment with a GlobalEnv
-    fn make_env<'db, 'g>(global: &'g val::GlobalEnv<'db>) -> TCEnvironment<'db, 'g> {
+    fn make_env<'db, 'g>(
+        db: &'db dyn salsa::Database,
+        global: &'g val::GlobalEnv<'db>,
+    ) -> TCEnvironment<'db, 'g> {
         TCEnvironment {
+            db,
             values: val::Environment::new(global),
             types: Vec::new(),
         }
@@ -1027,7 +1314,7 @@ mod tests {
     fn test_lift_is_valid_meta_type() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ^(^s Bit) - a lifted hardware type (Lift containing SLift containing Bit)
         let lift_bit = parse(&db, "^(^s Bit)");
@@ -1039,7 +1326,7 @@ mod tests {
     fn test_hwtype_is_not_valid_meta_type() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // Bit - a hardware type
         let bit = parse(&db, "Bit");
@@ -1051,7 +1338,7 @@ mod tests {
     fn test_universe_is_valid_meta_type() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // 𝒰0 should be accepted
         let u0 = parse(&db, "U0");
@@ -1063,7 +1350,7 @@ mod tests {
     fn test_pi_is_valid_meta_type() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ∀ (%x : 𝒰0) → 𝒰0
         let pi = parse(&db, "forall (%x : U0) -> U0");
@@ -1077,7 +1364,7 @@ mod tests {
     fn test_check_type_accepts_universe() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         let u0 = parse(&db, "U0");
         assert!(check_type(&mut env, &u0).is_ok());
@@ -1088,7 +1375,7 @@ mod tests {
     fn test_check_type_accepts_pi() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         let pi = parse(&db, "forall (%x : U0) -> U0");
         assert!(check_type(&mut env, &pi).is_ok());
@@ -1099,7 +1386,7 @@ mod tests {
     fn test_check_type_accepts_bit() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // Bit is a signal type (SType), so it's a valid type
         let bit = parse(&db, "Bit");
@@ -1111,7 +1398,7 @@ mod tests {
     fn test_check_type_accepts_harrow() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ^s Bit -> ^s Bit : MType (module type with hardware type components)
         let harrow = parse(&db, "^s Bit -> ^s Bit");
@@ -1123,7 +1410,7 @@ mod tests {
     fn test_check_type_accepts_lift() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ^(^s Bit) : Type (lifted hardware type)
         let lift = parse(&db, "^(^s Bit)");
@@ -1137,7 +1424,7 @@ mod tests {
     fn test_synth_universe() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         let u0 = parse(&db, "U0");
         let ty = type_synth(&mut env, &u0).expect("should synthesize");
@@ -1154,7 +1441,7 @@ mod tests {
     fn test_synth_lift() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ^(^s Bit) : 𝒰0 - Lift of SLift of Bit
         let lift = parse(&db, "^(^s Bit)");
@@ -1169,9 +1456,9 @@ mod tests {
     /// Test that variables get their type from the environment.
     #[test]
     fn test_synth_variable() {
-        let _db = Database::default();
+        let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // Push a variable of type 𝒰0
         let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
@@ -1203,7 +1490,7 @@ mod tests {
             val::ConstantInfo::new(parse(&db, "U0"), parse(&db, "U0")),
         );
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // @myConst should have type 𝒰0
         let const_syn = parse(&db, "@myConst");
@@ -1226,7 +1513,7 @@ mod tests {
         // Add primitive $Nat : 𝒰0
         global.add_primitive(cid("Nat"), val::PrimitiveInfo::new(parse(&db, "U0")));
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // $Nat should have type 𝒰0
         let prim_syn = parse(&db, "$Nat");
@@ -1245,7 +1532,7 @@ mod tests {
     fn test_check_pi_against_universe() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ∀ (%x : 𝒰0) → 𝒰0 has type 𝒰1 (not 𝒰0)
         let pi = parse(&db, "forall (%x : U0) -> U0");
@@ -1259,7 +1546,7 @@ mod tests {
     fn test_check_lambda_against_pi() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // λ %x → %x : ∀ (%x : 𝒰0) → 𝒰0
         let lam = parse(&db, "λ %x -> %x");
@@ -1280,7 +1567,7 @@ mod tests {
     fn test_check_bit_against_signal_universe() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         let bit = parse(&db, "Bit");
         let signal_universe = Value::SignalUniverse(val::SignalUniverse::new());
@@ -1293,7 +1580,7 @@ mod tests {
     fn test_check_harrow_against_module_universe() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ^s Bit -> ^s Bit : MType (HArrow with hardware type components)
         let harrow = parse(&db, "^s Bit -> ^s Bit");
@@ -1309,7 +1596,7 @@ mod tests {
     fn test_synth_application() {
         let db = Database::default();
         let global = val::GlobalEnv::new();
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // Set up: we need a variable of Pi type
         // Create a function f : ∀ (%x : 𝒰0) → 𝒰0
@@ -1345,14 +1632,14 @@ mod tests {
     fn test_synth_metavariable_no_args() {
         use crate::common::MetaVariableId;
 
-        let _db = Database::default();
+        let db = Database::default();
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] : U0
         let meta_id = MetaVariableId(0);
         global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ?[0] should synthesize to U0
         let meta_stx = Syntax::metavariable(meta_id, vec![]);
@@ -1380,7 +1667,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ?[0 ^(^s Bit)] should synthesize to U0
         let lift_bit = parse(&db, "^(^s Bit)");
@@ -1398,7 +1685,7 @@ mod tests {
     fn test_synth_metavariable_wrong_arg_count() {
         use crate::common::MetaVariableId;
 
-        let _db = Database::default();
+        let db = Database::default();
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0 (expects 1 argument)
@@ -1409,7 +1696,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ?[0] with no arguments should fail
         let meta_stx = Syntax::metavariable(meta_id, vec![]);
@@ -1432,7 +1719,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ?[0 U0] with universe instead of ^Bit should fail
         let u0 = parse(&db, "U0");
@@ -1460,7 +1747,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
-        let mut env = make_env(&global);
+        let mut env = make_env(&db, &global);
 
         // ?[0 ^(^s Bit) (0 : ^(^s Bit))] - provide ^(^s Bit) for A, and a bit value 0 for x
         let lift_bit = parse(&db, "^(^s Bit)");
@@ -1472,5 +1759,552 @@ mod tests {
             Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(0)),
             _ => panic!("Expected Universe, got {:?}", ty),
         }
+    }
+
+    // ========== apply_subst tests ==========
+
+    /// Test that apply_subst correctly turns a variable into a transparent let-binding.
+    /// Context: [n : Nat]
+    /// Substitution: n ~ @Zero
+    /// Expected: values.local[0] becomes @Zero
+    #[test]
+    fn test_apply_subst_simple() {
+        let db = Database::default();
+        let global = make_nat_global(&db);
+
+        let mut env = make_env(&db, &global);
+
+        // Push n : Nat
+        let nat = Value::type_constructor("Nat".into_with_db(&db), vec![]);
+        env.push_var(Rc::new(nat));
+
+        // Now values.local[0] is a Rigid (variable n)
+        assert!(matches!(
+            env.values.get(Level::new(0)).as_ref(),
+            Value::Rigid(_)
+        ));
+
+        // Apply substitution: n ~ @Zero
+        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let solutions = vec![(Level::new(0), zero.clone())];
+        env.apply_subst(&solutions)
+            .expect("apply_subst should succeed");
+
+        // Now values.local[0] should be @Zero (transparent let-binding)
+        match env.values.get(Level::new(0)).as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Zero");
+            }
+            other => panic!("Expected DataConstructor(@Zero), got {:?}", other),
+        }
+    }
+
+    /// Test that apply_subst correctly re-evaluates dependent types.
+    /// Context: [n : Nat, v : Vec Bit n]
+    /// Substitution: n ~ @Zero
+    /// Expected: types[1] (the type of v) becomes Vec Bit @Zero
+    #[test]
+    fn test_apply_subst_dependent_type() {
+        let db = Database::default();
+        let global = make_vec_global(&db);
+
+        let mut env = make_env(&db, &global);
+
+        // Push n : Nat at level 0
+        let nat_ty = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let n = env.push_var(nat_ty);
+
+        // Push v : Vec Bit n at level 1
+        // Vec Bit n = #[@Vec Bit n]
+        let bit_ty = Rc::new(Value::bit());
+        let vec_bit_n = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![bit_ty.clone(), n.clone()],
+        ));
+        env.push_var(vec_bit_n);
+
+        // Verify initial state: types[1] contains Vec Bit n (with Rigid at index 0)
+        match env.types[1].as_ref() {
+            Value::TypeConstructor(tcon) => {
+                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.arguments.len(), 2);
+                // Second argument should be a Rigid (variable n at level 0)
+                match tcon.arguments[1].as_ref() {
+                    Value::Rigid(r) => assert_eq!(r.head.level, Level::new(0)),
+                    other => panic!("Expected Rigid, got {:?}", other),
+                }
+            }
+            other => panic!("Expected TypeConstructor(Vec), got {:?}", other),
+        }
+
+        // Apply substitution: n ~ @Zero
+        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let solutions = vec![(Level::new(0), zero.clone())];
+        env.apply_subst(&solutions)
+            .expect("apply_subst should succeed");
+
+        // Now types[1] should be Vec Bit @Zero
+        match env.types[1].as_ref() {
+            Value::TypeConstructor(tcon) => {
+                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.arguments.len(), 2);
+                // Second argument should now be @Zero
+                match tcon.arguments[1].as_ref() {
+                    Value::DataConstructor(dcon) => {
+                        assert_eq!(dcon.constructor.name(&db), "Zero");
+                    }
+                    other => panic!("Expected DataConstructor(@Zero), got {:?}", other),
+                }
+            }
+            other => panic!("Expected TypeConstructor(Vec), got {:?}", other),
+        }
+    }
+
+    /// Test that apply_subst handles multiple solutions correctly.
+    /// Context: [n : Nat, m : Nat, v : Vec Bit n, w : Vec Bit m]
+    /// Substitution: n ~ @Zero, m ~ @Succ @Zero
+    /// Expected: types[2] becomes Vec Bit @Zero, types[3] becomes Vec Bit (@Succ @Zero)
+    #[test]
+    fn test_apply_subst_multiple_solutions() {
+        let db = Database::default();
+        let global = make_vec_global(&db);
+
+        let mut env = make_env(&db, &global);
+        let bit_ty = Rc::new(Value::bit());
+
+        // Push n : Nat at level 0
+        let nat_ty = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let n = env.push_var(nat_ty.clone());
+
+        // Push m : Nat at level 1
+        let m = env.push_var(nat_ty);
+
+        // Push v : Vec Bit n at level 2
+        let vec_bit_n = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![bit_ty.clone(), n.clone()],
+        ));
+        env.push_var(vec_bit_n);
+
+        // Push w : Vec Bit m at level 3
+        let vec_bit_m = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![bit_ty.clone(), m.clone()],
+        ));
+        env.push_var(vec_bit_m);
+
+        // Apply substitutions: n ~ @Zero, m ~ @Succ @Zero
+        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let succ_zero = Rc::new(Value::data_constructor(
+            "Succ".into_with_db(&db),
+            vec![zero.clone()],
+        ));
+        let solutions = vec![
+            (Level::new(0), zero.clone()),
+            (Level::new(1), succ_zero.clone()),
+        ];
+        env.apply_subst(&solutions)
+            .expect("apply_subst should succeed");
+
+        // Check types[2]: Vec Bit @Zero
+        match env.types[2].as_ref() {
+            Value::TypeConstructor(tcon) => match tcon.arguments[1].as_ref() {
+                Value::DataConstructor(dcon) => {
+                    assert_eq!(dcon.constructor.name(&db), "Zero");
+                }
+                other => panic!("Expected @Zero, got {:?}", other),
+            },
+            other => panic!("Expected Vec, got {:?}", other),
+        }
+
+        // Check types[3]: Vec Bit (@Succ @Zero)
+        match env.types[3].as_ref() {
+            Value::TypeConstructor(tcon) => match tcon.arguments[1].as_ref() {
+                Value::DataConstructor(dcon) => {
+                    assert_eq!(dcon.constructor.name(&db), "Succ");
+                    assert_eq!(dcon.arguments.len(), 1);
+                    match dcon.arguments[0].as_ref() {
+                        Value::DataConstructor(inner) => {
+                            assert_eq!(inner.constructor.name(&db), "Zero");
+                        }
+                        other => panic!("Expected @Zero, got {:?}", other),
+                    }
+                }
+                other => panic!("Expected @Succ, got {:?}", other),
+            },
+            other => panic!("Expected Vec, got {:?}", other),
+        }
+    }
+
+    /// Test the "Quote Depth" fix for deeply nested dependent types.
+    /// This test verifies that each type is quoted at its historical depth.
+    ///
+    /// Context: [n : Nat, m : Nat, p : Nat, v : Vec Bit n, w : Vec Bit m, x : Vec Bit p]
+    /// Where each Vec depends on a different preceding Nat.
+    ///
+    /// Substitution: n ~ @Zero, m ~ @Succ @Zero, p ~ @Succ (@Succ @Zero)
+    ///
+    /// After substitution:
+    /// - types[3] (Vec Bit n) should become Vec Bit @Zero
+    /// - types[4] (Vec Bit m) should become Vec Bit (@Succ @Zero)
+    /// - types[5] (Vec Bit p) should become Vec Bit (@Succ (@Succ @Zero))
+    ///
+    /// The bug we're testing for: if we quote all types at depth 6 (the final env size),
+    /// the De Bruijn indices would be wrong because the type at level 3 was originally
+    /// checked when only levels 0-2 were in scope.
+    #[test]
+    fn test_apply_subst_quote_depth_correctness() {
+        let db = Database::default();
+        let global = make_vec_global(&db);
+
+        let mut env = make_env(&db, &global);
+        let bit_ty = Rc::new(Value::bit());
+        let nat_ty = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+
+        // Push n : Nat at level 0
+        let n = env.push_var(nat_ty.clone());
+        // Push m : Nat at level 1
+        let m = env.push_var(nat_ty.clone());
+        // Push p : Nat at level 2
+        let p = env.push_var(nat_ty);
+
+        // Push v : Vec Bit n at level 3
+        let vec_bit_n = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![bit_ty.clone(), n.clone()],
+        ));
+        env.push_var(vec_bit_n);
+
+        // Push w : Vec Bit m at level 4
+        let vec_bit_m = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![bit_ty.clone(), m.clone()],
+        ));
+        env.push_var(vec_bit_m);
+
+        // Push x : Vec Bit p at level 5
+        let vec_bit_p = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![bit_ty.clone(), p.clone()],
+        ));
+        env.push_var(vec_bit_p);
+
+        // Apply substitutions
+        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let one = Rc::new(Value::data_constructor(
+            "Succ".into_with_db(&db),
+            vec![zero.clone()],
+        ));
+        let two = Rc::new(Value::data_constructor(
+            "Succ".into_with_db(&db),
+            vec![one.clone()],
+        ));
+        let solutions = vec![
+            (Level::new(0), zero.clone()),
+            (Level::new(1), one.clone()),
+            (Level::new(2), two.clone()),
+        ];
+        env.apply_subst(&solutions)
+            .expect("apply_subst should succeed");
+
+        // Verify types[3]: Vec Bit @Zero
+        match env.types[3].as_ref() {
+            Value::TypeConstructor(tcon) => {
+                assert_eq!(tcon.constructor.name(&db), "Vec");
+                match tcon.arguments[1].as_ref() {
+                    Value::DataConstructor(dcon) => {
+                        assert_eq!(dcon.constructor.name(&db), "Zero");
+                    }
+                    other => panic!("types[3] index: Expected @Zero, got {:?}", other),
+                }
+            }
+            other => panic!("types[3]: Expected Vec, got {:?}", other),
+        }
+
+        // Verify types[4]: Vec Bit (@Succ @Zero)
+        match env.types[4].as_ref() {
+            Value::TypeConstructor(tcon) => {
+                assert_eq!(tcon.constructor.name(&db), "Vec");
+                match tcon.arguments[1].as_ref() {
+                    Value::DataConstructor(dcon) => {
+                        assert_eq!(dcon.constructor.name(&db), "Succ");
+                        match dcon.arguments[0].as_ref() {
+                            Value::DataConstructor(inner) => {
+                                assert_eq!(inner.constructor.name(&db), "Zero");
+                            }
+                            other => panic!("types[4] inner: Expected @Zero, got {:?}", other),
+                        }
+                    }
+                    other => panic!("types[4] index: Expected @Succ, got {:?}", other),
+                }
+            }
+            other => panic!("types[4]: Expected Vec, got {:?}", other),
+        }
+
+        // Verify types[5]: Vec Bit (@Succ (@Succ @Zero))
+        match env.types[5].as_ref() {
+            Value::TypeConstructor(tcon) => {
+                assert_eq!(tcon.constructor.name(&db), "Vec");
+                match tcon.arguments[1].as_ref() {
+                    Value::DataConstructor(outer) => {
+                        assert_eq!(outer.constructor.name(&db), "Succ");
+                        match outer.arguments[0].as_ref() {
+                            Value::DataConstructor(middle) => {
+                                assert_eq!(middle.constructor.name(&db), "Succ");
+                                match middle.arguments[0].as_ref() {
+                                    Value::DataConstructor(inner) => {
+                                        assert_eq!(inner.constructor.name(&db), "Zero");
+                                    }
+                                    other => {
+                                        panic!("types[5] inner: Expected @Zero, got {:?}", other)
+                                    }
+                                }
+                            }
+                            other => panic!("types[5] middle: Expected @Succ, got {:?}", other),
+                        }
+                    }
+                    other => panic!("types[5] index: Expected @Succ, got {:?}", other),
+                }
+            }
+            other => panic!("types[5]: Expected Vec, got {:?}", other),
+        }
+    }
+
+    // ========== Coverage Checking tests ==========
+
+    /// Test that exhaustive pattern matching on Nat succeeds.
+    /// n : Nat |- n case @Zero => @Zero, @Succ %m => @Zero : Nat
+    #[test]
+    fn test_exhaustive_nat_case() {
+        let db = Database::default();
+        let global = make_nat_global(&db);
+        let mut env = make_env(&db, &global);
+
+        // Push n : Nat
+        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        env.push_var(nat.clone());
+
+        // Parse case: !0 case { @Zero => [@Zero] | @Succ %m => [@Zero] }
+        // !0 refers to the variable at index 0 (the most recent variable, n)
+        let case_stx = parse(&db, "!0 case { @Zero => [@Zero] | @Succ %m => [@Zero] }");
+        let Syntax::Case(case) = case_stx.as_ref() else {
+            panic!("Expected Case syntax");
+        };
+
+        // Check the case against type Nat
+        let result = type_check_case(&mut env, case, &nat);
+        assert!(
+            result.is_ok(),
+            "Exhaustive case should succeed: {:?}",
+            result
+        );
+    }
+
+    /// Test that missing a constructor results in NonExhaustiveMatch error.
+    /// n : Nat |- n case @Zero => @Zero : Nat  (missing @Succ)
+    #[test]
+    fn test_non_exhaustive_nat_case_missing_succ() {
+        let db = Database::default();
+        let global = make_nat_global(&db);
+        let mut env = make_env(&db, &global);
+
+        // Push n : Nat
+        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        env.push_var(nat.clone());
+
+        // Parse case: !0 case { @Zero => [@Zero] }  (missing @Succ)
+        // !0 refers to the variable at index 0 (the most recent variable, n)
+        let case_stx = parse(&db, "!0 case { @Zero => [@Zero] }");
+        let Syntax::Case(case) = case_stx.as_ref() else {
+            panic!("Expected Case syntax");
+        };
+
+        // Check should fail with NonExhaustiveMatch
+        let result = type_check_case(&mut env, case, &nat);
+        match result {
+            Err(ref e @ Error::NonExhaustiveMatch { ref missing, .. }) => {
+                // Verify human-readable output
+                let display_output = format!("{}", e);
+                println!("Display output: {}", display_output);
+                assert!(
+                    display_output.contains("@Succ"),
+                    "Expected '@Succ' in display, got: {}",
+                    display_output
+                );
+                assert_eq!(missing.len(), 1);
+                assert_eq!(missing[0], "Succ");
+            }
+            other => panic!("Expected NonExhaustiveMatch, got {:?}", other),
+        }
+    }
+
+    /// Test that a case on Vec at index @Zero only requires @VNil.
+    /// a : Type, v : Vec a @Zero |- v case @VNil => @Zero : Nat
+    /// (@VCons is impossible because the index is @Zero)
+    #[test]
+    fn test_vec_at_zero_only_requires_vnil() {
+        let db = Database::default();
+        let global = make_vec_global(&db);
+        let mut env = make_env(&db, &global);
+
+        // Push a : Type at level 0
+        let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
+        env.push_var(universe.clone());
+        let a = Rc::new(Value::variable(Level::new(0), universe.clone()));
+
+        // Push v : Vec a @Zero at level 1
+        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let vec_a_zero = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![a.clone(), zero.clone()],
+        ));
+        env.push_var(vec_a_zero.clone());
+
+        // Parse case: !0 case { @VNil => [@Zero] }
+        // !0 refers to the variable at index 0 (the most recent variable, v)
+        // This should be exhaustive because @VCons is impossible at index @Zero
+        let case_stx = parse(&db, "!0 case { @VNil => [@Zero] }");
+        let Syntax::Case(case) = case_stx.as_ref() else {
+            panic!("Expected Case syntax");
+        };
+
+        // Check should succeed - @VCons is unreachable, only @VNil is required
+        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let result = type_check_case(&mut env, case, &nat);
+        assert!(
+            result.is_ok(),
+            "Vec@Zero case with only VNil should be exhaustive: {:?}",
+            result
+        );
+    }
+
+    /// Test that a case on Vec at variable index requires both @VNil and @VCons.
+    /// a : Type, n : Nat, v : Vec a n |- v case @VNil => ... (missing @VCons)
+    #[test]
+    fn test_vec_at_variable_requires_both_constructors() {
+        let db = Database::default();
+        let global = make_vec_global(&db);
+        let mut env = make_env(&db, &global);
+
+        // Push a : Type at level 0
+        let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
+        env.push_var(universe.clone());
+        let a = Rc::new(Value::variable(Level::new(0), universe.clone()));
+
+        // Push n : Nat at level 1
+        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        env.push_var(nat.clone());
+        let n = Rc::new(Value::variable(Level::new(1), nat.clone()));
+
+        // Push v : Vec a n at level 2
+        let vec_a_n = Rc::new(Value::type_constructor(
+            "Vec".into_with_db(&db),
+            vec![a.clone(), n.clone()],
+        ));
+        env.push_var(vec_a_n.clone());
+
+        // Parse case: !0 case { @VNil => [@Zero] }  (missing @VCons)
+        // !0 refers to the variable at index 0 (the most recent variable, v)
+        let case_stx = parse(&db, "!0 case { @VNil => [@Zero] }");
+        let Syntax::Case(case) = case_stx.as_ref() else {
+            panic!("Expected Case syntax");
+        };
+
+        // Check should fail - both @VNil and @VCons are required when index is a variable
+        let result = type_check_case(&mut env, case, &nat);
+        match result {
+            Err(Error::NonExhaustiveMatch { missing, .. }) => {
+                assert_eq!(missing.len(), 1);
+                assert_eq!(missing[0], "VCons");
+            }
+            other => panic!("Expected NonExhaustiveMatch, got {:?}", other),
+        }
+    }
+
+    // ========== Equality type checking tests ==========
+
+    #[test]
+    fn test_check_eq_type() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // Eq U0 U0 U0 : U1
+        let eq = parse(&db, "Eq U1 U0 U0");
+        let u1 = Value::universe(UniverseLevel::new(1));
+        let result = type_check(&mut env, &eq, &u1);
+        assert!(result.is_ok(), "type_check failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_check_refl() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // refl : Eq U0 U0 U0
+        let refl = parse(&db, "refl");
+        let eq_ty = eval_str(&db, &global, "Eq U0 U0 U0");
+        let result = type_check(&mut env, &refl, &eq_ty);
+        assert!(result.is_ok(), "type_check failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_check_refl_fails_on_different_endpoints() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // refl : Eq U0 U0 U1 should fail (endpoints don't match)
+        let refl = parse(&db, "refl");
+        let eq_ty = eval_str(&db, &global, "Eq U0 U0 U1");
+        assert!(type_check(&mut env, &refl, &eq_ty).is_err());
+    }
+
+    #[test]
+    fn test_check_transport() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // Test: transport along an equality of types
+        // Context: [A : U0, B : U0, h : Eq U0 A B, x : A]
+        // Term: transport [%0 -> %0] %h %x : B
+        // The motive [%0 -> %0] is the identity function on types
+        // This transports a value x : A to a value of type B
+
+        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+
+        // Push A : U0
+        let a = env.push_var(u0.clone());
+
+        // Push B : U0
+        let b = env.push_var(u0.clone());
+
+        // Push h : Eq U0 A B
+        let eq_ty = Rc::new(Value::eq(u0.clone(), a.clone(), b.clone()));
+        env.push_var(eq_ty);
+
+        // Push x : A
+        env.push_var(a.clone());
+
+        // Construct: transport [%0] |- %0 %h %x
+        let motive_body = Syntax::variable_rc(Index(0)); // %0 (the motive body)
+        let motive = syn::Closure::new(motive_body); // [%0] |- %0
+        let proof = Syntax::variable_rc(Index(1)); // h is at index 1
+        let value = Syntax::variable_rc(Index(0)); // x is at index 0
+        let transport = Syntax::transport_rc(motive, proof, value);
+
+        // Synthesize the type - should be B
+        let result = type_synth(&mut env, &transport);
+        assert!(result.is_ok(), "type_synth failed: {:?}", result.err());
+
+        let synth_ty = result.unwrap();
+        // The synthesized type should be equal to B
+        assert!(
+            equal::type_equiv(&global, env.depth(), &synth_ty, &b).is_ok(),
+            "Expected type B, got {:?}",
+            synth_ty
+        );
     }
 }

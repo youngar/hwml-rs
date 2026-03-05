@@ -14,6 +14,7 @@ use crate::val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
 use crate::ConstantId;
+use salsa::Database;
 use std::rc::Rc;
 
 /// Errors that can occur during module checking.
@@ -57,6 +58,7 @@ pub struct CheckedModule<'db> {
 /// 3. Add the declaration to the global environment
 /// 4. Track which constants have hardware types (Lift)
 pub fn check_module<'db>(
+    db: &'db dyn Database,
     module: &Module<'db>,
     initial_env: GlobalEnv<'db>,
 ) -> Result<CheckedModule<'db>, Error<'db>> {
@@ -66,10 +68,10 @@ pub fn check_module<'db>(
     for decl in &module.declarations {
         match decl {
             Declaration::Primitive(prim) => {
-                check_primitive(&mut global_env, prim)?;
+                check_primitive(db, &mut global_env, prim)?;
             }
             Declaration::Constant(constant) => {
-                let is_hw = check_constant(&mut global_env, constant)?;
+                let is_hw = check_constant(db, &mut global_env, constant)?;
                 if is_hw {
                     hardware_constants.push(constant.name);
                 }
@@ -78,7 +80,7 @@ pub fn check_module<'db>(
                 check_type_constructor(&mut global_env, tcon)?;
             }
             Declaration::Metavariable(meta) => {
-                check_metavariable(&mut global_env, meta)?;
+                check_metavariable(db, &mut global_env, meta)?;
             }
         }
     }
@@ -91,11 +93,13 @@ pub fn check_module<'db>(
 
 /// Check a primitive declaration and add it to the global environment.
 fn check_primitive<'db>(
+    db: &'db dyn Database,
     global: &mut GlobalEnv<'db>,
     prim: &Primitive<'db>,
 ) -> Result<(), Error<'db>> {
     // Create a type-checking environment
     let mut tc_env = TCEnvironment {
+        db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
@@ -117,11 +121,13 @@ fn check_primitive<'db>(
 /// constant itself. The value is stored as syntax and evaluated on demand
 /// (eagerly unfolded during evaluation).
 fn check_constant<'db>(
+    db: &'db dyn Database,
     global: &mut GlobalEnv<'db>,
     constant: &Constant<'db>,
 ) -> Result<bool, Error<'db>> {
     // Create a type-checking environment
     let mut tc_env = TCEnvironment {
+        db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
@@ -146,6 +152,7 @@ fn check_constant<'db>(
 
     // Create a fresh type-checking environment that includes the new constant
     let mut tc_env = TCEnvironment {
+        db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
@@ -170,16 +177,19 @@ fn check_type_constructor<'db>(
         _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
     };
 
-    // For now, we treat all arguments as parameters (no indices)
-    // TODO: Properly parse parameters vs indices from the declaration
-    let arguments: Telescope<'db> = [].into();
-    let num_parameters = 0;
+    // Combine parameters and indices into the full argument telescope
+    let num_parameters = tcon.parameters.len();
+    let mut all_types: Vec<_> = tcon.parameters.iter().cloned().collect();
+    all_types.extend(tcon.indices.iter().cloned());
+    let arguments = Telescope::new(all_types);
 
-    // Add the type constructor to the global environment
-    global.add_type_constructor(
-        tcon.name,
-        TypeConstructorInfo::new(arguments, num_parameters, level),
-    );
+    // Collect data constructor names for the type constructor
+    let dcon_names: Vec<_> = tcon.data_constructors.iter().map(|d| d.name).collect();
+
+    // Add the type constructor to the global environment with its constructor list
+    let mut tcon_info = TypeConstructorInfo::new(arguments, num_parameters, level);
+    tcon_info.constructors = dcon_names;
+    global.add_type_constructor(tcon.name, tcon_info);
 
     // Add each data constructor
     for dcon in &tcon.data_constructors {
@@ -194,11 +204,13 @@ fn check_type_constructor<'db>(
 
 /// Check a metavariable declaration and add it to the global environment.
 fn check_metavariable<'db>(
+    db: &'db dyn Database,
     global: &mut GlobalEnv<'db>,
     meta: &Metavariable<'db>,
 ) -> Result<(), Error<'db>> {
     // Create a type-checking environment
     let mut tc_env = TCEnvironment {
+        db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
@@ -285,7 +297,7 @@ mod tests {
         let db = Database::default();
         let input = "prim $Nat : U0; meta ?[0] (%A : U0) (%x : %A) : U0;";
         let module = parse_module(&db, input).expect("Failed to parse module");
-        let result = check_module(&module, GlobalEnv::new());
+        let result = check_module(&db, &module, GlobalEnv::new());
         assert!(
             result.is_ok(),
             "Dependent metavariable should type-check: {:?}",

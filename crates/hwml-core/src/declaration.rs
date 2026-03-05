@@ -32,6 +32,10 @@ impl<'db> Constant<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeConstructor<'db> {
     pub name: ConstantId<'db>,
+    /// The parameters of the type constructor (telescope of types)
+    pub parameters: Telescope<'db>,
+    /// The indices of the type constructor (telescope of types)
+    pub indices: Telescope<'db>,
     pub data_constructors: Vec<DataConstructor<'db>>,
     pub universe: RcSyntax<'db>,
 }
@@ -39,11 +43,15 @@ pub struct TypeConstructor<'db> {
 impl<'db> TypeConstructor<'db> {
     pub fn new(
         name: ConstantId<'db>,
+        parameters: Telescope<'db>,
+        indices: Telescope<'db>,
         data_constructors: Vec<DataConstructor<'db>>,
         universe: RcSyntax<'db>,
     ) -> Self {
         TypeConstructor {
             name,
+            parameters,
+            indices,
             data_constructors,
             universe,
         }
@@ -128,10 +136,18 @@ impl<'db> Declaration<'db> {
 
     pub fn type_constructor(
         name: ConstantId<'db>,
+        parameters: Telescope<'db>,
+        indices: Telescope<'db>,
         data_constructors: Vec<DataConstructor<'db>>,
         universe: RcSyntax<'db>,
     ) -> Self {
-        Declaration::TypeConstructor(TypeConstructor::new(name, data_constructors, universe))
+        Declaration::TypeConstructor(TypeConstructor::new(
+            name,
+            parameters,
+            indices,
+            data_constructors,
+            universe,
+        ))
     }
 
     pub fn metavariable(id: MetaVariableId, arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
@@ -178,10 +194,13 @@ impl<'db> Module<'db> {
     pub fn add_type_constructor(
         &mut self,
         name: ConstantId<'db>,
+        parameters: Telescope<'db>,
+        indices: Telescope<'db>,
         ty: RcSyntax<'db>,
         data_constructors: Vec<DataConstructor<'db>>,
     ) {
-        let declaration = Declaration::type_constructor(name, data_constructors, ty);
+        let declaration =
+            Declaration::type_constructor(name, parameters, indices, data_constructors, ty);
         self.add_declaration(declaration)
     }
 }
