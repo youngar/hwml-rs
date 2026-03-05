@@ -10,6 +10,7 @@ use crate::{
 use itertools::izip;
 use std::rc::Rc;
 
+#[derive(Debug, Clone)]
 #[deny(elided_lifetimes_in_paths)]
 pub enum Error<'db> {
     /// Indicates that the terms are not convertible.
@@ -55,6 +56,7 @@ pub fn equate<'a, 'db: 'a>(
         Value::Constant(constant) => equate_constant_instances(global, depth, lhs, rhs, constant),
         Value::Rigid(rigid) => equate_rigid_instances(global, depth, lhs, rhs, rigid),
         Value::Flex(flex) => equate_flex_instances(global, depth, lhs, rhs, flex),
+        Value::EqType(eq) => equate_eq_instances(global, depth, lhs, rhs, eq),
         _ => Err(Error::IllTyped),
     }
 }
@@ -326,6 +328,9 @@ pub fn type_equiv<'db>(
 
         // Bit is a hardware type (equivalent types if both are Bit)
         (Value::Bit(_), Value::Bit(_)) => Ok(()),
+
+        // Equality types
+        (Value::EqType(lhs), Value::EqType(rhs)) => equate_eq_types(global, depth, lhs, rhs),
 
         _ => Err(Error::NotConvertible),
     }
@@ -728,6 +733,10 @@ pub fn equate_normals<'db>(
     equate(global, depth, &lhs.value, &rhs.value, &lhs.ty)
 }
 
+/// Check that two case eliminators are convertible.
+///
+/// With the simple (non-dependent) return type design, we compare return types
+/// directly rather than comparing motives.
 pub fn equate_cases<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
@@ -767,47 +776,18 @@ pub fn equate_cases<'db>(
         env.push(lparam.clone());
     }
 
-    // Check that the motives are convertible by applying them to fresh variables.
-    // First, create variables for the indices.
-    let index_bindings = type_info.indices().to_vec();
-    let index_telescope = crate::syn::Telescope::from(index_bindings);
-    let index_tys = eval::eval_telescope(global, lhs.parameters.clone(), &index_telescope)?;
-
-    let mut motive_args = Vec::new();
-    for ty in index_tys.types {
-        motive_args.push(Rc::new(Value::variable(
-            Level::new(depth + motive_args.len()),
-            ty,
-        )));
-    }
-
-    // Create a variable for the scrutinee.
-    let scrutinee_ty = Rc::new(Value::type_constructor(
-        lhs.type_constructor,
-        // TODO: shouldn't this include the indices?
-        lhs.parameters.clone(),
-    ));
-    let scrutinee_var = Rc::new(Value::variable(Level::new(depth), scrutinee_ty));
-    motive_args.push(scrutinee_var);
-
-    // Apply both motives to the same arguments.
-    let motive_args_len = motive_args.len();
-    let lhs_motive_result = run_closure(global, &lhs.motive, motive_args.clone())?;
-    let rhs_motive_result = run_closure(global, &rhs.motive, motive_args)?;
-
-    // Check that the motive results are convertible as types.
-    type_equiv(
-        global,
-        depth + motive_args_len,
-        &lhs_motive_result,
-        &rhs_motive_result,
-    )?;
+    // No return_type comparison needed - case expressions are check-only,
+    // so the return type comes from the expected type context.
 
     // Check that the branches are convertible.
     // First, check that we have the same number of branches.
     if lhs.branches.len() != rhs.branches.len() {
         return Err(Error::NotConvertible);
     }
+
+    // For checking branch bodies, we need a type. Without return_type, we use a placeholder.
+    // TODO: Thread the expected type through when we have check-only equate.
+    let placeholder_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
 
     // Check each branch.
     for (lbranch, rbranch) in izip!(lhs.branches.iter(), rhs.branches.iter()) {
@@ -838,41 +818,96 @@ pub fn equate_cases<'db>(
             )));
         }
 
-        // Evaluate the type of the data constructor to get the type constructor instance.
-        let mut dcon_env = LocalEnv::new();
-        dcon_env.extend(lhs.parameters.clone());
-        let dcon_ty_clos = val::Closure::new(dcon_env, data_info.ty.clone());
-        let dcon_ty = run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
-        let Value::TypeConstructor(tcon) = &*dcon_ty else {
-            return Err(Error::NotConvertible);
-        };
-
-        // Create the data constructor value.
-        let dcon_val = Rc::new(Value::data_constructor(
-            lbranch.constructor,
-            dcon_args.clone(),
-        ));
-
-        // Create the arguments to the motive for this branch.
-        let mut branch_motive_args = tcon.arguments[type_info.num_parameters()..].to_vec();
-        branch_motive_args.push(dcon_val);
-
-        // Evaluate the motive to get the type of the branch body.
-        let branch_ty = run_closure(global, &lhs.motive, branch_motive_args)?;
-
         // Apply both branch bodies to the same data constructor arguments.
         let lbranch_val = run_closure(global, &lbranch.body, dcon_args.clone())?;
         let rbranch_val = run_closure(global, &rbranch.body, dcon_args)?;
 
-        // Check that the branch values are convertible at the branch type.
+        // Check that the branch values are convertible.
+        // TODO: Use the actual expected type from check context instead of placeholder.
         equate(
             global,
             depth + lbranch.arity,
             &lbranch_val,
             &rbranch_val,
-            &branch_ty,
+            &placeholder_ty,
         )?;
     }
+
+    Ok(())
+}
+
+// ============================================================================
+// Equality Type Support
+// ============================================================================
+
+/// Check that two instances of an equality type are convertible.
+/// At type `Eq A x y`, the instances must be proofs of equality.
+pub fn equate_eq_instances<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &Value<'db>,
+    rhs: &Value<'db>,
+    eq: &val::EqType<'db>,
+) -> Result<'db> {
+    match (lhs, rhs) {
+        // Two refl proofs are always equal
+        (Value::Refl(_), Value::Refl(_)) => Ok(()),
+        // Transport terms: compare structurally
+        (Value::Transport(lhs_t), Value::Transport(rhs_t)) => {
+            equate_transports(global, depth, lhs_t, rhs_t, eq)
+        }
+        // Neutral proofs: compare as neutrals
+        (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
+        (Value::Constant(lhs), Value::Constant(rhs)) => equate_constants(global, depth, lhs, rhs),
+        (Value::Rigid(lhs), Value::Rigid(rhs)) => equate_rigids(global, depth, lhs, rhs),
+        (Value::Flex(lhs), Value::Flex(rhs)) => equate_flexes(global, depth, lhs, rhs),
+        _ => Err(Error::NotConvertible),
+    }
+}
+
+/// Check that two equality types are convertible.
+/// Eq A x y ≡ Eq B u v  iff  A ≡ B, x ≡ u, and y ≡ v
+fn equate_eq_types<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &val::EqType<'db>,
+    rhs: &val::EqType<'db>,
+) -> Result<'db> {
+    // Check that the types are equivalent
+    type_equiv(global, depth, &lhs.ty, &rhs.ty)?;
+    // Check that the left-hand sides are equal at that type
+    equate(global, depth, &lhs.lhs, &rhs.lhs, &lhs.ty)?;
+    // Check that the right-hand sides are equal at that type
+    equate(global, depth, &lhs.rhs, &rhs.rhs, &lhs.ty)?;
+    Ok(())
+}
+
+/// Check that two transport terms are convertible.
+fn equate_transports<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    lhs: &val::Transport<'db>,
+    rhs: &val::Transport<'db>,
+    eq: &val::EqType<'db>,
+) -> Result<'db> {
+    // Compare proofs at the equality type
+    let eq_ty = Rc::new(Value::eq(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()));
+    equate(global, depth, &lhs.proof, &rhs.proof, &eq_ty)?;
+
+    // Compare values at the motive applied to lhs
+    // P x where P is the motive
+    let lhs_ty = run_closure(global, &lhs.motive, vec![eq.lhs.clone()])?;
+    equate(global, depth, &lhs.value, &rhs.value, &lhs_ty)?;
+
+    // Compare motives by eta-expansion
+    // Create a fresh variable and compare P x for both motives
+    let var = Rc::new(Value::variable(Level::new(depth), eq.ty.clone()));
+    let lhs_result = run_closure(global, &lhs.motive, vec![var.clone()])?;
+    let rhs_result = run_closure(global, &rhs.motive, vec![var])?;
+
+    // The result type is a universe (motives are type families)
+    // We use type_equiv to compare the results
+    type_equiv(global, depth + 1, &lhs_result, &rhs_result)?;
 
     Ok(())
 }

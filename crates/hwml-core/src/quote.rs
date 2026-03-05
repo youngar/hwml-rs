@@ -9,12 +9,12 @@
 use crate::{
     common::Level,
     eval::{self, eval_telescope, run_closure},
-    syn::{CaseBranch, RcSyntax, Syntax, Telescope},
+    syn::{CaseBranch, RcSyntax, Syntax},
     val::{
         self, Closure, Eliminator, Environment, Flex, GlobalEnv, HArrow, LocalEnv, Module, Normal,
         Pi, Rigid, TypeConstructor,
     },
-    ConstantId, Value,
+    ConstantId, UniverseLevel, Value,
 };
 use std::rc::Rc;
 
@@ -89,6 +89,8 @@ pub fn quote<'db>(
         Value::Constant(constant) => quote_constant_instances(global, depth, value, constant),
         Value::Rigid(rigid) => quote_rigid_instances(global, depth, value, rigid),
         Value::Flex(flex) => quote_flex_instances(global, depth, value, flex),
+        // Equality types
+        Value::EqType(eq) => quote_eq_instances(global, depth, value, eq),
         _ => Err(Error::IllTyped),
     }
 }
@@ -412,6 +414,7 @@ pub fn type_quote<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::EqType(eq) => quote_eq_type(global, depth, eq),
         _ => Err(Error::IllTyped),
     }
 }
@@ -741,25 +744,37 @@ fn quote_eliminator<'db>(
 // ============================================================================
 
 /// Quote a stuck case expression to syntax.
+///
+/// Since we use a simple return type (not a motive), the return type is the same
+/// for all branches and doesn't depend on the scrutinee.
 fn quote_case_eliminator<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     syn_scrutinee: RcSyntax<'db>,
     sem_case: &val::Case<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let type_info = global.type_constructor(sem_case.type_constructor)?;
-    let num_parameters = type_info.num_parameters();
+    // The scrutinee must be a variable (not an arbitrary expression).
+    // The `syn_scrutinee` is the quoted head of the neutral term, which should
+    // always be a Variable. Extract the Variable struct for the Case syntax.
+    let scrutinee_var = match syn_scrutinee.as_ref() {
+        Syntax::Variable(var) => var.clone(),
+        _ => return Err(Error::IllTyped), // Case scrutinee must be a variable
+    };
+
+    let _type_info = global.type_constructor(sem_case.type_constructor)?;
 
     let parameters = &sem_case.parameters;
-    let index_bindings = type_info.arguments.bindings[num_parameters..].to_vec();
-    let index_telescope = Telescope::from(index_bindings);
-    let index_tys = eval_telescope(global, parameters.clone(), &index_telescope)?;
+
+    // No return_type in case anymore - case is check-only.
+    // For quoting branch bodies, we use a placeholder type.
+    // TODO: Thread the expected type through when we have check-only quoting.
+    let placeholder_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
 
     let mut branches = Vec::new();
     for branch in &sem_case.branches {
         let data_info = global.data_constructor(branch.constructor)?;
 
-        // Create an instance of this data constructor
+        // Create an instance of this data constructor to evaluate the branch body
         let dcon_arg_tys = eval_telescope(global, parameters.clone(), &data_info.arguments)?;
         let mut dcon_args = Vec::new();
         for ty in dcon_arg_tys.types {
@@ -768,26 +783,10 @@ fn quote_case_eliminator<'db>(
                 ty,
             )));
         }
-        let mut dcon_env = LocalEnv::new();
-        dcon_env.extend(parameters.clone());
-        let dcon_ty_clos = Closure::new(dcon_env, data_info.ty.clone());
-        let dcon_ty = run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
-        let Value::TypeConstructor(tcon) = &*dcon_ty else {
-            return Err(Error::IllTyped);
-        };
-        let dcon_val = Rc::new(Value::data_constructor(
-            branch.constructor,
-            dcon_args.clone(),
-        ));
-
-        // Create the arguments to the motive
-        let mut motive_args = tcon.arguments[type_info.num_parameters..].to_vec();
-        motive_args.push(dcon_val);
-        let branch_ty = run_closure(global, &sem_case.motive, motive_args)?;
 
         // Evaluate the branch body closure
         let branch_val = run_closure(global, &branch.body, dcon_args)?;
-        let branch_syn = quote(global, depth + branch.arity, &branch_val, &branch_ty)?;
+        let branch_syn = quote(global, depth + branch.arity, &branch_val, &placeholder_ty)?;
         branches.push(CaseBranch::new(
             branch.constructor,
             branch.arity,
@@ -795,25 +794,68 @@ fn quote_case_eliminator<'db>(
         ));
     }
 
-    // Read back the motive
-    let mut motive_args = Vec::new();
-    for ty in index_tys.types {
-        motive_args.push(Rc::new(Value::variable(
-            Level::new(depth + motive_args.len()),
-            ty,
-        )));
-    }
-    let scrutinee_ty = Rc::new(Value::type_constructor(
-        sem_case.type_constructor,
-        sem_case.parameters.clone(),
-    ));
-    let scrutinee_var = Rc::new(Value::variable(Level::new(depth), scrutinee_ty));
-    motive_args.push(scrutinee_var);
-    let motive_args_len = motive_args.len();
-    let sem_motive_result = run_closure(global, &sem_case.motive, motive_args)?;
-    let syn_motive = type_quote(global, depth + 1 + motive_args_len, &sem_motive_result)?;
+    // No return_type to quote - case expressions are check-only
+    Ok(Syntax::case_rc(scrutinee_var.index, branches))
+}
 
-    Ok(Syntax::case_rc(syn_scrutinee, syn_motive, branches))
+// ============================================================================
+// Equality Type Quotation
+// ============================================================================
+
+/// Quote an instance of an equality type.
+/// At type `Eq A x y`, the instance is a proof of equality.
+pub fn quote_eq_instances<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    value: &Value<'db>,
+    eq: &val::EqType<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    match value {
+        Value::Refl(_) => Ok(Syntax::refl_rc()),
+        Value::Transport(transport) => quote_transport(global, depth, transport, eq),
+        Value::Prim(prim) => quote_prim(global, depth, prim),
+        Value::Constant(constant) => quote_constant(global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
+        Value::Flex(flex) => quote_flex(global, depth, flex),
+        _ => Err(Error::IllTyped),
+    }
+}
+
+/// Quote an equality type to syntax.
+pub fn quote_eq_type<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    eq: &val::EqType<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    let ty = type_quote(global, depth, &eq.ty)?;
+    let lhs = quote(global, depth, &eq.lhs, &eq.ty)?;
+    let rhs = quote(global, depth, &eq.rhs, &eq.ty)?;
+    Ok(Syntax::eq_rc(ty, lhs, rhs))
+}
+
+/// Quote a transport term to syntax.
+fn quote_transport<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    transport: &val::Transport<'db>,
+    eq: &val::EqType<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    // Quote the motive by eta-expansion
+    // The motive is a closure with arity 1, so we create a single Closure wrapping the body
+    let var = Rc::new(Value::variable(Level::new(depth), eq.ty.clone()));
+    let motive_result = run_closure(global, &transport.motive, vec![var])?;
+    let motive_body = type_quote(global, depth + 1, &motive_result)?;
+    let motive = crate::syn::Closure::new(motive_body);
+
+    // Quote the proof at the equality type
+    let eq_ty = Rc::new(Value::eq(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()));
+    let proof = quote(global, depth, &transport.proof, &eq_ty)?;
+
+    // Quote the value at the motive applied to lhs
+    let lhs_ty = run_closure(global, &transport.motive, vec![eq.lhs.clone()])?;
+    let value = quote(global, depth, &transport.value, &lhs_ty)?;
+
+    Ok(Syntax::transport_rc(motive, proof, value))
 }
 
 // ============================================================================
@@ -1318,5 +1360,45 @@ mod tests {
         assert_eq!(c.quote_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
         // mod x → 0 (constant module)
         assert_eq!(c.quote_at("mod %x → 0", "Bit → Bit"), "mod %0 → 0");
+    }
+
+    // =========================================================================
+    // Equality Type Quotation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_quote_eq_type() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Eq Bit 0 1
+        assert_eq!(c.quote_type("Eq Bit 0 1"), "Eq Bit 0 1");
+    }
+
+    #[test]
+    fn test_quote_refl() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // refl at Eq Bit 0 0
+        assert_eq!(c.quote_at("refl", "Eq Bit 0 0"), "refl");
+    }
+
+    #[test]
+    fn test_quote_transport() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // transport [%0] |- Bit refl 0 reduces to 0 during eval
+        // So we just verify the reduction works
+        assert_eq!(c.quote_at("transport [%0] |- Bit refl 0", "Bit"), "0");
+    }
+
+    #[test]
+    fn test_quote_nested_eq() {
+        let db = Database::new();
+        let c = Ctx::new(&db);
+        // Eq (Eq U0 U0 U0) refl refl
+        assert_eq!(
+            c.quote_type("Eq (Eq U0 U0 U0) refl refl"),
+            "Eq (Eq 𝒰0 𝒰0 𝒰0) refl refl"
+        );
     }
 }

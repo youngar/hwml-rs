@@ -45,6 +45,10 @@ pub enum Value<'db> {
     TypeConstructor(TypeConstructor<'db>),
     DataConstructor(DataConstructor<'db>),
 
+    EqType(EqType<'db>),
+    Refl(Refl<'db>),
+    Transport(Transport<'db>),
+
     HardwareUniverse(HardwareUniverse<'db>),
     SLift(SLift<'db>),
     MLift(MLift<'db>),
@@ -96,6 +100,22 @@ impl<'db> Value<'db> {
         arguments: Vec<Rc<Value<'db>>>,
     ) -> Value<'db> {
         Value::DataConstructor(DataConstructor::new(constructor, arguments))
+    }
+
+    pub fn eq(ty: Rc<Value<'db>>, lhs: Rc<Value<'db>>, rhs: Rc<Value<'db>>) -> Value<'db> {
+        Value::EqType(EqType::new(ty, lhs, rhs))
+    }
+
+    pub fn refl() -> Value<'db> {
+        Value::Refl(Refl::new())
+    }
+
+    pub fn transport(
+        motive: Closure<'db>,
+        proof: Rc<Value<'db>>,
+        value: Rc<Value<'db>>,
+    ) -> Value<'db> {
+        Value::Transport(Transport::new(motive, proof, value))
     }
 
     pub fn hardware_universe() -> Value<'db> {
@@ -294,6 +314,53 @@ impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.arguments.iter()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EqType<'db> {
+    pub ty: Rc<Value<'db>>,
+    pub lhs: Rc<Value<'db>>,
+    pub rhs: Rc<Value<'db>>,
+}
+
+impl<'db> EqType<'db> {
+    pub fn new(ty: Rc<Value<'db>>, lhs: Rc<Value<'db>>, rhs: Rc<Value<'db>>) -> EqType<'db> {
+        EqType { ty, lhs, rhs }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Refl<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> Refl<'db> {
+    pub fn new() -> Refl<'db> {
+        Refl {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Transport<'db> {
+    pub motive: Closure<'db>,
+    pub proof: Rc<Value<'db>>,
+    pub value: Rc<Value<'db>>,
+}
+
+impl<'db> Transport<'db> {
+    pub fn new(
+        motive: Closure<'db>,
+        proof: Rc<Value<'db>>,
+        value: Rc<Value<'db>>,
+    ) -> Transport<'db> {
+        Transport {
+            motive,
+            proof,
+            value,
+        }
     }
 }
 
@@ -546,10 +613,9 @@ impl<'db> Eliminator<'db> {
     pub fn case(
         type_constructor: ConstantId<'db>,
         parameters: Vec<Rc<Value<'db>>>,
-        motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Eliminator<'db> {
-        Eliminator::Case(Case::new(type_constructor, parameters, motive, branches))
+        Eliminator::Case(Case::new(type_constructor, parameters, branches))
     }
 }
 
@@ -568,7 +634,6 @@ impl<'db> Application<'db> {
 pub struct Case<'db> {
     pub type_constructor: ConstantId<'db>,
     pub parameters: Vec<Rc<Value<'db>>>,
-    pub motive: Closure<'db>,
     pub branches: Vec<CaseBranch<'db>>,
 }
 
@@ -576,13 +641,11 @@ impl<'db> Case<'db> {
     pub fn new(
         type_constructor: ConstantId<'db>,
         parameters: Vec<Rc<Value<'db>>>,
-        motive: Closure<'db>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Case<'db> {
         Case {
             type_constructor,
             parameters,
-            motive,
             branches,
         }
     }
@@ -642,6 +705,10 @@ impl<'db, 'g> Environment<'db, 'g> {
     /// Get a local variable by level.
     pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
         self.local.get(level)
+    }
+
+    pub fn set(&mut self, level: Level, value: Rc<Value<'db>>) {
+        self.local.set(level, value)
     }
 
     /// The number of bound variables in scope.
@@ -911,6 +978,8 @@ pub struct TypeConstructorInfo<'db> {
     pub arguments: Telescope<'db>,
     pub num_parameters: usize,
     pub level: UniverseLevel,
+    /// The data constructors belonging to this type constructor.
+    pub constructors: Vec<ConstantId<'db>>,
 }
 
 impl<'db> TypeConstructorInfo<'db> {
@@ -922,6 +991,7 @@ impl<'db> TypeConstructorInfo<'db> {
             arguments: args.into(),
             num_parameters,
             level,
+            constructors: Vec::new(),
         }
     }
 
@@ -933,14 +1003,16 @@ impl<'db> TypeConstructorInfo<'db> {
         self.arguments.len() - self.num_parameters
     }
 
-    /// Get a slice of just the parameters.
     pub fn parameters(&self) -> &[RcSyntax<'db>] {
         &self.arguments.bindings[..self.num_parameters]
     }
 
-    /// Get a slice of just the indices.
     pub fn indices(&self) -> &[RcSyntax<'db>] {
         &self.arguments.bindings[self.num_parameters..]
+    }
+
+    pub fn constructors(&self) -> &[ConstantId<'db>] {
+        &self.constructors
     }
 }
 
@@ -997,6 +1069,16 @@ impl<'db> LocalEnv<'db> {
     pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
         let index: usize = level.into();
         &self.locals[index]
+    }
+
+    /// Set the value at a specific level.
+    ///
+    /// Used by pattern matching to turn a variable into a transparent let-binding
+    /// when we learn its value (e.g., `n ~ @zero`). After this, any evaluation
+    /// that looks up this level will see the new value instead of a rigid variable.
+    pub fn set(&mut self, level: Level, value: Rc<Value<'db>>) {
+        let index: usize = level.into();
+        self.locals[index] = value;
     }
 
     /// The number of bound variables in scope.
