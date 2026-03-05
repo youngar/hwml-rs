@@ -6,7 +6,7 @@ pub mod environment;
 pub mod equal;
 pub mod eval;
 pub mod lower;
-pub mod prelude;
+pub mod pattern_unify;
 pub mod quote;
 pub mod symbol;
 pub mod syn;

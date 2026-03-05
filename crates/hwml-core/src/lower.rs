@@ -94,6 +94,23 @@ pub fn saturate_value<'db>(
                 .collect::<Result<'db, Vec<_>>>()?;
             Ok(Rc::new(Value::data_constructor(dc.constructor, new_args)))
         }
+        Value::EqType(eq) => {
+            let new_ty = saturate_value(global, &eq.ty)?;
+            let new_lhs = saturate_value(global, &eq.lhs)?;
+            let new_rhs = saturate_value(global, &eq.rhs)?;
+            Ok(Rc::new(Value::eq(new_ty, new_lhs, new_rhs)))
+        }
+        Value::Transport(transport) => {
+            // For transport, we saturate the proof and value, but keep the motive as-is
+            // since it's a closure that will be handled during quoting.
+            let new_proof = saturate_value(global, &transport.proof)?;
+            let new_value = saturate_value(global, &transport.value)?;
+            Ok(Rc::new(Value::transport(
+                transport.motive.clone(),
+                new_proof,
+                new_value,
+            )))
+        }
         Value::Rigid(rigid) => saturate_rigid(global, rigid),
         Value::Flex(flex) => saturate_flex(global, flex),
 
@@ -106,7 +123,8 @@ pub fn saturate_value<'db>(
         | Value::Zero(_)
         | Value::One(_)
         | Value::Prim(_)
-        | Value::Constant(_) => Ok(Rc::new(value.clone())),
+        | Value::Constant(_)
+        | Value::Refl(_) => Ok(Rc::new(value.clone())),
     }
 }
 
@@ -281,11 +299,10 @@ fn saturate_eliminator<'db>(
                 .iter()
                 .map(|p| saturate_value(global, p))
                 .collect::<Result<'db, Vec<_>>>()?;
-            // For now, keep motive and branches as-is since saturating closures is complex
+            // For now, keep branches as-is since saturating closures is complex
             Ok(val::Eliminator::case(
                 case.type_constructor,
                 new_params,
-                case.motive.clone(),
                 case.branches.clone(),
             ))
         }
