@@ -112,6 +112,9 @@ fn run_core(args: Args) {
                         tc.data_constructors.len()
                     );
                 }
+                hwml_core::declaration::Declaration::Metavariable(m) => {
+                    println!("  - meta ?{}: {:?}", m.id.0, m.ty);
+                }
             }
         }
     }
@@ -137,6 +140,10 @@ fn run_core(args: Args) {
                     print!("    dcon @{} : ", dcon.name.name(&db));
                     hwml_core::syn::dump_syntax(&db, &dcon.full_type());
                 }
+            }
+            hwml_core::declaration::Declaration::Metavariable(m) => {
+                print!("  meta ?{} : ", m.id.0);
+                hwml_core::syn::dump_syntax(&db, &m.ty);
             }
         }
     }
