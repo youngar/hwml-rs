@@ -1,4 +1,5 @@
 use crate::{
+    common::Index,
     declaration::{self, Declaration, Metavariable as DeclMetavariable, Primitive},
     syn::*,
     ConstantId,
@@ -153,20 +154,47 @@ pub fn print_type_constructor<'db, R: Render>(
 ) -> Result<(), R::Error> {
     p.text("tcon @")?;
     p.text_owned(tc.name.name(db))?;
-    p.text(" : -> ")?;
-    let st = State::new();
+
+    // Print parameters as telescope
+    let mut st = State::new();
+    for param_ty in tc.parameters.iter() {
+        p.text(" (%")?;
+        p.text_owned(format!("{}", st.depth))?;
+        p.text(" : ")?;
+        param_ty.print(db, st, p)?;
+        p.text(")")?;
+        st = st.inc_depth();
+    }
+
+    p.text(" : ")?;
+
+    // Print indices as telescope
+    for index_ty in tc.indices.iter() {
+        p.text("(%")?;
+        p.text_owned(format!("{}", st.depth))?;
+        p.text(" : ")?;
+        index_ty.print(db, st, p)?;
+        p.text(") ")?;
+        st = st.inc_depth();
+    }
+
+    p.text("-> ")?;
     tc.universe.print(db, st, p)?;
+
+    // State for data constructors should start after parameters (not indices)
+    // Data constructors can reference parameters but use their own bindings for args
+    let dcon_base_st = State::new().with_depth(tc.parameters.len());
+
     if !tc.data_constructors.is_empty() {
         p.text(" where")?;
         p.hard_break()?;
         for dcon in &tc.data_constructors {
             p.text("    dcon @")?;
             p.text_owned(dcon.name.name(db))?;
-            // Print parameters as telescope, then result type
-            let mut dcon_st = st;
+            // Print dcon parameters as telescope, then result type
+            let mut dcon_st = dcon_base_st;
             for param_ty in dcon.parameters.iter() {
-                p.text(" (")?;
-                p.text("%")?;
+                p.text(" (%")?;
                 p.text_owned(format!("{}", dcon_st.depth))?;
                 p.text(" : ")?;
                 param_ty.print(db, dcon_st, p)?;
@@ -244,6 +272,17 @@ impl State {
     fn inc_depth(self) -> State {
         State {
             depth: self.depth + 1,
+            ..self
+        }
+    }
+
+    fn with_depth(self, depth: usize) -> State {
+        State { depth, ..self }
+    }
+
+    fn under_binders(self, n: usize) -> State {
+        State {
+            depth: self.depth + n,
             ..self
         }
     }
@@ -361,6 +400,18 @@ where
     p.text_owned(format!("%{}", st.depth))
 }
 
+/// Print a variable reference (de Bruijn index) at the current depth.
+fn print_variable<R>(st: State, p: &mut Printer<R>, index: Index) -> Result<(), R::Error>
+where
+    R: Render,
+{
+    if index.is_bound(st.depth) {
+        p.text_owned(&format!("{}", index.to_level(st.depth)))
+    } else {
+        p.text_owned(&format!("{}", index.to_negative_level(st.depth)))
+    }
+}
+
 fn print_binders<R>(st: State, p: &mut Printer<R>, n: usize) -> Result<(), R::Error>
 where
     R: Render,
@@ -395,18 +446,34 @@ impl<'db> Print for Closure<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("[")?;
-        p.cgroup(1, |p| {
-            for (i, value) in self.values.iter().enumerate() {
-                if i > 0 {
-                    p.text(",")?;
-                    p.space()?;
+        // Count nested closures to print all binders at once
+        let mut arity = 0;
+        let mut current = self;
+        loop {
+            arity += 1;
+            match &*current.body {
+                Syntax::Closure(inner) => {
+                    current = inner;
                 }
-                value.print(db, st, p)?;
+                _ => break,
             }
-            Ok(())
-        })?;
+        }
+
+        // Print opening bracket and all binders
+        p.text("[")?;
+        for i in 0..arity {
+            if i > 0 {
+                p.space()?;
+            }
+            p.text_owned(format!("%{}", i))?;
+        }
         p.text("]")?;
+        p.space()?;
+        p.text("|-")?;
+        p.space()?;
+
+        // Print the innermost body under all the binders
+        current.body.print(db, st.under_binders(arity), p)?;
         Ok(())
     }
 }
@@ -429,6 +496,11 @@ impl<'db> Print for Syntax<'db> {
             Syntax::TypeConstructor(type_constructor) => type_constructor.print(db, st, p),
             Syntax::DataConstructor(data_constructor) => data_constructor.print(db, st, p),
             Syntax::Case(case) => case.print(db, st, p),
+
+            Syntax::Eq(eq) => eq.print(db, st, p),
+            Syntax::Refl(refl) => refl.print(db, st, p),
+            Syntax::Transport(transport) => transport.print(db, st, p),
+            Syntax::Closure(closure) => closure.print(db, st, p),
 
             Syntax::HardwareUniverse(hwu) => hwu.print(db, st, p),
             Syntax::SLift(slift) => slift.print(db, st, p),
@@ -671,31 +743,27 @@ where
 impl<'db> Print for Case<'db> {
     fn print<R: Render>(
         &self,
-        db: &dyn salsa::Database,
+        _db: &dyn salsa::Database,
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         ensure(st, p, CASE, |st, p| {
-            print_lhs_subterm(db, st, p, &*self.expr, CASE.lhs_prec())?;
+            // Print the scrutinee as a variable (de Bruijn index).
+            // The scrutinee is always a variable, never an arbitrary expression.
+            self.scrutinee.print(_db, st, p)?;
             p.space()?;
             p.text("case")?;
-            p.space()?;
-            print_binder(st, p)?;
-            p.space()?;
-            p.text("→")?;
-            p.space()?;
-            print_internal_subterm(db, st.inc_depth(), p, &*self.motive)?;
             p.space()?;
             p.text("{")?;
             p.cgroup(0, |p| {
                 p.space()?;
                 if let Some((first, rest)) = self.branches.split_first() {
-                    print_case_branch(db, st, p, first)?;
+                    print_case_branch(_db, st, p, first)?;
                     p.space()?;
                     for branch in rest {
                         p.text("|")?;
                         p.space()?;
-                        print_case_branch(db, st, p, branch)?;
+                        print_case_branch(_db, st, p, branch)?;
                         p.space()?;
                     }
                 }
@@ -714,6 +782,59 @@ impl<'db> Print for CaseBranch<'db> {
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         print_case_branch(db, st, p, self)
+    }
+}
+
+impl<'db> Print for EqType<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        // Print as: Eq A x y
+        ensure(st, p, APP, |st, p| {
+            p.text("Eq")?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.ty, APP.rhs_prec())?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.lhs, APP.rhs_prec())?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.rhs, APP.rhs_prec())
+        })
+    }
+}
+
+impl<'db> Print for Refl<'db> {
+    fn print<R: Render>(
+        &self,
+        _db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        p.text("refl")
+    }
+}
+
+impl<'db> Print for Transport<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        // Print as: transport [%0 %1 ...] |- body proof value
+        ensure(st, p, APP, |st, p| {
+            p.text("transport")?;
+            p.space()?;
+            // Print the motive closure
+            self.motive.print(db, st, p)?;
+            p.space()?;
+            // Print proof and value
+            print_rhs_subterm(db, st, p, &*self.proof, APP.rhs_prec())?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.value, APP.rhs_prec())
+        })
     }
 }
 
@@ -991,29 +1112,22 @@ mod tests {
     #[test]
     fn print_pi() {
         let db = Database::new();
-        let u0 = || Syntax::universe_rc(UniverseLevel::new(0));
-        let u1 = || Syntax::universe_rc(UniverseLevel::new(1));
-        let v = |i| Syntax::variable_rc(Index(i));
-        assert_snapshot!(p(&db, &Syntax::pi(u0(), u1())), @"∀ (%0 : 𝒰0) → 𝒰1");
-        assert_snapshot!(p(&db, &Syntax::pi(u0(), Syntax::pi_rc(v(0), v(0)))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::universe_rc(UniverseLevel::new(1)))), @"∀ (%0 : 𝒰0) → 𝒰1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::pi_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(0))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
     }
 
     #[test]
     fn print_lambda() {
         let db = Database::new();
-        let v = |i| Syntax::variable_rc(Index(i));
-        assert_snapshot!(p(&db, &Syntax::lambda(v(0))), @"λ %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::lambda_rc(v(1)))), @"λ %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::lambda_rc(Syntax::variable_rc(Index(1))))), @"λ %0 %1 → %0");
     }
 
     #[test]
     fn print_application() {
         let db = Database::new();
-        let f = Syntax::constant_rc("f".into_with_db(&db));
-        let x = Syntax::constant_rc("x".into_with_db(&db));
-        let y = Syntax::constant_rc("y".into_with_db(&db));
-        assert_snapshot!(p(&db, &Syntax::application(f.clone(), x.clone())), @"@f[@x]");
-        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(f, x), y)), @"@f[@x, @y]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)))), @"@f[@x]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db))), Syntax::constant_rc("y".into_with_db(&db)))), @"@f[@x, @y]");
     }
 
     // =========================================================================
@@ -1023,31 +1137,29 @@ mod tests {
     #[test]
     fn print_type_constructor() {
         let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
         assert_snapshot!(p(&db, &Syntax::type_constructor("Nat".into_with_db(&db), vec![])), @"#[@Nat]");
-        assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![c("A"), c("n")])), @"#[@Vec @A @n]");
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![Syntax::constant_rc("A".into_with_db(&db)), Syntax::constant_rc("n".into_with_db(&db))])), @"#[@Vec @A @n]");
     }
 
     #[test]
     fn print_data_constructor() {
         let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
         assert_snapshot!(p(&db, &Syntax::data_constructor("Nil".into_with_db(&db), vec![])), @"[@Nil]");
-        assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![c("x"), c("xs")])), @"[@Cons @x @xs]");
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![Syntax::constant_rc("x".into_with_db(&db)), Syntax::constant_rc("xs".into_with_db(&db))])), @"[@Cons @x @xs]");
     }
 
     #[test]
     fn print_case() {
         let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
-        let v = |i| Syntax::variable_rc(Index(i));
-        let scrutinee = c("n");
-        let motive = Syntax::universe_rc(UniverseLevel::new(0));
-        let branches = vec![
-            CaseBranch::new("Zero".into_with_db(&db), 0, c("a")),
-            CaseBranch::new("Succ".into_with_db(&db), 1, v(0)),
-        ];
-        assert_snapshot!(p(&db, &Syntax::case(scrutinee, motive, branches)), @"@n case %0 → 𝒰0 { @Zero => @a | @Succ %0 => %0 }");
+        // Case with scrutinee at Index(0), which means the most recently bound variable
+        // At depth 1 (under one binder), Index(0) prints as %0
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Syntax::case_rc(
+            Index(0),
+            vec![
+                CaseBranch::new("Zero".into_with_db(&db), 0, Syntax::constant_rc("a".into_with_db(&db))),
+                CaseBranch::new("Succ".into_with_db(&db), 1, Syntax::variable_rc(Index(0))),
+            ]
+        ))), @"λ %0 → %0 case { @Zero => @a | @Succ %1 => %1 }");
     }
 
     // =========================================================================
@@ -1101,6 +1213,38 @@ mod tests {
     }
 
     // =========================================================================
+    // Equality Types
+    // =========================================================================
+
+    #[test]
+    fn print_eq_type() {
+        let db = Database::new();
+        let eq = Syntax::eq_rc(
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::variable_rc(Index(0)),
+            Syntax::variable_rc(Index(1)),
+        );
+        // Variables are unbound at depth 0, so they print as !0, !1
+        assert_snapshot!(p(&db, &eq), @"Eq 𝒰0 !0 !1");
+    }
+
+    #[test]
+    fn print_refl() {
+        let db = Database::new();
+        assert_snapshot!(p(&db, &Syntax::refl()), @"refl");
+    }
+
+    #[test]
+    fn print_transport() {
+        let db = Database::new();
+        let motive = Closure::new(Syntax::variable_rc(Index(0))); // [%0] |- %0
+        let transport =
+            Syntax::transport_rc(motive, Syntax::refl_rc(), Syntax::variable_rc(Index(2)));
+        // Prints as: transport [%0] |- body proof value
+        assert_snapshot!(p(&db, &transport), @"transport [%0] |- %0 refl !2");
+    }
+
+    // =========================================================================
     // Module Universe
     // =========================================================================
 
@@ -1113,26 +1257,25 @@ mod tests {
     #[test]
     fn print_harrow() {
         let db = Database::new();
-        let bit = || Syntax::bit_rc();
-        assert_snapshot!(p(&db, &Syntax::harrow(bit(), bit())), @"Bit → Bit");
-        assert_snapshot!(p(&db, &Syntax::harrow(bit(), Syntax::harrow_rc(bit(), bit()))), @"Bit → Bit → Bit");
+        assert_snapshot!(p(&db, &Syntax::harrow(Syntax::bit_rc(), Syntax::bit_rc())), @"Bit → Bit");
+        assert_snapshot!(p(&db, &Syntax::harrow(Syntax::bit_rc(), Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()))), @"Bit → Bit → Bit");
     }
 
     #[test]
     fn print_module() {
         let db = Database::new();
-        let v = |i| Syntax::variable_rc(Index(i));
-        assert_snapshot!(p(&db, &Syntax::module(v(0))), @"mod %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::module(Syntax::module_rc(v(1)))), @"mod %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Syntax::variable_rc(Index(0)))), @"mod %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Syntax::module_rc(Syntax::variable_rc(Index(1))))), @"mod %0 %1 → %0");
     }
 
     #[test]
     fn print_happlication() {
         let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
-        let bit = || Syntax::bit_rc();
-        let ty = Syntax::harrow_rc(bit(), bit());
-        assert_snapshot!(p(&db, &Syntax::happlication(c("m"), ty, c("x"))), @"@m<Bit → Bit>(@x)");
+        assert_snapshot!(p(&db, &Syntax::happlication(
+            Syntax::constant_rc("m".into_with_db(&db)),
+            Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
+            Syntax::constant_rc("x".into_with_db(&db))
+        )), @"@m<Bit → Bit>(@x)");
     }
 
     // =========================================================================
@@ -1154,8 +1297,7 @@ mod tests {
     #[test]
     fn print_variable_bound() {
         let db = Database::new();
-        let v = |i| Syntax::variable_rc(Index(i));
-        assert_snapshot!(p(&db, &Syntax::lambda(v(0))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))), @"λ %0 → %0");
     }
 
     #[test]
@@ -1168,9 +1310,8 @@ mod tests {
     #[test]
     fn print_metavariable() {
         let db = Database::new();
-        let v = |i| Syntax::variable_rc(Index(i));
         assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(0), vec![])), @"?[0]");
-        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(1), vec![v(0), v(1)])), @"?[1 !0 !1]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(1), vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))])), @"?[1 !0 !1]");
     }
 
     // =========================================================================
@@ -1180,8 +1321,6 @@ mod tests {
     #[test]
     fn print_check() {
         let db = Database::new();
-        let c = |s: &str| Syntax::constant_rc(s.into_with_db(&db));
-        let u0 = Syntax::universe_rc(UniverseLevel::new(0));
-        assert_snapshot!(p(&db, &Syntax::check(u0, c("x"))), @"@x : 𝒰0");
+        assert_snapshot!(p(&db, &Syntax::check(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
     }
 }

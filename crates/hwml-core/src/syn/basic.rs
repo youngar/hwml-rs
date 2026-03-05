@@ -56,32 +56,19 @@ pub type RcSyntax<'db> = Rc<Syntax<'db>>;
 pub type Tm<'db> = Syntax<'db>;
 pub type Ty<'db> = Syntax<'db>;
 
-/// A captured environment.
+/// A closure in the syntax: [var] |- body
+/// This represents a term with a single explicit variable binder.
+/// Multiple binders like [%0 %1] |- body are represented as nested closures.
+/// Used for transport motives and potentially other constructs.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Closure<'db> {
-    /// The environment contains a vector of definitions.
-    pub values: Vec<RcSyntax<'db>>,
+    /// The body term (may reference variable 0, or be another closure for multiple binders)
+    pub body: RcSyntax<'db>,
 }
 
 impl<'db> Closure<'db> {
-    pub fn new() -> Closure<'db> {
-        Closure { values: Vec::new() }
-    }
-
-    pub fn with_values(values: Vec<RcSyntax<'db>>) -> Closure<'db> {
-        Closure { values }
-    }
-
-    pub fn pop(&mut self) {
-        self.values.pop();
-    }
-
-    pub fn truncate(&mut self, depth: usize) {
-        self.values.truncate(depth);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+    pub fn new(body: RcSyntax<'db>) -> Closure<'db> {
+        Closure { body }
     }
 }
 
@@ -97,6 +84,11 @@ pub enum Syntax<'db> {
     TypeConstructor(TypeConstructor<'db>),
     DataConstructor(DataConstructor<'db>),
     Case(Case<'db>),
+
+    Eq(EqType<'db>),
+    Refl(Refl<'db>),
+    Transport(Transport<'db>),
+    Closure(Closure<'db>),
 
     HardwareUniverse(HardwareUniverse<'db>),
     SLift(SLift<'db>),
@@ -186,20 +178,52 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::data_constructor(constructor, arguments))
     }
 
-    pub fn case(
-        expr: RcSyntax<'db>,
-        motive: RcSyntax<'db>,
-        branches: Vec<CaseBranch<'db>>,
-    ) -> Syntax<'db> {
-        Syntax::Case(Case::new(expr, motive, branches))
+    pub fn case(scrutinee: Index, branches: Vec<CaseBranch<'db>>) -> Syntax<'db> {
+        Syntax::Case(Case::new(Variable::new(scrutinee), branches))
     }
 
-    pub fn case_rc(
-        expr: RcSyntax<'db>,
-        motive: RcSyntax<'db>,
-        branches: Vec<CaseBranch<'db>>,
+    pub fn case_rc(scrutinee: Index, branches: Vec<CaseBranch<'db>>) -> RcSyntax<'db> {
+        Rc::new(Syntax::case(scrutinee, branches))
+    }
+
+    pub fn eq(ty: RcSyntax<'db>, lhs: RcSyntax<'db>, rhs: RcSyntax<'db>) -> Syntax<'db> {
+        Syntax::Eq(EqType::new(ty, lhs, rhs))
+    }
+
+    pub fn eq_rc(ty: RcSyntax<'db>, lhs: RcSyntax<'db>, rhs: RcSyntax<'db>) -> RcSyntax<'db> {
+        Rc::new(Syntax::eq(ty, lhs, rhs))
+    }
+
+    pub fn refl() -> Syntax<'db> {
+        Syntax::Refl(Refl::new())
+    }
+
+    pub fn refl_rc() -> RcSyntax<'db> {
+        Rc::new(Syntax::refl())
+    }
+
+    pub fn transport(
+        motive: Closure<'db>,
+        proof: RcSyntax<'db>,
+        value: RcSyntax<'db>,
+    ) -> Syntax<'db> {
+        Syntax::Transport(Transport::new(motive, proof, value))
+    }
+
+    pub fn transport_rc(
+        motive: Closure<'db>,
+        proof: RcSyntax<'db>,
+        value: RcSyntax<'db>,
     ) -> RcSyntax<'db> {
-        Rc::new(Syntax::case(expr, motive, branches))
+        Rc::new(Syntax::transport(motive, proof, value))
+    }
+
+    pub fn closure(body: RcSyntax<'db>) -> Syntax<'db> {
+        Syntax::Closure(Closure::new(body))
+    }
+
+    pub fn closure_rc(body: RcSyntax<'db>) -> RcSyntax<'db> {
+        Rc::new(Syntax::closure(body))
     }
 
     pub fn hardware() -> Syntax<'db> {
@@ -509,29 +533,25 @@ impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
 
 /// A case tree for pattern matching.
 ///
-/// A case expression contains both the expression being matched (scrutinee) and the branches
+/// A case expression contains the variable being matched (scrutinee) and branches
 /// that define the pattern matching behavior.
 ///
-/// Type annotations should be provided using the Check syntax node to wrap the case expression.
+/// The scrutinee MUST be a variable (represented as a de Bruijn index). This is
+/// essential for dependent pattern matching, where the pattern unifier needs to
+/// know exactly which variable it is solving for. If the surface language allows
+/// `match f x { ... }`, the elaborator must desugar it to `let y = f x in y case { ... }`.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Case<'db> {
-    /// The expression being matched on (scrutinee)
-    pub expr: RcSyntax<'db>,
-    /// An expression which computes the resulting type of the case expression.
-    pub motive: RcSyntax<'db>,
+    /// The scrutinee variable (de Bruijn index).
+    pub scrutinee: Variable<'db>,
     /// The branches of the case tree
     pub branches: Vec<CaseBranch<'db>>,
 }
 
 impl<'db> Case<'db> {
-    pub fn new(
-        expr: RcSyntax<'db>,
-        motive: RcSyntax<'db>,
-        branches: Vec<CaseBranch<'db>>,
-    ) -> Case<'db> {
+    pub fn new(scrutinee: Variable<'db>, branches: Vec<CaseBranch<'db>>) -> Case<'db> {
         Case {
-            expr,
-            motive,
+            scrutinee,
             branches,
         }
     }
@@ -557,6 +577,76 @@ impl<'db> CaseBranch<'db> {
             constructor,
             arity,
             body,
+        }
+    }
+}
+
+/// Propositional equality type: Eq A x y
+///
+/// Represents the type of proofs that x and y are equal at type A.
+/// This is the identity type from Martin-Löf type theory.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+pub struct EqType<'db> {
+    /// The type at which equality is stated
+    pub ty: RcSyntax<'db>,
+    /// The left-hand side of the equality
+    pub lhs: RcSyntax<'db>,
+    /// The right-hand side of the equality
+    pub rhs: RcSyntax<'db>,
+}
+
+impl<'db> EqType<'db> {
+    pub fn new(ty: RcSyntax<'db>, lhs: RcSyntax<'db>, rhs: RcSyntax<'db>) -> EqType<'db> {
+        EqType { ty, lhs, rhs }
+    }
+}
+
+/// Reflexivity proof: refl
+///
+/// The canonical proof that any term is equal to itself.
+/// This is the only constructor of the Eq type.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+pub struct Refl<'db> {
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> Refl<'db> {
+    pub fn new() -> Refl<'db> {
+        Refl {
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Transport (rewrite) operator: transport motive proof value
+///
+/// Given:
+/// - motive: A type family P : A → Type
+/// - proof: A proof that x = y (of type Eq A x y)
+/// - value: A value of type P x
+///
+/// Produces a value of type P y.
+///
+/// This is Axiom J (the eliminator for equality types).
+/// When the proof evaluates to refl, the transport vanishes during evaluation.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+pub struct Transport<'db> {
+    /// The type family (motive): [%0] |- P
+    /// Represents a closure with one variable binding
+    /// Syntax: transport [%0] |- P proof value
+    pub motive: Closure<'db>,
+    /// The equality proof: h : Eq A x y
+    pub proof: RcSyntax<'db>,
+    /// The value to transport: v : P x
+    pub value: RcSyntax<'db>,
+}
+
+impl<'db> Transport<'db> {
+    pub fn new(motive: Closure<'db>, proof: RcSyntax<'db>, value: RcSyntax<'db>) -> Transport<'db> {
+        Transport {
+            motive,
+            proof,
+            value,
         }
     }
 }
