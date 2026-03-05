@@ -140,6 +140,8 @@ pub enum Error<'db> {
     ScopeError(Level),
     Occurs,
     NotAType(Rc<Value<'db>>),
+    /// Case scrutinee must be a variable (not a complex expression).
+    CaseScrutineeMustBeVariable,
 }
 
 impl<'db> From<eval::Error> for Error<'db> {
@@ -760,6 +762,10 @@ fn rename_application<'db>(
     Ok(Syntax::application_rc(head, syn_arg))
 }
 
+/// Rename a case eliminator.
+///
+/// Case expressions are check-only, so there's no return type to rename.
+/// We use a placeholder type for renaming branch bodies.
 fn rename_case<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
@@ -768,13 +774,21 @@ fn rename_case<'db>(
     head: RcSyntax<'db>,
     case: &val::Case<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
-    let type_info = global.type_constructor(case.type_constructor)?.clone();
-    let num_parameters = type_info.num_parameters();
+    // The scrutinee must be a variable (not an arbitrary expression).
+    // The `head` is the already-renamed head of the neutral term, which should
+    // always be a Variable. Extract its Index for the Case syntax.
+    let scrutinee_index = match head.as_ref() {
+        Syntax::Variable(var) => var.index,
+        _ => return Err(Error::CaseScrutineeMustBeVariable),
+    };
 
     let parameters = &case.parameters;
-    let index_bindings = type_info.arguments.bindings[num_parameters..].to_vec();
-    let index_telescope = syn::Telescope::from(index_bindings);
-    let index_tys = eval::eval_telescope(global, parameters.clone(), &index_telescope)?;
+
+    // No return_type in case anymore - case is check-only.
+    // For renaming branch bodies, we use a placeholder type.
+    // TODO: Thread the expected type through when we have check-only renaming.
+    let placeholder_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
+    let branch_ty = &placeholder_ty;
 
     let mut branches = Vec::new();
     for branch in &case.branches {
@@ -789,25 +803,6 @@ fn rename_case<'db>(
                 ty,
             )));
         }
-        let mut dcon_env = LocalEnv::new();
-        dcon_env.extend(parameters.clone());
-        let dcon_ty_clos = val::Closure::new(dcon_env, data_info.ty.clone());
-        let dcon_ty = eval::run_closure(global, &dcon_ty_clos, dcon_args.clone())?;
-        let Value::TypeConstructor(tcon) = &*dcon_ty else {
-            return Err(Error::IllTyped {
-                tm: dcon_ty.clone(),
-                ty: Rc::new(Value::universe(common::UniverseLevel::new(0))),
-            });
-        };
-        let dcon_val = Rc::new(Value::data_constructor(
-            branch.constructor,
-            dcon_args.clone(),
-        ));
-
-        // Create the arguments to the motive
-        let mut motive_args = tcon.arguments[type_info.num_parameters..].to_vec();
-        motive_args.push(dcon_val);
-        let branch_ty = eval::run_closure(global, &case.motive, motive_args)?;
 
         // Evaluate the branch body closure
         let branch_val = eval::run_closure(global, &branch.body, dcon_args)?;
@@ -824,7 +819,7 @@ fn rename_case<'db>(
             }
             renaming.depth = original_depth + branch.arity;
 
-            let result = rename(db, global, meta, renaming, &branch_ty, &branch_val)?;
+            let result = rename(db, global, meta, renaming, branch_ty, &branch_val)?;
 
             // Restore the renaming
             for i in 0..branch.arity {
@@ -843,49 +838,8 @@ fn rename_case<'db>(
         ));
     }
 
-    // Read back the motive
-    let mut motive_args = Vec::new();
-    for ty in index_tys.types {
-        motive_args.push(Rc::new(Value::variable(
-            Level::new(renaming.source_depth() + motive_args.len()),
-            ty,
-        )));
-    }
-    let scrutinee_ty = Rc::new(Value::type_constructor(
-        case.type_constructor,
-        case.parameters.clone(),
-    ));
-    let scrutinee_var = Rc::new(Value::variable(
-        Level::new(renaming.source_depth()),
-        scrutinee_ty,
-    ));
-    motive_args.push(scrutinee_var);
-    let motive_args_len = motive_args.len();
-    let sem_motive_result = eval::run_closure(global, &case.motive, motive_args)?;
-
-    // Rename the motive with extended depth
-    let syn_motive = {
-        let original_depth = renaming.depth;
-        for i in 0..(1 + motive_args_len) {
-            let src_level = Level::new(original_depth + i);
-            let tgt_level = Level::new(renaming.map.len());
-            renaming.map.insert(src_level, tgt_level);
-        }
-        renaming.depth = original_depth + 1 + motive_args_len;
-
-        let result = rename_type(db, global, meta, renaming, &sem_motive_result)?;
-
-        // Restore the renaming
-        for i in 0..(1 + motive_args_len) {
-            let src_level = Level::new(original_depth + i);
-            renaming.map.remove(&src_level);
-        }
-        renaming.depth = original_depth;
-
-        result
-    };
-
-    Ok(Syntax::case_rc(head, syn_motive, branches))
+    // No return_type to rename - case expressions are check-only
+    Ok(Syntax::case_rc(scrutinee_index, branches))
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -56,6 +56,7 @@ mod tests {
         let global = GlobalEnv::new();
         let mut executor = SingleThreadedExecutor::new();
         let tc_env = TCEnvironment {
+            db: &db,
             values: Environment::new(&global),
             types: Vec::new(),
         };
@@ -80,6 +81,7 @@ mod tests {
     ) -> Rc<Value<'db>> {
         let mut executor = SingleThreadedExecutor::new();
         let tc_env = TCEnvironment {
+            db,
             values: Environment::new(global),
             types: Vec::new(),
         };
@@ -128,6 +130,7 @@ mod tests {
         let global = GlobalEnv::new();
         let mut executor = SingleThreadedExecutor::new();
         let tc_env = TCEnvironment {
+            db: &db,
             values: Environment::new(&global),
             types: Vec::new(),
         };
@@ -167,6 +170,7 @@ mod tests {
         let global = load_prelude(&db, "meta ?[0] : U0;");
         let executor = SingleThreadedExecutor::new();
         let tc_env = TCEnvironment {
+            db: &db,
             values: Environment::new(&global),
             types: Vec::new(),
         };
@@ -189,6 +193,7 @@ mod tests {
         let global = load_prelude(&db, "meta ?[0] (%x : U0) : U0;");
         let executor = SingleThreadedExecutor::new();
         let tc_env = TCEnvironment {
+            db: &db,
             values: Environment::new(&global),
             types: Vec::new(),
         };
