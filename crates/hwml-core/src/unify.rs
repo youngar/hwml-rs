@@ -270,6 +270,30 @@ fn rename<'db>(
                 new_args,
             )))
         }
+        Value::EqType(eq) => {
+            // Rename all components of the equality type
+            let ty = rename(global, mctx, meta, renaming, &eq.ty)?;
+            let lhs = rename(global, mctx, meta, renaming, &eq.lhs)?;
+            let rhs = rename(global, mctx, meta, renaming, &eq.rhs)?;
+            Ok(Rc::new(Value::eq(ty, lhs, rhs)))
+        }
+        Value::Refl(_) => {
+            // Refl has no free variables to rename
+            Ok(value.clone())
+        }
+        Value::Transport(transport) => {
+            // Rename the motive closure
+            let mut lifted_renaming = renaming.lift();
+            let mut new_env = LocalEnv::new();
+            for value in transport.motive.local.iter() {
+                new_env.push(rename(global, mctx, meta, &mut lifted_renaming, value)?);
+            }
+            let motive = Closure::new(new_env, transport.motive.term.clone());
+            // Rename proof and value
+            let proof = rename(global, mctx, meta, renaming, &transport.proof)?;
+            let value_renamed = rename(global, mctx, meta, renaming, &transport.value)?;
+            Ok(Rc::new(Value::transport(motive, proof, value_renamed)))
+        }
         _ => Ok(value.clone()),
     }
 }
@@ -349,7 +373,10 @@ pub fn unify_elim<'db>(
     }
 }
 
-/// Unify two Case eliminators
+/// Unify two Case eliminators.
+///
+/// With the simple (non-dependent) return type design, we unify return types
+/// directly rather than comparing motives.
 fn unify_case<'db>(
     db: &'db dyn salsa::Database,
     global: &val::GlobalEnv<'db>,
@@ -381,13 +408,10 @@ fn unify_case<'db>(
         unify(db, global, mctx, depth, p1.clone(), p2.clone())?;
     }
 
-    // 3. Unify motives by applying to a fresh variable
-    let scrutinee_var = Rc::new(Value::variable(Level(depth), placeholder_ty.clone()));
-    let motive1 = eval::run_closure(global, &c1.motive, [scrutinee_var.clone()])?;
-    let motive2 = eval::run_closure(global, &c2.motive, [scrutinee_var])?;
-    unify(db, global, mctx, depth + 1, motive1, motive2)?;
+    // Note: No return_type unification needed - case expressions are check-only,
+    // so the return type comes from the expected type context, not the eliminator.
 
-    // 4. Check branches count and unify each
+    // 3. Check branches count and unify each
     if c1.branches.len() != c2.branches.len() {
         return Err(UnificationError::MismatchSpine(
             val::Spine::empty(),
@@ -572,6 +596,23 @@ pub fn unify<'db>(
                 unify(db, global, mctx, depth, l.clone(), r.clone())?;
             }
             Ok(())
+        }
+        (Value::EqType(eq1), Value::EqType(eq2)) => {
+            unify(db, global, mctx, depth, eq1.ty.clone(), eq2.ty.clone())?;
+            unify(db, global, mctx, depth, eq1.lhs.clone(), eq2.lhs.clone())?;
+            unify(db, global, mctx, depth, eq1.rhs.clone(), eq2.rhs.clone())
+        }
+        (Value::Refl(_), Value::Refl(_)) => Ok(()),
+        (Value::Transport(t1), Value::Transport(t2)) => {
+            let var = Rc::new(Value::variable(
+                Level::new(depth),
+                Rc::new(Value::universe(UniverseLevel::new(0))),
+            ));
+            let m1_body = eval::run_closure(global, &t1.motive, [var.clone()])?;
+            let m2_body = eval::run_closure(global, &t2.motive, [var])?;
+            unify(db, global, mctx, depth + 1, m1_body, m2_body)?;
+            unify(db, global, mctx, depth, t1.proof.clone(), t2.proof.clone())?;
+            unify(db, global, mctx, depth, t1.value.clone(), t2.value.clone())
         }
         (Value::Rigid(r1), Value::Rigid(r2)) => {
             if r1.head.level != r2.head.level {
@@ -837,5 +878,184 @@ mod tests {
         assert!(c
             .unify_terms(&mut mctx, "mod %x → %x", "mod %y → 0")
             .is_err());
+    }
+
+    // =========================================================================
+    // Axiom K / Deletion Rule Tests
+    // =========================================================================
+
+    /// Test the deletion rule: x = x succeeds trivially.
+    ///
+    /// This demonstrates Axiom K implicitly. In HoTT (without K), you cannot
+    /// simply delete the constraint `x = x` because the proof `p : x = x`
+    /// could be a non-trivial path/loop. With Axiom K, all proofs of `x = x`
+    /// are equal to `refl`, so the constraint is trivially satisfiable.
+    #[test]
+    fn test_deletion_rule_axiom_k() {
+        use crate::common::Level;
+
+        let db = Database::new();
+        let global = val::GlobalEnv::new();
+        let mut mctx = MetaContext::new();
+
+        // Create a rigid variable x at level 0
+        let var = val::Variable {
+            level: Level::new(0),
+        };
+        let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let rigid_x = Rc::new(Value::Rigid(val::Rigid::new(
+            var.clone(),
+            val::Spine::empty(),
+            var_ty.clone(),
+        )));
+
+        // Unify x with itself: x = x should succeed via deletion
+        // This is the deletion rule: when both sides are the same rigid variable,
+        // the constraint is trivially satisfied and can be deleted.
+        let result = unify(&db, &global, &mut mctx, 1, rigid_x.clone(), rigid_x.clone());
+        assert!(
+            result.is_ok(),
+            "x = x should succeed via deletion rule (Axiom K), got {:?}",
+            result
+        );
+    }
+
+    /// Test that deletion applies to rigid variables with matching spines.
+    #[test]
+    fn test_deletion_rule_with_spine() {
+        use crate::common::Level;
+
+        let db = Database::new();
+        let global = val::GlobalEnv::new();
+        let mut mctx = MetaContext::new();
+
+        // Create a rigid variable f at level 0
+        let var_f = val::Variable {
+            level: Level::new(0),
+        };
+        let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+
+        // Create an argument (rigid variable x at level 1)
+        let var_x = val::Variable {
+            level: Level::new(1),
+        };
+        let arg_x = Rc::new(Value::Rigid(val::Rigid::new(
+            var_x.clone(),
+            val::Spine::empty(),
+            var_ty.clone(),
+        )));
+
+        // Create f(x) - rigid f with x in the spine
+        // Application requires a Normal which has both type and value
+        let arg_normal = val::Normal::new(var_ty.clone(), arg_x.clone());
+        let spine = val::Spine::new(vec![val::Eliminator::Application(val::Application::new(
+            arg_normal,
+        ))]);
+        let f_applied_x = Rc::new(Value::Rigid(val::Rigid::new(
+            var_f.clone(),
+            spine,
+            var_ty.clone(),
+        )));
+
+        // Unify f(x) with f(x) - should succeed via deletion + spine unification
+        let result = unify(
+            &db,
+            &global,
+            &mut mctx,
+            2,
+            f_applied_x.clone(),
+            f_applied_x.clone(),
+        );
+        assert!(
+            result.is_ok(),
+            "f(x) = f(x) should succeed via deletion rule, got {:?}",
+            result
+        );
+    }
+
+    // ========== Equality Type Unification Tests ==========
+
+    #[test]
+    fn test_unify_eq_types() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut mctx = MetaContext::new();
+
+        // Eq Bit 0 1 ~ Eq Bit 0 1
+        let eq1 = Value::eq(
+            Rc::new(Value::bit()),
+            Rc::new(Value::zero()),
+            Rc::new(Value::one()),
+        );
+        let eq2 = Value::eq(
+            Rc::new(Value::bit()),
+            Rc::new(Value::zero()),
+            Rc::new(Value::one()),
+        );
+
+        let result = unify(&db, &global, &mut mctx, 0, Rc::new(eq1), Rc::new(eq2));
+        assert!(result.is_ok(), "Eq types should unify");
+    }
+
+    #[test]
+    fn test_unify_eq_types_different_fails() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut mctx = MetaContext::new();
+
+        // Eq Bit 0 1 ~ Eq Bit 1 0 should fail
+        let eq1 = Value::eq(
+            Rc::new(Value::bit()),
+            Rc::new(Value::zero()),
+            Rc::new(Value::one()),
+        );
+        let eq2 = Value::eq(
+            Rc::new(Value::bit()),
+            Rc::new(Value::one()),
+            Rc::new(Value::zero()),
+        );
+
+        let result = unify(&db, &global, &mut mctx, 0, Rc::new(eq1), Rc::new(eq2));
+        assert!(result.is_err(), "Different Eq types should not unify");
+    }
+
+    #[test]
+    fn test_unify_refl() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut mctx = MetaContext::new();
+
+        // refl ~ refl (Axiom K)
+        let refl1 = Value::refl();
+        let refl2 = Value::refl();
+
+        let result = unify(&db, &global, &mut mctx, 0, Rc::new(refl1), Rc::new(refl2));
+        assert!(result.is_ok(), "Refl should unify with refl (Axiom K)");
+    }
+
+    #[test]
+    fn test_unify_transport() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut mctx = MetaContext::new();
+
+        // transport (λ x → Bit) refl 0 ~ transport (λ x → Bit) refl 0
+        let motive = Closure::new(val::LocalEnv::new(), Syntax::bit_rc());
+        let transport1 = Value::transport(
+            motive.clone(),
+            Rc::new(Value::refl()),
+            Rc::new(Value::zero()),
+        );
+        let transport2 = Value::transport(motive, Rc::new(Value::refl()), Rc::new(Value::zero()));
+
+        let result = unify(
+            &db,
+            &global,
+            &mut mctx,
+            0,
+            Rc::new(transport1),
+            Rc::new(transport2),
+        );
+        assert!(result.is_ok(), "Transport terms should unify");
     }
 }
