@@ -225,6 +225,7 @@ impl<'input> State<'input> {
         self.names.push(name);
     }
 
+    #[allow(dead_code)]
     fn extend_names<T>(&mut self, names: T)
     where
         T: IntoIterator<Item = String>,
@@ -255,6 +256,7 @@ impl<'input> State<'input> {
     }
 
     /// Parse with additional variables in scope.
+    #[allow(dead_code)]
     fn under_binders<T, F, R>(&mut self, names: T, block: F) -> R
     where
         T: IntoIterator<Item = String>,
@@ -284,6 +286,7 @@ impl<'input> State<'input> {
     }
 }
 
+#[allow(dead_code)]
 fn p_while0<'input, T, F>(state: &mut State<'input>, f: F) -> ParseResult<Vec<T>>
 where
     F: Fn(&mut State<'input>) -> ParseResult<Option<T>>,
@@ -295,6 +298,7 @@ where
     Ok(result)
 }
 
+#[allow(dead_code)]
 fn p_while1<'input, T, F>(state: &mut State<'input>, err: Error, f: F) -> ParseResult<Vec<T>>
 where
     F: Fn(&mut State<'input>) -> ParseResult<Option<T>>,
@@ -339,6 +343,7 @@ fn p_rparen(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::RParen, Error::MissingRParen)
 }
 
+#[allow(dead_code)]
 fn p_lbracket_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::LBracket)
 }
@@ -359,6 +364,7 @@ fn p_arrow_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Arrow)
 }
 
+#[allow(dead_code)]
 fn p_pipe(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::Pipe, Error::Other)
 }
@@ -375,6 +381,7 @@ fn p_colon_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Colon)
 }
 
+#[allow(dead_code)]
 fn p_semicolon(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::Semicolon, Error::Other)
 }
@@ -391,6 +398,7 @@ fn p_rbrace(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::RBrace, Error::Other)
 }
 
+#[allow(dead_code)]
 fn p_semicolon_opt(state: &mut State) -> ParseResult<Option<()>> {
     p_token_opt(state, Token::Semicolon)
 }

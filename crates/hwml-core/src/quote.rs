@@ -6,6 +6,8 @@
 //! - `quote_*_instances` handle quoting instances of specific types
 //! - `quote_*` handle quoting specific term constructors
 
+#![allow(unused_imports)]
+
 use crate::{
     common::Level,
     eval::{self, eval_telescope, run_closure},

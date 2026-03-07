@@ -34,9 +34,11 @@ const LIFT: Properties = Properties::new((None, Some(5)));
 const PI: Properties = Properties::new((None, Some(3)));
 const LAMBDA: Properties = Properties::new((None, Some(3)));
 const APP: Properties = Properties::new((Some(4), Some(5)));
+#[allow(dead_code)]
 const TCON_APP: Properties = APP;
 const DCON_APP: Properties = APP;
 const TCON: Properties = Properties::new((None, None));
+#[allow(dead_code)]
 const DCON: Properties = Properties::new((None, None));
 const CASE: Properties = Properties::new((APP.precedence.0, None));
 const HARDWARE_UNIVERSE: Properties = Properties::new((None, None));
@@ -46,6 +48,7 @@ const SIGNAL_UNIVERSE: Properties = Properties::new((None, None));
 const BIT: Properties = Properties::new((None, None));
 const ZERO: Properties = Properties::new((None, None));
 const ONE: Properties = Properties::new((None, None));
+#[allow(dead_code)]
 const MODULE_UNIVERSE: Properties = Properties::new((None, None));
 const HARROW: Properties = Properties::new((Some(4), Some(3)));
 const MODULE: Properties = LAMBDA;
@@ -325,6 +328,7 @@ where
     x.print(db, st.set_lhs_prec(rhs_prec), p)
 }
 
+#[allow(dead_code)]
 fn print_internal<F, R>(
     _db: &dyn salsa::Database,
     st: State,
@@ -401,6 +405,7 @@ where
 }
 
 /// Print a variable reference (de Bruijn index) at the current depth.
+#[allow(dead_code)]
 fn print_variable<R>(st: State, p: &mut Printer<R>, index: Index) -> Result<(), R::Error>
 where
     R: Render,
@@ -412,6 +417,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 fn print_binders<R>(st: State, p: &mut Printer<R>, n: usize) -> Result<(), R::Error>
 where
     R: Render,
@@ -698,7 +704,7 @@ fn print_constructor<'db, R: Render>(
 ) -> Result<(), R::Error> {
     p.cgroup(0, |p| {
         p.text(sigil)?;
-        p.text("[");
+        p.text("[")?;
         constructor.print(db, st, p)?;
         if let Some((last, rest)) = arguments.split_last() {
             let st = st.set_lhs_prec(DCON_APP.rhs_prec());
@@ -710,7 +716,7 @@ fn print_constructor<'db, R: Render>(
             p.space()?;
             last.print(db, st, p)?;
         }
-        p.text("]");
+        p.text("]")?;
         Ok(())
     })
 }
@@ -897,7 +903,7 @@ impl<'db> Print for Bit<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, BIT, |st, p| p.text("Bit"))
+        ensure(st, p, BIT, |_st, p| p.text("Bit"))
     }
 }
 
@@ -908,7 +914,7 @@ impl<'db> Print for Zero<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, ZERO, |st, p| p.text("0"))
+        ensure(st, p, ZERO, |_st, p| p.text("0"))
     }
 }
 
@@ -919,7 +925,7 @@ impl<'db> Print for One<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, ONE, |st, p| p.text("1"))
+        ensure(st, p, ONE, |_st, p| p.text("1"))
     }
 }
 
@@ -1033,7 +1039,7 @@ impl<'db> Print for Constant<'db> {
 impl<'db> Print for Variable<'db> {
     fn print<R: Render>(
         &self,
-        db: &dyn salsa::Database,
+        _db: &dyn salsa::Database,
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {

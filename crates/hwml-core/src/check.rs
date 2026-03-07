@@ -30,10 +30,12 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.type_of(level)
     }
 
+    #[allow(dead_code)]
     fn value_of(&self, level: Level) -> &Rc<Value<'db>> {
         self.values.get(level)
     }
 
+    #[allow(dead_code)]
     fn var_value(&self, var: &stx::Variable) -> &Rc<Value<'db>> {
         let level = var.index.to_level(self.depth());
         self.value_of(level)
@@ -64,6 +66,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.values.depth()
     }
 
+    #[allow(dead_code)]
     fn extend_vars<T>(&mut self, types: T)
     where
         T: IntoIterator<Item = Rc<Value<'db>>>,
