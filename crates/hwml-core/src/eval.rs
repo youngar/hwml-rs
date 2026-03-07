@@ -641,7 +641,7 @@ where
     // We start with a fresh local environment since types are defined in the
     // global environment.
     let mut env = Environment {
-        global: global,
+        global,
         local: LocalEnv::new(),
     };
     // Extend the environment with the parameters.

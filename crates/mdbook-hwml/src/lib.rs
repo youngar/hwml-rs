@@ -1,3 +1,12 @@
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::explicit_auto_deref)]
+#![allow(clippy::iter_cloned_collect)]
+#![allow(clippy::match_single_binding)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::must_use_candidate)]
+
 /// Utilities for extracting and validating code snippets from Markdown documentation.
 ///
 /// This crate provides functionality to:

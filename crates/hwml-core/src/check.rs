@@ -215,7 +215,7 @@ impl<'db> std::fmt::Display for Error<'db> {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "@{}", name)?;
+                    write!(f, "@{name}")?;
                 }
                 Ok(())
             }
@@ -245,7 +245,7 @@ fn run_closure<'db, 'g, T>(
 where
     T: IntoIterator<Item = Rc<Value<'db>>>,
 {
-    eval::run_closure(&env.values.global, closure, args).map_err(Error::EvaluationFailure)
+    eval::run_closure(env.values.global, closure, args).map_err(Error::EvaluationFailure)
 }
 
 /// Synthesize (infer) types for variables and elimination forms.
@@ -529,9 +529,7 @@ pub fn type_check_case<'db, 'g>(
                 env.truncate(branch_depth);
             }
 
-            pattern_unify::PatternUnifyOutcome::Conflict => {
-                continue;
-            }
+            pattern_unify::PatternUnifyOutcome::Conflict => {}
 
             pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
                 return Err(Error::PatternUnifyStuck {

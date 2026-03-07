@@ -357,7 +357,7 @@ mod tests {
     /// Test that HApplication with a concrete Module is beta-reduced.
     #[test]
     fn test_saturate_happlication_with_module() {
-        let db = Database::default();
+        let _db = Database::default();
         let global = GlobalEnv::new();
 
         // Create a Module closure that returns its argument (identity)

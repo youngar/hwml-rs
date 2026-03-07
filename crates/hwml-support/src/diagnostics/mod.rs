@@ -21,9 +21,9 @@ impl Severity {
     }
 }
 
-impl std::string::ToString for Severity {
-    fn to_string(&self) -> String {
-        self.str().to_owned()
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.str())
     }
 }
 

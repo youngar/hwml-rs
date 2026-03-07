@@ -524,7 +524,7 @@ fn equate_data_constructors<'db>(
     // Create an environment for evaluating the type of each argument, with
     // parameters in the context.
     let mut env = Environment {
-        global: global,
+        global,
         local: LocalEnv::new(),
     };
     env.extend(parameters);
@@ -757,7 +757,7 @@ pub fn equate_cases<'db>(
     // Check that the parameters are convertible.
     // Create an environment for evaluating the type of each parameter.
     let mut env = Environment {
-        global: global,
+        global,
         local: LocalEnv::new(),
     };
 

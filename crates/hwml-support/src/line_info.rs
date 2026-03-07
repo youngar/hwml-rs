@@ -8,12 +8,18 @@ pub struct LineInfo {
     breaks: Vec<usize>,
 }
 
+impl Default for LineInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LineInfo {
     pub fn new() -> LineInfo {
         LineInfo { breaks: vec![0] }
     }
 
-    pub fn from_str(text: &str) -> LineInfo {
+    pub fn from_string(text: &str) -> LineInfo {
         LineInfo::from_bytes(text.as_bytes())
     }
 
@@ -26,21 +32,21 @@ impl LineInfo {
             // Record the next character as the first on a line.
             match bytes[cursor] {
                 b'\n' => {
-                    cursor = cursor + 1;
+                    cursor += 1;
                     info.breaks.push(cursor);
                 }
                 b'\r' => {
-                    cursor = cursor + 1;
+                    cursor += 1;
                     if cursor < len {
                         let c = bytes[cursor];
                         if c == b'\n' {
-                            cursor = cursor + 1;
+                            cursor += 1;
                         }
                     }
                     info.breaks.push(cursor);
                 }
                 _ => {
-                    cursor = cursor + 1;
+                    cursor += 1;
                 }
             }
         }
@@ -100,7 +106,7 @@ impl LineInfo {
         }
 
         // Failure, which can never happen.
-        return usize::MAX;
+        usize::MAX
     }
 
     /// 0-Based line and column. Column reported as a byte offset.
@@ -121,27 +127,27 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        let info = LineInfo::from_str("");
+        let info = LineInfo::from_string("");
         assert_eq!(info.line(0), 0);
     }
 
     #[test]
     fn test_x() {
-        let info = LineInfo::from_str("x");
+        let info = LineInfo::from_string("x");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 0);
     }
 
     #[test]
     fn test_br() {
-        let info = LineInfo::from_str("\n");
+        let info = LineInfo::from_string("\n");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 1);
     }
 
     #[test]
     fn test_x_br() {
-        let info = LineInfo::from_str("x\n");
+        let info = LineInfo::from_string("x\n");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 0);
         assert_eq!(info.line(2), 1);
@@ -149,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_br_x() {
-        let info = LineInfo::from_str("\nx");
+        let info = LineInfo::from_string("\nx");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 1);
         assert_eq!(info.line(2), 1);
@@ -157,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_br_br() {
-        let info = LineInfo::from_str("\n\n");
+        let info = LineInfo::from_string("\n\n");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 1);
         assert_eq!(info.line(2), 2);
@@ -166,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_x_br_x_br() {
-        let info = LineInfo::from_str("x\nx\n");
+        let info = LineInfo::from_string("x\nx\n");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 0);
         assert_eq!(info.line(2), 1);
@@ -176,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_br_x_br() {
-        let info = LineInfo::from_str("\nx\n");
+        let info = LineInfo::from_string("\nx\n");
         assert_eq!(info.line(0), 0);
         assert_eq!(info.line(1), 1);
         assert_eq!(info.line(2), 1);

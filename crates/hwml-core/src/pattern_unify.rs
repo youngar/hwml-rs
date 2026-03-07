@@ -338,7 +338,6 @@ fn unify_equations<'db>(
             (Value::Refl(_), Value::Refl(_), Value::EqType(_)) => {
                 // refl ~ refl  is always true (Axiom K)
                 // Delete this equation
-                continue;
             }
 
             // Rule: Injectivity - Transport at EqType
