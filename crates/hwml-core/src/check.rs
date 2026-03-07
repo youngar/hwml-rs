@@ -291,19 +291,15 @@ pub fn type_synth_variable<'db, 'g>(
     Ok(env.var_type(variable).clone())
 }
 
-/// Synthesize the type of a constant by looking it up in the global environment.
 pub fn type_synth_constant<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     constant: &syn::Constant<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
-    // Look up the constant in the global environment
     let constant_info = env
         .values
         .global
         .constant(constant.name)
         .map_err(Error::LookupError)?;
-
-    // Evaluate the type to get a Value
     eval(env, &constant_info.ty)
 }
 

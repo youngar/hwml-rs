@@ -16,11 +16,10 @@ pub mod val;
 pub mod test_utils;
 
 pub use common::*;
-pub use syn::Syntax;
-pub use val::Value;
-
-/// A simple database implementation for testing and parsing.
-/// This is a minimal implementation that only supports string interning.
+pub use declaration::{Constant, DataConstructor, Declaration, Module, Primitive, TypeConstructor};
+pub use symbol::InternedString;
+pub use syn::{parse_module, Syntax};
+pub use val::{GlobalEnv, Value};
 #[salsa::db]
 #[derive(Default, Clone)]
 pub struct Database {
