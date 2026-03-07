@@ -179,6 +179,5 @@ All examples now compile successfully! ✅
 
 - [CIRCT Documentation](https://circt.llvm.org/)
 - [MLIR Documentation](https://mlir.llvm.org/)
-- [HWML CIRCT Developer Guide](../../../doc/CIRCT_DEVELOPER_GUIDE.md)
-- [CIRCT Quick Start](../../../doc/CIRCT_QUICKSTART.md)
+- [HWML Design Documents](../../../docs/design/)
 

@@ -48,6 +48,6 @@ endmodule
 
 ## Documentation
 
-- [Development](./doc/Development.md)
-- [CIRCT Backend Usage](./doc/CIRCT_CLI_USAGE.md)
-- [CIRCT Quick Start](./doc/CIRCT_QUICKSTART.md)
+- [HWML Core IR Reference Manual](./docs/book/index.html) - Type-checked documentation
+- [Development Notes](./docs/design/Development.md)
+- [Design Documents](./docs/design/) - Implementation plans and technical notes
