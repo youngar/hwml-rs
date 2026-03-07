@@ -1,24 +1,29 @@
-on: [push]
+on: [push, pull_request]
 
 name: CI
 
 jobs:
   check:
-    name: Rust project
+    name: Check and Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Install latest nightly
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: nightly
-            override: true
-            components: rustfmt, clippy
+      - uses: actions/checkout@v4
 
-      # `cargo check` command here will use installed `nightly`
-      # as it is set as an "override" for current directory
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
 
       - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+        run: cargo check --workspace
+
+      - name: Run cargo test (hwml_core)
+        run: cargo test -p hwml_core
+
+      - name: Run documentation validation
+        run: cargo test -p mdbook-hwml --test validate_docs
+
+      - name: Run cargo clippy
+        run: cargo clippy --workspace
+        continue-on-error: true

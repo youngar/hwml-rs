@@ -1,9 +1,9 @@
 name: "CI Nix"
 on:
-  # Run only when pushing to master branch, and making PRs
+  # Run only when pushing to main branch, and making PRs
   push:
     branches:
-      - master
+      - main
   pull_request:
 jobs:
   build:
