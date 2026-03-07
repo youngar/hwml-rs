@@ -33,6 +33,8 @@ impl<'db> Normal<'db> {
     }
 }
 
+pub type RcValue<'db> = Rc<Value<'db>>;
+
 /// Fully normalized values in the semantic domain.
 #[derive(Clone, Debug)]
 pub enum Value<'db> {
@@ -1058,7 +1060,7 @@ impl<'db> MetavariableInfo<'db> {
 #[derive(Clone, Debug)]
 pub struct LocalEnv<'db> {
     /// The typing environment.
-    locals: Vec<Rc<Value<'db>>>,
+    pub locals: Vec<Rc<Value<'db>>>,
 }
 
 impl<'db> LocalEnv<'db> {

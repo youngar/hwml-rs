@@ -2,6 +2,8 @@ use clap::Parser;
 use std::fs;
 use std::path::PathBuf;
 
+mod driver;
+
 #[derive(Parser, Debug)]
 #[clap(author = "Andrew Young", version, about)]
 /// Application configuration

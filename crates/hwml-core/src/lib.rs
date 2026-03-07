@@ -50,22 +50,28 @@ pub mod check_module;
 pub mod common;
 pub mod declaration;
 pub mod equal;
+pub mod erased;
 pub mod eval;
 pub mod lower;
 pub mod pattern_unify;
+pub mod problem;
 pub mod quote;
 pub mod symbol;
 pub mod syn;
+pub mod test_utils;
+pub mod typed;
 pub mod unify;
 pub mod val;
 
-pub mod test_utils;
-
 pub use common::*;
 pub use declaration::{Constant, DataConstructor, Declaration, Module, Primitive, TypeConstructor};
+pub use erased::{erase, Erased};
+pub use problem::{Problem, QName};
 pub use symbol::InternedString;
-pub use syn::{parse_module, Syntax};
-pub use val::{GlobalEnv, Value};
+pub use syn::{parse_module, RcSyntax, Syntax};
+pub use typed::{Typed, TypedSyntax, TypedValue};
+pub use val::{GlobalEnv, RcValue, Value};
+
 #[salsa::db]
 #[derive(Default, Clone)]
 pub struct Database {

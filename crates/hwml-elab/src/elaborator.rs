@@ -1,9 +1,145 @@
 use crate::engine::*;
-use hwml_core::{syn, val, Database};
+use hwml_core::*;
 use hwml_surface::syntax;
 use std::rc::Rc;
 use syn::Syntax;
 use val::Value;
+
+pub struct ElabSignature<'db> {
+    env: val::GlobalEnv<'db>,
+}
+
+impl<'db> ElabSignature<'db> {
+    pub fn resolve(&self, name: Name<'db>) -> Option<TypedSyntax<'db>> {
+        // TODO: This should be returning a "boundary" (?).
+        match self.env.constant(name) {
+            Err(_) => None,
+            Ok(_info) => Some(TypedSyntax {
+                ty: todo!("info.ty.clone()"),
+                subject: Syntax::constant_rc(name),
+            }),
+        }
+    }
+}
+
+struct ElabLocals<'db> {
+    names: Vec<Option<Name<'db>>>,
+    tys: Vec<Rc<Value<'db>>>,
+    values: Vec<Rc<Value<'db>>>,
+}
+
+impl<'db> ElabLocals<'db> {
+    pub fn new() -> Self {
+        ElabLocals {
+            names: Vec::new(),
+            tys: Vec::new(),
+            values: Vec::new(),
+        }
+    }
+
+    pub fn depth(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn resolve_level(&self, name: &Name) -> Option<Level> {
+        for i in (0..self.depth()).rev() {
+            if let Some(n) = self.names[i] {
+                if n == *name {
+                    return Some(Level(i));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn resolve_index(&self, name: &Name<'db>) -> Option<Index> {
+        self.resolve_level(name)
+            .map(|level| level.to_index(self.depth()))
+    }
+
+    pub fn name(&self, Level(i): Level) -> Option<Name<'db>> {
+        self.names[i]
+    }
+
+    pub fn value(&self, Level(i): Level) -> &Rc<Value<'db>> {
+        &self.values[i]
+    }
+
+    pub fn ty(&self, Level(i): Level) -> &Rc<Value<'db>> {
+        &self.tys[i]
+    }
+
+    pub fn resolve(&self, name: &Name<'db>) -> Option<TypedSyntax<'db>> {
+        match self.resolve_level(name) {
+            Some(level) => {
+                let ty = self.ty(level).clone();
+                let subject = Syntax::variable_rc(level.to_index(self.depth()));
+                Some(TypedSyntax { ty, subject })
+            }
+            None => None,
+        }
+    }
+
+    pub fn bind(&mut self, name: &Name<'db>, ty: Rc<Value<'db>>) -> Level {
+        let level = Level(self.depth());
+        self.names.push(Some(*name));
+        self.tys.push(ty.clone());
+        self.values.push(Rc::new(Value::variable(level, ty)));
+        level
+    }
+}
+
+impl<'db> Into<val::LocalEnv<'db>> for &ElabLocals<'db> {
+    fn into(self) -> val::LocalEnv<'db> {
+        val::LocalEnv {
+            locals: self.values.clone(),
+        }
+    }
+}
+
+struct ElabSink {}
+
+pub struct ElabEnv<'db> {
+    db: &'db Database,
+    signature: ElabSignature<'db>,
+    namespace: Path<'db>,
+    locals: ElabLocals<'db>,
+}
+
+impl<'db> ElabEnv<'db> {
+    pub fn new(db: &'db Database, signature: ElabSignature<'db>, namespace: Path<'db>) -> Self {
+        ElabEnv {
+            db,
+            namespace,
+            signature,
+            locals: ElabLocals::new(),
+        }
+    }
+
+    pub fn resolve_global(&self, name: Name<'db>) -> Option<TypedSyntax<'db>> {
+        self.signature.resolve(name)
+    }
+
+    pub fn resolve_local(&self, name: Name<'db>) -> Option<TypedSyntax<'db>> {
+        self.locals.resolve(&name)
+    }
+
+    pub fn resolve(&self, name: Name<'db>) -> Option<TypedSyntax<'db>> {
+        if let Some(typed_stx) = self.locals.resolve(&name) {
+            return Some(typed_stx);
+        }
+        self.signature.resolve(name)
+    }
+
+    pub async fn eval_env<'a>(&'a self) -> val::Environment<'db, 'a> {
+        val::Environment {
+            global: &self.signature.env,
+            local: val::LocalEnv {
+                locals: self.locals.values.clone(),
+            },
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Expected(Vec<&'static str>);

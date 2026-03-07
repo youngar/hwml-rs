@@ -224,12 +224,12 @@ impl From<usize> for UniverseLevel {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct ConstantId<'db>(pub InternedString<'db>);
+pub struct Name<'db>(pub InternedString<'db>);
 
-impl<'db> ConstantId<'db> {
-    /// Create a new ConstantId from an interned string.
+impl<'db> Name<'db> {
+    /// Create a new Name from an interned string.
     pub fn new(interned: InternedString<'db>) -> Self {
-        ConstantId(interned)
+        Name(interned)
     }
 
     /// Get the interned string for this constant.
@@ -243,7 +243,7 @@ impl<'db> ConstantId<'db> {
     }
 }
 
-impl<'db, T> FromWithDb<'db, T> for ConstantId<'db>
+impl<'db, T> FromWithDb<'db, T> for Name<'db>
 where
     T: IntoWithDb<'db, InternedString<'db>>,
 {
@@ -251,9 +251,25 @@ where
     where
         Db: salsa::Database + ?Sized,
     {
-        ConstantId::new(value.into_with_db(db))
+        Name::new(value.into_with_db(db))
     }
 }
+
+#[salsa::interned]
+pub struct Path<'db> {
+    #[return_ref]
+    pub parts: Vec<Name<'db>>,
+}
+
+impl<'db> Path<'db> {
+    pub fn push(&self, db: &'db dyn Database, name: Name<'db>) -> Path<'db> {
+        let mut parts = self.parts(db).clone();
+        parts.push(name);
+        Self::new(db, parts)
+    }
+}
+
+pub type ConstantId<'db> = Name<'db>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]

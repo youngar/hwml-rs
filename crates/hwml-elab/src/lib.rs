@@ -1,14 +1,16 @@
 pub mod elaborator;
-pub use elaborator::*;
-
 pub mod engine;
-pub use engine::*;
-
 pub mod force;
-pub use force::*;
-
+pub mod refiner;
 pub mod renaming;
-pub use renaming::*;
-
+pub mod resolver;
+pub mod rule;
+pub mod tactic;
 pub mod unify;
+
+pub use elaborator::*;
+pub use engine::*;
+pub use force::*;
+pub use renaming::*;
+pub use resolver::*;
 pub use unify::UnificationError;
