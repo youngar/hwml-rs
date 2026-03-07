@@ -4,6 +4,8 @@
 
 HWML is an in-development hardware description language equipped with a powerful metaprogramming layer.
 
+**[📖 Read the Documentation](https://youngar.github.io/hwml-rs/)**
+
 ```hwml
 meta def option.map (f : ^a -> ^b) (x : ^(option a)) : ^(option b) :=
   [
@@ -48,6 +50,6 @@ endmodule
 
 ## Documentation
 
-- [HWML Core IR Reference Manual](./docs/book/index.html) - Type-checked documentation
+- **[HWML Core IR Reference Manual](https://youngar.github.io/hwml-rs/)** - Type-checked documentation (also available [locally](./docs/book/index.html))
 - [Development Notes](./docs/design/Development.md)
 - [Design Documents](./docs/design/) - Implementation plans and technical notes
