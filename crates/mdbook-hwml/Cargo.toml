@@ -1,0 +1,26 @@
+[package]
+name = "mdbook-hwml"
+description = "mdBook preprocessor and documentation validator for HWML"
+
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core compiler library (clean API, no markdown dependencies)
+hwml_core.workspace = true
+
+# Markdown parsing
+pulldown-cmark.workspace = true
+
+# File system utilities
+walkdir.workspace = true
+
+[lints]
+workspace = true
+

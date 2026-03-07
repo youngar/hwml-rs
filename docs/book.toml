@@ -1,0 +1,23 @@
+[book]
+title = "HWML Language Guide"
+authors = ["HWML Contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/yourusername/hwml-rust"
+edit-url-template = "https://github.com/yourusername/hwml-rust/edit/main/docs/{path}"
+# Custom syntax highlighting for hwml and hwmlc
+additional-js = ["theme/hwml-highlight.js"]
+
+[output.html.fold]
+enable = true
+level = 0
+
+[output.html.search]
+enable = true
