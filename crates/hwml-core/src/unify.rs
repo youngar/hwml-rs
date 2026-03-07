@@ -817,13 +817,17 @@ mod tests {
         let c = Ctx::new(&db);
         let mut mctx = MetaContext::new();
         assert!(c
-            .unify_terms(&mut mctx, "HardwareType", "HardwareType")
+            .unify_terms(&mut mctx, "HardwareUniverse", "HardwareUniverse")
             .is_ok());
-        assert!(c.unify_terms(&mut mctx, "SignalType", "SignalType").is_ok());
-        assert!(c.unify_terms(&mut mctx, "ModuleType", "ModuleType").is_ok());
+        assert!(c
+            .unify_terms(&mut mctx, "SignalUniverse", "SignalUniverse")
+            .is_ok());
+        assert!(c
+            .unify_terms(&mut mctx, "ModuleUniverse", "ModuleUniverse")
+            .is_ok());
         // Different hardware universes should fail
         assert!(c
-            .unify_terms(&mut mctx, "HardwareType", "SignalType")
+            .unify_terms(&mut mctx, "HardwareUniverse", "SignalUniverse")
             .is_err());
     }
 

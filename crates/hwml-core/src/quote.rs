@@ -979,9 +979,9 @@ mod tests {
         assert_eq!(c.quote_type("U0"), "𝒰0");
         assert_eq!(c.quote_type("U1"), "𝒰1");
         // Hardware universes
-        assert_eq!(c.quote_type("HardwareType"), "HardwareType");
-        assert_eq!(c.quote_type("SignalType"), "SignalType");
-        assert_eq!(c.quote_type("ModuleType"), "ModuleType");
+        assert_eq!(c.quote_type("HardwareUniverse"), "HardwareUniverse");
+        assert_eq!(c.quote_type("SignalUniverse"), "SignalUniverse");
+        assert_eq!(c.quote_type("ModuleUniverse"), "ModuleUniverse");
     }
 
     // =========================================================================
@@ -1040,10 +1040,10 @@ mod tests {
         let c = Ctx::new(&db);
         // U0 is a value of type U1
         assert_eq!(c.quote_at("U0", "U1"), "𝒰0");
-        // Bit is a value of type SignalType
-        assert_eq!(c.quote_at("Bit", "SignalType"), "Bit");
-        // HArrow is a value of type ModuleType
-        assert_eq!(c.quote_at("Bit → Bit", "ModuleType"), "Bit → Bit");
+        // Bit is a value of type SignalUniverse
+        assert_eq!(c.quote_at("Bit", "SignalUniverse"), "Bit");
+        // HArrow is a value of type ModuleUniverse
+        assert_eq!(c.quote_at("Bit → Bit", "ModuleUniverse"), "Bit → Bit");
     }
 
     // =========================================================================

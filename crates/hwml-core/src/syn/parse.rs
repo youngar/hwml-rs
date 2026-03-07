@@ -114,12 +114,12 @@ pub enum Token {
     #[regex(r"U[0-9]+", priority = 4, callback = |lex| lex.slice()["U".len()..].parse())]
     #[regex(r"𝒰[0-9]+", priority = 4, callback = |lex| lex.slice()["𝒰".len()..].parse())]
     Universe(usize),
-    #[token("HardwareType", priority = 5)]
-    HardwareType,
-    #[token("SignalType", priority = 5)]
-    SignalType,
-    #[token("ModuleType", priority = 5)]
-    ModuleType,
+    #[token("HardwareUniverse", priority = 5)]
+    HardwareUniverse,
+    #[token("SignalUniverse", priority = 5)]
+    SignalUniverse,
+    #[token("ModuleUniverse", priority = 5)]
+    ModuleUniverse,
     #[regex(r"@(?&id)+", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
     Constant(String),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
@@ -694,7 +694,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     crate::common::UniverseLevel::new(level),
                 )))
             }
-            Token::HardwareType => {
+            Token::HardwareUniverse => {
                 state.advance_token();
                 Ok(Some(Syntax::hardware_rc()))
             }
@@ -733,11 +733,11 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 let tm = p_atom(state)?;
                 Ok(Some(Syntax::mlift_rc(tm)))
             }
-            Token::SignalType => {
+            Token::SignalUniverse => {
                 state.advance_token();
                 Ok(Some(Syntax::signal_universe_rc()))
             }
-            Token::ModuleType => {
+            Token::ModuleUniverse => {
                 state.advance_token();
                 Ok(Some(Syntax::module_universe_rc()))
             }
@@ -2283,7 +2283,7 @@ mod tests {
     #[test]
     fn test_parse_tcon_declaration_with_dcons() {
         let db = Database::new();
-        let input = "tcon @Option (%a : U0) : -> U0 where dcon @None : @Option %a dcon @Some : %a -> @Option %a;";
+        let input = "tcon @Option (%a : U0) : -> U0 where dcon @None : #[@Option %a] dcon @Some : %a -> #[@Option %a];";
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
@@ -2302,7 +2302,7 @@ mod tests {
         let input = r#"
             prim $Nat : U0;
             const @zero : $Nat;
-            tcon @Bool : -> U0 where dcon @True : @Bool dcon @False : @Bool;
+            tcon @Bool : -> U0 where dcon @True : #[@Bool] dcon @False : #[@Bool];
         "#;
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 3);
@@ -2345,8 +2345,8 @@ mod tests {
         let db = Database::new();
         let input = r#"
             tcon @Option (%a : U0) : -> U0 where
-                dcon @None : @Option %a
-                dcon @Some : %a -> @Option %a;
+                dcon @None : #[@Option %a]
+                dcon @Some : %a -> #[@Option %a];
         "#;
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
@@ -2392,8 +2392,8 @@ mod tests {
         let db = Database::new();
         let input = r#"
             tcon @List (%a : U0) : -> U0 where
-                dcon @Nil : @List %a
-                dcon @Cons (%x : %a) (%xs : @List %a) : @List %a;
+                dcon @Nil : #[@List %a]
+                dcon @Cons (%x : %a) (%xs : #[@List %a]) : #[@List %a];
         "#;
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
@@ -2414,7 +2414,7 @@ mod tests {
     fn test_parse_tcon_with_indices() {
         let db = Database::new();
         let module =
-            parse_module(&db, "tcon @Vec (%a : U0) : (%n : @Nat) -> U0;").expect("parse failed");
+            parse_module(&db, "tcon @Vec (%a : U0) : (%n : #[@Nat]) -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Vec");
@@ -2439,8 +2439,8 @@ mod tests {
         let input = r#"prim $Nat : U0;
 prim $Zero : $Nat;
 tcon @Bool : -> U0 where
-    dcon @True : @Bool
-    dcon @False : @Bool
+    dcon @True : #[@Bool]
+    dcon @False : #[@Bool]
 ;
 const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
         let module = parse_module(&db, input).expect("parse failed");
@@ -2453,8 +2453,8 @@ const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
     fn test_module_roundtrip_with_params() {
         let db = Database::new();
         let input = r#"tcon @List (%a : U0) : -> U0 where
-    dcon @Nil : @List %a
-    dcon @Cons (%x : %a) (%xs : @List %a) : @List %a
+    dcon @Nil : #[@List %a]
+    dcon @Cons (%x : %a) (%xs : #[@List %a]) : #[@List %a]
 ;"#;
         let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
@@ -2467,8 +2467,8 @@ const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
         let db = Database::new();
         let input = r#"prim $Nat : U0;
 tcon @List (%a : U0) : -> U0 where
-    dcon @Nil : @List %a
-    dcon @Cons (%x : %a) (%xs : @List %a) : @List %a
+    dcon @Nil : #[@List %a]
+    dcon @Cons (%x : %a) (%xs : #[@List %a]) : #[@List %a]
 ;"#;
         let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);

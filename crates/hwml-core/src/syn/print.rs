@@ -845,7 +845,9 @@ impl<'db> Print for HardwareUniverse<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, HARDWARE_UNIVERSE, |st, p| p.text("HardwareType"))
+        ensure(st, p, HARDWARE_UNIVERSE, |_st, p| {
+            p.text("HardwareUniverse")
+        })
     }
 }
 
@@ -884,7 +886,7 @@ impl<'db> Print for SignalUniverse<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, SIGNAL_UNIVERSE, |st, p| p.text("SignalType"))
+        ensure(st, p, SIGNAL_UNIVERSE, |_st, p| p.text("SignalUniverse"))
     }
 }
 
@@ -928,7 +930,7 @@ impl<'db> Print for ModuleUniverse<'db> {
         _st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        p.text("ModuleType")
+        p.text("ModuleUniverse")
     }
 }
 
@@ -1169,7 +1171,7 @@ mod tests {
     #[test]
     fn print_hardware_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::hardware()), @"HardwareType");
+        assert_snapshot!(p(&db, &Syntax::hardware()), @"HardwareUniverse");
     }
 
     #[test]
@@ -1191,7 +1193,7 @@ mod tests {
     #[test]
     fn print_signal_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::signal_universe()), @"SignalType");
+        assert_snapshot!(p(&db, &Syntax::signal_universe()), @"SignalUniverse");
     }
 
     #[test]
@@ -1251,7 +1253,7 @@ mod tests {
     #[test]
     fn print_module_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::module_universe()), @"ModuleType");
+        assert_snapshot!(p(&db, &Syntax::module_universe()), @"ModuleUniverse");
     }
 
     #[test]

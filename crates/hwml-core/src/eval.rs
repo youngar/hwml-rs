@@ -261,14 +261,10 @@ fn eval_constant<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     constant: &syn::Constant<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    // Look up the constant's definition
     let info = env
         .global
         .constant(constant.name)
         .map_err(|_| Error::UnknownConstant)?;
-
-    // Evaluate the constant's body in an empty local environment
-    // (constants are top-level definitions with no free variables)
     let mut unfold_env = Environment {
         global: env.global,
         local: LocalEnv::new(),
@@ -737,9 +733,9 @@ mod tests {
     fn test_eval_hardware_universes() {
         let db = Database::new();
         let c = Ctx::new(&db);
-        assert_eq!(c.eval_type("HardwareType"), "HardwareType");
-        assert_eq!(c.eval_type("SignalType"), "SignalType");
-        assert_eq!(c.eval_type("ModuleType"), "ModuleType");
+        assert_eq!(c.eval_type("HardwareUniverse"), "HardwareUniverse");
+        assert_eq!(c.eval_type("SignalUniverse"), "SignalUniverse");
+        assert_eq!(c.eval_type("ModuleUniverse"), "ModuleUniverse");
     }
 
     #[test]
