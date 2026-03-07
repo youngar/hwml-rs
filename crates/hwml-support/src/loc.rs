@@ -52,6 +52,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 struct Located<T> {
     value: T,
     range: Option<SourceRange>,
