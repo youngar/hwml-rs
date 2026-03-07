@@ -50,38 +50,40 @@ pub struct CheckedModule<'db> {
     pub hardware_constants: Vec<ConstantId<'db>>,
 }
 
-/// Check a module and build a global environment.
-///
-/// This processes each declaration in order:
-/// 1. Type-check the declaration against the current environment
-/// 2. Evaluate the value (for constants)
-/// 3. Add the declaration to the global environment
-/// 4. Track which constants have hardware types (Lift)
+/// Check a module in two passes: first add all declarations to the environment,
+/// then validate them. This allows mutual recursion between all global declarations.
 pub fn check_module<'db>(
     db: &'db dyn Database,
     module: &Module<'db>,
     initial_env: GlobalEnv<'db>,
 ) -> Result<CheckedModule<'db>, Error<'db>> {
     let mut global_env = initial_env;
-    let mut hardware_constants = Vec::new();
 
+    // Add all declarations to the environment
     for decl in &module.declarations {
         match decl {
-            Declaration::Primitive(prim) => {
-                check_primitive(db, &mut global_env, prim)?;
+            Declaration::Primitive(prim) => add_primitive_to_env(&mut global_env, prim),
+            Declaration::Constant(constant) => add_constant_to_env(&mut global_env, constant),
+            Declaration::TypeConstructor(tcon) => {
+                add_type_constructor_to_env(&mut global_env, tcon)?
             }
+            Declaration::Metavariable(meta) => add_metavariable_to_env(&mut global_env, meta),
+        }
+    }
+
+    // Validate all declarations
+    let mut hardware_constants = Vec::new();
+    for decl in &module.declarations {
+        match decl {
+            Declaration::Primitive(prim) => validate_primitive(db, &global_env, prim)?,
             Declaration::Constant(constant) => {
-                let is_hw = check_constant(db, &mut global_env, constant)?;
+                let is_hw = validate_constant(db, &global_env, constant)?;
                 if is_hw {
                     hardware_constants.push(constant.name);
                 }
             }
-            Declaration::TypeConstructor(tcon) => {
-                check_type_constructor(&mut global_env, tcon)?;
-            }
-            Declaration::Metavariable(meta) => {
-                check_metavariable(db, &mut global_env, meta)?;
-            }
+            Declaration::TypeConstructor(tcon) => validate_type_constructor(db, &global_env, tcon)?,
+            Declaration::Metavariable(meta) => validate_metavariable(db, &global_env, meta)?,
         }
     }
 
@@ -91,107 +93,73 @@ pub fn check_module<'db>(
     })
 }
 
-/// Check a primitive declaration and add it to the global environment.
-fn check_primitive<'db>(
+fn add_primitive_to_env<'db>(global: &mut GlobalEnv<'db>, prim: &Primitive<'db>) {
+    global.add_primitive(prim.name, PrimitiveInfo::new(prim.ty.clone()));
+}
+
+fn validate_primitive<'db>(
     db: &'db dyn Database,
-    global: &mut GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     prim: &Primitive<'db>,
 ) -> Result<(), Error<'db>> {
-    // Create a type-checking environment
     let mut tc_env = TCEnvironment {
         db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
-
-    // Check that the type is valid
     check_type(&mut tc_env, &prim.ty)?;
-
-    // Add the primitive to the global environment
-    global.add_primitive(prim.name, PrimitiveInfo::new(prim.ty.clone()));
-
     Ok(())
 }
 
-/// Check a constant declaration and add it to the global environment.
-/// Returns true if the constant has a hardware type (Lift).
-///
-/// To support recursive definitions, we add the constant to the environment
-/// BEFORE type-checking its body. This allows the body to reference the
-/// constant itself. The value is stored as syntax and evaluated on demand
-/// (eagerly unfolded during evaluation).
-fn check_constant<'db>(
-    db: &'db dyn Database,
-    global: &mut GlobalEnv<'db>,
-    constant: &Constant<'db>,
-) -> Result<bool, Error<'db>> {
-    // Create a type-checking environment
-    let mut tc_env = TCEnvironment {
-        db,
-        values: crate::val::Environment::new(global),
-        types: Vec::new(),
-    };
-
-    // Check that the type is valid (doesn't need the constant itself)
-    check_type(&mut tc_env, &constant.ty)?;
-
-    // Evaluate the type to a value
-    let mut eval_env = crate::val::Environment::new(global);
-    let ty_val = eval::eval(&mut eval_env, &constant.ty)?;
-
-    // Check if this is a hardware constant (has a Lift type or is a closed hardware type)
-    let is_hardware = is_hardware_type(&ty_val);
-
-    // Add the constant to the global environment BEFORE checking the body.
-    // This enables recursive definitions - the body can reference the constant.
-    // The value is stored as syntax (not pre-evaluated).
+fn add_constant_to_env<'db>(global: &mut GlobalEnv<'db>, constant: &Constant<'db>) {
     global.add_constant(
         constant.name,
         ConstantInfo::new(constant.ty.clone(), constant.value.clone()),
     );
+}
 
-    // Create a fresh type-checking environment that includes the new constant
+fn validate_constant<'db>(
+    db: &'db dyn Database,
+    global: &GlobalEnv<'db>,
+    constant: &Constant<'db>,
+) -> Result<bool, Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
 
-    // Check that the value has the declared type.
-    // If the body references the constant recursively, eval_constant will
-    // unfold it by evaluating the syntax.
+    check_type(&mut tc_env, &constant.ty)?;
+
+    let mut eval_env = crate::val::Environment::new(global);
+    let ty_val = eval::eval(&mut eval_env, &constant.ty)?;
+
+    let is_hardware = is_hardware_type(&ty_val);
     type_check(&mut tc_env, &constant.value, &ty_val)?;
 
     Ok(is_hardware)
 }
 
-/// Check a type constructor declaration and add it to the global environment.
-fn check_type_constructor<'db>(
+fn add_type_constructor_to_env<'db>(
     global: &mut GlobalEnv<'db>,
     tcon: &DeclTypeConstructor<'db>,
 ) -> Result<(), Error<'db>> {
-    // Parse the universe from the declaration
-    // The universe syntax should be something like "U0", "U1", etc.
     let level = match tcon.universe.as_ref() {
         Syntax::Universe(u) => u.level,
         _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
     };
 
-    // Combine parameters and indices into the full argument telescope
     let num_parameters = tcon.parameters.len();
     let mut all_types: Vec<_> = tcon.parameters.iter().cloned().collect();
     all_types.extend(tcon.indices.iter().cloned());
     let arguments = Telescope::new(all_types);
 
-    // Collect data constructor names for the type constructor
     let dcon_names: Vec<_> = tcon.data_constructors.iter().map(|d| d.name).collect();
 
-    // Add the type constructor to the global environment with its constructor list
-    let mut tcon_info = TypeConstructorInfo::new(arguments, num_parameters, level);
+    let mut tcon_info = TypeConstructorInfo::new(arguments.clone(), num_parameters, level);
     tcon_info.constructors = dcon_names;
     global.add_type_constructor(tcon.name, tcon_info);
 
-    // Add each data constructor
     for dcon in &tcon.data_constructors {
         global.add_data_constructor(
             dcon.name,
@@ -202,36 +170,38 @@ fn check_type_constructor<'db>(
     Ok(())
 }
 
-/// Check a metavariable declaration and add it to the global environment.
-fn check_metavariable<'db>(
+fn validate_type_constructor<'db>(
+    _db: &'db dyn Database,
+    _global: &GlobalEnv<'db>,
+    _tcon: &DeclTypeConstructor<'db>,
+) -> Result<(), Error<'db>> {
+    // TODO: Type-check the type constructor parameters, indices, and universe
+    // TODO: Type-check each data constructor's parameter types and result type
+    Ok(())
+}
+
+fn add_metavariable_to_env<'db>(global: &mut GlobalEnv<'db>, meta: &Metavariable<'db>) {
+    global.add_metavariable(meta.id, meta.arguments.clone(), meta.ty.clone());
+}
+
+fn validate_metavariable<'db>(
     db: &'db dyn Database,
-    global: &mut GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     meta: &Metavariable<'db>,
 ) -> Result<(), Error<'db>> {
-    // Create a type-checking environment
     let mut tc_env = TCEnvironment {
         db,
         values: crate::val::Environment::new(global),
         types: Vec::new(),
     };
 
-    // Check each argument type in the telescope
     for arg_ty in meta.arguments.iter() {
-        // Check that the argument type is valid
         check_type(&mut tc_env, arg_ty)?;
-
-        // Evaluate the type and extend the environment with a fresh variable
-        // This pushes to both tc_env.values and tc_env.types, keeping them in sync
         let arg_ty_val = eval::eval(&mut tc_env.values, arg_ty)?;
         tc_env.push_var(arg_ty_val);
     }
 
-    // Check that the metavariable's type is valid in the extended context
     check_type(&mut tc_env, &meta.ty)?;
-
-    // Add the metavariable to the global environment
-    global.add_metavariable(meta.id, meta.arguments.clone(), meta.ty.clone());
-
     Ok(())
 }
 
