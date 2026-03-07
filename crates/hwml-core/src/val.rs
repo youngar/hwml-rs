@@ -541,7 +541,7 @@ impl<'db> PartialEq for MetaVariable<'db> {
 }
 
 impl<'db> MetaVariable<'db> {
-    pub fn new(id: MetaVariableId, local: LocalEnv<'db>) -> MetaVariable {
+    pub fn new(id: MetaVariableId, local: LocalEnv<'db>) -> MetaVariable<'db> {
         MetaVariable { id, local }
     }
 }
@@ -688,7 +688,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     pub fn type_constructor(
         &self,
         name: ConstantId<'db>,
-    ) -> Result<&TypeConstructorInfo<'db>, LookupError> {
+    ) -> Result<&TypeConstructorInfo<'db>, LookupError<'_>> {
         self.global.type_constructor(name)
     }
 
@@ -696,7 +696,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     pub fn data_constructor(
         &self,
         name: ConstantId<'db>,
-    ) -> Result<&DataConstructorInfo<'db>, LookupError> {
+    ) -> Result<&DataConstructorInfo<'db>, LookupError<'_>> {
         self.global.data_constructor(name)
     }
 
