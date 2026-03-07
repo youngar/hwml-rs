@@ -25,6 +25,7 @@ hwml_support = { path = "crates/hwml-support" }
 hwml_surface = { path = "crates/hwml-surface" }
 hwml_circt_sys = { path = "crates/hwml-circt-sys" }
 hwml_circt = { path = "crates/hwml-circt" }
+mdbook_hwml = { path = "crates/mdbook-hwml" }
 
 # External Crates
 annotate-snippets = "0.11.5"
@@ -49,12 +50,14 @@ lsp-server = "0.7.9"
 lsp-types = "0.97.0"
 melior = "0.26"
 notify-debouncer-mini = "0.4.1"
+pulldown-cmark = "0.12"
 salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
 thiserror = "2"
 pretty = "0.12.5"
 slab = "0.4"
+walkdir = "2"
 
 [profile.dev.package]
 insta.opt-level = 3
