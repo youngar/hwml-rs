@@ -124,7 +124,8 @@ pub fn saturate_value<'db>(
         | Value::One(_)
         | Value::Prim(_)
         | Value::Constant(_)
-        | Value::Refl(_) => Ok(Rc::new(value.clone())),
+        | Value::Refl(_)
+        | Value::Let(_) => Ok(Rc::new(value.clone())),
     }
 }
 

@@ -544,6 +544,7 @@ fn rename_type_constructor<'db>(
     let mut env = Environment {
         global: global,
         local: LocalEnv::new(),
+        transparent: val::TransparentEnv::new(),
     };
     let mut syn_args = Vec::new();
     for (sem_arg, syn_arg_ty) in tcon.iter().zip(type_info.arguments.iter()) {
@@ -705,6 +706,7 @@ fn rename_data_constructor<'db>(
     let mut env = Environment {
         global: global,
         local: LocalEnv::new(),
+        transparent: val::TransparentEnv::new(),
     };
     env.extend(parameters);
     let mut syn_args = Vec::new();
@@ -885,6 +887,7 @@ fn rename_substitution<'db>(
     let mut env = Environment {
         global: global,
         local: LocalEnv::new(),
+        transparent: val::TransparentEnv::new(),
     };
     let mut syn_substitution = Vec::new();
     for (sem_arg, syn_arg_ty) in sem_substitution.iter().zip(tys.iter()) {

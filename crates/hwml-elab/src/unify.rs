@@ -4,6 +4,7 @@ use hwml_core::common::{MetaVariableId, UniverseLevel};
 use hwml_core::eval::{self, run_application, run_closure, run_spine};
 use hwml_core::val::Environment;
 use hwml_core::val::LocalEnv;
+use hwml_core::val::TransparentEnv;
 use hwml_core::val::{Eliminator, Value};
 use itertools::izip;
 use std::fmt;
@@ -630,6 +631,7 @@ async fn unify_type_constructor<'db, 'g>(
     let mut env = Environment {
         global: ctx.tc_env.values.global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
 
     println!("[Unify] Type constructor injectivity");
@@ -718,6 +720,7 @@ async fn unify_data_constructor<'db, 'g>(
     let mut env = Environment {
         global: ctx.tc_env.values.global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
     env.extend(parameters);
 
