@@ -171,12 +171,71 @@ fn add_type_constructor_to_env<'db>(
 }
 
 fn validate_type_constructor<'db>(
-    _db: &'db dyn Database,
-    _global: &GlobalEnv<'db>,
-    _tcon: &DeclTypeConstructor<'db>,
+    db: &'db dyn Database,
+    global: &GlobalEnv<'db>,
+    tcon: &DeclTypeConstructor<'db>,
 ) -> Result<(), Error<'db>> {
-    // TODO: Type-check the type constructor parameters, indices, and universe
-    // TODO: Type-check each data constructor's parameter types and result type
+    let mut tc_env = TCEnvironment {
+        db,
+        values: crate::val::Environment::new(global),
+        types: Vec::new(),
+    };
+
+    check_type(&mut tc_env, &tcon.universe)?;
+    let universe_ty = crate::check::type_synth(&mut tc_env, &tcon.universe)?;
+    let Value::Universe(tcon_universe) = &*universe_ty else {
+        return Err(Error::InvalidTypeConstructorUniverse(tcon.name));
+    };
+
+    for param_ty in tcon.parameters.iter() {
+        check_type(&mut tc_env, param_ty)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, param_ty)?;
+        tc_env.push_var(param_ty_val);
+    }
+
+    for index_ty in tcon.indices.iter() {
+        check_type(&mut tc_env, index_ty)?;
+        let index_ty_val = eval::eval(&mut tc_env.values, index_ty)?;
+        tc_env.push_var(index_ty_val);
+    }
+
+    for dcon in tcon.data_constructors.iter() {
+        validate_data_constructor(db, global, tcon, tcon_universe, dcon)?;
+    }
+
+    Ok(())
+}
+
+fn validate_data_constructor<'db>(
+    db: &'db dyn Database,
+    global: &GlobalEnv<'db>,
+    tcon: &DeclTypeConstructor<'db>,
+    _tcon_universe: &crate::val::Universe<'db>,
+    dcon: &crate::declaration::DataConstructor<'db>,
+) -> Result<(), Error<'db>> {
+    let mut tc_env = TCEnvironment {
+        db,
+        values: crate::val::Environment::new(global),
+        types: Vec::new(),
+    };
+
+    // Add type constructor parameters (but not indices) to match parser scoping.
+    for param_ty in tcon.parameters.iter() {
+        let param_ty_val = eval::eval(&mut tc_env.values, param_ty)?;
+        tc_env.push_var(param_ty_val);
+    }
+
+    // Validate data constructor parameters.
+    for param_ty in dcon.parameters.iter() {
+        check_type(&mut tc_env, param_ty)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, param_ty)?;
+        tc_env.push_var(param_ty_val);
+    }
+
+    check_type(&mut tc_env, &dcon.result_type)?;
+
+    // TODO: strict positivity and universe level checking
+
     Ok(())
 }
 
