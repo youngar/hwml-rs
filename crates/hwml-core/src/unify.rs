@@ -37,10 +37,6 @@ impl<'db> MetaContext<'db> {
     }
 }
 
-/// Force the substitution of a metavariable with its solution, if possible,
-/// executing any now-unblocked computations. Forcing does not descend into values
-/// because we do not need to force under a constructor--we only need to force
-/// up to the head.
 fn force<'db>(
     global: &val::GlobalEnv<'db>,
     mctx: &MetaContext<'db>,
@@ -49,13 +45,10 @@ fn force<'db>(
     while let Value::Flex(flex) = &*value {
         match mctx.lookup(flex.head.id) {
             Some(solution) => {
-                // First, apply the solution to the local substitution.
-                // The solution is a closure that expects the substitution arguments.
                 let mut result = solution.clone();
                 for arg in flex.head.local.iter() {
                     result = eval::run_application(global, &result, arg.clone())?;
                 }
-                // Then apply the spine.
                 value = eval::run_spine(global, result, &flex.spine)?;
             }
             None => break,
@@ -168,11 +161,46 @@ fn rename_eliminator<'db>(
             let arg_normal = val::Normal::new(arg_ty, arg_value);
             Ok(Eliminator::application(arg_normal))
         }
-        Eliminator::Case(_c) => {
-            // Currently don't support renaming cases - we currently need to
-            // know the binder depth of the motive, and we are reading that
-            // off the type.  We will probably rework the motive.
-            todo!("rename case");
+        Eliminator::Case(c) => {
+            // Rename the case eliminator by renaming:
+            // 1. All parameters (type constructor arguments)
+            // 2. Each branch body (extending the renaming by the constructor's arity)
+
+            // Rename all parameters
+            let mut new_parameters = Vec::new();
+            for param in c.parameters.iter() {
+                new_parameters.push(rename(global, mctx, meta, renaming, param)?);
+            }
+
+            // Rename each branch
+            let mut new_branches = Vec::new();
+            for branch in c.branches.iter() {
+                // Extend the renaming by the constructor's arity
+                // Each constructor argument introduces a new binder
+                let mut lifted_renaming = renaming.clone();
+                for _ in 0..branch.arity {
+                    lifted_renaming = lifted_renaming.lift();
+                }
+
+                // Rename all free variables in the branch closure
+                let mut new_env = LocalEnv::new();
+                for value in branch.body.local.iter() {
+                    new_env.push(rename(global, mctx, meta, &mut lifted_renaming, value)?);
+                }
+                let new_body = Closure::new(new_env, branch.body.term.clone());
+
+                new_branches.push(val::CaseBranch::new(
+                    branch.constructor,
+                    branch.arity,
+                    new_body,
+                ));
+            }
+
+            Ok(Eliminator::case(
+                c.type_constructor,
+                new_parameters,
+                new_branches,
+            ))
         }
     }
 }
@@ -337,6 +365,7 @@ fn solve<'db>(
         &mut Environment {
             global,
             local: LocalEnv::new(),
+            transparent: val::TransparentEnv::new(),
         },
         &rhs_syntax,
     )
@@ -571,11 +600,9 @@ pub fn unify<'db>(
             unify(db, global, mctx, depth, m1.ty.clone(), m2.ty.clone())
         }
         (Value::TypeConstructor(t1), Value::TypeConstructor(t2)) => {
-            // Check that the type constructor constants are the same.
             if t1.constructor != t2.constructor {
                 return Err(UnificationError::Mismatch(lhs, rhs));
             }
-            // Check that the arguments are the same.
             if t1.arguments.len() != t2.arguments.len() {
                 return Err(UnificationError::Mismatch(lhs, rhs));
             }
@@ -585,7 +612,6 @@ pub fn unify<'db>(
             Ok(())
         }
         (Value::DataConstructor(d1), Value::DataConstructor(d2)) => {
-            // Check that the data constructor constants are the same.
             if d1.constructor != d2.constructor {
                 return Err(UnificationError::Mismatch(lhs, rhs));
             }
@@ -696,6 +722,7 @@ mod tests {
             let mut env = Environment {
                 global: &self.global,
                 local: LocalEnv::new(),
+                transparent: val::TransparentEnv::new(),
             };
             eval::eval(&mut env, stx).expect("eval failed")
         }

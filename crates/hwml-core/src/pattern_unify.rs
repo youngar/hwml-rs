@@ -3,7 +3,9 @@
 use crate::{
     common::{Level, MetaVariableId},
     equal, eval,
-    val::{DataConstructorInfo, Environment, GlobalEnv, LocalEnv, TypeConstructorInfo},
+    val::{
+        DataConstructorInfo, Environment, GlobalEnv, LocalEnv, TransparentEnv, TypeConstructorInfo,
+    },
     ConstantId, Value,
 };
 use std::rc::Rc;
@@ -70,6 +72,7 @@ impl<'db> std::error::Error for Error<'db> {}
 ///
 /// # Arguments
 /// * `global` - The global environment for lookups
+/// * `transparent` - The transparent environment for δ-reduction during unification
 /// * `tcon_info` - The type constructor info (e.g., Vec)
 /// * `tcon_args` - The type constructor arguments (e.g., [A, n] for Vec A n)
 /// * `dcon_name` - The data constructor name (e.g., "cons")
@@ -81,14 +84,13 @@ impl<'db> std::error::Error for Error<'db> {}
 /// * `Err(Error)` - An unexpected error occurred
 pub fn unify_pattern<'db>(
     global: &GlobalEnv<'db>,
+    transparent: &TransparentEnv<'db>,
     tcon_info: &TypeConstructorInfo<'db>,
     tcon_args: &[Rc<Value<'db>>],
     _dcon_name: ConstantId<'db>,
     dcon_info: &DataConstructorInfo<'db>,
     base_depth: usize,
 ) -> Result<PatternUnifyOutcome<'db>, Error<'db>> {
-    // Phase 1: Rigid Telescopic Walk
-    // For each argument in the constructor's telescope, create a fresh rigid variable.
     let num_parameters = tcon_info.num_parameters();
     let parameters: Vec<_> = tcon_args.iter().take(num_parameters).cloned().collect();
 
@@ -103,6 +105,7 @@ pub fn unify_pattern<'db>(
         let mut env = Environment {
             global,
             local: local.clone(),
+            transparent: TransparentEnv::new(),
         };
         let ty = eval::eval(&mut env, ty_syntax)?;
         let rigid_var = Rc::new(Value::variable(Level::new(current_depth), ty.clone()));
@@ -111,7 +114,11 @@ pub fn unify_pattern<'db>(
         current_depth += 1;
     }
 
-    let mut env = Environment { global, local };
+    let mut env = Environment {
+        global,
+        local,
+        transparent: TransparentEnv::new(),
+    };
     let constructor_return_ty = eval::eval(&mut env, &dcon_info.ty)?;
 
     let scrutinee_indices: Vec<_> = tcon_args.iter().skip(num_parameters).cloned().collect();
@@ -133,6 +140,7 @@ pub fn unify_pattern<'db>(
     let mut param_env = Environment {
         global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
     param_env.extend(parameters.iter().cloned());
 
@@ -151,7 +159,8 @@ pub fn unify_pattern<'db>(
         .collect();
 
     let unify_depth = base_depth + new_bindings.len();
-    match unify_equations(global, unify_depth, &equations)? {
+    // Use the transparent environment from the typechecker to enable δ-reduction during unification
+    match unify_equations(global, transparent, unify_depth, &equations)? {
         EquationOutcome::Success(solutions) => {
             Ok(PatternUnifyOutcome::Success(PatternUnifyResult {
                 new_bindings,
@@ -170,34 +179,60 @@ enum EquationOutcome<'db> {
     Stuck(MetaVariableId),
 }
 
-fn occurs_check(level: Level, value: &Value<'_>) -> bool {
+/// Check if a variable at the given level occurs in a value.
+/// This is critical for soundness: if we try to solve `?meta =? body` where `?meta` appears
+/// in `body`, we would create an infinite cycle in the semantic domain.
+///
+/// CRITICAL: This function must unfold transparent variables! If we have `let y = ?meta`,
+/// and we check whether `?meta` occurs in `y`, we must unfold `y` to detect the cycle.
+/// Without this, we would create the substitution `?meta := y`, causing infinite loops.
+fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_>) -> bool {
     match value {
         Value::Rigid(rigid) => {
             if rigid.head.level == level {
                 return true;
             }
+
+            // CRITICAL: If this rigid variable is transparent (let-bound), unfold it!
+            // Example: let y = ?meta; occurs(?meta, y) must return true
+            if let Some(unfolded) = transparent.lookup(rigid.head.level) {
+                if occurs_check(transparent, level, &unfolded) {
+                    return true;
+                }
+            }
+
+            // Also check the spine for occurrences
             rigid.spine.iter().any(|elim| match elim {
                 crate::val::Eliminator::Application(app) => {
-                    occurs_check(level, &app.argument.value)
+                    occurs_check(transparent, level, &app.argument.value)
                 }
                 crate::val::Eliminator::Case(_) => false,
             })
         }
         Value::Flex(flex) => flex.spine.iter().any(|elim| match elim {
-            crate::val::Eliminator::Application(app) => occurs_check(level, &app.argument.value),
+            crate::val::Eliminator::Application(app) => {
+                occurs_check(transparent, level, &app.argument.value)
+            }
             crate::val::Eliminator::Case(_) => false,
         }),
-        Value::DataConstructor(dcon) => dcon.arguments.iter().any(|arg| occurs_check(level, arg)),
-        Value::TypeConstructor(tcon) => tcon.arguments.iter().any(|arg| occurs_check(level, arg)),
-        Value::Pi(pi) => occurs_check(level, &pi.source),
+        Value::DataConstructor(dcon) => dcon
+            .arguments
+            .iter()
+            .any(|arg| occurs_check(transparent, level, arg)),
+        Value::TypeConstructor(tcon) => tcon
+            .arguments
+            .iter()
+            .any(|arg| occurs_check(transparent, level, arg)),
+        Value::Pi(pi) => occurs_check(transparent, level, &pi.source),
         Value::Lambda(_) => false,
         Value::EqType(eq) => {
-            occurs_check(level, &eq.ty)
-                || occurs_check(level, &eq.lhs)
-                || occurs_check(level, &eq.rhs)
+            occurs_check(transparent, level, &eq.ty)
+                || occurs_check(transparent, level, &eq.lhs)
+                || occurs_check(transparent, level, &eq.rhs)
         }
         Value::Transport(transport) => {
-            occurs_check(level, &transport.proof) || occurs_check(level, &transport.value)
+            occurs_check(transparent, level, &transport.proof)
+                || occurs_check(transparent, level, &transport.value)
         }
         Value::Universe(_)
         | Value::Lift(_)
@@ -215,11 +250,17 @@ fn occurs_check(level: Level, value: &Value<'_>) -> bool {
         | Value::ModuleUniverse(_)
         | Value::Prim(_)
         | Value::Constant(_) => false,
+        Value::Let(let_val) => {
+            occurs_check(transparent, level, &let_val.ty)
+                || occurs_check(transparent, level, &let_val.value)
+                || occurs_check(transparent, level, &let_val.body)
+        }
     }
 }
 
 fn unify_equations<'db>(
     global: &GlobalEnv<'db>,
+    transparent: &TransparentEnv<'db>,
     depth: usize,
     equations: &[(Rc<Value<'db>>, Rc<Value<'db>>, Rc<Value<'db>>)],
 ) -> Result<EquationOutcome<'db>, Error<'db>> {
@@ -227,7 +268,7 @@ fn unify_equations<'db>(
     let mut work_list: Vec<(Rc<Value<'db>>, Rc<Value<'db>>, Rc<Value<'db>>)> = equations.to_vec();
 
     while let Some((lhs, rhs, ty)) = work_list.pop() {
-        if equal::equate(global, depth, &lhs, &rhs, &ty).is_ok() {
+        if equal::equate(global, transparent, depth, &lhs, &rhs, &ty).is_ok() {
             continue;
         }
 
@@ -238,7 +279,20 @@ fn unify_equations<'db>(
 
             (Value::Rigid(rigid), _, _) if rigid.spine.is_empty() => {
                 let level = rigid.head.level;
-                if occurs_check(level, rhs.as_ref()) {
+
+                // CRITICAL: Miller Pattern Validation!
+                // If this variable is transparent (let-bound), it's NOT a valid pattern variable.
+                // Example: let x = zero; ?meta x =? one
+                // This looks like a Miller pattern (?meta applied to variable x), but x is actually
+                // zero in disguise! We cannot invert x because it's not a true parameter.
+                // We must reject this and return Conflict.
+                if transparent.lookup(level).is_some() {
+                    // This variable is let-bound, not a pattern variable!
+                    // Reject the pattern and return Conflict.
+                    return Ok(EquationOutcome::Conflict);
+                }
+
+                if occurs_check(transparent, level, rhs.as_ref()) {
                     return Ok(EquationOutcome::Conflict);
                 }
                 solutions.push((level, rhs.clone()));
@@ -246,7 +300,14 @@ fn unify_equations<'db>(
 
             (_, Value::Rigid(rigid), _) if rigid.spine.is_empty() => {
                 let level = rigid.head.level;
-                if occurs_check(level, lhs.as_ref()) {
+
+                // CRITICAL: Miller Pattern Validation (symmetric case)
+                if transparent.lookup(level).is_some() {
+                    // This variable is let-bound, not a pattern variable!
+                    return Ok(EquationOutcome::Conflict);
+                }
+
+                if occurs_check(transparent, level, lhs.as_ref()) {
                     return Ok(EquationOutcome::Conflict);
                 }
                 solutions.push((level, lhs.clone()));
@@ -302,6 +363,7 @@ fn unify_equations<'db>(
                     let mut env = Environment {
                         global,
                         local: LocalEnv::new(),
+                        transparent: TransparentEnv::new(),
                     };
                     env.extend(parameters);
 
@@ -399,9 +461,11 @@ mod tests {
 
         let db = Database::default();
         let global = setup_nat_vec(&db);
+        let transparent = TransparentEnv::new();
 
         match unify_pattern(
             &global,
+            &transparent,
             global.type_constructor("Vec".into_with_db(&db)).unwrap(),
             &vec![
                 eval_str(&db, &global, "$Bit"),
@@ -429,9 +493,11 @@ mod tests {
 
         let db = Database::default();
         let global = setup_nat_vec(&db);
+        let transparent = TransparentEnv::new();
 
         match unify_pattern(
             &global,
+            &transparent,
             global.type_constructor("Vec".into_with_db(&db)).unwrap(),
             &vec![
                 eval_str(&db, &global, "$Bit"),
@@ -457,9 +523,11 @@ mod tests {
 
         let db = Database::default();
         let global = setup_nat_vec(&db);
+        let transparent = TransparentEnv::new();
 
         match unify_pattern(
             &global,
+            &transparent,
             global.type_constructor("Vec".into_with_db(&db)).unwrap(),
             &vec![
                 Rc::new(Value::bit()),
@@ -495,9 +563,11 @@ mod tests {
 
         let db = Database::default();
         let global = setup_nat_vec(&db);
+        let transparent = TransparentEnv::new();
 
         match unify_equations(
             &global,
+            &transparent,
             1,
             &vec![(
                 eval_str_at_depth(&db, &global, "%0", 1),
@@ -519,9 +589,11 @@ mod tests {
 
         let db = Database::default();
         let global = setup_nat_vec(&db);
+        let transparent = TransparentEnv::new();
 
         match unify_equations(
             &global,
+            &transparent,
             2,
             &vec![(
                 eval_str_at_depth(&db, &global, "[@Succ %1]", 2), // x at level 0
@@ -557,11 +629,13 @@ mod tests {
         let db = Database::default();
         let global = load_prelude(
             &db,
-            "tcon @Nat : -> U0 where dcon @Zero : @Nat dcon @Succ (%n : @Nat) : @Nat; meta ?[42] : U0;",
+            "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat]; meta ?[42] : U0;",
         );
+        let transparent = TransparentEnv::new();
 
         match unify_equations(
             &global,
+            &transparent,
             1,
             &vec![(
                 eval_str_at_depth(&db, &global, "%0", 1),
@@ -583,9 +657,11 @@ mod tests {
 
         let db = Database::default();
         let global = load_prelude(&db, "");
+        let transparent = TransparentEnv::new();
 
         match unify_equations(
             &global,
+            &transparent,
             0,
             &vec![(
                 eval_str(&db, &global, "λ %x → %x"),
@@ -610,9 +686,11 @@ mod tests {
 
         let db = Database::default();
         let global = GlobalEnv::new();
+        let transparent = TransparentEnv::new();
 
         match unify_equations(
             &global,
+            &transparent,
             1,
             &vec![(
                 eval_str(&db, &global, "λ %x → %x"),
@@ -637,9 +715,11 @@ mod tests {
 
         let db = Database::default();
         let global = GlobalEnv::new();
+        let transparent = TransparentEnv::new();
 
         match unify_equations(
             &global,
+            &transparent,
             0,
             &vec![(
                 eval_str(&db, &global, "λ %x → %x"),
@@ -652,6 +732,164 @@ mod tests {
                 assert_eq!(solutions[0].0, Level::new(0)); // fresh variable at level 0
             }
             Ok(EquationOutcome::Conflict) => panic!("Expected success, got conflict"),
+            Ok(EquationOutcome::Stuck(meta)) => panic!("Unexpected stuck on {:?}", meta),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_unifier_sees_transparent_bindings() {
+        // CRITICAL TEST: Verify that the unifier can see let-bound variables via δ-reduction
+        // This test proves that threading TransparentEnv into the unifier actually works!
+        //
+        // Setup: let y : Nat = @Zero (at level 0)
+        // Equation: y =? @Zero
+        // Expected: Success (the unifier should unfold y to @Zero and see they're equal)
+        // Without the fix: Would return Conflict (treating y as a rigid variable ≠ @Zero)
+        use crate::test_utils::{eval_str, load_prelude};
+
+        let db = Database::default();
+        let global = load_prelude(
+            &db,
+            "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];",
+        );
+
+        // Create a transparent environment with y = @Zero at level 0
+        let mut transparent = TransparentEnv::new();
+        let zero_val = eval_str(&db, &global, "[@Zero]");
+        transparent.push_transparent(zero_val.clone());
+
+        // Create the equation: Rigid(Level(0)) =? @Zero
+        // Rigid(Level(0)) represents the variable y
+        let nat_ty = eval_str(&db, &global, "#[@Nat]");
+        let y_var = Rc::new(Value::variable(Level::new(0), nat_ty.clone()));
+
+        // Try to unify y =? @Zero
+        match unify_equations(
+            &global,
+            &transparent,
+            1, // depth = 1 because we have one binding (y)
+            &vec![(y_var, zero_val, nat_ty)],
+        ) {
+            Ok(EquationOutcome::Success(solutions)) => {
+                // Should succeed with no new solutions (y is already bound to @Zero)
+                assert_eq!(
+                    solutions.len(),
+                    0,
+                    "Expected no solutions (y is transparent, not a pattern variable)"
+                );
+            }
+            Ok(EquationOutcome::Conflict) => {
+                panic!("UNIFIER BLINDNESS: The unifier cannot see that y = @Zero!")
+            }
+            Ok(EquationOutcome::Stuck(meta)) => panic!("Unexpected stuck on {:?}", meta),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_occurs_check_detects_transparent_cycle() {
+        // CRITICAL SOUNDNESS TEST: Verify that occurs check unfolds transparent variables
+        // This prevents infinite cycles when solving for pattern variables!
+        //
+        // Setup: let y : Nat = z (at level 1, where z is at level 0)
+        // Equation: z =? @Succ y
+        // Expected: Conflict (because y = z, so z =? @Succ z would create a cycle if we solve z := @Succ y)
+        // Without the fix: Would accept z := @Succ y, but y = z, so z := @Succ z (infinite!)
+        use crate::test_utils::{eval_str, load_prelude};
+
+        let db = Database::default();
+        let global = load_prelude(
+            &db,
+            "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];",
+        );
+
+        // Create a transparent environment where y (level 1) = z (level 0)
+        let nat_ty = eval_str(&db, &global, "#[@Nat]");
+        let z_var = Rc::new(Value::variable(Level::new(0), nat_ty.clone()));
+
+        let mut transparent = TransparentEnv::new();
+        transparent.push_rigid(); // z at level 0
+        transparent.push_transparent(z_var.clone()); // y at level 1, bound to z
+
+        // Create the equation: z =? @Succ y
+        // This is a pattern unification problem: we're trying to solve for z
+        // Build @Succ y manually
+        let y_var = Rc::new(Value::variable(Level::new(1), nat_ty.clone()));
+        let succ_const = eval_str(&db, &global, "[@Succ]");
+        let succ_y_applied = match succ_const.as_ref() {
+            Value::DataConstructor(dcon) => {
+                Rc::new(Value::DataConstructor(crate::val::DataConstructor {
+                    constructor: dcon.constructor,
+                    arguments: vec![y_var],
+                }))
+            }
+            _ => panic!("Expected @Succ to be a data constructor"),
+        };
+
+        // Try to unify z =? @Succ y
+        // The occurs check should detect that z occurs in @Succ y (because y = z)
+        match unify_equations(
+            &global,
+            &transparent,
+            2, // depth = 2 (z and y)
+            &vec![(z_var, succ_y_applied, nat_ty)],
+        ) {
+            Ok(EquationOutcome::Success(_)) => {
+                panic!("SOUNDNESS BUG: Occurs check failed to detect cycle! z =? @Succ y where y = z should fail!")
+            }
+            Ok(EquationOutcome::Conflict) => {
+                // This is the correct outcome! The occurs check should detect that
+                // z occurs in @Succ y (because y unfolds to z), preventing the cycle.
+            }
+            Ok(EquationOutcome::Stuck(meta)) => panic!("Unexpected stuck on {:?}", meta),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_miller_pattern_rejects_transparent_variables() {
+        // CRITICAL CORRECTNESS TEST: Verify that transparent variables are rejected as Miller patterns
+        // This prevents bogus solutions that ignore let-bound constraints!
+        //
+        // Setup: let x : Nat = @Zero (at level 0)
+        // Equation: x =? @Succ @Zero
+        // Expected: Conflict (x is not a pattern variable, it's bound to @Zero)
+        // Without the fix: Would accept x := @Succ @Zero, completely ignoring that x = @Zero!
+        use crate::test_utils::{eval_str, load_prelude};
+
+        let db = Database::default();
+        let global = load_prelude(
+            &db,
+            "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];",
+        );
+
+        // Create a transparent environment where x (level 0) = @Zero
+        let nat_ty = eval_str(&db, &global, "#[@Nat]");
+        let zero_val = eval_str(&db, &global, "[@Zero]");
+
+        let mut transparent = TransparentEnv::new();
+        transparent.push_transparent(zero_val.clone()); // x at level 0, bound to @Zero
+
+        // Create the equation: x =? @Succ @Zero
+        let x_var = Rc::new(Value::variable(Level::new(0), nat_ty.clone()));
+        let succ_zero = eval_str(&db, &global, "[@Succ [@Zero]]");
+
+        // Try to unify x =? @Succ @Zero
+        // This should REJECT the pattern because x is transparent (let-bound to @Zero)
+        match unify_equations(
+            &global,
+            &transparent,
+            1, // depth = 1 (x)
+            &vec![(x_var, succ_zero, nat_ty)],
+        ) {
+            Ok(EquationOutcome::Success(_)) => {
+                panic!("CORRECTNESS BUG: Miller pattern accepted transparent variable! x =? @Succ @Zero where x = @Zero should fail!")
+            }
+            Ok(EquationOutcome::Conflict) => {
+                // This is the correct outcome! The pattern validator should reject x
+                // because it's transparent (let-bound), not a true pattern variable.
+            }
             Ok(EquationOutcome::Stuck(meta)) => panic!("Unexpected stuck on {:?}", meta),
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
