@@ -146,18 +146,13 @@ fn generate_test_module<'db>(db: &'db Database, data: &[u8]) -> Module<'db> {
                 let value = generate_random_expression(db, data, expr_offset, 0);
                 Declaration::constant(name, ty, value)
             }
-            1 => {
-                // Type constructor
-                Declaration::type_constructor(name, ty)
-            }
             _ => {
-                // Data constructor
-                let inductive_type = ConstantId::from_str(db, "TestType");
-                Declaration::data_constructor(name, ty, inductive_type, 0)
+                // Primitive (simplified - type constructors need more complex setup)
+                Declaration::primitive(name, ty)
             }
         };
 
-        let _ = module.add_declaration(declaration); // Ignore duplicate name errors
+        module.add_declaration(declaration);
     }
 
     module
@@ -178,60 +173,53 @@ fuzz_target!(|data: &[u8]| {
     let module = generate_test_module(&db, data);
 
     // Test basic module operations
-    let declarations = module.declarations();
+    let declarations = &module.declarations;
 
     // Test that we can iterate over declarations
     for decl in declarations {
-        // Test declaration accessors
-        let _name = decl.name();
-        let _ty = decl.ty();
-        let _expr = decl.expr();
-
-        // Test declaration type checks
-        let _is_constant = decl.is_constant();
-        let _is_type_constructor = decl.is_type_constructor();
-        let _is_data_constructor = decl.is_data_constructor();
-
-        // Test getting value for constants
-        let _value = decl.get_value();
-    }
-
-    // Test module search operations
-    for decl in declarations {
-        // Should be able to find each declaration by name
-        let found = module.find_declaration(decl.name());
-        assert!(found.is_some(), "Declaration should be findable by name");
-        assert_eq!(
-            found.unwrap(),
-            decl,
-            "Found declaration should match original"
-        );
-
-        // Test contains method
-        assert!(
-            module.contains(decl.name()),
-            "Module should contain declaration"
-        );
+        // Test declaration pattern matching
+        match decl {
+            Declaration::Primitive(p) => {
+                let _name = p.name;
+                let _ty = &p.ty;
+            }
+            Declaration::Constant(c) => {
+                let _name = c.name;
+                let _ty = &c.ty;
+                let _value = &c.value;
+            }
+            Declaration::TypeConstructor(tc) => {
+                let _name = tc.name;
+                let _params = &tc.parameters;
+                let _indices = &tc.indices;
+                let _data_constructors = &tc.data_constructors;
+            }
+            Declaration::Metavariable(m) => {
+                let _id = m.id;
+                let _args = &m.arguments;
+                let _ty = &m.ty;
+            }
+        }
     }
 
     // Test module construction methods
     let new_module = Module::new();
     assert_eq!(
-        new_module.declarations().len(),
+        new_module.declarations.len(),
         0,
         "New module should be empty"
     );
 
     // Test creating module from declarations
-    let reconstructed = Module::from_declarations(declarations.to_vec());
+    let reconstructed = Module::from_declarations(declarations.clone());
     assert_eq!(
-        reconstructed.declarations().len(),
+        reconstructed.declarations.len(),
         declarations.len(),
         "Reconstructed module should have same number of declarations"
     );
 
     // Test that reconstructed module has same declarations
-    for (original, reconstructed) in declarations.iter().zip(reconstructed.declarations().iter()) {
+    for (original, reconstructed) in declarations.iter().zip(reconstructed.declarations.iter()) {
         assert_eq!(
             original, reconstructed,
             "Declarations should match after reconstruction"
@@ -241,7 +229,6 @@ fuzz_target!(|data: &[u8]| {
     // Test adding declarations to a new module
     let mut test_module = Module::new();
     for decl in declarations {
-        // Try to add each declaration - some might fail due to duplicate names, which is fine
-        let _ = test_module.add_declaration(decl.clone());
+        test_module.add_declaration(decl.clone());
     }
 });

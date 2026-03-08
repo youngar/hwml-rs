@@ -98,25 +98,20 @@ impl FuzzInput {
             let name = self.generate_constant_id(db, i);
             let ty = self.generate_syntax(db, i * 3, 0);
 
-            let decl_type = self.data.get(i + 100).unwrap_or(&0) % 3;
+            let decl_type = self.data.get(i + 100).unwrap_or(&0) % 2;
             let declaration = match decl_type {
                 0 => {
                     // Constant
                     let value = self.generate_syntax(db, i * 3 + 1, 0);
                     Declaration::constant(name, ty, value)
                 }
-                1 => {
-                    // Type constructor
-                    Declaration::type_constructor(name, ty)
-                }
                 _ => {
-                    // Data constructor
-                    let inductive_type = self.generate_constant_id(db, i + 100);
-                    Declaration::data_constructor(name, ty, inductive_type, 0)
+                    // Primitive
+                    Declaration::primitive(name, ty)
                 }
             };
 
-            let _ = module.add_declaration(declaration); // Ignore duplicate errors
+            module.add_declaration(declaration);
         }
 
         module
@@ -128,34 +123,38 @@ fuzz_target!(|input: FuzzInput| {
     let module = input.generate_module(&db);
 
     // Test module operations
-    let declarations = module.declarations();
+    let declarations = &module.declarations;
 
-    // Test finding declarations
+    // Test accessing declarations
     for decl in declarations {
-        let found = module.find_declaration(decl.name());
-        assert!(found.is_some(), "Should find declaration by name");
-
-        // Test declaration accessors
-        let _name = decl.name();
-        let _ty = decl.ty();
-        let _expr = decl.expr();
-
-        // Test type checks
-        let _is_constant = decl.is_constant();
-        let _is_type_constructor = decl.is_type_constructor();
-        let _is_data_constructor = decl.is_data_constructor();
-
-        if let Some(value) = decl.get_value() {
-            let _val = value; // Just access to ensure it's valid
+        // Test declaration pattern matching
+        match decl {
+            Declaration::Primitive(p) => {
+                let _name = p.name;
+                let _ty = &p.ty;
+            }
+            Declaration::Constant(c) => {
+                let _name = c.name;
+                let _ty = &c.ty;
+                let _value = &c.value;
+            }
+            Declaration::TypeConstructor(tc) => {
+                let _name = tc.name;
+                let _params = &tc.parameters;
+            }
+            Declaration::Metavariable(m) => {
+                let _id = m.id;
+                let _ty = &m.ty;
+            }
         }
     }
 
     // Test module reconstruction
-    let new_module = Module::from_declarations(declarations.to_vec());
-    assert_eq!(new_module.declarations().len(), declarations.len());
+    let new_module = Module::from_declarations(declarations.clone());
+    assert_eq!(new_module.declarations.len(), declarations.len());
 
     // Test iteration consistency
-    let count1 = module.declarations().len();
-    let count2 = module.declarations().len();
+    let count1 = module.declarations.len();
+    let count2 = module.declarations.len();
     assert_eq!(count1, count2);
 });
