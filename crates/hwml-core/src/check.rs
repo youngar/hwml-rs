@@ -31,12 +31,12 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
     }
 
     #[allow(dead_code)]
-    fn value_of(&self, level: Level) -> &Rc<Value<'db>> {
+    fn value_of(&self, level: Level) -> Rc<Value<'db>> {
         self.values.get(level)
     }
 
     #[allow(dead_code)]
-    fn var_value(&self, var: &stx::Variable) -> &Rc<Value<'db>> {
+    fn var_value(&self, var: &stx::Variable) -> Rc<Value<'db>> {
         let level = var.index.to_level(self.depth());
         self.value_of(level)
     }
@@ -50,6 +50,11 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         let var = Rc::new(Value::variable(Level::new(self.depth()), ty.clone()));
         self.push(var.clone(), ty);
         var
+    }
+
+    fn push_transparent(&mut self, ty: Rc<Value<'db>>, value: Rc<Value<'db>>) {
+        self.values.push_transparent(ty.clone(), value);
+        self.types.push(ty);
     }
 
     fn pop(&mut self) {
@@ -258,6 +263,7 @@ pub fn type_synth<'db, 'g>(
         Syntax::Constant(constant) => type_synth_constant(env, constant),
         Syntax::Prim(prim) => type_synth_prim(env, prim),
         Syntax::Check(check) => type_synth_check(env, check),
+        Syntax::Let(let_expr) => type_synth_let(env, let_expr),
         Syntax::Application(application) => type_synth_application(env, application),
         Syntax::Metavariable(metavariable) => type_synth_metavariable(env, metavariable),
 
@@ -336,6 +342,22 @@ pub fn type_synth_check<'db, 'g>(
     Ok(ty)
 }
 
+pub fn type_synth_let<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    let_expr: &syn::Let<'db>,
+) -> Result<Rc<Value<'db>>, Error<'db>> {
+    check_type(env, &let_expr.ty)?;
+    let sem_ty = eval(env, &let_expr.ty)?;
+    type_check(env, &let_expr.value, &sem_ty)?;
+    let sem_value = eval(env, &let_expr.value)?;
+
+    env.push_transparent(sem_ty, sem_value);
+    let body_ty = type_synth(env, &let_expr.body)?;
+    env.pop();
+
+    Ok(body_ty)
+}
+
 /// Synthesize the type of a metavariable.
 pub fn type_synth_metavariable<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
@@ -369,6 +391,7 @@ pub fn type_synth_metavariable<'db, 'g>(
         let mut temp_env = Environment {
             global: env.values.global,
             local: local_env.clone(),
+            transparent: val::TransparentEnv::new(),
         };
         let expected_ty = eval::eval(&mut temp_env, arg_ty).map_err(|_| Error::BadSynth {
             tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
@@ -386,6 +409,7 @@ pub fn type_synth_metavariable<'db, 'g>(
     let mut temp_env = Environment {
         global: env.values.global,
         local: local_env,
+        transparent: val::TransparentEnv::new(),
     };
     let meta_ty = eval::eval(&mut temp_env, &meta_info.ty).map_err(|_| Error::BadSynth {
         tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
@@ -456,6 +480,7 @@ pub fn type_check_case<'db, 'g>(
 
         let outcome = pattern_unify::unify_pattern(
             env.values.global,
+            &env.values.transparent,
             &tcon_info,
             &tcon_args,
             dcon_id,
@@ -501,6 +526,7 @@ pub fn type_check_case<'db, 'g>(
         // Run pattern unification for this branch
         let outcome = pattern_unify::unify_pattern(
             env.values.global,
+            &env.values.transparent,
             &tcon_info,
             &tcon_args,
             branch.constructor,
@@ -552,6 +578,7 @@ pub fn type_check<'db, 'g>(
     match term {
         Syntax::Pi(pi) => type_check_pi(env, pi, ty),
         Syntax::Lambda(lam) => type_check_lambda(env, lam, ty),
+        Syntax::Let(let_expr) => type_check_let(env, let_expr, ty),
         Syntax::TypeConstructor(tc) => type_check_type_constructor(env, tc, ty),
         Syntax::DataConstructor(dc) => type_check_data_constructor(env, dc, ty),
         Syntax::Case(case) => type_check_case(env, case, ty),
@@ -576,31 +603,53 @@ pub fn type_check<'db, 'g>(
     }
 }
 
-/// Typecheck a pi term.
 fn type_check_pi<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     pi: &syn::Pi<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
-    // The expected type of a pi must be a universe.
-    let Value::Universe(_) = ty else {
+    let Value::Universe(expected_univ) = ty else {
         return Err(Error::BadCtor {
             tm: Rc::new(Syntax::Pi(pi.clone())),
             ty_exp: Rc::new(ty.clone()),
         });
     };
 
-    // Check that the source type is valid.
-    check_type(env, &pi.source)?;
+    let source_ty = type_synth(env, &pi.source)?;
+    let Value::Universe(source_univ) = &*source_ty else {
+        return Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Pi(pi.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        });
+    };
 
-    // Evaluate the source type to a value.
     let sem_source_ty = eval(env, &pi.source)?;
 
-    // Check that the target type is of the same universe as the pi.
     env.push_var(sem_source_ty);
-    let result = type_check(env, &pi.target, ty);
+    let target_ty = type_synth(env, &pi.target)?;
     env.pop();
-    result
+
+    let Value::Universe(target_univ) = &*target_ty else {
+        return Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Pi(pi.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        });
+    };
+
+    // Pi type universe: max(source, target). Check cumulativity.
+    let source_level: usize = source_univ.level.into();
+    let target_level: usize = target_univ.level.into();
+    let pi_level = source_level.max(target_level);
+    let expected_level: usize = expected_univ.level.into();
+
+    if pi_level > expected_level {
+        return Err(Error::BadCtor {
+            tm: Rc::new(Syntax::Pi(pi.clone())),
+            ty_exp: Rc::new(ty.clone()),
+        });
+    }
+
+    Ok(())
 }
 
 fn type_check_lambda<'db, 'g>(
@@ -627,6 +676,23 @@ fn type_check_lambda<'db, 'g>(
     }
 }
 
+fn type_check_let<'db, 'g>(
+    env: &mut TCEnvironment<'db, 'g>,
+    let_expr: &syn::Let<'db>,
+    expected_type: &Value<'db>,
+) -> Result<(), Error<'db>> {
+    check_type(env, &let_expr.ty)?;
+    let sem_ty = eval(env, &let_expr.ty)?;
+    type_check(env, &let_expr.value, &sem_ty)?;
+    let sem_value = eval(env, &let_expr.value)?;
+
+    env.push_transparent(sem_ty, sem_value);
+    let result = type_check(env, &let_expr.body, expected_type);
+    env.pop();
+
+    result
+}
+
 fn type_check_type_constructor<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     tcon: &syn::TypeConstructor<'db>,
@@ -651,6 +717,7 @@ fn type_check_type_constructor<'db, 'g>(
             let mut ty_env = val::Environment {
                 global: env.values.global,
                 local: val::LocalEnv::new(),
+                transparent: val::TransparentEnv::new(),
             };
 
             for (arg, arg_ty) in tcon.arguments.iter().zip(&tcon_info.arguments) {
@@ -690,6 +757,7 @@ fn type_check_data_constructor<'db, 'g>(
             let mut ty_env = val::Environment {
                 global: env.values.global,
                 local: val::LocalEnv::new(),
+                transparent: val::TransparentEnv::new(),
             };
 
             let ps = tc.arguments[..tc_info.num_parameters].iter().cloned();
@@ -705,7 +773,13 @@ fn type_check_data_constructor<'db, 'g>(
             }
 
             let ty_got = eval::eval(&mut ty_env, &dc_info.ty)?;
-            match equal::type_equiv(env.values.global, env.depth(), ty_exp, &ty_got) {
+            match equal::type_equiv(
+                env.values.global,
+                &env.values.transparent,
+                env.depth(),
+                ty_exp,
+                &ty_got,
+            ) {
                 Ok(_) => Ok(()),
                 Err(_) => Err(Error::BadCheck {
                     tm: Rc::new(Syntax::DataConstructor(dc.clone())),
@@ -993,6 +1067,7 @@ fn type_check_refl<'db, 'g>(
 
     equal::equate(
         env.values.global,
+        &env.values.transparent,
         env.depth(),
         &eq_ty.lhs,
         &eq_ty.rhs,
@@ -1061,7 +1136,13 @@ pub fn type_check_synth_term<'db, 'g>(
     ty1: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     let ty2 = type_synth(env, term)?;
-    match crate::equal::type_equiv(env.values.global, env.depth(), ty1, &ty2) {
+    match crate::equal::type_equiv(
+        env.values.global,
+        &env.values.transparent,
+        env.depth(),
+        ty1,
+        &ty2,
+    ) {
         Ok(()) => Ok(()),
         Err(_) => Err(Error::BadCheck {
             tm: Rc::new(term.clone()),
@@ -1250,6 +1331,7 @@ fn check_type_constructor_type<'db, 'g>(
     let mut ty_env = val::Environment {
         global: env.values.global,
         local: val::LocalEnv::new(),
+        transparent: val::TransparentEnv::new(),
     };
 
     for (arg, arg_ty) in tcon.arguments.iter().zip(&tcon_info.arguments) {
@@ -2299,9 +2381,277 @@ mod tests {
         let synth_ty = result.unwrap();
         // The synthesized type should be equal to B
         assert!(
-            equal::type_equiv(&global, env.depth(), &synth_ty, &b).is_ok(),
+            equal::type_equiv(&global, &env.values.transparent, env.depth(), &synth_ty, &b).is_ok(),
             "Expected type B, got {:?}",
             synth_ty
         );
+    }
+
+    // ========== Let expression tests ==========
+
+    #[test]
+    fn test_let_simple_synth() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %x : U0 = U0; %x
+        // Should synthesize to U1 (since U0 : U1)
+        let let_expr = parse(&db, "let %x : U1 = U0; %x");
+        let result = type_synth(&mut env, &let_expr);
+        assert!(result.is_ok(), "type_synth failed: {:?}", result.err());
+
+        let synth_ty = result.unwrap();
+        match synth_ty.as_ref() {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
+            other => panic!("Expected Universe(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_let_simple_check() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %x : U0 = U0; %x : U1
+        let let_expr = parse(&db, "let %x : U1 = U0; %x");
+        let u1 = Value::universe(UniverseLevel::new(1));
+        let result = type_check(&mut env, &let_expr, &u1);
+        assert!(result.is_ok(), "type_check failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_let_body_uses_binding() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %A : U1 = U0; %A
+        // The body references the let-bound variable
+        let let_expr = parse(&db, "let %A : U1 = U0; %A");
+        let result = type_synth(&mut env, &let_expr);
+        assert!(result.is_ok(), "type_synth failed: {:?}", result.err());
+
+        let synth_ty = result.unwrap();
+        match synth_ty.as_ref() {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
+            other => panic!("Expected Universe(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_let_nested() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %A : U1 = U0; let %B : U1 = %A; %B
+        let let_expr = parse(&db, "let %A : U1 = U0; let %B : U1 = %A; %B");
+        let result = type_synth(&mut env, &let_expr);
+        assert!(result.is_ok(), "type_synth failed: {:?}", result.err());
+
+        let synth_ty = result.unwrap();
+        match synth_ty.as_ref() {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
+            other => panic!("Expected Universe(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_let_delta_reduction_in_equality() {
+        // CRITICAL TEST: This is the test case from the design document
+        // let y = U0; let h : Eq U1 U0 y = refl;
+        // This tests that δ-reduction works correctly in conversion checking
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %y : U1 = U0; let %h : Eq U1 U0 %y = refl; %h
+        // This should typecheck because y unfolds to U0 via δ-reduction
+        let let_expr = parse(&db, "let %y : U1 = U0; let %h : Eq U1 U0 %y = refl; %h");
+        let result = type_synth(&mut env, &let_expr);
+        assert!(
+            result.is_ok(),
+            "δ-reduction test failed: {:?}",
+            result.err()
+        );
+
+        // The type should be Eq U1 U0 U0 after δ-reduction
+        let synth_ty = result.unwrap();
+        match synth_ty.as_ref() {
+            Value::EqType(_) => {
+                // Success! The equality type was synthesized correctly
+            }
+            other => panic!("Expected EqType, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_let_with_universe_values() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %T : U1 = U0; let %x : U1 = %T; %x
+        // Chain of let bindings with universe values
+        let let_expr = parse(&db, "let %T : U1 = U0; let %x : U1 = %T; %x");
+        let result = type_synth(&mut env, &let_expr);
+        assert!(result.is_ok(), "type_synth failed: {:?}", result.err());
+
+        let synth_ty = result.unwrap();
+        match synth_ty.as_ref() {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
+            other => panic!("Expected Universe(1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_let_type_annotation_checked() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // let %x : Bit = U0; %x
+        // This should fail because U0 is not a Bit
+        let let_expr = parse(&db, "let %x : Bit = U0; %x");
+        let result = type_synth(&mut env, &let_expr);
+        assert!(result.is_err(), "Expected type error, but got success");
+    }
+
+    #[test]
+    fn test_let_in_lambda_with_pi_type() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // λ %A → let %B : U0 = %A; %B
+        // Let can appear in lambda bodies, and we check against a Pi type
+        let lam_expr = parse(&db, "λ %A → let %B : U0 = %A; %B");
+        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_closure = val::Closure::new(
+            val::LocalEnv::new(),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        let pi_ty = Rc::new(Value::pi(u0, u0_closure));
+        let result = type_check(&mut env, &lam_expr, &pi_ty);
+        assert!(result.is_ok(), "type_check failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_let_in_lambda_body() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // λ %x → let %y : U0 = %x; %y
+        // Let can appear in lambda bodies
+        let lam_expr = parse(&db, "λ %x → let %y : U0 = %x; %y");
+        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_closure = val::Closure::new(
+            val::LocalEnv::new(),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        let pi_ty = Rc::new(Value::pi(u0.clone(), u0_closure));
+        let result = type_check(&mut env, &lam_expr, &pi_ty);
+        assert!(result.is_ok(), "type_check failed: {:?}", result.err());
+    }
+
+    // ========== Universe Level Checking Tests ==========
+
+    #[test]
+    fn test_pi_universe_max_rule() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // ∀ (%x : U0) → U0 should have type U1 (max(0, 0) = 0, so Pi : U1)
+        let pi_expr = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
+        let result = type_check(&mut env, &pi_expr, &u1);
+        assert!(result.is_ok(), "Pi (U0 -> U0) should be in U1");
+
+        // ∀ (%x : U0) → U1 should have type U2 (max(0, 1) = 1, so Pi : U2)
+        let pi_expr = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(1)),
+        );
+        let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
+        let result = type_check(&mut env, &pi_expr, &u2);
+        assert!(result.is_ok(), "Pi (U0 -> U1) should be in U2");
+
+        // ∀ (%x : U1) → U0 should have type U2 (max(1, 0) = 1, so Pi : U2)
+        let pi_expr = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel::new(1)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
+        let result = type_check(&mut env, &pi_expr, &u2);
+        assert!(result.is_ok(), "Pi (U1 -> U0) should be in U2");
+    }
+
+    #[test]
+    fn test_pi_universe_cumulativity() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // ∀ (%x : U0) → U0 can be checked against U2 (cumulativity: U1 <= U2)
+        let pi_expr = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+        );
+        let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
+        let result = type_check(&mut env, &pi_expr, &u2);
+        assert!(
+            result.is_ok(),
+            "Pi (U0 -> U0) should be checkable against U2 (cumulativity)"
+        );
+    }
+
+    #[test]
+    fn test_pi_universe_level_too_low_fails() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // ∀ (%x : U0) → U1 should NOT be checkable against U1
+        // (max(0, 1) = 1, so Pi : U2, but we're checking against U1)
+        let pi_expr = Syntax::pi_rc(
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(1)),
+        );
+        let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
+        let result = type_check(&mut env, &pi_expr, &u1);
+        assert!(
+            result.is_err(),
+            "Pi (U0 -> U1) should NOT be in U1 (needs U2)"
+        );
+    }
+
+    #[test]
+    fn test_universe_synthesis_increments() {
+        let db = Database::default();
+        let global = val::GlobalEnv::new();
+        let mut env = make_env(&db, &global);
+
+        // U0 : U1
+        let u0 = Syntax::universe_rc(UniverseLevel::new(0));
+        let ty = type_synth(&mut env, &u0).expect("should synthesize");
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
+
+        // U5 : U6
+        let u5 = Syntax::universe_rc(UniverseLevel::new(5));
+        let ty = type_synth(&mut env, &u5).expect("should synthesize");
+        match &*ty {
+            Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(6)),
+            _ => panic!("Expected Universe, got {:?}", ty),
+        }
     }
 }
