@@ -77,6 +77,8 @@ pub enum Token {
     #[token("λ", priority = 4)]
     #[token("\\", priority = 4)]
     Lambda,
+    #[token("let", priority = 5)]
+    Let,
     #[token("mod", priority = 5)]
     Mod,
     #[token("^", priority = 4)]
@@ -607,6 +609,46 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     result = Syntax::lambda_rc(result);
                 }
                 Ok(Some(result))
+            }
+            Token::Let => {
+                // Parse: let %x : T = v; body
+                state.advance_token();
+                let depth = state.names_depth();
+
+                // Parse the variable name
+                let var_name = match state.peek_token() {
+                    Some(Ok(Token::Variable(name))) => {
+                        state.advance_token();
+                        name
+                    }
+                    _ => return Err(Error::MissingVariable),
+                };
+
+                // Expect ':'
+                p_token(state, Token::Colon, Error::MissingColon)?;
+
+                // Parse the type annotation
+                let ty = p_term(state)?;
+
+                // Expect '='
+                p_token(state, Token::Equals, Error::Other)?;
+
+                // Parse the value
+                let value = p_term(state)?;
+
+                // Expect ';'
+                p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
+
+                // Push the variable name into scope for the body
+                state.push_name(var_name);
+
+                // Parse the body
+                let body = p_term(state)?;
+
+                // Restore the name environment
+                state.reset_names(depth);
+
+                Ok(Some(Syntax::let_rc(ty, value, body)))
             }
             Token::Mod => {
                 state.advance_token();

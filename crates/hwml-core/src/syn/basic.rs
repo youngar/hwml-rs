@@ -80,6 +80,7 @@ pub enum Syntax<'db> {
     Pi(Pi<'db>),
     Lambda(Lambda<'db>),
     Application(Application<'db>),
+    Let(Let<'db>),
 
     TypeConstructor(TypeConstructor<'db>),
     DataConstructor(DataConstructor<'db>),
@@ -151,6 +152,14 @@ impl<'db> Syntax<'db> {
 
     pub fn application_rc(fun: RcSyntax<'db>, arg: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::application(fun, arg))
+    }
+
+    pub fn let_expr(ty: RcSyntax<'db>, value: RcSyntax<'db>, body: RcSyntax<'db>) -> Syntax<'db> {
+        Syntax::Let(Let::new(ty, value, body))
+    }
+
+    pub fn let_rc(ty: RcSyntax<'db>, value: RcSyntax<'db>, body: RcSyntax<'db>) -> RcSyntax<'db> {
+        Rc::new(Syntax::let_expr(ty, value, body))
     }
 
     pub fn type_constructor(name: ConstantId<'db>, arguments: Vec<RcSyntax<'db>>) -> Syntax<'db> {
@@ -462,6 +471,19 @@ pub struct Application<'db> {
 impl<'db> Application<'db> {
     pub fn new(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Application<'db> {
         Application { function, argument }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
+pub struct Let<'db> {
+    pub ty: RcSyntax<'db>,
+    pub value: RcSyntax<'db>,
+    pub body: RcSyntax<'db>,
+}
+
+impl<'db> Let<'db> {
+    pub fn new(ty: RcSyntax<'db>, value: RcSyntax<'db>, body: RcSyntax<'db>) -> Let<'db> {
+        Let { ty, value, body }
     }
 }
 

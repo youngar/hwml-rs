@@ -498,6 +498,7 @@ impl<'db> Print for Syntax<'db> {
             Syntax::Pi(pi) => pi.print(db, st, p),
             Syntax::Lambda(lam) => lam.print(db, st, p),
             Syntax::Application(app) => app.print(db, st, p),
+            Syntax::Let(let_expr) => let_expr.print(db, st, p),
 
             Syntax::TypeConstructor(type_constructor) => type_constructor.print(db, st, p),
             Syntax::DataConstructor(data_constructor) => data_constructor.print(db, st, p),
@@ -664,6 +665,29 @@ impl<'db> Print for Application<'db> {
                 }
                 p.text("]")
             })
+        })
+    }
+}
+
+impl<'db> Print for Let<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        // Print: let %x : ty = value; body
+        p.cgroup(2, |p| {
+            p.text("let ")?;
+            print_binder(st, p)?;
+            p.text(" : ")?;
+            print_internal_subterm(db, st, p, &*self.ty)?;
+            p.text(" = ")?;
+            print_internal_subterm(db, st, p, &*self.value)?;
+            p.text(";")?;
+            p.space()?;
+            let st = st.inc_depth();
+            print_internal_subterm(db, st, p, &*self.body)
         })
     }
 }
