@@ -14,7 +14,7 @@ use crate::{
     syn::{CaseBranch, RcSyntax, Syntax},
     val::{
         self, Closure, Eliminator, Environment, Flex, GlobalEnv, HArrow, LocalEnv, Module, Normal,
-        Pi, Rigid, TypeConstructor,
+        Pi, Rigid, TransparentEnv, TypeConstructor,
     },
     ConstantId, UniverseLevel, Value,
 };
@@ -65,6 +65,10 @@ pub fn quote<'db>(
     value: &Value<'db>,
     ty: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
+    if let Value::Let(let_val) = value {
+        return quote_let(global, depth, let_val, ty);
+    }
+
     match ty {
         Value::Universe(universe) => quote_universe_instances(global, depth, value, universe),
         Value::Lift(lift) => quote_lift_instances(global, depth, value, lift),
@@ -476,6 +480,26 @@ pub fn quote_lambda<'db>(
     Ok(Syntax::lambda_rc(syn_body))
 }
 
+pub fn quote_let<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    let_val: &val::Let<'db>,
+    _expected_ty: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    let syn_ty = quote_at_unknown_type(global, depth, &let_val.ty)?;
+    let syn_value = quote(global, depth, &let_val.value, &let_val.ty)?;
+    let syn_body = quote(global, depth + 1, &let_val.body, _expected_ty)?;
+    Ok(Syntax::let_rc(syn_ty, syn_value, syn_body))
+}
+
+fn quote_at_unknown_type<'db>(
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    value: &Value<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    type_quote(global, depth, value)
+}
+
 /// Quote a TypeConstructor to syntax.
 pub fn quote_type_constructor<'db>(
     global: &GlobalEnv<'db>,
@@ -492,6 +516,7 @@ pub fn quote_type_constructor<'db>(
     let mut env = Environment {
         global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
 
     // Quote each argument (parameters and indices)
@@ -531,6 +556,7 @@ pub fn quote_data_constructor<'db>(
     let mut env = Environment {
         global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
     env.extend(parameters);
 
@@ -712,6 +738,7 @@ fn quote_metavariable<'db>(
     let mut env = Environment {
         global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
 
     // Quote each value in the local environment
@@ -899,6 +926,7 @@ mod tests {
             let mut env = Environment {
                 global: &self.global,
                 local: LocalEnv::new(),
+                transparent: TransparentEnv::new(),
             };
             eval::eval(&mut env, &stx).expect("eval failed")
         }

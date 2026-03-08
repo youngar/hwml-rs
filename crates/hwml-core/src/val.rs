@@ -41,6 +41,7 @@ pub enum Value<'db> {
 
     Pi(Pi<'db>),
     Lambda(Lambda<'db>),
+    Let(Let<'db>),
 
     TypeConstructor(TypeConstructor<'db>),
     DataConstructor(DataConstructor<'db>),
@@ -245,6 +246,19 @@ pub struct Lambda<'db> {
 impl<'db> Lambda<'db> {
     pub fn new(body: Closure<'db>) -> Lambda<'db> {
         Lambda { body }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Let<'db> {
+    pub ty: Rc<Value<'db>>,
+    pub value: Rc<Value<'db>>,
+    pub body: Rc<Value<'db>>,
+}
+
+impl<'db> Let<'db> {
+    pub fn new(ty: Rc<Value<'db>>, value: Rc<Value<'db>>, body: Rc<Value<'db>>) -> Let<'db> {
+        Let { ty, value, body }
     }
 }
 
@@ -668,10 +682,50 @@ impl<'db> CaseBranch<'db> {
     }
 }
 
+/// Tracks transparent bindings (Let-bound variables) for δ-reduction.
+#[derive(Clone, Debug)]
+pub struct TransparentEnv<'db> {
+    bindings: Vec<Option<Rc<Value<'db>>>>,
+}
+
+impl<'db> TransparentEnv<'db> {
+    pub fn new() -> Self {
+        Self {
+            bindings: Vec::new(),
+        }
+    }
+
+    pub fn lookup(&self, level: Level) -> Option<Rc<Value<'db>>> {
+        let index: usize = level.into();
+        self.bindings.get(index).and_then(|opt| opt.clone())
+    }
+
+    pub fn push_transparent(&mut self, value: Rc<Value<'db>>) {
+        self.bindings.push(Some(value));
+    }
+
+    pub fn push_rigid(&mut self) {
+        self.bindings.push(None);
+    }
+
+    pub fn pop(&mut self) {
+        self.bindings.pop();
+    }
+
+    pub fn truncate(&mut self, depth: usize) {
+        self.bindings.truncate(depth);
+    }
+
+    pub fn depth(&self) -> usize {
+        self.bindings.len()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Environment<'db, 'g> {
     pub global: &'g GlobalEnv<'db>,
     pub local: LocalEnv<'db>,
+    pub transparent: TransparentEnv<'db>,
 }
 
 impl<'db, 'g> Environment<'db, 'g> {
@@ -679,6 +733,7 @@ impl<'db, 'g> Environment<'db, 'g> {
         Self {
             global,
             local: LocalEnv::new(),
+            transparent: TransparentEnv::new(),
         }
     }
 
@@ -703,8 +758,10 @@ impl<'db, 'g> Environment<'db, 'g> {
     // Forwarding methods to LocalEnv
 
     /// Get a local variable by level.
-    pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
-        self.local.get(level)
+    /// Returns the rigid variable representation.
+    /// NOTE: Does NOT unfold transparent bindings - that's the job of the conversion checker!
+    pub fn get(&self, level: Level) -> Rc<Value<'db>> {
+        self.local.get(level).clone()
     }
 
     pub fn set(&mut self, level: Level, value: Rc<Value<'db>>) {
@@ -717,12 +774,15 @@ impl<'db, 'g> Environment<'db, 'g> {
     }
 
     /// Extend the environment by pushing a definition onto the end.
+    /// This is rigid (not transparent) by default.
     pub fn push(&mut self, value: Rc<Value<'db>>) {
+        self.transparent.push_rigid();
         self.local.push(value)
     }
 
     /// Extend the environment by pushing a variable onto the end.
     pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+        self.transparent.push_rigid();
         self.local.push_var(ty)
     }
 
@@ -731,12 +791,32 @@ impl<'db, 'g> Environment<'db, 'g> {
     where
         T: IntoIterator<Item = Rc<Value<'db>>>,
     {
-        self.local.extend_vars(types)
+        for ty in types {
+            self.push_var(ty);
+        }
+    }
+
+    /// Push a transparent binding (for Let expressions).
+    /// This adds both the variable to the local environment and tracks it as transparent.
+    pub fn push_transparent(
+        &mut self,
+        ty: Rc<Value<'db>>,
+        value: Rc<Value<'db>>,
+    ) -> Rc<Value<'db>> {
+        let var = self.local.push_var(ty);
+        self.transparent.push_transparent(value);
+        var
+    }
+
+    /// Look up a transparent binding for a variable.
+    pub fn lookup_transparent(&self, level: Level) -> Option<Rc<Value<'db>>> {
+        self.transparent.lookup(level)
     }
 
     /// Pop the last value from the local environment.
     pub fn pop(&mut self) {
-        self.local.pop()
+        self.local.pop();
+        self.transparent.pop();
     }
 
     /// Get the length of the local environment.
@@ -746,7 +826,8 @@ impl<'db, 'g> Environment<'db, 'g> {
 
     /// Truncate the local environment to the given depth.
     pub fn truncate(&mut self, depth: usize) {
-        self.local.truncate(depth)
+        self.local.truncate(depth);
+        self.transparent.truncate(depth);
     }
 }
 

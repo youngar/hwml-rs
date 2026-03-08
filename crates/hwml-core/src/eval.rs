@@ -1,6 +1,6 @@
 use crate::val::{
     self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
-    MetaVariableLookupError, Normal, Rigid, SemTelescope, Value,
+    MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
 };
 use crate::*;
 use std::{
@@ -45,6 +45,7 @@ pub fn substitute<'db, 'g>(
     let mut env = Environment {
         global,
         local: substitution,
+        transparent: TransparentEnv::new(),
     };
     eval(&mut env, tm)
 }
@@ -60,6 +61,7 @@ pub fn eval<'db, 'g>(
         Syntax::Pi(pi) => eval_pi(env, pi),
         Syntax::Lambda(lam) => eval_lambda(env, lam),
         Syntax::Application(app) => eval_application(env, &app),
+        Syntax::Let(let_expr) => eval_let(env, let_expr),
 
         Syntax::TypeConstructor(type_constructor) => eval_type_constructor(env, type_constructor),
         Syntax::DataConstructor(data_constructor) => eval_data_constructor(env, data_constructor),
@@ -128,6 +130,23 @@ fn eval_lambda<'db, 'g>(
     Ok(Rc::new(Value::Lambda(dom::Lambda {
         body: Closure::new(env.local.clone(), lambda.body.clone()),
     })))
+}
+
+fn eval_let<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    let_expr: &syn::Let<'db>,
+) -> Result<Rc<Value<'db>>, Error> {
+    // Evaluate the type and value
+    let ty = eval(env, &let_expr.ty)?;
+    let value = eval(env, &let_expr.value)?;
+
+    // Push transparent binding and evaluate body
+    env.push_transparent(ty.clone(), value.clone());
+    let body = eval(env, &let_expr.body)?;
+    env.pop();
+
+    // Return Let value with fully evaluated body
+    Ok(Rc::new(Value::Let(dom::Let::new(ty, value, body))))
 }
 
 fn eval_type_constructor<'db, 'g>(
@@ -268,6 +287,7 @@ fn eval_constant<'db, 'g>(
     let mut unfold_env = Environment {
         global: env.global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
     eval(&mut unfold_env, &info.value)
 }
@@ -276,7 +296,7 @@ fn eval_variable<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     var: &syn::Variable<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    Ok(env.get(var.index.to_level(env.depth())).clone())
+    Ok(env.get(var.index.to_level(env.depth())))
 }
 
 fn eval_metavariable<'db, 'g>(
@@ -297,6 +317,7 @@ fn eval_metavariable<'db, 'g>(
     let mut type_env = Environment {
         global: env.global,
         local: local_env.clone(),
+        transparent: TransparentEnv::new(),
     };
 
     // Evaluate the type of the metavariable in the extended environment.
@@ -625,7 +646,11 @@ where
 {
     let mut local = closure.local.clone();
     local.extend(args);
-    let mut env = Environment { global, local };
+    let mut env = Environment {
+        global,
+        local,
+        transparent: TransparentEnv::new(),
+    };
     eval(&mut env, &closure.term)
 }
 
@@ -643,6 +668,7 @@ where
     let mut env = Environment {
         global,
         local: LocalEnv::new(),
+        transparent: TransparentEnv::new(),
     };
     // Extend the environment with the parameters.
     env.extend(params);
@@ -693,6 +719,7 @@ mod tests {
             let mut env = Environment {
                 global: &self.global,
                 local: LocalEnv::new(),
+                transparent: TransparentEnv::new(),
             };
             super::eval(&mut env, stx).expect("eval failed")
         }
