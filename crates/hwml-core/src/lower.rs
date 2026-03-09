@@ -13,6 +13,7 @@
 //! beta-reduction for hardware-level applications.
 
 use crate::{
+    common::Location,
     eval::run_closure,
     quote,
     syn::RcSyntax,
@@ -363,14 +364,14 @@ mod tests {
 
         // Create a Module closure that returns its argument (identity)
         // mod %0 - the body just refers to the bound variable
-        let module_body = Syntax::variable_rc(crate::common::Index(0));
+        let module_body = Syntax::variable_rc(Location::UNKNOWN, crate::common::Index(0));
         let module_closure = Closure::new(LocalEnv::new(), module_body);
         let module = Value::module(module_closure);
 
         // The type: Bit → Bit
         let module_ty = Value::harrow(
             Rc::new(Value::bit()),
-            Closure::new(LocalEnv::new(), Syntax::bit_rc()),
+            Closure::new(LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN)),
         );
 
         // The argument: One
@@ -395,7 +396,7 @@ mod tests {
         let constant = Value::Constant("myModule".into_with_db(&db));
         let module_ty = Value::harrow(
             Rc::new(Value::bit()),
-            Closure::new(LocalEnv::new(), Syntax::bit_rc()),
+            Closure::new(LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN)),
         );
         let arg = Rc::new(Value::one());
 
@@ -413,13 +414,13 @@ mod tests {
         let global = GlobalEnv::new();
 
         // Inner module: mod 0 (ignores argument, returns Zero)
-        let inner_module_body = Syntax::zero_rc();
+        let inner_module_body = Syntax::zero_rc(Location::UNKNOWN);
         let inner_closure = Closure::new(LocalEnv::new(), inner_module_body);
         let inner_module = Value::module(inner_closure);
 
         let inner_ty = Value::harrow(
             Rc::new(Value::bit()),
-            Closure::new(LocalEnv::new(), Syntax::bit_rc()),
+            Closure::new(LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN)),
         );
 
         // Inner HApplication: (mod 0)<Bit→Bit>(One) which should reduce to Zero
@@ -430,13 +431,13 @@ mod tests {
         );
 
         // Outer module: mod %0 (identity - returns argument)
-        let outer_module_body = Syntax::variable_rc(crate::common::Index(0));
+        let outer_module_body = Syntax::variable_rc(Location::UNKNOWN, crate::common::Index(0));
         let outer_closure = Closure::new(LocalEnv::new(), outer_module_body);
         let outer_module = Value::module(outer_closure);
 
         let outer_ty = Value::harrow(
             Rc::new(Value::bit()),
-            Closure::new(LocalEnv::new(), Syntax::bit_rc()),
+            Closure::new(LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN)),
         );
 
         // Outer HApplication: (mod %0)<Bit→Bit>((mod 0)<Bit→Bit>(One))
@@ -460,13 +461,13 @@ mod tests {
         let global = GlobalEnv::new();
 
         // Create a simple HApplication that reduces to One
-        let module_body = Syntax::one_rc(); // mod that ignores arg and returns 1
+        let module_body = Syntax::one_rc(Location::UNKNOWN); // mod that ignores arg and returns 1
         let module_closure = Closure::new(LocalEnv::new(), module_body);
         let module = Value::module(module_closure);
 
         let module_ty = Value::harrow(
             Rc::new(Value::bit()),
-            Closure::new(LocalEnv::new(), Syntax::bit_rc()),
+            Closure::new(LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN)),
         );
 
         let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), Rc::new(Value::zero()));
