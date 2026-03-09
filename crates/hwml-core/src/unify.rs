@@ -155,7 +155,6 @@ fn rename_eliminator<'db>(
 ) -> UnificationResult<'db, val::Eliminator<'db>> {
     match eliminator {
         Eliminator::Application(a) => {
-            // TODO: do we have to rename the type?
             let arg_ty = rename(global, mctx, meta, renaming, &a.argument.ty)?;
             let arg_value = rename(global, mctx, meta, renaming, &a.argument.value)?;
             let arg_normal = val::Normal::new(arg_ty, arg_value);
@@ -414,20 +413,15 @@ fn unify_case<'db>(
     c1: &val::Case<'db>,
     c2: &val::Case<'db>,
 ) -> UnificationResult<'db, ()> {
-    // Placeholder type for fresh variables (we don't track precise types in this unifier)
-    let placeholder_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+    let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
 
-    // 1. Check type constructors match
     if c1.type_constructor != c2.type_constructor {
-        // Use Mismatch with placeholder values to indicate the case mismatch
         let v1 = Rc::new(Value::Constant(c1.type_constructor));
         let v2 = Rc::new(Value::Constant(c2.type_constructor));
         return Err(UnificationError::Mismatch(v1, v2));
     }
 
-    // 2. Check parameters count and unify pairwise
     if c1.parameters.len() != c2.parameters.len() {
-        // Parameters count mismatch - report as spine mismatch
         return Err(UnificationError::MismatchSpine(
             val::Spine::empty(),
             val::Spine::empty(),
@@ -437,10 +431,6 @@ fn unify_case<'db>(
         unify(db, global, mctx, depth, p1.clone(), p2.clone())?;
     }
 
-    // Note: No return_type unification needed - case expressions are check-only,
-    // so the return type comes from the expected type context, not the eliminator.
-
-    // 3. Check branches count and unify each
     if c1.branches.len() != c2.branches.len() {
         return Err(UnificationError::MismatchSpine(
             val::Spine::empty(),
@@ -461,9 +451,8 @@ fn unify_case<'db>(
             ));
         }
 
-        // Create fresh variables for constructor arguments
         let args: Vec<_> = (0..b1.arity)
-            .map(|i| Rc::new(Value::variable(Level(depth + i), placeholder_ty.clone())))
+            .map(|i| Rc::new(Value::variable(Level(depth + i), var_ty.clone())))
             .collect();
         let body1 = eval::run_closure(global, &b1.body, args.clone())?;
         let body2 = eval::run_closure(global, &b2.body, args)?;
@@ -523,7 +512,6 @@ pub fn unify<'db>(
         }
         (Value::Lambda(l1), Value::Lambda(l2)) => {
             let var = Rc::new(Value::variable(
-                // TODO: get the type.
                 Level::new(depth),
                 Rc::new(Value::universe(UniverseLevel::new(0))),
             ));

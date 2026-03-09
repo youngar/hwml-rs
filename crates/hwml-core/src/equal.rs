@@ -113,7 +113,6 @@ pub fn equate<'a, 'db: 'a>(
         _ => {}
     }
 
-    // STRUCTURAL COMPARISON: Try to match on type-directed structure
     match ty {
         Value::Universe(universe) => {
             equate_universe_instances(global, transparent, depth, lhs, rhs, universe)
@@ -701,11 +700,6 @@ fn equate_data_constructors<'db>(
     };
     env.extend(parameters);
 
-    // TODO: We are not adding the parameters to the binding depth, which is used
-    // to check if two terms are convertible. The environment only extends for the
-    // types.
-    // depth = depth + num_parameters;
-
     for (larg, rarg, syn_ty) in izip!(lhs.iter(), rhs.iter(), data_info.arguments.iter()) {
         // Evaluate the type of the current argument.
         let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
@@ -977,16 +971,12 @@ pub fn equate_cases<'db>(
     // so the return type comes from the expected type context.
 
     // Check that the branches are convertible.
-    // First, check that we have the same number of branches.
     if lhs.branches.len() != rhs.branches.len() {
         return Err(Error::NotConvertible);
     }
 
-    // For checking branch bodies, we need a type. Without return_type, we use a placeholder.
-    // TODO: Thread the expected type through when we have check-only equate.
-    let placeholder_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
+    let branch_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
 
-    // Check each branch.
     for (lbranch, rbranch) in izip!(lhs.branches.iter(), rhs.branches.iter()) {
         // Check that the constructors are the same.
         if lbranch.constructor != rbranch.constructor {
@@ -1024,15 +1014,13 @@ pub fn equate_cases<'db>(
             inner_env.push_rigid();
         }
 
-        // Check that the branch values are convertible.
-        // TODO: Use the actual expected type from check context instead of placeholder.
         equate(
             global,
             &inner_env,
             depth + lbranch.arity,
             &lbranch_val,
             &rbranch_val,
-            &placeholder_ty,
+            &branch_ty,
         )?;
     }
 

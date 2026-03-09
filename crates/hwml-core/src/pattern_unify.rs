@@ -413,18 +413,12 @@ fn unify_equations<'db>(
                 ));
                 let m1_body = eval::run_closure(global, &t1.motive, [var.clone()])?;
                 let m2_body = eval::run_closure(global, &t2.motive, [var.clone()])?;
-                // The result type of the motive is a universe
-                let motive_result_ty =
-                    Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
-                work_list.push((m1_body, m2_body, motive_result_ty));
+                let motive_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+                work_list.push((m1_body, m2_body, motive_ty));
 
-                // Unify proofs - we need to infer their type (should be EqType)
-                // For simplicity, use a placeholder type
                 let proof_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
                 work_list.push((t1.proof.clone(), t2.proof.clone(), proof_ty));
 
-                // Unify values - they should have the same type (P x for some x)
-                // For simplicity, use a placeholder type
                 let value_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
                 work_list.push((t1.value.clone(), t2.value.clone(), value_ty));
             }

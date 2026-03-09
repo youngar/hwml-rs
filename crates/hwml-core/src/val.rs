@@ -685,13 +685,13 @@ impl<'db> CaseBranch<'db> {
 /// Tracks transparent bindings (Let-bound variables) for δ-reduction.
 #[derive(Clone, Debug)]
 pub struct TransparentEnv<'db> {
-    bindings: Vec<Option<Rc<Value<'db>>>>,
+    bindings: im::Vector<Option<Rc<Value<'db>>>>,
 }
 
 impl<'db> TransparentEnv<'db> {
     pub fn new() -> Self {
         Self {
-            bindings: Vec::new(),
+            bindings: im::Vector::new(),
         }
     }
 
@@ -701,15 +701,15 @@ impl<'db> TransparentEnv<'db> {
     }
 
     pub fn push_transparent(&mut self, value: Rc<Value<'db>>) {
-        self.bindings.push(Some(value));
+        self.bindings.push_back(Some(value));
     }
 
     pub fn push_rigid(&mut self) {
-        self.bindings.push(None);
+        self.bindings.push_back(None);
     }
 
     pub fn pop(&mut self) {
-        self.bindings.pop();
+        self.bindings.pop_back();
     }
 
     pub fn truncate(&mut self, depth: usize) {
