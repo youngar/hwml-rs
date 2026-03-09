@@ -1,5 +1,6 @@
 ///! Renaming: preparing metavariable solutions for substitution.
 use crate::*;
+use hwml_core::common::Location;
 use hwml_core::syn::{RcSyntax, Syntax};
 use hwml_core::val::{
     self, Eliminator, Environment, Flex, GlobalEnv, LocalEnv, Normal, Rigid, Value,
@@ -364,7 +365,7 @@ fn rename_signal_universe_instance<'db>(
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // SignalUniverse has Bit as its type constructor
     match &**value {
-        Value::Bit(_) => Ok(Syntax::bit_rc()),
+        Value::Bit(_) => Ok(Syntax::bit_rc(Location::UNKNOWN)),
         Value::Prim(prim) => rename_prim(prim),
         Value::Constant(constant) => rename_constant(constant),
         Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
@@ -441,8 +442,8 @@ fn rename_bit_instance<'db>(
     value: &Rc<Value<'db>>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match &**value {
-        Value::Zero(_) => Ok(Syntax::zero_rc()),
-        Value::One(_) => Ok(Syntax::one_rc()),
+        Value::Zero(_) => Ok(Syntax::zero_rc(Location::UNKNOWN)),
+        Value::One(_) => Ok(Syntax::one_rc(Location::UNKNOWN)),
         Value::Prim(prim) => rename_prim(prim),
         Value::Constant(constant) => rename_constant(constant),
         Value::Rigid(rigid) => rename_rigid(db, global, meta, renaming, rigid),
@@ -494,9 +495,9 @@ pub fn rename_type<'db>(
         Value::HardwareUniverse(_) => Ok(Syntax::hardware_rc()),
         Value::SLift(slift) => rename_slift(db, global, meta, renaming, slift),
         Value::MLift(mlift) => rename_mlift(db, global, meta, renaming, mlift),
-        Value::SignalUniverse(_) => Ok(Syntax::signal_universe_rc()),
-        Value::Bit(_) => Ok(Syntax::bit_rc()),
-        Value::ModuleUniverse(_) => Ok(Syntax::module_universe_rc()),
+        Value::SignalUniverse(_) => Ok(Syntax::signal_universe_rc(Location::UNKNOWN)),
+        Value::Bit(_) => Ok(Syntax::bit_rc(Location::UNKNOWN)),
+        Value::ModuleUniverse(_) => Ok(Syntax::module_universe_rc(Location::UNKNOWN)),
         Value::HArrow(harrow) => rename_harrow(db, global, meta, renaming, harrow),
         Value::Prim(prim) => rename_prim(prim),
         Value::Constant(constant) => rename_constant(constant),
@@ -513,7 +514,7 @@ fn rename_universe<'db>(
     _renaming: &mut Renaming,
     universe: &val::Universe,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
-    Ok(Syntax::universe_rc(universe.level))
+    Ok(Syntax::universe_rc(Location::UNKNOWN, universe.level))
 }
 
 fn rename_pi<'db>(
@@ -603,7 +604,11 @@ fn rename_harrow<'db>(
         let sem_target = eval::run_closure(global, &sem_target_closure, [var])?;
         rename_type(db, global, meta, renaming, &sem_target)
     })?;
-    Ok(Syntax::harrow_rc(syn_source, syn_target))
+    Ok(Syntax::harrow_rc(
+        Location::UNKNOWN,
+        syn_source,
+        syn_target,
+    ))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -655,11 +660,11 @@ fn rename_module<'db>(
 }
 
 fn rename_prim<'db>(prim: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
-    Ok(Syntax::prim_rc(*prim))
+    Ok(Syntax::prim_rc(Location::UNKNOWN, *prim))
 }
 
 fn rename_constant<'db>(constant: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
-    Ok(Syntax::constant_rc(*constant))
+    Ok(Syntax::constant_rc(Location::UNKNOWN, *constant))
 }
 
 fn rename_rigid<'db>(
@@ -761,7 +766,7 @@ fn rename_application<'db>(
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     let sem_arg = &app.argument;
     let syn_arg = rename_normal(db, global, meta, renaming, sem_arg)?;
-    Ok(Syntax::application_rc(head, syn_arg))
+    Ok(Syntax::application_rc(Location::UNKNOWN, head, syn_arg))
 }
 
 /// Rename a case eliminator.
@@ -873,7 +878,11 @@ fn rename_metavariable<'db>(
     let info = global.metavariable(sem_meta.id).unwrap();
     let substitution =
         rename_substitution(db, global, meta, renaming, &info.arguments, &sem_meta.local)?;
-    Ok(Syntax::metavariable_rc(sem_meta.id, substitution))
+    Ok(Syntax::metavariable_rc(
+        Location::UNKNOWN,
+        sem_meta.id,
+        substitution,
+    ))
 }
 
 fn rename_substitution<'db>(

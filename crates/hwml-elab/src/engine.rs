@@ -61,14 +61,15 @@ fn quote_value_simple<'db>(
     _depth: usize,
     value: &Rc<Value<'db>>,
 ) -> syn::RcSyntax<'db> {
+    use hwml_core::common::Location;
     // For now, we can just return a placeholder - the key is that the type
     // is stored semantically. In practice, this closure won't be evaluated
     // directly, but used for typing information.
     // A proper implementation would use the full quote function.
     match value.as_ref() {
-        Value::Universe(u) => syn::Syntax::universe_rc(u.level),
+        Value::Universe(u) => syn::Syntax::universe_rc(Location::UNKNOWN, u.level),
         // For other cases, we'll need to handle them as they come up
-        _ => syn::Syntax::universe_rc(UniverseLevel::new(0)), // Placeholder
+        _ => syn::Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), // Placeholder
     }
 }
 

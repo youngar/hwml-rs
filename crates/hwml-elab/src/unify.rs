@@ -1,6 +1,6 @@
 use futures::future::join_all;
 use futures::join;
-use hwml_core::common::{MetaVariableId, UniverseLevel};
+use hwml_core::common::{Location, MetaVariableId, UniverseLevel};
 use hwml_core::eval::{self, run_application, run_closure, run_spine};
 use hwml_core::val::Environment;
 use hwml_core::val::LocalEnv;
@@ -877,11 +877,15 @@ async fn unify_flex_same<'db, 'g>(
         .iter()
         .map(|&level_idx| {
             let index = depth - 1 - level_idx;
-            hwml_core::syn::Syntax::variable_rc(hwml_core::common::Index::new(index))
+            hwml_core::syn::Syntax::variable_rc(
+                Location::UNKNOWN,
+                hwml_core::common::Index::new(index),
+            )
         })
         .collect();
 
-    let solution = hwml_core::syn::Syntax::metavariable_rc(new_meta_id, subst_vars);
+    let solution =
+        hwml_core::syn::Syntax::metavariable_rc(Location::UNKNOWN, new_meta_id, subst_vars);
 
     println!(
         "[Unify] Solving ?{} := ?{}[{:?}]",
@@ -1159,15 +1163,20 @@ async fn lower_flex<'db, 'g>(
                             ..extended_subst_len)
                             .rev()
                             .map(|i| {
-                                hwml_core::syn::Syntax::variable_rc(hwml_core::common::Index::new(
-                                    i,
-                                ))
+                                hwml_core::syn::Syntax::variable_rc(
+                                    Location::UNKNOWN,
+                                    hwml_core::common::Index::new(i),
+                                )
                             })
                             .collect();
 
-                        let new_meta_term =
-                            hwml_core::syn::Syntax::metavariable_rc(new_meta_id, subst_vars);
-                        let lambda_term = hwml_core::syn::Syntax::lambda_rc(new_meta_term);
+                        let new_meta_term = hwml_core::syn::Syntax::metavariable_rc(
+                            Location::UNKNOWN,
+                            new_meta_id,
+                            subst_vars,
+                        );
+                        let lambda_term =
+                            hwml_core::syn::Syntax::lambda_rc(Location::UNKNOWN, new_meta_term);
 
                         // Solve the old metavariable
                         println!(
@@ -2342,9 +2351,9 @@ mod tests {
             id_tcon,
             TypeConstructorInfo::new(
                 vec![
-                    Syntax::universe_rc(UniverseLevel::new(0)), // A : U0
-                    Syntax::variable_rc(hwml_core::common::Index::new(0)), // x : A
-                    Syntax::variable_rc(hwml_core::common::Index::new(1)), // y : A
+                    Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), // A : U0
+                    Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(0)), // x : A
+                    Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(1)), // y : A
                 ],
                 1, // num_parameters = 1 (only A)
                 UniverseLevel::new(0),
@@ -2364,13 +2373,17 @@ mod tests {
         global.add_data_constructor(
             "Refl".into_with_db(db),
             DataConstructorInfo::new(
-                vec![Syntax::variable_rc(hwml_core::common::Index::new(0))], // x : A
+                vec![Syntax::variable_rc(
+                    Location::UNKNOWN,
+                    hwml_core::common::Index::new(0),
+                )], // x : A
                 Syntax::type_constructor_rc(
+                    Location::UNKNOWN,
                     id_tcon,
                     vec![
-                        Syntax::variable_rc(hwml_core::common::Index::new(1)), // A
-                        Syntax::variable_rc(hwml_core::common::Index::new(0)), // x
-                        Syntax::variable_rc(hwml_core::common::Index::new(0)), // x (same!)
+                        Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(1)), // A
+                        Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(0)), // x
+                        Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(0)), // x (same!)
                     ],
                 ),
             ),

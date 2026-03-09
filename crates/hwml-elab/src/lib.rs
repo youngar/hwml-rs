@@ -1,3 +1,6 @@
+// Re-export location types from hwml-support
+pub use hwml_support::{Location, LocationData, SourceFile};
+
 pub mod elaborator;
 pub use elaborator::*;
 
