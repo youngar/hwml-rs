@@ -10,11 +10,11 @@ use std::{
 
 #[derive(Debug, Clone)]
 pub enum Error {
-    BadApplication,
-    BadCase,
-    UnknownConstant,
-    UnknownTypeConstructor,
-    UnknownDataConstructor,
+    BadApplication { loc: Option<Location> },
+    BadCase { loc: Option<Location> },
+    UnknownConstant { loc: Option<Location> },
+    UnknownTypeConstructor { loc: Option<Location> },
+    UnknownDataConstructor { loc: Option<Location> },
     MetaVariableLookupError(MetaVariableLookupError),
 }
 
@@ -27,11 +27,41 @@ impl From<MetaVariableLookupError> for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::BadApplication => write!(f, "bad application"),
-            Error::BadCase => write!(f, "bad case"),
-            Error::UnknownConstant => write!(f, "unknown constant"),
-            Error::UnknownTypeConstructor => write!(f, "unknown type constructor"),
-            Error::UnknownDataConstructor => write!(f, "unknown data constructor"),
+            Error::BadApplication { loc } => {
+                write!(f, "bad application")?;
+                if let Some(loc) = loc {
+                    write!(f, " at {:?}", loc)?;
+                }
+                Ok(())
+            }
+            Error::BadCase { loc } => {
+                write!(f, "bad case")?;
+                if let Some(loc) = loc {
+                    write!(f, " at {:?}", loc)?;
+                }
+                Ok(())
+            }
+            Error::UnknownConstant { loc } => {
+                write!(f, "unknown constant")?;
+                if let Some(loc) = loc {
+                    write!(f, " at {:?}", loc)?;
+                }
+                Ok(())
+            }
+            Error::UnknownTypeConstructor { loc } => {
+                write!(f, "unknown type constructor")?;
+                if let Some(loc) = loc {
+                    write!(f, " at {:?}", loc)?;
+                }
+                Ok(())
+            }
+            Error::UnknownDataConstructor { loc } => {
+                write!(f, "unknown data constructor")?;
+                if let Some(loc) = loc {
+                    write!(f, " at {:?}", loc)?;
+                }
+                Ok(())
+            }
             Error::MetaVariableLookupError(e) => e.fmt(f),
         }
     }
@@ -54,48 +84,53 @@ pub fn eval<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     stx: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    match stx {
-        Syntax::Universe(uni) => eval_universe(env, &uni),
-        Syntax::Lift(lift) => eval_lift(env, lift),
+    use crate::syn::SyntaxData;
+    match &stx.data {
+        SyntaxData::Universe(uni) => eval_universe(env, &uni),
+        SyntaxData::Lift(lift) => eval_lift(env, lift),
 
-        Syntax::Pi(pi) => eval_pi(env, pi),
-        Syntax::Lambda(lam) => eval_lambda(env, lam),
-        Syntax::Application(app) => eval_application(env, &app),
-        Syntax::Let(let_expr) => eval_let(env, let_expr),
+        SyntaxData::Pi(pi) => eval_pi(env, pi),
+        SyntaxData::Lambda(lam) => eval_lambda(env, lam),
+        SyntaxData::Application(app) => eval_application(env, &app),
+        SyntaxData::Let(let_expr) => eval_let(env, let_expr),
 
-        Syntax::TypeConstructor(type_constructor) => eval_type_constructor(env, type_constructor),
-        Syntax::DataConstructor(data_constructor) => eval_data_constructor(env, data_constructor),
-        Syntax::Case(case) => eval_case(env, case),
+        SyntaxData::TypeConstructor(type_constructor) => {
+            eval_type_constructor(env, type_constructor)
+        }
+        SyntaxData::DataConstructor(data_constructor) => {
+            eval_data_constructor(env, data_constructor)
+        }
+        SyntaxData::Case(case) => eval_case(env, case),
 
-        Syntax::Eq(eq) => eval_eq(env, eq),
-        Syntax::Refl(refl) => eval_refl(env, refl),
-        Syntax::Transport(transport) => eval_transport(env, transport),
-        Syntax::Closure(_) => {
+        SyntaxData::Eq(eq) => eval_eq(env, eq),
+        SyntaxData::Refl(refl) => eval_refl(env, refl),
+        SyntaxData::Transport(transport) => eval_transport(env, transport),
+        SyntaxData::Closure(_) => {
             // Closures should not appear in evaluated terms - they only exist in Transport motives
             // This is a malformed term
-            Err(Error::BadApplication)
+            Err(Error::BadApplication { loc: Some(stx.loc) })
         }
 
-        Syntax::HardwareUniverse(hw) => eval_hardware_universe(env, hw),
-        Syntax::SLift(slift) => eval_slift(env, slift),
-        Syntax::MLift(mlift) => eval_mlift(env, mlift),
+        SyntaxData::HardwareUniverse(hw) => eval_hardware_universe(env, hw),
+        SyntaxData::SLift(slift) => eval_slift(env, slift),
+        SyntaxData::MLift(mlift) => eval_mlift(env, mlift),
 
-        Syntax::SignalUniverse(sig) => eval_signal_universe(env, sig),
-        Syntax::Bit(bit) => eval_bit(env, bit),
-        Syntax::Zero(zero) => eval_zero(env, zero),
-        Syntax::One(one) => eval_one(env, one),
+        SyntaxData::SignalUniverse(sig) => eval_signal_universe(env, sig),
+        SyntaxData::Bit(bit) => eval_bit(env, bit),
+        SyntaxData::Zero(zero) => eval_zero(env, zero),
+        SyntaxData::One(one) => eval_one(env, one),
 
-        Syntax::ModuleUniverse(mod_uni) => eval_module_universe(env, mod_uni),
-        Syntax::HArrow(harrow) => eval_harrow(env, harrow),
-        Syntax::Module(module) => eval_module(env, module),
-        Syntax::HApplication(happ) => eval_happlication(env, happ),
+        SyntaxData::ModuleUniverse(mod_uni) => eval_module_universe(env, mod_uni),
+        SyntaxData::HArrow(harrow) => eval_harrow(env, harrow),
+        SyntaxData::Module(module) => eval_module(env, module),
+        SyntaxData::HApplication(happ) => eval_happlication(env, happ),
 
-        Syntax::Prim(prim) => eval_prim(env, prim),
-        Syntax::Constant(constant) => eval_constant(env, &constant),
-        Syntax::Variable(var) => eval_variable(env, &var),
-        Syntax::Metavariable(meta) => eval_metavariable(env, meta),
+        SyntaxData::Prim(prim) => eval_prim(env, prim),
+        SyntaxData::Constant(constant) => eval_constant(env, &constant),
+        SyntaxData::Variable(var) => eval_variable(env, &var),
+        SyntaxData::Metavariable(meta) => eval_metavariable(env, meta),
 
-        Syntax::Check(chk) => eval_check(env, chk),
+        SyntaxData::Check(chk) => eval_check(env, chk),
     }
 }
 
@@ -283,7 +318,7 @@ fn eval_constant<'db, 'g>(
     let info = env
         .global
         .constant(constant.name)
-        .map_err(|_| Error::UnknownConstant)?;
+        .map_err(|_| Error::UnknownConstant { loc: None })?;
     let mut unfold_env = Environment {
         global: env.global,
         local: LocalEnv::new(),
@@ -347,7 +382,7 @@ fn apply_rigid<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // If the operator is not pi-typed, bail.
     let Value::Pi(pi) = rigid.ty.as_ref() else {
-        return Err(Error::BadApplication);
+        return Err(Error::BadApplication { loc: None });
     };
 
     // Use the pi type of the neutral to compute typing information.
@@ -375,7 +410,7 @@ fn apply_flex<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // If the operator is not pi-typed, bail.
     let Value::Pi(pi) = flex.ty.as_ref() else {
-        return Err(Error::BadApplication);
+        return Err(Error::BadApplication { loc: None });
     };
 
     // Use the pi type of the neutral to compute typing information.
@@ -415,7 +450,7 @@ pub fn run_application<'db>(
         Value::Lambda(lambda) => apply_lambda(global, lambda, arg),
         Value::Rigid(rigid) => apply_rigid(global, rigid, arg),
         Value::Flex(flex) => apply_flex(global, flex, arg),
-        _ => Err(Error::BadApplication),
+        _ => Err(Error::BadApplication { loc: None }),
     }
 }
 
@@ -461,7 +496,7 @@ fn run_case<'db>(
         }
         Value::Rigid(rigid) => run_case_on_rigid(global, scrutinee.clone(), rigid, branches),
         Value::Flex(flex) => run_case_on_flex(global, scrutinee.clone(), flex, branches),
-        _ => Err(Error::BadCase),
+        _ => Err(Error::BadCase { loc: None }),
     }
 }
 
@@ -477,7 +512,7 @@ fn run_case_on_data_constructor<'db>(
         }
     }
     // If we didn't match any branches, we have a bad case.
-    Err(Error::BadCase)
+    Err(Error::BadCase { loc: None })
 }
 
 fn run_case_on_rigid<'db>(
@@ -488,14 +523,14 @@ fn run_case_on_rigid<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // Verify that the type is a type constructor.
     let Value::TypeConstructor(type_constructor) = rigid.ty.as_ref() else {
-        return Err(Error::BadCase);
+        return Err(Error::BadCase { loc: None });
     };
     let constructor = type_constructor.constructor;
 
     // Look up the type information from the global environment.
     let type_info = global
         .type_constructor(constructor)
-        .map_err(|_| Error::UnknownTypeConstructor)?;
+        .map_err(|_| Error::UnknownTypeConstructor { loc: None })?;
 
     // Get the parameters off of the type.
     let num_parameters = type_info.num_parameters();
@@ -527,14 +562,14 @@ fn run_case_on_flex<'db>(
 ) -> Result<Rc<Value<'db>>, Error> {
     // Verify that the type is a type constructor.
     let Value::TypeConstructor(type_constructor) = flex.ty.as_ref() else {
-        return Err(Error::BadCase);
+        return Err(Error::BadCase { loc: None });
     };
     let constructor = type_constructor.constructor;
 
     // Look up the type information from the global environment.
     let type_info = global
         .type_constructor(constructor)
-        .map_err(|_| Error::UnknownTypeConstructor)?;
+        .map_err(|_| Error::UnknownTypeConstructor { loc: None })?;
 
     // Get the parameters off of the type.
     let num_parameters = type_info.num_parameters();
@@ -937,10 +972,14 @@ mod tests {
 
         // Declare ?[0] : U0
         let meta_id = MetaVariableId(0);
-        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(
+            meta_id,
+            vec![],
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+        );
 
         let mut env = Environment::new(&global);
-        let meta_stx = Syntax::metavariable(meta_id, vec![]);
+        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![]);
         let result = eval(&mut env, &meta_stx).expect("eval should succeed");
 
         // Should be a Flex neutral
@@ -976,14 +1015,17 @@ mod tests {
         let meta_id = MetaVariableId(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::universe_rc(UniverseLevel::new(0))],
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            vec![Syntax::universe_rc(
+                Location::UNKNOWN,
+                UniverseLevel::new(0),
+            )],
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
         );
 
         let mut env = Environment::new(&global);
         // ?[0 ^Bit] - apply metavariable to ^Bit
-        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
-        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit]);
+        let lift_bit = Syntax::lift_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN));
+        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![lift_bit]);
         let result = eval(&mut env, &meta_stx).expect("eval should succeed");
 
         // Should be a Flex neutral with the argument in its local env
@@ -1024,16 +1066,17 @@ mod tests {
         // Declare ?[0] : ∀ (%x : U0) → U0
         let meta_id = MetaVariableId(0);
         let pi_ty = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            Location::UNKNOWN,
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
         );
         global.add_metavariable(meta_id, vec![], pi_ty);
 
         let mut env = Environment::new(&global);
         // (?[0])[^Bit] - apply metavariable to ^Bit
-        let meta_stx = Syntax::metavariable_rc(meta_id, vec![]);
-        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
-        let app_stx = Syntax::application(meta_stx, lift_bit);
+        let meta_stx = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
+        let lift_bit = Syntax::lift_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN));
+        let app_stx = Syntax::application(Location::UNKNOWN, meta_stx, lift_bit);
         let result = eval(&mut env, &app_stx).expect("eval should succeed");
 
         // Should be a Flex neutral with the application in its spine
