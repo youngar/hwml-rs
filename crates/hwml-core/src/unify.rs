@@ -354,7 +354,7 @@ fn solve<'db>(
 
     // Wrap the syntax in binders.
     for _ in 0..depth {
-        rhs_syntax = Syntax::lambda_rc(rhs_syntax);
+        rhs_syntax = Syntax::lambda_rc(Location::UNKNOWN, rhs_syntax);
     }
 
     println!("Solved metavariable: {:?}", rhs_syntax);
@@ -1059,7 +1059,7 @@ mod tests {
         let mut mctx = MetaContext::new();
 
         // transport (λ x → Bit) refl 0 ~ transport (λ x → Bit) refl 0
-        let motive = Closure::new(val::LocalEnv::new(), Syntax::bit_rc());
+        let motive = Closure::new(val::LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN));
         let transport1 = Value::transport(
             motive.clone(),
             Rc::new(Value::refl()),

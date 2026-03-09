@@ -1,5 +1,5 @@
 use crate::{
-    common::{Level, MetaVariableId},
+    common::{Level, Location, MetaVariableId},
     eval::{self, run_closure},
     val::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
@@ -654,7 +654,7 @@ fn equate_type_constructors<'db>(
         equate(global, transparent, depth, &larg, &rarg, &sem_ty)?;
 
         // Push the semantic argument into the environment for subsequent iterations.
-        env.push(larg.clone());
+        env.push(Rc::new(larg.clone()));
     }
     Ok(())
 }
@@ -708,7 +708,7 @@ fn equate_data_constructors<'db>(
         equate(global, transparent, depth, &larg, &rarg, &sem_ty)?;
 
         // Push the semantic argument into the environment for subsequent iterations.
-        env.push(larg.clone());
+        env.push(Rc::new(larg.clone()));
     }
     Ok(())
 }
@@ -964,7 +964,7 @@ pub fn equate_cases<'db>(
         equate(global, transparent, depth, &lparam, &rparam, &sem_ty)?;
 
         // Push the semantic parameter into the environment for subsequent iterations.
-        env.push(lparam.clone());
+        env.push(Rc::new(lparam.clone()));
     }
 
     // No return_type comparison needed - case expressions are check-only,
@@ -1194,7 +1194,11 @@ mod tests {
     fn test_equate_flexes_same_meta_empty_spine() {
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId(0);
-        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(
+            meta_id,
+            vec![],
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+        );
 
         let transparent = TransparentEnv::new();
         let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
@@ -1210,8 +1214,16 @@ mod tests {
         let mut global = GlobalEnv::new();
         let meta_id1 = MetaVariableId(0);
         let meta_id2 = MetaVariableId(1);
-        global.add_metavariable(meta_id1, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
-        global.add_metavariable(meta_id2, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(
+            meta_id1,
+            vec![],
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+        );
+        global.add_metavariable(
+            meta_id2,
+            vec![],
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+        );
 
         let transparent = TransparentEnv::new();
         let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
@@ -1234,7 +1246,11 @@ mod tests {
         // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId(0);
-        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(
+            meta_id,
+            vec![],
+            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+        );
 
         let transparent = TransparentEnv::new();
         let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
@@ -1325,7 +1341,7 @@ mod tests {
         let bit_ty = Rc::new(Value::bit());
         let identity = Rc::new(Value::lambda(val::Closure::new(
             LocalEnv::new(),
-            Rc::new(Syntax::variable(Index(0))),
+            Rc::new(Syntax::variable(Location::UNKNOWN, Index(0))),
         )));
 
         // Create a transparent environment with f = identity at level 0
