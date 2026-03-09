@@ -270,3 +270,14 @@ impl std::fmt::Display for MetaVariableId {
         write!(f, "?{}", self.0)
     }
 }
+
+/// MLIR-style location tracking using Salsa interning.
+///
+/// The Core IR treats locations as opaque identifiers and never inspects them.
+/// Evaluation and type checking ignore locations (pattern match on `.data` only).
+/// The elaborator queries Salsa for source snippets via `location.snippet(db)`.
+///
+/// Use `Location::physical(db, file, start, end)` during parsing,
+/// `Location::UNKNOWN` for synthetic syntax, and `location.snippet(db)` for
+/// error reporting.
+pub use hwml_support::Location;
