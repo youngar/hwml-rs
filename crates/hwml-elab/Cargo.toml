@@ -14,6 +14,7 @@ license.workspace = true
 [dependencies]
 annotate-snippets.workspace = true
 anyhow.workspace = true
+async-recursion = "1.0"
 clap.workspace = true
 derive-new.workspace = true
 futures.workspace = true
