@@ -15,3 +15,9 @@ pub use renaming::*;
 
 pub mod unify;
 pub use unify::UnificationError;
+
+pub mod zonk;
+pub use zonk::*;
+
+pub mod pipeline;
+pub use pipeline::*;

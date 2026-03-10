@@ -926,6 +926,28 @@ pub async fn unify<'db, 'g>(
     let ty = whnf(&ctx, ty).await?;
     let lhs = force(&ctx, lhs)?;
     let rhs = force(&ctx, rhs)?;
+
+    // Short-circuit: if either side is a poisoned metavariable, unification always succeeds
+    // This prevents error cascades when elaborating code with errors
+    if let Value::Flex(flex) = &*lhs {
+        if ctx.state.borrow().is_poisoned(flex.head.id) {
+            println!(
+                "[Unify] Short-circuit: LHS is poisoned meta {}",
+                flex.head.id
+            );
+            return Ok(());
+        }
+    }
+    if let Value::Flex(flex) = &*rhs {
+        if ctx.state.borrow().is_poisoned(flex.head.id) {
+            println!(
+                "[Unify] Short-circuit: RHS is poisoned meta {}",
+                flex.head.id
+            );
+            return Ok(());
+        }
+    }
+
     match (&*lhs, &*rhs) {
         // Structural equality: constants, universes, primitives
         (Value::Constant(c1), Value::Constant(c2)) => unify_constant(&lhs, &rhs, c1, c2),
@@ -1508,7 +1530,9 @@ mod tests {
     fn test_unify_with_prelude_metavariable_dependent() {
         let db = Database::default();
         let c = Ctx::with_prelude(&db, "prim $Nat : U0; meta ?[0] (%A : U0) (%x : %A) : U0;");
-        let meta_info = c.global.metavariable(hwml_core::common::MetaVariableId(0));
+        let meta_info = c
+            .global
+            .metavariable(hwml_core::common::MetaVariableId::new(Location::UNKNOWN, 0));
         assert!(meta_info.is_ok(), "Metavariable 0 should be in global env");
     }
 

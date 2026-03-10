@@ -2,7 +2,7 @@ use check::TCEnvironment;
 use hwml_core::*;
 use slab::Slab;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -122,6 +122,9 @@ struct MetaSlot<'db> {
     solution: Option<Rc<Syntax<'db>>>,
     /// Tasks waiting for this metavariable to be solved.
     waiters: Vec<WaitingTask>,
+    /// Whether this metavariable is poisoned (represents an error).
+    /// Poisoned metavariables unify with anything to prevent error cascades.
+    poisoned: bool,
 }
 
 impl<'db> MetaSlot<'db> {
@@ -130,35 +133,75 @@ impl<'db> MetaSlot<'db> {
             ty,
             solution: None,
             waiters: Vec::new(),
+            poisoned: false,
+        }
+    }
+
+    fn new_poisoned(ty: Rc<Value<'db>>) -> Self {
+        Self {
+            ty,
+            solution: None,
+            waiters: Vec::new(),
+            poisoned: true,
         }
     }
 
     fn is_solved(&self) -> bool {
         self.solution.is_some()
     }
+
+    fn is_poisoned(&self) -> bool {
+        self.poisoned
+    }
 }
 
 /// The central state for the constraint solver. Contains solved metavariables
 /// and wait lists for blocked tasks.
 pub struct SolverState<'db> {
-    /// Vector of metavariable slots, indexed by MetaVariableId
+    /// HashMap of metavariable slots, indexed by MetaVariableId
     /// Each slot contains the solution (if solved) and list of waiting tasks
-    metas: Vec<MetaSlot<'db>>,
+    metas: HashMap<MetaVariableId, MetaSlot<'db>>,
+
+    /// Dependency graph: meta ?M depends on metas in the set
+    /// Edge ?M -> ?N means "?M's solution mentions ?N"
+    dependencies: HashMap<MetaVariableId, HashSet<MetaVariableId>>,
+
+    /// Counter for generating local indices at each location
+    /// Maps Location -> next local_index
+    local_counters: HashMap<Location, u16>,
 }
 
 impl<'db> SolverState<'db> {
     pub fn new() -> Self {
-        Self { metas: Vec::new() }
+        Self {
+            metas: HashMap::new(),
+            dependencies: HashMap::new(),
+            local_counters: HashMap::new(),
+        }
     }
 
-    /// Allocate a fresh metavariable.
+    /// Allocate a fresh metavariable at the given location.
     ///
     /// This is the **only** way to create new MetaVariableIds for this solver.
-    /// By allocating through the state, we ensure the vector is always properly sized.
-    pub fn fresh_meta(&mut self, ty: Rc<Value<'db>>) -> MetaVariableId {
-        let id = MetaVariableId(self.metas.len());
-        self.metas.push(MetaSlot::new(ty));
+    /// By allocating through the state, we ensure deterministic ID generation.
+    pub fn fresh_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableId {
+        let local_index = self.local_counters.entry(loc).or_insert(0);
+        let id = MetaVariableId::new(loc, *local_index);
+        *local_index += 1;
+
+        self.metas.insert(id, MetaSlot::new(ty));
         println!("[Solver] Allocated fresh meta {}", id);
+        id
+    }
+
+    /// Allocate a fresh poisoned metavariable (for error recovery).
+    pub fn fresh_poisoned_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableId {
+        let local_index = self.local_counters.entry(loc).or_insert(0);
+        let id = MetaVariableId::new(loc, *local_index);
+        *local_index += 1;
+
+        self.metas.insert(id, MetaSlot::new_poisoned(ty));
+        println!("[Solver] Allocated fresh poisoned meta {}", id);
         id
     }
 
@@ -171,13 +214,10 @@ impl<'db> SolverState<'db> {
         reason: BlockReason,
     ) -> Option<Rc<Syntax<'db>>> {
         // Meta should already exist if it was allocated through fresh_meta
-        assert!(
-            meta.0 < self.metas.len(),
+        let slot = self.metas.get_mut(&meta).expect(&format!(
             "Meta {} not allocated! Use fresh_meta() to allocate metavariables.",
             meta
-        );
-
-        let slot = &mut self.metas[meta.0];
+        ));
 
         match &slot.solution {
             Some(term) => Some(term.clone()),
@@ -197,15 +237,14 @@ impl<'db> SolverState<'db> {
     pub fn get_unsolved_with_waiters(&self) -> Vec<(MetaVariableId, Vec<BlockReason>)> {
         self.metas
             .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
+            .filter_map(|(id, slot)| {
                 if slot.solution.is_none() && !slot.waiters.is_empty() {
                     let reasons = slot
                         .waiters
                         .iter()
                         .map(|w| w.reason.clone())
                         .collect::<Vec<_>>();
-                    Some((MetaVariableId(idx), reasons))
+                    Some((*id, reasons))
                 } else {
                     None
                 }
@@ -213,18 +252,192 @@ impl<'db> SolverState<'db> {
             .collect()
     }
 
-    pub fn is_solved(&self, MetaVariableId(i): MetaVariableId) -> bool {
-        self.metas[i].solution.is_some()
+    pub fn is_solved(&self, id: MetaVariableId) -> bool {
+        self.metas
+            .get(&id)
+            .map_or(false, |slot| slot.solution.is_some())
+    }
+
+    pub fn is_poisoned(&self, id: MetaVariableId) -> bool {
+        self.metas.get(&id).map_or(false, |slot| slot.poisoned)
     }
 
     /// Get the solution for a specific metavariable, if it has been solved.
-    pub fn solution(&self, MetaVariableId(i): MetaVariableId) -> Option<Rc<Syntax<'db>>> {
-        self.metas[i].solution.clone()
+    pub fn solution(&self, id: MetaVariableId) -> Option<Rc<Syntax<'db>>> {
+        self.metas.get(&id).and_then(|slot| slot.solution.clone())
     }
 
     /// Get the type of a metavariable.
-    pub fn meta_type(&self, MetaVariableId(i): MetaVariableId) -> Rc<Value<'db>> {
-        self.metas[i].ty.clone()
+    pub fn meta_type(&self, id: MetaVariableId) -> Rc<Value<'db>> {
+        self.metas
+            .get(&id)
+            .expect(&format!("Meta {} not found", id))
+            .ty
+            .clone()
+    }
+
+    /// Collect all metavariables that appear in a syntax term.
+    /// This is used to build the dependency graph when solving a metavariable.
+    fn collect_dependencies(&self, term: &Syntax<'db>) -> HashSet<MetaVariableId> {
+        use syn::SyntaxData;
+        let mut deps = HashSet::new();
+
+        fn collect_rec<'db>(term: &Syntax<'db>, deps: &mut HashSet<MetaVariableId>) {
+            match &term.data {
+                SyntaxData::Metavariable(meta) => {
+                    deps.insert(meta.id);
+                    for arg in meta.substitution.iter() {
+                        collect_rec(arg, deps);
+                    }
+                }
+                SyntaxData::Variable(_) => {}
+                SyntaxData::Constant(_) => {}
+                SyntaxData::Universe(_) => {}
+                SyntaxData::Prim(_) => {}
+                SyntaxData::HardwareUniverse(_) => {}
+                SyntaxData::SignalUniverse(_) => {}
+                SyntaxData::ModuleUniverse(_) => {}
+                SyntaxData::Bit(_) => {}
+                SyntaxData::Zero(_) => {}
+                SyntaxData::One(_) => {}
+                SyntaxData::Pi(pi) => {
+                    collect_rec(&pi.source, deps);
+                    collect_rec(&pi.target, deps);
+                }
+                SyntaxData::Lambda(lam) => {
+                    collect_rec(&lam.body, deps);
+                }
+                SyntaxData::Application(app) => {
+                    collect_rec(&app.function, deps);
+                    collect_rec(&app.argument, deps);
+                }
+                SyntaxData::Lift(lift) => {
+                    collect_rec(&lift.ty, deps);
+                }
+                SyntaxData::SLift(slift) => {
+                    collect_rec(&slift.ty, deps);
+                }
+                SyntaxData::MLift(mlift) => {
+                    collect_rec(&mlift.ty, deps);
+                }
+                SyntaxData::TypeConstructor(tc) => {
+                    for arg in tc.arguments.iter() {
+                        collect_rec(arg, deps);
+                    }
+                }
+                SyntaxData::DataConstructor(dc) => {
+                    for arg in dc.arguments.iter() {
+                        collect_rec(arg, deps);
+                    }
+                }
+                SyntaxData::Case(case) => {
+                    // scrutinee is a Variable, not a Syntax - no need to recurse
+                    // Case doesn't have a ty field - just recurse into branches
+                    for branch in case.branches.iter() {
+                        collect_rec(&branch.body, deps);
+                    }
+                }
+                SyntaxData::Let(let_expr) => {
+                    collect_rec(&let_expr.ty, deps);
+                    collect_rec(&let_expr.value, deps);
+                    collect_rec(&let_expr.body, deps);
+                }
+                SyntaxData::Eq(eq) => {
+                    collect_rec(&eq.ty, deps);
+                    collect_rec(&eq.lhs, deps);
+                    collect_rec(&eq.rhs, deps);
+                }
+                SyntaxData::Refl(_) => {}
+                SyntaxData::Transport(transport) => {
+                    collect_rec(&transport.motive.body, deps);
+                    collect_rec(&transport.proof, deps);
+                    collect_rec(&transport.value, deps);
+                }
+                SyntaxData::Closure(closure) => {
+                    collect_rec(&closure.body, deps);
+                }
+                SyntaxData::HArrow(harrow) => {
+                    collect_rec(&harrow.source, deps);
+                    collect_rec(&harrow.target, deps);
+                }
+                SyntaxData::Module(module) => {
+                    collect_rec(&module.body, deps);
+                }
+                SyntaxData::HApplication(happ) => {
+                    collect_rec(&happ.module, deps);
+                    collect_rec(&happ.module_ty, deps);
+                    collect_rec(&happ.argument, deps);
+                }
+                SyntaxData::Prim(_) => {}
+                SyntaxData::Check(check) => {
+                    collect_rec(&check.ty, deps);
+                    collect_rec(&check.term, deps);
+                }
+            }
+        }
+
+        collect_rec(term, &mut deps);
+        deps
+    }
+
+    /// Check if solving meta ?M with the given solution would create a cycle.
+    /// Returns Ok(()) if no cycle, Err with the cycle path if a cycle is detected.
+    fn check_cycle(
+        &self,
+        meta: MetaVariableId,
+        solution_deps: &HashSet<MetaVariableId>,
+    ) -> Result<(), Vec<MetaVariableId>> {
+        // If the solution mentions the meta itself, that's an immediate cycle
+        if solution_deps.contains(&meta) {
+            return Err(vec![meta]);
+        }
+
+        // Check for transitive cycles: if ?M depends on ?N, and ?N (transitively) depends on ?M
+        for &dep in solution_deps.iter() {
+            if self.has_path(dep, meta, &mut HashSet::new()) {
+                return Err(vec![meta, dep]);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if there's a path from `from` to `to` in the dependency graph.
+    /// Uses DFS with a visited set to detect cycles.
+    fn has_path(
+        &self,
+        from: MetaVariableId,
+        to: MetaVariableId,
+        visited: &mut HashSet<MetaVariableId>,
+    ) -> bool {
+        if from == to {
+            return true;
+        }
+
+        if visited.contains(&from) {
+            return false;
+        }
+
+        visited.insert(from);
+
+        if let Some(deps) = self.dependencies.get(&from) {
+            for &dep in deps.iter() {
+                if self.has_path(dep, to, visited) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Test-only: Directly set a metavariable solution without cycle checking.
+    /// This is useful for testing zonking and other functionality.
+    #[cfg(test)]
+    pub fn set_solution_unchecked(&mut self, meta: MetaVariableId, solution: Rc<Syntax<'db>>) {
+        if let Some(slot) = self.metas.get_mut(&meta) {
+            slot.solution = Some(solution);
+        }
     }
 }
 
@@ -238,22 +451,10 @@ impl<'db> SolverState<'db> {
     pub fn from_global_env(global: &val::GlobalEnv<'db>) -> Self {
         use hwml_core::val::Environment;
 
-        // Find the maximum metavariable ID to size the vector
-        let max_id = global.max_metavariable_id();
-        let size = match max_id {
-            Some(id) => id.0 + 1,
-            None => 0,
-        };
-
-        // Create a vector with placeholder slots
-        let mut metas = Vec::with_capacity(size);
+        let mut metas = HashMap::new();
         let placeholder_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
 
-        for _ in 0..size {
-            metas.push(MetaSlot::new(placeholder_ty.clone()));
-        }
-
-        // Now populate with actual metavariable types
+        // Populate with actual metavariable types
         for (id, info) in global.iter_metavariables() {
             // For a metavariable with arguments, we need to build a Pi type.
             // For now, just evaluate the final type in an extended environment.
@@ -272,10 +473,14 @@ impl<'db> SolverState<'db> {
                 eval_metavariable_type(global, info).unwrap_or(placeholder_ty.clone())
             };
 
-            metas[id.0] = MetaSlot::new(ty);
+            metas.insert(id, MetaSlot::new(ty));
         }
 
-        Self { metas }
+        Self {
+            metas,
+            dependencies: HashMap::new(),
+            local_counters: HashMap::new(),
+        }
     }
 }
 
@@ -333,14 +538,28 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
     /// Allocate a fresh metavariable and return its ID.
     /// The type is stored in the SolverState's MetaSlot.
+    /// TODO: Accept a Location parameter once we add location tracking to the elaboration context.
     pub fn fresh_meta_id(&self, ty: Rc<Value<'db>>) -> MetaVariableId {
-        self.state.borrow_mut().fresh_meta(ty)
+        self.state.borrow_mut().fresh_meta(Location::UNKNOWN, ty)
     }
 
     /// Allocate a fresh metavariable and return it as a Flex value.
     /// The metavariable captures the current local environment as its substitution.
     pub fn fresh_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
         let id = self.fresh_meta_id(ty.clone());
+        Rc::new(Value::metavariable(
+            id,
+            self.tc_env.values.local.clone(),
+            ty,
+        ))
+    }
+
+    /// Allocate a fresh poisoned metavariable for error recovery.
+    pub fn fresh_poisoned_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+        let id = self
+            .state
+            .borrow_mut()
+            .fresh_poisoned_meta(Location::UNKNOWN, ty.clone());
         Rc::new(Value::metavariable(
             id,
             self.tc_env.values.local.clone(),
@@ -362,22 +581,37 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         self.state.borrow().meta_type(meta)
     }
 
-    /// Solve a meta and wake everyone up.
-    pub fn solve(&self, meta: MetaVariableId, value: Rc<Syntax<'db>>) {
-        // We need to be careful here to avoid holding the borrow when waking
+    /// Solve a meta with cycle detection and dependency tracking.
+    /// Returns Ok(()) if the solution is valid, Err with cycle path if a cycle is detected.
+    pub fn solve_checked(
+        &self,
+        meta: MetaVariableId,
+        value: Rc<Syntax<'db>>,
+    ) -> Result<(), Vec<MetaVariableId>> {
+        // First, check for cycles before committing the solution
+        let (deps, cycle_check) = {
+            let state = self.state.borrow();
+            let deps = state.collect_dependencies(&value);
+            let cycle_check = state.check_cycle(meta, &deps);
+            (deps, cycle_check)
+        };
+
+        // If there's a cycle, return the error without solving
+        cycle_check?;
+
+        // No cycle detected, proceed with solving
         let waiting_tasks = {
             let mut state = self.state.borrow_mut();
             println!("[Solver] Defining {} := {:?}", meta, value);
 
-            // Meta should already exist if it was allocated through fresh_meta
-            assert!(
-                meta.0 < state.metas.len(),
-                "Meta {} not allocated! Use fresh_meta() to allocate metavariables.",
-                meta
-            );
+            // Update the dependency graph
+            state.dependencies.insert(meta, deps);
 
             // Get the slot and set the solution
-            let slot = &mut state.metas[meta.0];
+            let slot = state.metas.get_mut(&meta).expect(&format!(
+                "Meta {} not allocated! Use fresh_meta() to allocate metavariables.",
+                meta
+            ));
             slot.solution = Some(value);
 
             // Take the waiters (leaving an empty vec)
@@ -395,6 +629,23 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
                 waiting_task.waker.wake();
             }
         }
+
+        Ok(())
+    }
+
+    /// Solve a meta and wake everyone up.
+    /// This is the unchecked version that panics on cycles (for backward compatibility).
+    /// New code should use `solve_checked` instead.
+    pub fn solve(&self, meta: MetaVariableId, value: Rc<Syntax<'db>>) {
+        if let Err(cycle) = self.solve_checked(meta, value) {
+            panic!("Cycle detected when solving {}: {:?}", meta, cycle);
+        }
+    }
+
+    /// Zonk a syntax term, replacing all solved metavariables with their solutions.
+    /// This is a total function that never fails.
+    pub fn zonk(&self, term: &Syntax<'db>) -> Rc<Syntax<'db>> {
+        crate::zonk::zonk(&self.state.borrow(), term)
     }
 
     /// Generate a detailed blame report for unsolved metavariables.
@@ -666,5 +917,99 @@ impl<'db> SingleThreadedExecutor<'db> {
 
     unsafe fn drop_waker(data: *const ()) {
         let _ = Box::from_raw(data as *mut (Rc<ReadyQueue>, TaskId));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hwml_core::common::Location;
+    use hwml_core::syn::Syntax;
+
+    #[test]
+    fn test_cycle_detection_direct() {
+        // Test direct cycle: ?M := ?M
+        let mut state = SolverState::new();
+        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+        let meta_id = state.fresh_meta(Location::UNKNOWN, ty);
+
+        // Try to solve ?M := ?M (direct cycle)
+        let solution = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
+        let deps = state.collect_dependencies(&solution);
+        let result = state.check_cycle(meta_id, &deps);
+
+        assert!(result.is_err(), "Direct cycle should be detected");
+    }
+
+    #[test]
+    fn test_cycle_detection_transitive() {
+        // Test transitive cycle: ?M := ?N, ?N := ?M
+        let mut state = SolverState::new();
+        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+
+        let meta_m = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta_n = state.fresh_meta(Location::UNKNOWN, ty.clone());
+
+        // First solve ?N := ?M
+        let solution_n = Syntax::metavariable_rc(Location::UNKNOWN, meta_m, vec![]);
+        let deps_n = state.collect_dependencies(&solution_n);
+        state.dependencies.insert(meta_n, deps_n);
+
+        // Now try to solve ?M := ?N (would create a cycle)
+        let solution_m = Syntax::metavariable_rc(Location::UNKNOWN, meta_n, vec![]);
+        let deps_m = state.collect_dependencies(&solution_m);
+        let result = state.check_cycle(meta_m, &deps_m);
+
+        assert!(result.is_err(), "Transitive cycle should be detected");
+    }
+
+    #[test]
+    fn test_no_cycle() {
+        // Test valid dependency: ?M := ?N where ?N is independent
+        let mut state = SolverState::new();
+        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+
+        let meta_m = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta_n = state.fresh_meta(Location::UNKNOWN, ty.clone());
+
+        // Solve ?M := ?N (no cycle)
+        let solution = Syntax::metavariable_rc(Location::UNKNOWN, meta_n, vec![]);
+        let deps = state.collect_dependencies(&solution);
+        let result = state.check_cycle(meta_m, &deps);
+
+        assert!(result.is_ok(), "No cycle should be detected");
+    }
+
+    #[test]
+    fn test_poisoned_meta_creation() {
+        let mut state = SolverState::new();
+        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+        let meta_id = state.fresh_poisoned_meta(Location::UNKNOWN, ty);
+
+        assert!(state.is_poisoned(meta_id), "Meta should be poisoned");
+        assert!(
+            !state.is_solved(meta_id),
+            "Poisoned meta should not be solved"
+        );
+    }
+
+    #[test]
+    fn test_location_derived_ids() {
+        let mut state = SolverState::new();
+        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+
+        // Create multiple metas at the same location
+        let meta1 = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta2 = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta3 = state.fresh_meta(Location::UNKNOWN, ty.clone());
+
+        // They should have different local indices
+        assert_ne!(meta1, meta2);
+        assert_ne!(meta2, meta3);
+        assert_ne!(meta1, meta3);
+
+        // But same location
+        assert_eq!(meta1.loc, meta2.loc);
+        assert_eq!(meta2.loc, meta3.loc);
     }
 }

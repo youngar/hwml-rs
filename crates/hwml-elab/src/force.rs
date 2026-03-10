@@ -204,7 +204,7 @@ mod tests {
         // Note: the metavariable's solution is a lambda that will be applied to
         // substitution arguments via substitute(), which builds the local env
         let solution = parse(&db, "λ %x → Bit");
-        ctx.solve(hwml_core::common::MetaVariableId(0), solution);
+        ctx.solve(hwml_core::common::MetaVariableId::new(Location::UNKNOWN, 0), solution);
 
         // Evaluate ?[0 U0] - metavariable with U0 in substitution
         // This gives us Flex{ head: Meta(0, local=[U0]), spine: [] }
