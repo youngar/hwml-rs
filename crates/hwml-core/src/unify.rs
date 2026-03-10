@@ -16,24 +16,31 @@ use std::vec;
 
 pub struct MetaContext<'db> {
     // A map from metavariables to their solutions, if available.
-    table: Vec<Option<Rc<Value<'db>>>>,
+    table: HashMap<MetaVariableId, Rc<Value<'db>>>,
 }
 
 impl<'db> MetaContext<'db> {
     /// Create a new empty MetaContext.
     pub fn new() -> MetaContext<'db> {
-        MetaContext { table: Vec::new() }
+        MetaContext {
+            table: HashMap::new(),
+        }
     }
 
-    /// Allocate a new metavariable ID.
-    pub fn fresh_id(&mut self) -> MetaVariableId {
-        let id = MetaVariableId(self.table.len());
-        self.table.push(None);
+    /// Allocate a new metavariable ID at the given location.
+    /// For testing, use Location::UNKNOWN.
+    pub fn fresh_id(&mut self, loc: Location, local_index: u16) -> MetaVariableId {
+        let id = MetaVariableId::new(loc, local_index);
+        // Don't insert a solution yet - it's unsolved
         id
     }
 
-    pub fn lookup(&self, MetaVariableId(idx): MetaVariableId) -> &Option<Rc<Value<'db>>> {
-        &self.table[idx]
+    pub fn lookup(&self, id: MetaVariableId) -> Option<&Rc<Value<'db>>> {
+        self.table.get(&id)
+    }
+
+    pub fn solve(&mut self, id: MetaVariableId, solution: Rc<Value<'db>>) {
+        self.table.insert(id, solution);
     }
 }
 
@@ -371,7 +378,7 @@ fn solve<'db>(
     .map_err(UnificationError::Eval)?;
 
     // Store the solution.
-    meta_context.table[meta_variable.id.0] = Some(rhs);
+    meta_context.solve(meta_variable.id, rhs);
 
     // Ta-da!
     Ok(())

@@ -179,11 +179,7 @@ impl<'db> Syntax<'db> {
         }
     }
 
-    pub fn application_rc(
-        loc: Location,
-        fun: RcSyntax<'db>,
-        arg: RcSyntax<'db>,
-    ) -> RcSyntax<'db> {
+    pub fn application_rc(loc: Location, fun: RcSyntax<'db>, arg: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::application(loc, fun, arg))
     }
 
@@ -369,6 +365,54 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::mlift(loc, ty))
     }
 
+    // SignalUniverse constructors
+    pub fn signal_universe(loc: Location) -> Syntax<'db> {
+        Syntax {
+            loc,
+            data: SyntaxData::SignalUniverse(SignalUniverse::new()),
+        }
+    }
+
+    pub fn signal_universe_rc(loc: Location) -> RcSyntax<'db> {
+        Rc::new(Syntax::signal_universe(loc))
+    }
+
+    // Bit constructors
+    pub fn bit(loc: Location) -> Syntax<'db> {
+        Syntax {
+            loc,
+            data: SyntaxData::Bit(Bit::new()),
+        }
+    }
+
+    pub fn bit_rc(loc: Location) -> RcSyntax<'db> {
+        Rc::new(Syntax::bit(loc))
+    }
+
+    // Zero constructors
+    pub fn zero(loc: Location) -> Syntax<'db> {
+        Syntax {
+            loc,
+            data: SyntaxData::Zero(Zero::new()),
+        }
+    }
+
+    pub fn zero_rc(loc: Location) -> RcSyntax<'db> {
+        Rc::new(Syntax::zero(loc))
+    }
+
+    // One constructors
+    pub fn one(loc: Location) -> Syntax<'db> {
+        Syntax {
+            loc,
+            data: SyntaxData::One(One::new()),
+        }
+    }
+
+    pub fn one_rc(loc: Location) -> RcSyntax<'db> {
+        Rc::new(Syntax::one(loc))
+    }
+
     // ModuleUniverse constructors
     pub fn module_universe(loc: Location) -> Syntax<'db> {
         Syntax {
@@ -389,11 +433,7 @@ impl<'db> Syntax<'db> {
         }
     }
 
-    pub fn harrow_rc(
-        loc: Location,
-        source: RcSyntax<'db>,
-        target: RcSyntax<'db>,
-    ) -> RcSyntax<'db> {
+    pub fn harrow_rc(loc: Location, source: RcSyntax<'db>, target: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::harrow(loc, source, target))
     }
 

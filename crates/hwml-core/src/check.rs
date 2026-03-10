@@ -5,7 +5,7 @@ use crate::pattern_unify;
 use crate::quote;
 use crate::syn as stx;
 use crate::syn;
-use crate::syn::Syntax;
+use crate::syn::{Syntax, SyntaxData};
 use crate::val;
 use crate::val::{Environment, LocalEnv, Value};
 use salsa::Database;
@@ -221,7 +221,7 @@ impl<'db> std::fmt::Display for Error<'db> {
                     f,
                     "pattern match blocked on unsolved metavariable ?{}{}\n\
                      help: add a type annotation to resolve the ambiguity",
-                    meta_id.0,
+                    meta_id.local_index,
                     fmt_loc(tm.loc)
                 )
             }
@@ -389,14 +389,22 @@ pub fn type_synth_metavariable<'db, 'g>(
         .global
         .metavariable(metavariable.id)
         .map_err(|_| Error::BadSynth {
-            tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+            tm: Syntax::metavariable_rc(
+                Location::UNKNOWN,
+                metavariable.id,
+                metavariable.substitution.clone(),
+            ),
         })?;
 
     // The metavariable has a telescope of argument types.
     // We need to check that the substitution has the right number of arguments.
     if metavariable.substitution.len() != meta_info.arguments.len() {
         return Err(Error::BadSynth {
-            tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+            tm: Syntax::metavariable_rc(
+                Location::UNKNOWN,
+                metavariable.id,
+                metavariable.substitution.clone(),
+            ),
         });
     }
 
@@ -414,7 +422,11 @@ pub fn type_synth_metavariable<'db, 'g>(
             transparent: val::TransparentEnv::new(),
         };
         let expected_ty = eval::eval(&mut temp_env, arg_ty).map_err(|_| Error::BadSynth {
-            tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+            tm: Syntax::metavariable_rc(
+                Location::UNKNOWN,
+                metavariable.id,
+                metavariable.substitution.clone(),
+            ),
         })?;
 
         // Check the argument against the expected type.
@@ -432,7 +444,11 @@ pub fn type_synth_metavariable<'db, 'g>(
         transparent: val::TransparentEnv::new(),
     };
     let meta_ty = eval::eval(&mut temp_env, &meta_info.ty).map_err(|_| Error::BadSynth {
-        tm: Rc::new(Syntax::Metavariable(metavariable.clone())),
+        tm: Syntax::metavariable_rc(
+            Location::UNKNOWN,
+            metavariable.id,
+            metavariable.substitution.clone(),
+        ),
     })?;
 
     Ok(meta_ty)
@@ -449,7 +465,11 @@ pub fn type_synth_application<'db, 'g>(
     // Ensure that the applied term is a function `(x : src) -> tgt(x)`.
     let Value::Pi(pi) = &*fun_ty else {
         return Err(Error::BadElim {
-            tm: Rc::new(Syntax::Application(application.clone())),
+            tm: Syntax::application_rc(
+                Location::UNKNOWN,
+                application.function.clone(),
+                application.argument.clone(),
+            ),
             ty_got: fun_ty,
         });
     };
@@ -472,7 +492,11 @@ pub fn type_check_case<'db, 'g>(
 
     let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
         return Err(Error::BadElim {
-            tm: Rc::new(Syntax::Case(case.clone())),
+            tm: Syntax::case_rc(
+                Location::UNKNOWN,
+                case.scrutinee.index,
+                case.branches.clone(),
+            ),
             ty_got: scrutinee_ty,
         });
     };
@@ -515,7 +539,11 @@ pub fn type_check_case<'db, 'g>(
             pattern_unify::PatternUnifyOutcome::Conflict => {}
             pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
                 return Err(Error::PatternUnifyStuck {
-                    tm: Rc::new(Syntax::Case(case.clone())),
+                    tm: Syntax::case_rc(
+                        Location::UNKNOWN,
+                        case.scrutinee.index,
+                        case.branches.clone(),
+                    ),
                     meta_id,
                 });
             }
@@ -530,7 +558,11 @@ pub fn type_check_case<'db, 'g>(
 
     if !missing.is_empty() {
         return Err(Error::NonExhaustiveMatch {
-            tm: Rc::new(Syntax::Case(case.clone())),
+            tm: Syntax::case_rc(
+                Location::UNKNOWN,
+                case.scrutinee.index,
+                case.branches.clone(),
+            ),
             missing,
         });
     }
@@ -579,7 +611,11 @@ pub fn type_check_case<'db, 'g>(
 
             pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
                 return Err(Error::PatternUnifyStuck {
-                    tm: Rc::new(Syntax::Case(case.clone())),
+                    tm: Syntax::case_rc(
+                        Location::UNKNOWN,
+                        case.scrutinee.index,
+                        case.branches.clone(),
+                    ),
                     meta_id,
                 });
             }
@@ -631,7 +667,7 @@ fn type_check_pi<'db, 'g>(
 ) -> Result<(), Error<'db>> {
     let Value::Universe(expected_univ) = ty else {
         return Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Pi(pi.clone())),
+            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -639,7 +675,7 @@ fn type_check_pi<'db, 'g>(
     let source_ty = type_synth(env, &pi.source)?;
     let Value::Universe(source_univ) = &*source_ty else {
         return Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Pi(pi.clone())),
+            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -652,7 +688,7 @@ fn type_check_pi<'db, 'g>(
 
     let Value::Universe(target_univ) = &*target_ty else {
         return Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Pi(pi.clone())),
+            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -665,7 +701,7 @@ fn type_check_pi<'db, 'g>(
 
     if pi_level > expected_level {
         return Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Pi(pi.clone())),
+            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     }
@@ -691,7 +727,7 @@ fn type_check_lambda<'db, 'g>(
             r
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Lambda(lam.clone())),
+            tm: Syntax::lambda_rc(Location::UNKNOWN, lam.body.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -731,7 +767,11 @@ fn type_check_type_constructor<'db, 'g>(
             // Check that the number of arguments matches the number of parameters.
             if tcon.arguments.len() != tcon_info.arguments.len() {
                 return Err(Error::BadType {
-                    tm: Rc::new(Syntax::TypeConstructor(tcon.clone())),
+                    tm: Syntax::type_constructor_rc(
+                        Location::UNKNOWN,
+                        tcon.constructor,
+                        tcon.arguments.clone(),
+                    ),
                 });
             }
 
@@ -751,7 +791,11 @@ fn type_check_type_constructor<'db, 'g>(
             Ok(())
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::TypeConstructor(tcon.clone())),
+            tm: Syntax::type_constructor_rc(
+                Location::UNKNOWN,
+                tcon.constructor,
+                tcon.arguments.clone(),
+            ),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -803,14 +847,22 @@ fn type_check_data_constructor<'db, 'g>(
             ) {
                 Ok(_) => Ok(()),
                 Err(_) => Err(Error::BadCheck {
-                    tm: Rc::new(Syntax::DataConstructor(dc.clone())),
+                    tm: Syntax::data_constructor_rc(
+                        Location::UNKNOWN,
+                        dc.constructor,
+                        dc.arguments.clone(),
+                    ),
                     ty_exp: Rc::new(ty_exp.clone()),
                     ty_got,
                 }),
             }
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::DataConstructor(dc.clone())),
+            tm: Syntax::data_constructor_rc(
+                Location::UNKNOWN,
+                dc.constructor,
+                dc.arguments.clone(),
+            ),
             ty_exp: Rc::new(ty_exp.clone()),
         }),
     }
@@ -841,7 +893,7 @@ fn type_check_bit<'db, 'g>(
     match ty {
         Value::SignalUniverse(_) => Ok(()),
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Bit(syn::Bit::new())),
+            tm: Syntax::bit_rc(Location::UNKNOWN),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -860,7 +912,11 @@ fn type_check_harrow<'db, 'g>(
             Ok(())
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::HArrow(harrow.clone())),
+            tm: Syntax::harrow_rc(
+                Location::UNKNOWN,
+                harrow.source.clone(),
+                harrow.target.clone(),
+            ),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -879,7 +935,7 @@ fn type_check_slift<'db, 'g>(
             check_signal_type(env, &slift.ty)
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::SLift(slift.clone())),
+            tm: Syntax::slift_rc(Location::UNKNOWN, slift.ty.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -898,7 +954,7 @@ fn type_check_mlift<'db, 'g>(
             check_module_type(env, &mlift.ty)
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::MLift(mlift.clone())),
+            tm: Syntax::mlift_rc(Location::UNKNOWN, mlift.ty.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -917,17 +973,17 @@ fn type_check_zero<'db, 'g>(
             Value::SLift(slift) => match slift.ty.as_ref() {
                 Value::Bit(_) => Ok(()),
                 _ => Err(Error::BadCtor {
-                    tm: Rc::new(Syntax::Zero(zero.clone())),
+                    tm: Syntax::zero_rc(Location::UNKNOWN),
                     ty_exp: Rc::new(ty.clone()),
                 }),
             },
             _ => Err(Error::BadCtor {
-                tm: Rc::new(Syntax::Zero(zero.clone())),
+                tm: Syntax::zero_rc(Location::UNKNOWN),
                 ty_exp: Rc::new(ty.clone()),
             }),
         },
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Zero(zero.clone())),
+            tm: Syntax::zero_rc(Location::UNKNOWN),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -946,17 +1002,17 @@ fn type_check_one<'db, 'g>(
             Value::SLift(slift) => match slift.ty.as_ref() {
                 Value::Bit(_) => Ok(()),
                 _ => Err(Error::BadCtor {
-                    tm: Rc::new(Syntax::One(one.clone())),
+                    tm: Syntax::one_rc(Location::UNKNOWN),
                     ty_exp: Rc::new(ty.clone()),
                 }),
             },
             _ => Err(Error::BadCtor {
-                tm: Rc::new(Syntax::One(one.clone())),
+                tm: Syntax::one_rc(Location::UNKNOWN),
                 ty_exp: Rc::new(ty.clone()),
             }),
         },
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::One(one.clone())),
+            tm: Syntax::one_rc(Location::UNKNOWN),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -1043,7 +1099,12 @@ fn type_check_eq<'db, 'g>(
 ) -> Result<(), Error<'db>> {
     let Value::Universe(_) = ty else {
         return Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Eq(eq.clone())),
+            tm: Syntax::eq_rc(
+                Location::UNKNOWN,
+                eq.ty.clone(),
+                eq.lhs.clone(),
+                eq.rhs.clone(),
+            ),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -1065,7 +1126,12 @@ fn type_synth_eq<'db, 'g>(
 
     let Value::Universe(universe) = ty_ty.as_ref() else {
         return Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Eq(eq.clone())),
+            tm: Syntax::eq_rc(
+                Location::UNKNOWN,
+                eq.ty.clone(),
+                eq.lhs.clone(),
+                eq.rhs.clone(),
+            ),
             ty_exp: ty_ty,
         });
     };
@@ -1110,7 +1176,12 @@ fn type_synth_transport<'db, 'g>(
     let proof_ty = type_synth(env, &transport.proof)?;
     let Value::EqType(eq_ty) = &*proof_ty else {
         return Err(Error::BadSynth {
-            tm: Rc::new(Syntax::Transport(transport.clone())),
+            tm: Syntax::transport_rc(
+                Location::UNKNOWN,
+                transport.motive.clone(),
+                transport.proof.clone(),
+                transport.value.clone(),
+            ),
         });
     };
 
@@ -1143,8 +1214,8 @@ fn count_closure_arity<'db>(closure: &syn::Closure<'db>) -> (usize, syn::RcSynta
     let mut current = &closure.body;
 
     loop {
-        match &**current {
-            Syntax::Closure(inner) => {
+        match &current.data {
+            SyntaxData::Closure(inner) => {
                 arity += 1;
                 current = &inner.body;
             }
@@ -1356,7 +1427,11 @@ fn check_type_constructor_type<'db, 'g>(
     // Check that the number of arguments matches the number of parameters.
     if tcon.arguments.len() != tcon_info.arguments.len() {
         return Err(Error::BadType {
-            tm: Rc::new(Syntax::TypeConstructor(tcon.clone())),
+            tm: Syntax::type_constructor_rc(
+                Location::UNKNOWN,
+                tcon.constructor,
+                tcon.arguments.clone(),
+            ),
         });
     }
 
@@ -1751,7 +1826,7 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] : U0
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![],
@@ -1779,7 +1854,7 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![Syntax::universe_rc(
@@ -1811,7 +1886,7 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0 (expects 1 argument)
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![Syntax::universe_rc(
@@ -1837,7 +1912,7 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : ^Bit) : U0 (expects lifted bit type)
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![Syntax::lift_rc(
@@ -1865,7 +1940,7 @@ mod tests {
 
         // Declare ?[0] (%A : U0) (%x : %A) : U0
         // The second argument type depends on the first argument
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![

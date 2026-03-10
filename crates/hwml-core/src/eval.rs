@@ -1,3 +1,4 @@
+use crate::syn::SyntaxData;
 use crate::val::{
     self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
     MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
@@ -640,8 +641,8 @@ fn eval_transport<'db, 'g>(
 fn get_closure_body<'db>(closure: &syn::Closure<'db>) -> syn::RcSyntax<'db> {
     let mut current = &closure.body;
     loop {
-        match &**current {
-            Syntax::Closure(inner) => {
+        match &current.data {
+            SyntaxData::Closure(inner) => {
                 current = &inner.body;
             }
             _ => return current.clone(),
@@ -971,7 +972,7 @@ mod tests {
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : U0
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![],
@@ -1012,7 +1013,7 @@ mod tests {
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![Syntax::universe_rc(
@@ -1064,7 +1065,7 @@ mod tests {
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : ∀ (%x : U0) → U0
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         let pi_ty = Syntax::pi_rc(
             Location::UNKNOWN,
             Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),

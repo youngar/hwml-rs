@@ -255,19 +255,36 @@ where
     }
 }
 
+/// Location-derived metavariable identifier for deterministic, thread-safe elaboration.
+///
+/// Instead of using a global atomic counter (which breaks Salsa's determinism),
+/// metavariables are identified by the Location of the AST node that spawned them
+/// plus a local index for multiple metas at the same location.
+///
+/// This ensures:
+/// - Deterministic ID generation (same AST → same IDs)
+/// - Thread-safe elaboration (no global state)
+/// - Salsa-compatible incremental compilation
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct MetaVariableId(pub usize);
+pub struct MetaVariableId {
+    /// The source location that spawned this metavariable
+    pub loc: Location,
+    /// Local index for multiple metas at the same location
+    /// (e.g., inferred type + inferred term = 2 metas at same location)
+    pub local_index: u16,
+}
 
 impl MetaVariableId {
-    pub fn new(id: usize) -> MetaVariableId {
-        MetaVariableId(id)
+    pub fn new(loc: Location, local_index: u16) -> MetaVariableId {
+        MetaVariableId { loc, local_index }
     }
 }
 
 impl std::fmt::Display for MetaVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "?{}", self.0)
+        // Format as ?loc@index for debugging
+        // For Location::UNKNOWN, just show ?@index
+        write!(f, "?@{}", self.local_index)
     }
 }
 

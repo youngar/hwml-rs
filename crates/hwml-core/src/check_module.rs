@@ -9,7 +9,7 @@ use crate::declaration::{
     Constant, Declaration, Metavariable, Module, Primitive, TypeConstructor as DeclTypeConstructor,
 };
 use crate::eval;
-use crate::syn::{Syntax, Telescope};
+use crate::syn::{Syntax, SyntaxData, Telescope};
 use crate::val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
@@ -144,8 +144,8 @@ fn add_type_constructor_to_env<'db>(
     global: &mut GlobalEnv<'db>,
     tcon: &DeclTypeConstructor<'db>,
 ) -> Result<(), Error<'db>> {
-    let level = match tcon.universe.as_ref() {
-        Syntax::Universe(u) => u.level,
+    let level = match &tcon.universe.data {
+        SyntaxData::Universe(u) => u.level,
         _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
     };
 
@@ -288,15 +288,15 @@ fn is_hardware_type(ty: &Value) -> bool {
 
 /// Check if syntax represents a hardware type.
 fn is_hardware_type_syntax<'db>(ty: &Syntax<'db>) -> bool {
-    match ty {
+    match &ty.data {
         // Lift type in syntax
-        Syntax::Lift(_) => true,
+        SyntaxData::Lift(_) => true,
 
         // Pi type: check the target
-        Syntax::Pi(pi) => is_hardware_type_syntax(&pi.target),
+        SyntaxData::Pi(pi) => is_hardware_type_syntax(&pi.target),
 
         // Check term - recurse into the inner term
-        Syntax::Check(check) => is_hardware_type_syntax(&check.term),
+        SyntaxData::Check(check) => is_hardware_type_syntax(&check.term),
 
         // Everything else is not hardware
         _ => false,

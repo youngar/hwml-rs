@@ -1316,7 +1316,7 @@ mod tests {
         let u0_rc = Rc::new(u0.clone());
 
         // No args: ?[0]
-        let meta_id = MetaVariableId(0);
+        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
         global.add_metavariable(
             meta_id,
             vec![],
@@ -1327,7 +1327,7 @@ mod tests {
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
 
         // With args: ?[1 Bit]
-        let meta_id2 = MetaVariableId(1);
+        let meta_id2 = MetaVariableId::new(Location::UNKNOWN, 1);
         global.add_metavariable(
             meta_id2,
             vec![Syntax::universe_rc(

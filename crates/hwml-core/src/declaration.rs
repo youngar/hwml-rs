@@ -1,5 +1,5 @@
 use crate::syn::*;
-use crate::{ConstantId, MetaVariableId};
+use crate::{common::Location, ConstantId, MetaVariableId};
 
 /// A primitive declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -1,6 +1,6 @@
 use crate::common::{DBParseError, Index, Location, NegativeLevel};
 use crate::declaration::{Declaration, Module};
-use crate::syn::{CaseBranch, Closure, RcSyntax, Syntax, Telescope};
+use crate::syn::{CaseBranch, Closure, RcSyntax, Syntax, SyntaxData, Telescope};
 use crate::{declaration, ConstantId, MetaVariableId};
 use core::fmt::Debug;
 use hwml_support::FromWithDb;
@@ -234,7 +234,7 @@ impl<'input> State<'input> {
     fn alloc_location(&mut self) -> Location {
         let id = self.next_location_id;
         self.next_location_id += 1;
-        Location(id)
+        Location::new(id)
     }
 
     /// Push a binder to the environment.
@@ -295,7 +295,8 @@ impl<'input> State<'input> {
             id
         } else {
             // Name doesn't exist, allocate new ID
-            let id = MetaVariableId(self.next_meta_id);
+            // Use Location::UNKNOWN for named metas in parser
+            let id = MetaVariableId::new(Location::UNKNOWN, self.next_meta_id as u16);
             self.next_meta_id += 1;
             self.meta_names.insert(name, id);
             id
@@ -493,16 +494,17 @@ fn p_metavariable_id(state: &mut State) -> ParseResult<MetaVariableId> {
     match state.peek_token() {
         Some(Ok(Token::Number(n))) => {
             // Numeric ID: ?[0], ?[1], etc.
+            // Use Location::UNKNOWN for testing/debugging
             state.advance_token();
-            Ok(MetaVariableId(n))
+            Ok(MetaVariableId::new(Location::UNKNOWN, n as u16))
         }
         Some(Ok(Token::Zero)) => {
             state.advance_token();
-            Ok(MetaVariableId(0))
+            Ok(MetaVariableId::new(Location::UNKNOWN, 0))
         }
         Some(Ok(Token::One)) => {
             state.advance_token();
-            Ok(MetaVariableId(1))
+            Ok(MetaVariableId::new(Location::UNKNOWN, 1))
         }
         Some(Ok(Token::Variable(name))) => {
             // Named metavariable: ?[x], ?[myvar], etc.
@@ -583,8 +585,8 @@ fn p_transport_motive<'db>(state: &mut State<'db>) -> ParseResult<Closure<'db>> 
     }
 
     // The outermost wrapper is a Syntax::Closure, extract it
-    match &*result {
-        Syntax::Closure(c) => Ok(c.clone()),
+    match &result.data {
+        SyntaxData::Closure(c) => Ok(c.clone()),
         _ => unreachable!("We just built a closure"),
     }
 }
@@ -623,7 +625,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // For now, all nested lambdas share the same location (the λ token)
                 let mut result = body;
                 for _ in 0..i {
-                    result = Syntax::lambda_rc_with_loc(lambda_loc, result);
+                    result = Syntax::lambda_rc(lambda_loc, result);
                 }
                 Ok(Some(result))
             }
@@ -666,7 +668,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // Restore the name environment
                 state.reset_names(depth);
 
-                Ok(Some(Syntax::let_rc_with_loc(loc, ty, value, body)))
+                Ok(Some(Syntax::let_rc(loc, ty, value, body)))
             }
             Token::Mod => {
                 let mod_loc = state.alloc_location();
@@ -690,7 +692,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // Build nested modules from right to left
                 let mut result = body;
                 for _ in 0..i {
-                    result = Syntax::module_rc_with_loc(mod_loc, result);
+                    result = Syntax::module_rc(mod_loc, result);
                 }
                 Ok(Some(result))
             }
@@ -711,7 +713,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.reset_names(depth);
                 let mut result = target;
                 for ty in tys.iter().rev() {
-                    result = Syntax::pi_rc_with_loc(pi_loc, ty.clone(), result);
+                    result = Syntax::pi_rc(pi_loc, ty.clone(), result);
                 }
                 Ok(Some(result))
             }
@@ -728,7 +730,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     }
                 }
                 p_rbracket(state)?;
-                Ok(Some(Syntax::data_constructor_rc_with_loc(
+                Ok(Some(Syntax::data_constructor_rc(
                     loc,
                     constructor,
                     arguments,
@@ -747,7 +749,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     }
                 }
                 p_rbracket(state)?;
-                Ok(Some(Syntax::type_constructor_rc_with_loc(
+                Ok(Some(Syntax::type_constructor_rc(
                     loc,
                     constructor,
                     arguments,
@@ -758,7 +760,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.advance_token();
                 // Look it up in the unified environment
                 match state.find_name(&name) {
-                    Some(index) => Ok(Some(Syntax::variable_rc_with_loc(loc, index))),
+                    Some(index) => Ok(Some(Syntax::variable_rc(loc, index))),
                     _ => Err(Error::UnknownVariable(name)),
                 }
             }
@@ -768,12 +770,12 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // Convert negative level to index using the current depth:
                 // index = depth + negative_level
                 let index = negative_level.to_index(state.names_depth());
-                Ok(Some(Syntax::variable_rc_with_loc(loc, index)))
+                Ok(Some(Syntax::variable_rc(loc, index)))
             }
             Token::Universe(level) => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::universe_rc_with_loc(
+                Ok(Some(Syntax::universe_rc(
                     loc,
                     crate::common::UniverseLevel::new(level),
                 )))
@@ -781,16 +783,12 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             Token::HardwareUniverse => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::hardware_rc_with_loc(loc)))
+                Ok(Some(Syntax::hardware_rc(loc)))
             }
             Token::Constant(name) => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::constant_rc_with_loc_from(
-                    loc,
-                    state.db(),
-                    &name,
-                )))
+                Ok(Some(Syntax::constant_rc_from(loc, state.db(), &name)))
             }
             Token::LQuestionBracket => {
                 let loc = state.alloc_location();
@@ -807,54 +805,50 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                     }
                 }
                 p_rbracket(state)?;
-                Ok(Some(Syntax::metavariable_rc_with_loc(
-                    loc,
-                    id,
-                    substitution,
-                )))
+                Ok(Some(Syntax::metavariable_rc(loc, id, substitution)))
             }
             Token::Lift => {
                 let loc = state.alloc_location();
                 state.advance_token();
                 let tm = p_atom(state)?;
-                Ok(Some(Syntax::lift_rc_with_loc(loc, tm)))
+                Ok(Some(Syntax::lift_rc(loc, tm)))
             }
             Token::SLift => {
                 let loc = state.alloc_location();
                 state.advance_token();
                 let tm = p_atom(state)?;
-                Ok(Some(Syntax::slift_rc_with_loc(loc, tm)))
+                Ok(Some(Syntax::slift_rc(loc, tm)))
             }
             Token::MLift => {
                 let loc = state.alloc_location();
                 state.advance_token();
                 let tm = p_atom(state)?;
-                Ok(Some(Syntax::mlift_rc_with_loc(loc, tm)))
+                Ok(Some(Syntax::mlift_rc(loc, tm)))
             }
             Token::SignalUniverse => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::signal_universe_rc_with_loc(loc)))
+                Ok(Some(Syntax::signal_universe_rc(loc)))
             }
             Token::ModuleUniverse => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::module_universe_rc_with_loc(loc)))
+                Ok(Some(Syntax::module_universe_rc(loc)))
             }
             Token::Bit => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::bit_rc_with_loc(loc)))
+                Ok(Some(Syntax::bit_rc(loc)))
             }
             Token::Zero => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::zero_rc_with_loc(loc)))
+                Ok(Some(Syntax::zero_rc(loc)))
             }
             Token::One => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::one_rc_with_loc(loc)))
+                Ok(Some(Syntax::one_rc(loc)))
             }
             Token::Eq => {
                 // Parse: Eq A x y
@@ -863,13 +857,13 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 let ty = p_atom(state)?;
                 let lhs = p_atom(state)?;
                 let rhs = p_atom(state)?;
-                Ok(Some(Syntax::eq_rc_with_loc(loc, ty, lhs, rhs)))
+                Ok(Some(Syntax::eq_rc(loc, ty, lhs, rhs)))
             }
             Token::Refl => {
                 // Parse: refl
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::refl_rc_with_loc(loc)))
+                Ok(Some(Syntax::refl_rc(loc)))
             }
             Token::Transport => {
                 // Parse: transport [%x -> body] proof value
@@ -883,14 +877,12 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 let proof = p_atom(state)?;
                 let value = p_atom(state)?;
 
-                Ok(Some(Syntax::transport_rc_with_loc(
-                    loc, motive, proof, value,
-                )))
+                Ok(Some(Syntax::transport_rc(loc, motive, proof, value)))
             }
             Token::Primitive(name) => {
                 let loc = state.alloc_location();
                 state.advance_token();
-                Ok(Some(Syntax::prim_rc_with_loc_from(loc, state.db(), &name)))
+                Ok(Some(Syntax::prim_rc_from(loc, state.db(), &name)))
             }
             _ => Ok(None),
         },
@@ -979,11 +971,7 @@ fn p_trailing_case_opt<'db>(
         _ => return Err(Error::CaseScrutineeMustBeVariable),
     };
     let branches = p_case_branches(state)?;
-    Ok(Some(Syntax::case_rc_with_loc(
-        loc,
-        scrutinee_index,
-        branches,
-    )))
+    Ok(Some(Syntax::case_rc(loc, scrutinee_index, branches)))
 }
 
 // Parse application with bracket notation: f[x, y, z]
@@ -1016,7 +1004,7 @@ fn p_trailing_app_opt<'db>(
     let mut result = lead.clone();
     for arg in args {
         let app_loc = state.alloc_location();
-        result = Syntax::application_rc_with_loc(app_loc, result, arg);
+        result = Syntax::application_rc(app_loc, result, arg);
     }
 
     Ok(Some(result))
@@ -1078,11 +1066,7 @@ fn p_trailing_elim_opt<'db>(
     match p_atom_opt(state)? {
         Some(arg) => {
             let app_loc = state.alloc_location();
-            return Ok(Some(Syntax::application_rc_with_loc(
-                app_loc,
-                lead.clone(),
-                arg,
-            )));
+            return Ok(Some(Syntax::application_rc(app_loc, lead.clone(), arg)));
         }
         None => (),
     }
@@ -1141,7 +1125,7 @@ fn p_check_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>
     // Check if there's a colon.
     if let Some(()) = p_colon_opt(state)? {
         let loc = state.alloc_location();
-        Ok(Some(Syntax::check_rc_with_loc(loc, p_term(state)?, term)))
+        Ok(Some(Syntax::check_rc(loc, p_term(state)?, term)))
     } else {
         Ok(Some(term))
     }
@@ -1651,7 +1635,11 @@ mod tests {
         let db = Database::new();
         assert_eq!(
             parse(&db, "?[0]"),
-            Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(0), vec![])
+            Syntax::metavariable_rc(
+                Location::UNKNOWN,
+                MetaVariableId::new(Location::UNKNOWN, 0),
+                vec![]
+            )
         );
     }
 
@@ -1665,10 +1653,22 @@ mod tests {
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
-                    Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(0), vec![]),
-                    Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(1), vec![])
+                    Syntax::metavariable_rc(
+                        Location::UNKNOWN,
+                        MetaVariableId::new(Location::UNKNOWN, 0),
+                        vec![]
+                    ),
+                    Syntax::metavariable_rc(
+                        Location::UNKNOWN,
+                        MetaVariableId::new(Location::UNKNOWN, 1),
+                        vec![]
+                    )
                 ),
-                Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(0), vec![])
+                Syntax::metavariable_rc(
+                    Location::UNKNOWN,
+                    MetaVariableId::new(Location::UNKNOWN, 0),
+                    vec![]
+                )
             )
         );
     }
@@ -1682,7 +1682,11 @@ mod tests {
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
-                    Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(0), vec![]),
+                    Syntax::metavariable_rc(
+                        Location::UNKNOWN,
+                        MetaVariableId::new(Location::UNKNOWN, 0),
+                        vec![]
+                    ),
                     Syntax::variable_rc(Location::UNKNOWN, Index(0))
                 )
             )
@@ -1698,10 +1702,22 @@ mod tests {
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
-                    Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(0), vec![]),
-                    Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(1), vec![])
+                    Syntax::metavariable_rc(
+                        Location::UNKNOWN,
+                        MetaVariableId::new(Location::UNKNOWN, 0),
+                        vec![]
+                    ),
+                    Syntax::metavariable_rc(
+                        Location::UNKNOWN,
+                        MetaVariableId::new(Location::UNKNOWN, 1),
+                        vec![]
+                    )
                 ),
-                Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(2), vec![])
+                Syntax::metavariable_rc(
+                    Location::UNKNOWN,
+                    MetaVariableId::new(Location::UNKNOWN, 2),
+                    vec![]
+                )
             )
         );
     }
@@ -1714,7 +1730,11 @@ mod tests {
             Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-                Syntax::metavariable_rc(Location::UNKNOWN, MetaVariableId(0), vec![])
+                Syntax::metavariable_rc(
+                    Location::UNKNOWN,
+                    MetaVariableId::new(Location::UNKNOWN, 0),
+                    vec![]
+                )
             )
         );
     }
@@ -1726,7 +1746,7 @@ mod tests {
             parse(&db, "?[0 !0 !1]"),
             Syntax::metavariable_rc(
                 Location::UNKNOWN,
-                MetaVariableId(0),
+                MetaVariableId::new(Location::UNKNOWN, 0),
                 vec![
                     Syntax::variable_rc(Location::UNKNOWN, Index(0)),
                     Syntax::variable_rc(Location::UNKNOWN, Index(1))
@@ -2374,10 +2394,7 @@ mod tests {
         );
         assert_eq!(
             parse(&db, "@Multiply"),
-            Syntax::constant_rc(
-                Location::UNKNOWN,
-                ConstantId::from_with_db(&db, "Multiply")
-            )
+            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Multiply"))
         );
         assert_eq!(
             parse(&db, "@MyCircuit"),
