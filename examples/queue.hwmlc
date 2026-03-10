@@ -1,0 +1,128 @@
+// Variadic Queue Generator Example
+//
+// This example demonstrates how to build hardware circuits that generate
+// variadic-length queues of registers using HWML's dependent type system.
+//
+// A queue is a chain of registers where each register's output feeds
+// into the next register's input:
+//
+//   input -> [Reg] -> [Reg] -> ... -> [Reg] -> output
+//
+// Usage:
+//   hwml --core --emit-mlir --emit-verilog -f examples/queue.hwmlc
+
+// ============================================================================
+// Natural Numbers (for meta-level computation)
+// ============================================================================
+
+// Define natural numbers with Zero and Succ constructors
+tcon @Nat : -> U0 where
+    dcon @Zero : @Nat
+    dcon @Succ (%n : @Nat) : @Nat
+;
+
+// ============================================================================
+// HardwareUniverse Primitives
+// ============================================================================
+
+// The $Bit type represents a single-bit wire
+// Note: $Bit is parsed as a primitive identifier referencing the Bit type
+
+// HardwareUniverse primitives - binary combinational gates
+hprim $xor : $Bit -> $Bit -> $Bit;
+hprim $and : $Bit -> $Bit -> $Bit;
+hprim $or : $Bit -> $Bit -> $Bit;
+
+// HardwareUniverse primitive - unary NOT gate
+hprim $not : $Bit -> $Bit;
+
+// HardwareUniverse primitive - register (D flip-flop)
+// reg clk input: captures input on rising edge of clk
+hprim $reg : $Bit -> $Bit -> $Bit;
+
+// ============================================================================
+// Simple HardwareUniverse Constants
+// ============================================================================
+
+// Identity circuit: just passes input through
+hconst $Identity : $Bit -> $Bit = λ %x → %x;
+
+// NOT gate circuit
+hconst $NotGate : $Bit -> $Bit = λ %x → $not %x;
+
+// XOR gate circuit
+hconst $XorGate : $Bit -> $Bit -> $Bit = λ %a %b → $xor %a %b;
+
+// AND gate circuit
+hconst $AndGate : $Bit -> $Bit -> $Bit = λ %a %b → $and %a %b;
+
+// ============================================================================
+// Meta-Level Queue Generator (Non-Recursive)
+// ============================================================================
+
+// Since HWML doesn't support recursive constant definitions, we build up
+// the queue generator incrementally using helper constants.
+//
+// QueueGen takes a natural number (depth) and returns a quoted hardware term
+// representing a queue of that depth.
+//
+// Type: Nat -> ^($Bit -> $Bit -> $Bit)
+//
+// For depth 0: identity function (pass-through)
+// For depth N: chain of N registers
+
+// Base case: depth 0 queue is just identity
+const @Queue0Q : ^($Bit -> $Bit -> $Bit) = '(λ %clk %d → %d);
+
+// Depth 1: single register
+const @Queue1Q : ^($Bit -> $Bit -> $Bit) = '(λ %clk %d → $reg %clk %d);
+
+// Depth 2: two registers in series
+const @Queue2Q : ^($Bit -> $Bit -> $Bit) = '(λ %clk %d → $reg %clk ($reg %clk %d));
+
+// Depth 3: three registers in series
+const @Queue3Q : ^($Bit -> $Bit -> $Bit) = '(λ %clk %d → $reg %clk ($reg %clk ($reg %clk %d)));
+
+// ============================================================================
+// Instantiated Queues using the Generator
+// ============================================================================
+
+// Queue of depth 3, instantiated from the quoted generator constant
+// ~(@Queue3Q) splices the quoted hardware term into a hardware constant
+hconst $Queue3Gen : $Bit -> $Bit -> $Bit = ~@Queue3Q;
+
+// ============================================================================
+// Manually Written Queues (for comparison)
+// ============================================================================
+
+// Single register: delays input by one clock cycle
+// This is a depth-1 queue
+hconst $Reg1 : $Bit -> $Bit -> $Bit = λ %clk %d → $reg %clk %d;
+
+// Queue of depth 2: two registers in series
+hconst $Queue2 : $Bit -> $Bit -> $Bit = λ %clk %d → $reg %clk ($reg %clk %d);
+
+// Queue of depth 3: three registers in series (manual version)
+hconst $Queue3Manual : $Bit -> $Bit -> $Bit = λ %clk %d → $reg %clk ($reg %clk ($reg %clk %d));
+
+// ============================================================================
+// Pipeline Stage Example
+// ============================================================================
+
+// A pipeline stage: XOR the input with 1, then register
+// This demonstrates mixing combinational and sequential logic
+hconst $PipelineStage : $Bit -> $Bit -> $Bit = λ %clk %d → $reg %clk ($xor %d 1);
+
+// Two-stage pipeline
+hconst $Pipeline2 : $Bit -> $Bit -> $Bit =
+    λ %clk %d → $reg %clk ($xor ($reg %clk ($xor %d 1)) 1);
+
+// ============================================================================
+// Shift Register
+// ============================================================================
+
+// 4-bit shift register using chained registers
+// Each register delays its input by one clock cycle
+hconst $ShiftReg4 : $Bit -> $Bit -> $Bit =
+    λ %clk %d → $reg %clk ($reg %clk ($reg %clk ($reg %clk %d)));
+

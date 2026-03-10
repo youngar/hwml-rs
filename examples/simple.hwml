@@ -1,0 +1,4 @@
+// Simple identity function
+prim Bit : Signal
+def id (x : Bit) : Bit := x
+

@@ -1,0 +1,72 @@
+// Combinational Logic Example
+//
+// This example demonstrates purely combinational circuits that can be
+// exported to Verilog without requiring sequential lowering passes.
+//
+// Usage:
+//   hwml --core --emit-mlir --emit-verilog -f examples/combinational.hwmlc
+
+// ============================================================================
+// HardwareUniverse Primitives (Combinational Only)
+// ============================================================================
+
+// Binary combinational gates
+hprim $xor : $Bit -> $Bit -> $Bit;
+hprim $and : $Bit -> $Bit -> $Bit;
+hprim $or : $Bit -> $Bit -> $Bit;
+
+// Unary NOT gate
+hprim $not : $Bit -> $Bit;
+
+// ============================================================================
+// Basic Gates
+// ============================================================================
+
+// Identity: just passes input through
+hconst $Identity : $Bit -> $Bit = λ %x → %x;
+
+// NOT gate
+hconst $NotGate : $Bit -> $Bit = λ %x → $not %x;
+
+// XOR gate
+hconst $XorGate : $Bit -> $Bit -> $Bit = λ %a %b → $xor %a %b;
+
+// AND gate
+hconst $AndGate : $Bit -> $Bit -> $Bit = λ %a %b → $and %a %b;
+
+// OR gate
+hconst $OrGate : $Bit -> $Bit -> $Bit = λ %a %b → $or %a %b;
+
+// ============================================================================
+// Compound Combinational Circuits
+// ============================================================================
+
+// NAND gate: NOT (AND a b)
+hconst $NandGate : $Bit -> $Bit -> $Bit = λ %a %b → $not ($and %a %b);
+
+// NOR gate: NOT (OR a b)
+hconst $NorGate : $Bit -> $Bit -> $Bit = λ %a %b → $not ($or %a %b);
+
+// XNOR gate: NOT (XOR a b)
+hconst $XnorGate : $Bit -> $Bit -> $Bit = λ %a %b → $not ($xor %a %b);
+
+// ============================================================================
+// Half Adder
+// ============================================================================
+
+// Half adder produces sum = a XOR b
+// (carry would be a AND b, but we only have single output for now)
+hconst $HalfAdderSum : $Bit -> $Bit -> $Bit = λ %a %b → $xor %a %b;
+
+// Half adder carry
+hconst $HalfAdderCarry : $Bit -> $Bit -> $Bit = λ %a %b → $and %a %b;
+
+// ============================================================================
+// Multiplexer
+// ============================================================================
+
+// 2-to-1 MUX: sel ? b : a
+// mux sel a b = (sel AND b) OR (NOT sel AND a)
+hconst $Mux2 : $Bit -> $Bit -> $Bit -> $Bit = 
+    λ %sel %a %b → $or ($and %sel %b) ($and ($not %sel) %a);
+

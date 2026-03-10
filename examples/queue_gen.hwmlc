@@ -1,0 +1,94 @@
+// Recursive Queue Generator Example
+//
+// This example demonstrates a true recursive queue generator using
+// meta-level computation over natural numbers.
+//
+// A queue is a chain of registers where each register's output feeds
+// into the next register's input:
+//
+//   input -> [Reg] -> [Reg] -> ... -> [Reg] -> output
+//
+// The generator takes a natural number n and produces a queue of n registers.
+//
+// Usage:
+//   hwml --core --emit-mlir --emit-verilog -f examples/queue_gen.hwmlc
+
+// ============================================================================
+// Natural Numbers (for meta-level computation)
+// ============================================================================
+
+// Define natural numbers with Zero and Succ constructors
+tcon @Nat : -> U0 where
+    dcon @Zero : #[@Nat]
+    dcon @Succ (%n : #[@Nat]) : #[@Nat]
+;
+
+// ============================================================================
+// HardwareUniverse Primitives
+// ============================================================================
+
+// HardwareUniverse primitive - register (D flip-flop)
+// reg clk input: captures input on rising edge of clk
+hprim $reg : $Bit -> $Bit -> $Bit;
+
+// ============================================================================
+// Recursive Queue Generator
+// ============================================================================
+
+// QueueGen: A recursive generator that takes a natural number n and produces
+// a quoted hardware term representing a queue of n registers.
+//
+// Type: Nat -> ^($Bit -> $Bit -> $Bit)
+//
+// For n = Zero: identity function (pass-through)
+// For n = Succ m: chain one register with the queue of depth m
+//
+// QueueGen n clk d =
+//   case n of
+//     Zero   => d               -- pass through
+//     Succ m => reg clk (QueueGen m clk d)  -- chain a register
+const @QueueGen : ∀ (%n : #[@Nat]) → ^($Bit → $Bit → $Bit) =
+    λ %n →
+        %n case %_ → ^($Bit → $Bit → $Bit) {
+            @Zero => '(λ %clk %d → %d)
+          | @Succ %m => '(λ %clk %d → $reg %clk (~(@QueueGen %m) %clk %d))
+        };
+
+// ============================================================================
+// Convenience Definitions for Common Depths
+// ============================================================================
+
+// Natural number literals
+const @N0 : #[@Nat] = [@Zero];
+const @N1 : #[@Nat] = [@Succ @N0];
+const @N2 : #[@Nat] = [@Succ @N1];
+const @N3 : #[@Nat] = [@Succ @N2];
+const @N4 : #[@Nat] = [@Succ @N3];
+const @N5 : #[@Nat] = [@Succ @N4];
+
+// ============================================================================
+// Instantiated Queues using the Generator
+// ============================================================================
+
+// Generate a queue of depth 0 (identity)
+const @Queue0Q : ^($Bit → $Bit → $Bit) = @QueueGen @N0;
+
+// Generate a queue of depth 1 (single register)
+const @Queue1Q : ^($Bit → $Bit → $Bit) = @QueueGen @N1;
+
+// Generate a queue of depth 2 (two registers)
+const @Queue2Q : ^($Bit → $Bit → $Bit) = @QueueGen @N2;
+
+// Generate a queue of depth 3 (three registers)
+const @Queue3Q : ^($Bit → $Bit → $Bit) = @QueueGen @N3;
+
+// ============================================================================
+// HardwareUniverse Constants (spliced from quoted generators)
+// ============================================================================
+
+// Instantiate a queue of depth 3 as a hardware constant
+hconst $Queue3 : $Bit → $Bit → $Bit = ~@Queue3Q;
+
+// We can also splice directly without the intermediate constant
+hconst $Queue5Direct : $Bit → $Bit → $Bit = ~(@QueueGen @N5);
+

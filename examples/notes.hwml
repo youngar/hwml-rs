@@ -1,0 +1,122 @@
+
+
+
+def Foo (x : Bit) := x
+
+def Foo (x :Nat ) (y : Bit ) (z : Bit) := y
+
+def Foo : Nat => Bit -> Bit := \x y => y
+
+# Module System
+
+# Ghost Code
+
+val Foo (x : Bit) 
+
+mod Foo (x : Bit) (x != 0) :=
+  x
+
+
+Foo : (x : Bit) -> (x != 0) -> Bit
+
+struct {
+    x : Bit
+    y : x != 0
+}
+
+
+module Foo (x : Bit) (x != 0) := x
+
+module Foo (x : Bit | \x . x != 0)
+  
+module Foo(
+    input x : Bit
+    output o : Bit
+)
+  assert(x != 0)
+  o := x
+endmodule
+
+module Foo (x : Bit) (y : x ? Bit : Unit): Bit :=
+  if x
+    y
+  else
+    0
+
+====================
+
+
+meta def foo := '(\x y. x + y)
+def bar := ~foo
+// output: module bar(x, y, o) o := x + y; endmodule
+
+def foo := \x y. x + y
+def bar := foo
+// output module bar(x, y, o) foo foo(x, y, o); endmodule
+
+def foo := \x y. x + y
+def bar := foo 10 12
+// module bar(o : Bit);
+//   wire x = 10;
+//   wire y = 12;
+//   Foo foo(x, y, o)
+// endmodule
+
+meta def foo := \x \y. ~x + ~y
+meta def bar := foo '10 '12
+
+// bar := 10 + 12
+
+letm foo = mod x y => x + y
+letm bar = foo 10 12
+
+// bar := 10 + 12
+
+
+/// Metatype with hardware fields
+metatype Option a = Some a | None;
+
+metatype Cond: Bool -> Type where
+  | CondTrue : {T} -> T -> Cond True
+  | CondFalse : Cond False
+
+
+module Foo (x : Bool) : match x with True => Bit | False => Unit :=
+
+module Foo (x : Option Bit) : Bit :=
+  match x with
+  | Some x => x
+  | None => 0
+
+def Bar (x : Bool): match x with True ~> Bit | False ~> Bit => Bit :=
+  match x with
+  | True => 1
+  | False => module x => x
+
+module Bar :=
+  Foo (Some 1)
+  Foo (None)
+
+
+
+
+
+
+
+package Foo {
+  def Foo := 1
+  meta def Bar := 1
+  def Baz (x : Bit) := {
+    def y = x;
+    y
+  }
+
+}
+
+
+def Foo (t : ValueType) (v : t): t :=
+  v
+
+def Foo (t : ValueType) => '(T -> T) :=
+ \t. '(\x . x)
+
