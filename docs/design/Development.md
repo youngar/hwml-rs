@@ -8,25 +8,14 @@ Before pushing changes, run these commands locally to catch issues early:
 # Check that everything compiles
 cargo check --workspace
 
-# Run core tests
-cargo test -p hwml_core
-
-# Validate documentation snippets
-cargo test -p mdbook-hwml --test validate_docs
+# Run all tests (core, documentation validation, etc.)
+cargo test --workspace
 
 # Run clippy for code quality
 cargo clippy --workspace
 ```
 
-These match exactly what CI runs. Alternatively, run all workspace tests at once:
-
-```bash
-cargo test --workspace
-```
-
-This runs the same tests plus any others in the workspace.
-
-For a comprehensive check that also validates dependency separation and builds the mdBook, use:
+These match exactly what CI runs. For a comprehensive check that also validates dependency separation and builds the mdBook, use:
 
 ```bash
 ./scripts/validate-ci.sh

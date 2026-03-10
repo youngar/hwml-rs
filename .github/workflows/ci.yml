@@ -18,11 +18,8 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace
 
-      - name: Run cargo test (hwml_core)
-        run: cargo test -p hwml_core
-
-      - name: Run documentation validation
-        run: cargo test -p mdbook-hwml --test validate_docs
+      - name: Run cargo test
+        run: cargo test --workspace
 
       - name: Run cargo clippy
         run: cargo clippy --workspace
