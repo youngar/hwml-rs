@@ -225,11 +225,6 @@ impl<'input> State<'input> {
         self.token = self.lexer.next();
     }
 
-    /// Get the current span from the lexer.
-    fn span(&self) -> Range<usize> {
-        self.lexer.span()
-    }
-
     /// Allocate a new Location from the current lexer span.
     fn alloc_location(&mut self) -> Location {
         let id = self.next_location_id;

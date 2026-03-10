@@ -1,7 +1,7 @@
 //! Pattern unification for dependent pattern matching.
 
 use crate::{
-    common::{Level, Location, MetaVariableId},
+    common::{Level, MetaVariableId},
     equal, eval,
     val::{
         DataConstructorInfo, Environment, GlobalEnv, LocalEnv, TransparentEnv, TypeConstructorInfo,

@@ -1,5 +1,5 @@
 use crate::{
-    common::{Level, Location, MetaVariableId},
+    common::{Level, MetaVariableId},
     eval::{self, run_closure},
     val::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,

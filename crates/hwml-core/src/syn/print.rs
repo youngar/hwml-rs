@@ -1,5 +1,5 @@
 use crate::{
-    common::{Index, Location},
+    common::Index,
     declaration::{self, Declaration, Metavariable as DeclMetavariable, Primitive},
     syn::*,
     ConstantId,
@@ -647,7 +647,7 @@ impl<'db> Print for Application<'db> {
                 args.push(current.argument.clone());
                 match &current.function.data {
                     SyntaxData::Application(app) => current = app,
-                    other => break &current.function,
+                    _ => break &current.function,
                 }
             };
             args.reverse();

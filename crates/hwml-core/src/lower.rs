@@ -13,7 +13,6 @@
 //! beta-reduction for hardware-level applications.
 
 use crate::{
-    common::Location,
     eval::run_closure,
     quote,
     syn::RcSyntax,

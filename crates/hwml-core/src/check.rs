@@ -964,7 +964,7 @@ fn type_check_mlift<'db, 'g>(
 /// Zero values can be checked against ^(Sig Bit) (a Lift containing an SLift of Bit).
 fn type_check_zero<'db, 'g>(
     _env: &mut TCEnvironment<'db, 'g>,
-    zero: &syn::Zero<'db>,
+    _zero: &syn::Zero<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     // The expected type must be ^(Sig Bit), which is Lift(SLift(Bit))
@@ -993,7 +993,7 @@ fn type_check_zero<'db, 'g>(
 /// One values can be checked against ^(Sig Bit) (a Lift containing an SLift of Bit).
 fn type_check_one<'db, 'g>(
     _env: &mut TCEnvironment<'db, 'g>,
-    one: &syn::One<'db>,
+    _one: &syn::One<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
     // The expected type must be ^(Sig Bit), which is Lift(SLift(Bit))
@@ -1652,8 +1652,7 @@ mod tests {
 
         // Variable %0 should have type 𝒰0
         // Parse at depth 1 since we have one variable in scope
-        let var = crate::syn::parse::parse_syntax_at_depth(&db, "%0", 1)
-            .expect("should parse");
+        let var = crate::syn::parse::parse_syntax_at_depth(&db, "%0", 1).expect("should parse");
         let ty = type_synth(&mut env, &var).expect("should synthesize");
 
         match &*ty {
@@ -1798,8 +1797,8 @@ mod tests {
 
         // Now apply f to (^(^s Bit)) which has type 𝒰0
         // Parse at depth 1 since we have one variable (f) in scope
-        let app = crate::syn::parse::parse_syntax_at_depth(&db, "%0 ^(^s Bit)", 1)
-            .expect("should parse");
+        let app =
+            crate::syn::parse::parse_syntax_at_depth(&db, "%0 ^(^s Bit)", 1).expect("should parse");
 
         let ty = type_synth(&mut env, &app).expect("should synthesize");
 
@@ -2493,11 +2492,9 @@ mod tests {
         // Construct: transport [%0] |- %0 %1 %0
         // Parse at depth 4 since we have 4 variables in scope (A, B, h, x)
         // %0 = x (index 0), %1 = h (index 1), %2 = B (index 2), %3 = A (index 3)
-        let transport = crate::syn::parse::parse_syntax_at_depth(
-            &db,
-            "transport [%0] |- %0 %1 %0",
-            4
-        ).expect("should parse");
+        let transport =
+            crate::syn::parse::parse_syntax_at_depth(&db, "transport [%0] |- %0 %1 %0", 4)
+                .expect("should parse");
 
         // Synthesize the type - should be B
         let result = type_synth(&mut env, &transport);
