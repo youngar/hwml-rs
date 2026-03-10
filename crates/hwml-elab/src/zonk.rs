@@ -219,12 +219,14 @@ mod tests {
     use crate::engine::SolverState;
     use hwml_core::common::Location;
     use hwml_core::syn::Syntax;
+    use hwml_core::val::Value;
+    use std::rc::Rc;
 
     #[test]
     fn test_zonk_unsolved_meta() {
         // Create a solver state with an unsolved metavariable
         let mut state = SolverState::new();
-        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
         let meta_id = state.fresh_meta(Location::UNKNOWN, ty);
 
         // Create a term with the unsolved metavariable
@@ -233,7 +235,7 @@ mod tests {
         // Zonk should leave it unchanged
         let zonked = zonk(&state, &term);
         assert!(
-            matches!(&zonked.data, hwml_core::syn::SyntaxData::Metavariable(id, _) if *id == meta_id)
+            matches!(&zonked.data, hwml_core::syn::SyntaxData::Metavariable(m) if m.id == meta_id)
         );
     }
 
@@ -241,7 +243,7 @@ mod tests {
     fn test_zonk_solved_meta() {
         // Create a solver state with a solved metavariable
         let mut state = SolverState::new();
-        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
         let meta_id = state.fresh_meta(Location::UNKNOWN, ty);
 
         // Solve the metavariable to a universe
@@ -266,7 +268,7 @@ mod tests {
     fn test_zonk_poisoned_meta() {
         // Create a solver state with a poisoned metavariable
         let mut state = SolverState::new();
-        let ty = Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(0));
+        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
         let meta_id = state.fresh_poisoned_meta(Location::UNKNOWN, ty);
 
         // Create a term with the poisoned metavariable
@@ -275,7 +277,7 @@ mod tests {
         // Zonk should leave it unchanged (poisoned metas are unsolved)
         let zonked = zonk(&state, &term);
         assert!(
-            matches!(&zonked.data, hwml_core::syn::SyntaxData::Metavariable(id, _) if *id == meta_id)
+            matches!(&zonked.data, hwml_core::syn::SyntaxData::Metavariable(m) if m.id == meta_id)
         );
 
         // Verify it's actually poisoned

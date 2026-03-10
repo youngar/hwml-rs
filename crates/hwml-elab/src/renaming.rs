@@ -1009,9 +1009,9 @@ mod tests {
     fn test_rename_hardware_universes() {
         let db = Database::new();
         let c = Ctx::new(&db);
-        assert_eq!(c.rename_type_str("HardwareType"), "HardwareType");
-        assert_eq!(c.rename_type_str("SignalType"), "SignalType");
-        assert_eq!(c.rename_type_str("ModuleType"), "ModuleType");
+        assert_eq!(c.rename_type_str("HardwareUniverse"), "HardwareUniverse");
+        assert_eq!(c.rename_type_str("SignalUniverse"), "SignalUniverse");
+        assert_eq!(c.rename_type_str("ModuleUniverse"), "ModuleUniverse");
     }
 
     #[test]

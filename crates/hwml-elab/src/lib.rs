@@ -21,3 +21,6 @@ pub use zonk::*;
 
 pub mod pipeline;
 pub use pipeline::*;
+
+#[cfg(test)]
+pub mod test_utils;

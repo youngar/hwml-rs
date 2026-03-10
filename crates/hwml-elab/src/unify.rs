@@ -1449,24 +1449,24 @@ mod tests {
 
     #[test]
     fn test_unify_hardware_universe() {
-        unify_ok("HardwareType", "HardwareType", "U1");
+        unify_ok("HardwareUniverse", "HardwareUniverse", "U1");
     }
 
     #[test]
     fn test_unify_signal_universe() {
-        unify_ok("SignalType", "SignalType", "HardwareType");
+        unify_ok("SignalUniverse", "SignalUniverse", "HardwareUniverse");
     }
 
     #[test]
     fn test_unify_module_universe() {
-        unify_ok("ModuleType", "ModuleType", "HardwareType");
+        unify_ok("ModuleUniverse", "ModuleUniverse", "HardwareUniverse");
     }
 
     // ========== Bit Type Tests ==========
 
     #[test]
     fn test_unify_bit_types() {
-        unify_ok("Bit", "Bit", "SignalType");
+        unify_ok("Bit", "Bit", "SignalUniverse");
     }
 
     #[test]
@@ -1564,12 +1564,12 @@ mod tests {
 
     #[test]
     fn test_unify_harrow_same() {
-        unify_ok("Bit -> Bit", "Bit -> Bit", "ModuleType");
+        unify_ok("Bit -> Bit", "Bit -> Bit", "ModuleUniverse");
     }
 
     #[test]
     fn test_unify_harrow_different_fails() {
-        unify_err("Bit -> Bit", "Bit -> (Bit -> Bit)", "ModuleType");
+        unify_err("Bit -> Bit", "Bit -> (Bit -> Bit)", "ModuleUniverse");
     }
 
     // ========== Lambda Eta-Expansion Tests ==========
@@ -1681,7 +1681,7 @@ mod tests {
 
     #[test]
     fn test_unify_harrow_two_levels() {
-        unify_ok("Bit -> Bit -> Bit", "Bit -> Bit -> Bit", "ModuleType");
+        unify_ok("Bit -> Bit -> Bit", "Bit -> Bit -> Bit", "ModuleUniverse");
     }
 
     #[test]
@@ -1689,7 +1689,7 @@ mod tests {
         unify_err(
             "Bit -> Bit -> Bit",
             "Bit -> Bit -> (Bit -> Bit)",
-            "ModuleType",
+            "ModuleUniverse",
         );
     }
 
@@ -1702,7 +1702,7 @@ mod tests {
 
     #[test]
     fn test_solve_meta_with_bit() {
-        solve_meta_ok("Bit", "SignalType");
+        solve_meta_ok("Bit", "SignalUniverse");
     }
 
     #[test]
@@ -1712,7 +1712,7 @@ mod tests {
 
     #[test]
     fn test_solve_meta_with_harrow() {
-        solve_meta_ok("Bit -> Bit", "ModuleType");
+        solve_meta_ok("Bit -> Bit", "ModuleUniverse");
     }
 
     #[test]
@@ -1788,7 +1788,7 @@ mod tests {
 
     #[test]
     fn test_unify_constant_application() {
-        unify_ok("(λ %x → %x)[Bit]", "Bit", "SignalType");
+        unify_ok("(λ %x → %x)[Bit]", "Bit", "SignalUniverse");
     }
 
     #[test]
@@ -1796,7 +1796,7 @@ mod tests {
         unify_ok(
             "Bit -> Bit -> Bit -> Bit",
             "Bit -> Bit -> Bit -> Bit",
-            "ModuleType",
+            "ModuleUniverse",
         );
     }
 
@@ -1884,13 +1884,13 @@ mod tests {
         unify_ok(
             "Bit -> Bit -> Bit -> Bit -> Bit",
             "Bit -> Bit -> Bit -> Bit -> Bit",
-            "ModuleType",
+            "ModuleUniverse",
         );
     }
 
     #[test]
     fn test_unify_harrow_different_domain_fails() {
-        unify_err("Bit -> Bit", "(Bit -> Bit) -> Bit", "ModuleType");
+        unify_err("Bit -> Bit", "(Bit -> Bit) -> Bit", "ModuleUniverse");
     }
 
     // ========== More Metavariable Solving Tests ==========
@@ -1917,12 +1917,12 @@ mod tests {
 
     #[test]
     fn test_solve_meta_with_hardware_universe() {
-        solve_meta_ok("HardwareType", "U1");
+        solve_meta_ok("HardwareUniverse", "U1");
     }
 
-    // Note: SignalType : HardwareType and ModuleType : HardwareType
-    // cause ill-typed errors in renaming because HardwareType doesn't
-    // support instances other than SignalType/ModuleType themselves.
+    // Note: SignalUniverse : HardwareUniverse and ModuleUniverse : HardwareUniverse
+    // cause ill-typed errors in renaming because HardwareUniverse doesn't
+    // support instances other than SignalUniverse/ModuleUniverse themselves.
     // These are correct behaviors - the quote function expects specific
     // instance types. We skip these tests as they reveal intended behavior.
 
@@ -1937,21 +1937,21 @@ mod tests {
 
     #[test]
     fn test_unify_hardware_software_mismatch_fails() {
-        // HardwareType vs U0 should fail
-        unify_err("HardwareType", "U0", "U1");
+        // HardwareUniverse vs U0 should fail
+        unify_err("HardwareUniverse", "U0", "U1");
     }
 
     #[test]
     fn test_unify_signal_module_mismatch_fails() {
-        // SignalType vs ModuleType should fail
-        unify_err("SignalType", "ModuleType", "HardwareType");
+        // SignalUniverse vs ModuleUniverse should fail
+        unify_err("SignalUniverse", "ModuleUniverse", "HardwareUniverse");
     }
 
     #[test]
     fn test_unify_bit_vs_harrow_fails() {
-        // Bit vs (Bit -> Bit) should fail at SignalType
+        // Bit vs (Bit -> Bit) should fail at SignalUniverse
         // Note: This may error because types don't match, which is expected
-        unify_err("Bit", "Bit -> Bit", "HardwareType");
+        unify_err("Bit", "Bit -> Bit", "HardwareUniverse");
     }
 
     // ========== Complex Nested Structure Tests ==========
