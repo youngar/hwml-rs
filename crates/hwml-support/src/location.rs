@@ -26,43 +26,33 @@ pub enum LocationData {
 }
 
 /// Salsa-interned location ID (Copy-able u32 wrapper).
-#[salsa::interned]
-pub struct Location {
-    #[return_ref]
-    pub data: LocationData,
-}
+///
+/// This is a simple u32 ID that can be used without a database.
+/// For now, we use a simple counter-based approach.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Location(u32);
 
 impl Location {
     /// Sentinel for synthetic syntax (quotation, elaboration, tests).
-    /// Doesn't require a database.
-    pub const UNKNOWN: Location = unsafe {
-        // SAFETY: Salsa guarantees LocationData::Unknown always gets ID 0.
-        std::mem::transmute::<u32, Location>(0u32)
-    };
+    pub const UNKNOWN: Location = Location(0);
 
-    pub fn unknown(db: &dyn salsa::Database) -> Self {
-        Location::new(db, LocationData::Unknown)
+    /// Create a new location with a given ID.
+    pub fn new(id: u32) -> Self {
+        Location(id)
     }
 
-    pub fn physical(db: &dyn salsa::Database, file: SourceFile, start: u32, end: u32) -> Self {
-        Location::new(db, LocationData::Physical { file, start, end })
+    /// Get the ID of this location.
+    pub fn id(&self) -> u32 {
+        self.0
     }
+}
 
-    pub fn snippet<'db>(&self, db: &'db dyn salsa::Database) -> Option<&'db str> {
-        match self.data(db) {
-            LocationData::Physical { file, start, end } => {
-                file.text(db).get(*start as usize..*end as usize)
-            }
-            LocationData::Unknown => None,
-        }
-    }
-
-    pub fn display(&self, db: &dyn salsa::Database) -> String {
-        match self.data(db) {
-            LocationData::Physical { file, start, end } => {
-                format!("{}:{}..{}", file.path(db), start, end)
-            }
-            LocationData::Unknown => "<unknown>".to_string(),
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if *self == Location::UNKNOWN {
+            write!(f, "<unknown>")
+        } else {
+            write!(f, "loc#{}", self.0)
         }
     }
 }
