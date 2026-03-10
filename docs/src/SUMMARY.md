@@ -2,7 +2,15 @@
 
 [Introduction](./intro.md)
 
-# Core Language (hwmlc)
+# User Guide
 
-- [Core Language](./core/overview.md)
+- [Getting Started](./guide/getting-started.md)
+
+# Reference
+
+- [Surface Syntax](./reference/surface-syntax.md)
+
+# Internals
+
+- [Core IR](./internals/core-ir.md)
 
