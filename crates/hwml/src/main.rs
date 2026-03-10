@@ -42,65 +42,54 @@ fn main() {
         return;
     }
 
-    #[cfg(feature = "surface")]
-    {
-        let path = args.file.canonicalize().unwrap();
-        let path_str = path.to_string_lossy().to_string();
-        let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
-        let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
+    // Surface mode (default)
+    let path = args.file.canonicalize().unwrap();
+    let path_str = path.to_string_lossy().to_string();
+    let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
+    let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
 
-        let Some(program) = parse_result else {
-            println!("Failed to parse");
-            return;
-        };
+    let Some(program) = parse_result else {
+        println!("Failed to parse");
+        return;
+    };
 
-        // Create Salsa database
-        let db = hwml_core::Database::new();
+    // Create Salsa database
+    let db = hwml_core::Database::new();
 
-        // Create source file for location tracking
-        let source_file = hwml_support::SourceFile::new(&db, path_str, contents);
+    // Create source file for location tracking
+    let source_file = hwml_support::SourceFile::new(&db, path_str, contents);
 
-        // Elaborate the program
-        let results = hwml_elab::elaborate_program(&db, source_file, &program);
+    // Elaborate the program
+    let results = hwml_elab::elaborate_program(&db, source_file, &program);
 
-        // Display results
-        println!(
-            "Elaboration complete. {} statement(s) processed.",
-            results.len()
-        );
-        println!();
+    // Display results
+    println!(
+        "Elaboration complete. {} statement(s) processed.",
+        results.len()
+    );
+    println!();
 
-        for (i, result) in results.iter().enumerate() {
-            println!("Statement {}:", i + 1);
+    for (i, result) in results.iter().enumerate() {
+        println!("Statement {}:", i + 1);
 
-            // Show the elaborated term
-            if let Some(term) = &result.term {
-                println!(
-                    "  Core term: {}",
-                    hwml_core::syn::print::print_syntax_to_string(&db, term)
-                );
-            } else {
-                println!("  Core term: <failed to elaborate>");
-            }
-
-            // Show diagnostics
-            if !result.diagnostics.is_empty() {
-                println!("  Diagnostics:");
-                for diag in &result.diagnostics {
-                    println!("    {}: {}", diag.location, diag.message);
-                }
-            }
-            println!();
+        // Show the elaborated term
+        if let Some(term) = &result.term {
+            println!(
+                "  Core term: {}",
+                hwml_core::syn::print::print_syntax_to_string(&db, term)
+            );
+        } else {
+            println!("  Core term: <failed to elaborate>");
         }
-    }
 
-    #[cfg(not(feature = "surface"))]
-    {
-        eprintln!("Error: Surface syntax support not enabled.");
-        eprintln!(
-            "Use --core flag for core syntax, or rebuild with: cargo build --features surface"
-        );
-        std::process::exit(1);
+        // Show diagnostics
+        if !result.diagnostics.is_empty() {
+            println!("  Diagnostics:");
+            for diag in &result.diagnostics {
+                println!("    {}: {}", diag.location, diag.message);
+            }
+        }
+        println!();
     }
 }
 
