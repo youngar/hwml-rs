@@ -15,7 +15,11 @@ cargo test --workspace
 cargo clippy --workspace
 ```
 
-These match exactly what CI runs. For a comprehensive check that also validates dependency separation and builds the mdBook, use:
+These match exactly what CI runs.
+
+**Note**: Since this is a virtual workspace, `cargo test` (without `--workspace`) would also test all packages by default. However, we use `--workspace` explicitly for clarity and to match common Rust project conventions.
+
+For a comprehensive check that also validates dependency separation and builds the mdBook, use:
 
 ```bash
 ./scripts/validate-ci.sh
