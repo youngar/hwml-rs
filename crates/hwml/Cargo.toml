@@ -17,6 +17,7 @@ hwml_core.workspace = true
 hwml_db = { workspace = true, optional = true }
 hwml_surface = { workspace = true, optional = true }
 hwml_elab = { workspace = true, optional = true }
+hwml_support = { workspace = true, optional = true }
 la-arena = { workspace = true, optional = true }
 lalrpop-util = { workspace = true, optional = true }
 salsa.workspace = true
@@ -34,6 +35,7 @@ surface = [
     "dep:hwml_db",
     "dep:hwml_surface",
     "dep:hwml_elab",
+    "dep:hwml_support",
     "dep:la-arena",
     "dep:lalrpop-util",
 ]

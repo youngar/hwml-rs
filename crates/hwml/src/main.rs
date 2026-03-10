@@ -45,6 +45,7 @@ fn main() {
     #[cfg(feature = "surface")]
     {
         let path = args.file.canonicalize().unwrap();
+        let path_str = path.to_string_lossy().to_string();
         let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
         let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
 
@@ -52,19 +53,45 @@ fn main() {
             println!("Failed to parse");
             return;
         };
-        println!("Program: {program:?}");
-        let db = hwml_core::Database::new();
-        //let elab_result = hwml_elab::go(&db, program);
-        //let Ok(module) = elab_result else {
-        //    println!("Failed to elaborate");
-        //    return;
-        //};
-        //println!("Elaborated:");
-        //for decl in module.declarations() {
-        //    println!("{decl:?}");
-        //}
 
-        println!("Done.")
+        // Create Salsa database
+        let db = hwml_core::Database::new();
+
+        // Create source file for location tracking
+        let source_file = hwml_support::SourceFile::new(&db, path_str, contents);
+
+        // Elaborate the program
+        let results = hwml_elab::elaborate_program(&db, source_file, &program);
+
+        // Display results
+        println!(
+            "Elaboration complete. {} statement(s) processed.",
+            results.len()
+        );
+        println!();
+
+        for (i, result) in results.iter().enumerate() {
+            println!("Statement {}:", i + 1);
+
+            // Show the elaborated term
+            if let Some(term) = &result.term {
+                println!(
+                    "  Core term: {}",
+                    hwml_core::syn::print::print_syntax_to_string(&db, term)
+                );
+            } else {
+                println!("  Core term: <failed to elaborate>");
+            }
+
+            // Show diagnostics
+            if !result.diagnostics.is_empty() {
+                println!("  Diagnostics:");
+                for diag in &result.diagnostics {
+                    println!("    {}: {}", diag.location, diag.message);
+                }
+            }
+            println!();
+        }
     }
 
     #[cfg(not(feature = "surface"))]
@@ -113,7 +140,7 @@ fn run_core(args: Args) {
                     );
                 }
                 hwml_core::declaration::Declaration::Metavariable(m) => {
-                    println!("  - meta ?{}: {:?}", m.id.0, m.ty);
+                    println!("  - meta ?{}: {:?}", m.id.local_index, m.ty);
                 }
             }
         }
@@ -142,7 +169,7 @@ fn run_core(args: Args) {
                 }
             }
             hwml_core::declaration::Declaration::Metavariable(m) => {
-                print!("  meta ?{} : ", m.id.0);
+                print!("  meta ?{} : ", m.id.local_index);
                 hwml_core::syn::dump_syntax(&db, &m.ty);
             }
         }
