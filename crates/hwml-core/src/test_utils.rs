@@ -6,8 +6,11 @@
 use std::rc::Rc;
 
 use crate::check_module::check_module;
+use crate::common::{Level, UniverseLevel};
 use crate::eval;
-use crate::syn::parse::{parse_module, parse_syntax};
+use crate::quote::{quote, type_quote};
+use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
+use crate::syn::print::print_syntax_to_string;
 use crate::syn::RcSyntax;
 use crate::val::{Environment, GlobalEnv, Value};
 use crate::Database;
@@ -95,9 +98,6 @@ pub fn eval_str_at_depth<'db>(
     input: &'db str,
     depth: usize,
 ) -> Rc<Value<'db>> {
-    use crate::common::{Level, UniverseLevel};
-    use crate::syn::parse::parse_syntax_at_depth;
-
     let stx = parse_syntax_at_depth(db, input, depth)
         .unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e));
     let mut env = Environment::new(global);
@@ -111,6 +111,183 @@ pub fn eval_str_at_depth<'db>(
     env.extend(dummy_vars);
 
     eval::eval(&mut env, &stx).unwrap_or_else(|e| panic!("Failed to eval '{:?}': {:?}", stx, e))
+}
+
+// ========== Enhanced Test Utilities ==========
+
+/// Quote a value at a type and print it to a string.
+/// This is useful for test assertions.
+///
+/// # Example
+/// ```ignore
+/// let val = eval_str(&db, &global, "[@Succ [@Zero]]");
+/// let ty = eval_str(&db, &global, "#[@Nat]");
+/// assert_eq!(print_value_to_string(&db, &global, &val, &ty), "[@Succ [@Zero]]");
+/// ```
+pub fn print_value_to_string<'db>(
+    db: &'db Database,
+    global: &GlobalEnv<'db>,
+    value: &Value<'db>,
+    ty: &Value<'db>,
+) -> String {
+    let syntax = quote(global, 0, value, ty).expect("quote failed");
+    print_syntax_to_string(db, &syntax)
+}
+
+/// Quote a type and print it to a string.
+/// This is useful for test assertions on types.
+///
+/// # Example
+/// ```ignore
+/// let ty = eval_str(&db, &global, "#[@Nat]");
+/// assert_eq!(print_type_to_string(&db, &global, &ty), "#[@Nat]");
+/// ```
+pub fn print_type_to_string<'db>(
+    db: &'db Database,
+    global: &GlobalEnv<'db>,
+    ty: &Value<'db>,
+) -> String {
+    let syntax = type_quote(global, 0, ty).expect("type_quote failed");
+    print_syntax_to_string(db, &syntax)
+}
+
+/// Parse a context declaration of the form "%name : type".
+/// Returns the variable name and the parsed type syntax.
+fn parse_context_binding<'db>(
+    db: &'db Database,
+    binding: &'db str,
+) -> Result<(String, RcSyntax<'db>), String> {
+    let binding = binding.trim();
+    if binding.is_empty() {
+        return Err("Empty context binding".to_string());
+    }
+
+    // Split on ':'
+    let parts: Vec<&str> = binding.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return Err(format!("Invalid context binding '{}': expected '%name : type'", binding));
+    }
+
+    let var_part = parts[0].trim();
+    let ty_part = parts[1].trim();
+
+    // Variable name should start with %
+    if !var_part.starts_with('%') {
+        return Err(format!(
+            "Invalid variable name '{}': must start with %",
+            var_part
+        ));
+    }
+
+    let var_name = var_part[1..].to_string(); // Remove the %
+
+    // Parse the type
+    let ty_syntax = parse_syntax(db, ty_part)
+        .map_err(|e| format!("Failed to parse type '{}': {:?}", ty_part, e))?;
+
+    Ok((var_name, ty_syntax))
+}
+
+/// Evaluate a string with a typed variable context.
+/// The input format is: "context |- expression"
+/// where context is a semicolon-separated list of "%name : type" bindings.
+///
+/// Variables in the context are referenced by their position (0-indexed) in the expression.
+/// The first variable in the context is %0, the second is %1, etc.
+///
+/// # Example
+/// ```ignore
+/// let db = Database::default();
+/// let global = load_prelude(&db, NAT_PRELUDE);
+/// // %0 refers to the first variable (n : #[@Nat])
+/// // %1 refers to the second variable (m : #[@Nat])
+/// let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %0]");
+/// ```
+pub fn eval_with_context<'db>(
+    db: &'db Database,
+    global: &GlobalEnv<'db>,
+    input: &'db str,
+) -> Rc<Value<'db>> {
+    // Split on '|-'
+    let parts: Vec<&str> = input.splitn(2, "|-").collect();
+    if parts.len() != 2 {
+        panic!("Invalid context syntax '{}': expected 'context |- expression'", input);
+    }
+
+    let context_str = parts[0].trim();
+    let expr_str = parts[1].trim();
+
+    // Parse context bindings
+    let bindings: Vec<(String, RcSyntax<'db>)> = if context_str.is_empty() {
+        Vec::new()
+    } else {
+        context_str
+            .split(';')
+            .map(|binding| {
+                parse_context_binding(db, binding)
+                    .unwrap_or_else(|e| panic!("Failed to parse context: {}", e))
+            })
+            .collect()
+    };
+
+    // Create an environment and evaluate types, adding variables
+    let mut env = Environment::new(global);
+
+    for (_var_name, ty_syntax) in &bindings {
+        // Evaluate the type in the current environment
+        let ty_val = eval::eval(&mut env, ty_syntax)
+            .unwrap_or_else(|e| panic!("Failed to eval type '{:?}': {:?}", ty_syntax, e));
+
+        // Add variable to environment
+        let level = Level::new(env.depth());
+        let var_val = Rc::new(Value::variable(level, ty_val));
+        env.push(var_val);
+        env.transparent.push_rigid();
+    }
+
+    // Parse the expression with the depth set to the number of variables
+    let depth = bindings.len();
+    let expr_syntax = parse_syntax_at_depth(db, expr_str, depth)
+        .unwrap_or_else(|e| panic!("Failed to parse expression '{}': {:?}", expr_str, e));
+
+    // Evaluate the expression
+    eval::eval(&mut env, &expr_syntax)
+        .unwrap_or_else(|e| panic!("Failed to eval expression '{:?}': {:?}", expr_syntax, e))
+}
+
+/// Convenience wrapper: evaluate with context and prelude, auto-managing Database.
+/// Returns the value for further inspection or use with print_value_to_string.
+///
+/// # Example
+/// ```ignore
+/// let val = eval_with_prelude_and_context(
+///     NAT_PRELUDE,
+///     "%n : #[@Nat] |- [@Succ %0]"
+/// );
+/// ```
+pub fn eval_with_prelude_and_context<'db>(
+    db: &'db Database,
+    prelude: &'db str,
+    context_and_expr: &'db str,
+) -> Rc<Value<'db>> {
+    let global = load_prelude(db, prelude);
+    eval_with_context(db, &global, context_and_expr)
+}
+
+/// Convenience wrapper: evaluate a simple expression with prelude, no context.
+/// Auto-manages Database creation.
+///
+/// # Example
+/// ```ignore
+/// let val = eval_with_prelude(&db, NAT_PRELUDE, "[@Zero]");
+/// ```
+pub fn eval_with_prelude<'db>(
+    db: &'db Database,
+    prelude: &'db str,
+    expr: &'db str,
+) -> Rc<Value<'db>> {
+    let global = load_prelude(db, prelude);
+    eval_str(db, &global, expr)
 }
 
 #[cfg(test)]
@@ -174,8 +351,6 @@ mod tests {
 
     #[test]
     fn test_eval_str_at_depth_multiple_vars() {
-        use crate::common::Level;
-
         let db = Database::default();
         let global = GlobalEnv::new();
 
@@ -192,5 +367,227 @@ mod tests {
             }
             other => panic!("Expected rigid variable, got {:?}", other),
         }
+    }
+
+    // =========================================================================
+    // Enhanced Test Utilities Tests
+    // =========================================================================
+
+    #[test]
+    fn test_print_value_to_string_nat() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate [@Zero]
+        let val = eval_str(&db, &global, "[@Zero]");
+        let ty = eval_str(&db, &global, "#[@Nat]");
+
+        // Print it back
+        assert_eq!(print_value_to_string(&db, &global, &val, &ty), "[@Zero]");
+    }
+
+    #[test]
+    fn test_print_value_to_string_succ() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate [@Succ [@Zero]]
+        let val = eval_str(&db, &global, "[@Succ [@Zero]]");
+        let ty = eval_str(&db, &global, "#[@Nat]");
+
+        // Print it back
+        assert_eq!(
+            print_value_to_string(&db, &global, &val, &ty),
+            "[@Succ [@Zero]]"
+        );
+    }
+
+    #[test]
+    fn test_print_type_to_string() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate #[@Nat]
+        let ty = eval_str(&db, &global, "#[@Nat]");
+
+        // Print it back
+        assert_eq!(print_type_to_string(&db, &global, &ty), "#[@Nat]");
+    }
+
+    #[test]
+    fn test_eval_with_context_single_var() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate with one variable in context
+        let val = eval_with_context(&db, &global, "%n : #[@Nat] |- [@Succ %0]");
+
+        // Should be [@Succ %0] where %0 is a rigid variable
+        match val.as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.arguments.len(), 1);
+                // The argument should be a rigid variable at level 0
+                match dcon.arguments[0].as_ref() {
+                    Value::Rigid(rigid) => {
+                        assert_eq!(rigid.head.level, Level::new(0));
+                    }
+                    other => panic!("Expected rigid variable, got {:?}", other),
+                }
+            }
+            other => panic!("Expected data constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_context_multiple_vars() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate with two variables in context
+        // %0 refers to n, %1 refers to m
+        let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %0]");
+
+        // Should be [@Succ %0] where %0 is a rigid variable at level 0
+        match val.as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.arguments.len(), 1);
+                match dcon.arguments[0].as_ref() {
+                    Value::Rigid(rigid) => {
+                        assert_eq!(rigid.head.level, Level::new(0));
+                    }
+                    other => panic!("Expected rigid variable, got {:?}", other),
+                }
+            }
+            other => panic!("Expected data constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_context_second_var() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate with two variables, using the second one
+        // %0 refers to n, %1 refers to m
+        let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %1]");
+
+        // Should be [@Succ %1] where %1 is a rigid variable at level 1
+        match val.as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.arguments.len(), 1);
+                match dcon.arguments[0].as_ref() {
+                    Value::Rigid(rigid) => {
+                        assert_eq!(rigid.head.level, Level::new(1));
+                    }
+                    other => panic!("Expected rigid variable, got {:?}", other),
+                }
+            }
+            other => panic!("Expected data constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_context_bool() {
+        let db = Database::default();
+        let global = load_prelude(&db, BOOL_PRELUDE);
+
+        // Evaluate with Bool variable
+        let val = eval_with_context(&db, &global, "%b : #[@Bool] |- %0");
+
+        // Should be a rigid variable at level 0
+        match val.as_ref() {
+            Value::Rigid(rigid) => {
+                assert_eq!(rigid.head.level, Level::new(0));
+            }
+            other => panic!("Expected rigid variable, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_prelude_and_context() {
+        let db = Database::default();
+
+        // Use the convenience wrapper
+        let val = eval_with_prelude_and_context(&db, NAT_PRELUDE, "%n : #[@Nat] |- [@Succ %0]");
+
+        // Should be [@Succ %0]
+        match val.as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Succ");
+            }
+            other => panic!("Expected data constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_prelude() {
+        let db = Database::default();
+
+        // Use the convenience wrapper
+        let val = eval_with_prelude(&db, NAT_PRELUDE, "[@Zero]");
+
+        // Should be [@Zero]
+        match val.as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Zero");
+            }
+            other => panic!("Expected data constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_context_empty_context() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Empty context should work
+        let val = eval_with_context(&db, &global, " |- [@Zero]");
+
+        match val.as_ref() {
+            Value::DataConstructor(dcon) => {
+                assert_eq!(dcon.constructor.name(&db), "Zero");
+            }
+            other => panic!("Expected data constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eval_with_context_dependent_types() {
+        let db = Database::default();
+        let global = load_prelude(&db, VEC_PRELUDE);
+
+        // Test with dependent types: Vec depends on Nat
+        // %0 is the Nat, %1 is the element type
+        let val = eval_with_context(
+            &db,
+            &global,
+            "%n : #[@Nat]; %a : U0 |- #[@Vec %1 %0]",
+        );
+
+        // Should be a type constructor application
+        match val.as_ref() {
+            Value::TypeConstructor(tcon) => {
+                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.arguments.len(), 2);
+            }
+            other => panic!("Expected type constructor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_print_value_with_context() {
+        let db = Database::default();
+        let global = load_prelude(&db, NAT_PRELUDE);
+
+        // Evaluate with context and print the result
+        let val = eval_with_context(&db, &global, "%n : #[@Nat] |- [@Succ %0]");
+        let ty = eval_str(&db, &global, "#[@Nat]");
+
+        // The printed form should show the variable as !0 (unbound at depth 0)
+        let printed = print_value_to_string(&db, &global, &val, &ty);
+        assert_eq!(printed, "[@Succ !0]");
     }
 }
