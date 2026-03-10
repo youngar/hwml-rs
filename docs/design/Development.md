@@ -18,7 +18,15 @@ cargo test -p mdbook-hwml --test validate_docs
 cargo clippy --workspace
 ```
 
-These match what CI runs. For a comprehensive check, use the validation script:
+These match exactly what CI runs. Alternatively, run all workspace tests at once:
+
+```bash
+cargo test --workspace
+```
+
+This runs the same tests plus any others in the workspace.
+
+For a comprehensive check that also validates dependency separation and builds the mdBook, use:
 
 ```bash
 ./scripts/validate-ci.sh
