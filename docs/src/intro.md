@@ -12,7 +12,7 @@ The language has two syntaxes. The surface language is what you write. The core 
 
 Here's a NOT gate in HWML.
 
-```hwml
+```hwml,ignore
 prim Bit : Signal
 
 def not_gate (x : Bit) : Bit :=

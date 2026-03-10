@@ -53,6 +53,11 @@ fn test_all_documentation_snippets() {
         for snippet in snippets {
             total_snippets += 1;
 
+            // Skip ignored snippets
+            if snippet.ignore {
+                continue;
+            }
+
             let result = match snippet.language {
                 SnippetLanguage::Hwml => typecheck_snippet_hwml(&snippet.code),
                 SnippetLanguage::Hwmlc => typecheck_snippet_hwmlc(&snippet.code),

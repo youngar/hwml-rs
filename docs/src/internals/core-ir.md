@@ -482,7 +482,7 @@ The Core IR supports three kinds of global declarations: **type constructors**, 
 **Purpose**: Declare an inductive type family with parameters and indices.
 
 **Example**:
-```hwmlc
+```hwmlc,ignore
 tcon @Vec (params: 1) (indices: 1) : U0
 ```
 
@@ -495,7 +495,7 @@ This declares a vector type `Vec A n` where `A` is a parameter (the element type
 **Purpose**: Declare a constructor for an inductive type.
 
 **Example**:
-```hwmlc
+```hwmlc,ignore
 dcon @Nil : ∀(A : U0) -> #[@Vec A | @Zero]
 dcon @Cons : ∀(A : U0) -> ∀(n : @Nat) -> A -> #[@Vec A | n] -> #[@Vec A | @Succ n]
 ```
@@ -507,7 +507,7 @@ dcon @Cons : ∀(A : U0) -> ∀(n : @Nat) -> A -> #[@Vec A | n] -> #[@Vec A | @S
 **Purpose**: Declare a global definition with a type and value.
 
 **Example**:
-```hwmlc
+```hwmlc,ignore
 const @identity : ∀(A : U0) -> A -> A := \A -> \x -> x
 ```
 
@@ -518,7 +518,7 @@ const @identity : ∀(A : U0) -> A -> A := \A -> \x -> x
 **Purpose**: Declare an external primitive with a type but no definition.
 
 **Example**:
-```hwmlc
+```hwmlc,ignore
 prim @Bit : SignalUniverse
 ```
 

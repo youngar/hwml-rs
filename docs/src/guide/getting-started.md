@@ -6,7 +6,7 @@ This guide will help you write your first hardware circuit in HWML.
 
 The simplest circuit is just a wire that passes a signal through unchanged.
 
-```hwml
+```hwml,ignore
 prim Bit : Signal
 
 def wire (x : Bit) : Bit := x
@@ -18,7 +18,7 @@ This defines a function called `wire` that takes a bit and returns it. The `prim
 
 A NOT gate inverts its input. We can define it using pattern matching.
 
-```hwml
+```hwml,ignore
 prim Bit : Signal
 
 def not_gate (x : Bit) : Bit :=

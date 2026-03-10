@@ -25,6 +25,8 @@ pub struct Snippet {
     pub language: SnippetLanguage,
     /// Whether this snippet is expected to fail type checking
     pub should_fail: bool,
+    /// Whether this snippet should be ignored (not type-checked)
+    pub ignore: bool,
     /// Line number where the snippet starts in the source file (for error reporting)
     pub line_number: Option<usize>,
 }
@@ -58,6 +60,23 @@ impl Snippet {
             code,
             language,
             should_fail,
+            ignore: false,
+            line_number: None,
+        }
+    }
+
+    /// Create a new snippet with ignore flag
+    pub fn new_with_ignore(
+        code: String,
+        language: SnippetLanguage,
+        should_fail: bool,
+        ignore: bool,
+    ) -> Self {
+        Self {
+            code,
+            language,
+            should_fail,
+            ignore,
             line_number: None,
         }
     }
@@ -73,6 +92,7 @@ impl Snippet {
             code,
             language,
             should_fail,
+            ignore: false,
             line_number: Some(line_number),
         }
     }
@@ -82,7 +102,7 @@ impl Snippet {
 ///
 /// This function parses the Markdown and looks for fenced code blocks with
 /// language tags `hwml` or `hwmlc`. It also recognizes the `should_fail`
-/// modifier to mark snippets that are expected to fail type checking.
+/// and `ignore` modifiers.
 ///
 /// # Examples
 ///
@@ -98,6 +118,11 @@ impl Snippet {
 /// ```hwml,should_fail
 /// def x : Bit := "not a bit"
 /// ```
+///
+/// This should be ignored:
+/// ```hwml,ignore
+/// def x : NotImplementedYet := ...
+/// ```
 /// ```
 pub fn extract_snippets(markdown: &str) -> Vec<Snippet> {
     let parser = Parser::new(markdown);
@@ -105,6 +130,7 @@ pub fn extract_snippets(markdown: &str) -> Vec<Snippet> {
     let mut in_code_block = false;
     let mut current_language: Option<SnippetLanguage> = None;
     let mut current_should_fail = false;
+    let mut current_ignore = false;
     let mut current_code = String::new();
 
     for event in parser {
@@ -116,23 +142,26 @@ pub fn extract_snippets(markdown: &str) -> Vec<Snippet> {
                 if let Some(language) = SnippetLanguage::from_str(lang_str) {
                     in_code_block = true;
                     current_language = Some(language);
-                    // Check for should_fail modifier
+                    // Check for should_fail and ignore modifiers
                     current_should_fail = lang_str.contains("should_fail");
+                    current_ignore = lang_str.contains("ignore");
                     current_code.clear();
                 }
             }
             Event::End(TagEnd::CodeBlock) => {
                 if in_code_block {
                     if let Some(language) = current_language {
-                        snippets.push(Snippet::new(
+                        snippets.push(Snippet::new_with_ignore(
                             current_code.clone(),
                             language,
                             current_should_fail,
+                            current_ignore,
                         ));
                     }
                     in_code_block = false;
                     current_language = None;
                     current_should_fail = false;
+                    current_ignore = false;
                     current_code.clear();
                 }
             }
