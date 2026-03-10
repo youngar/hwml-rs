@@ -12,6 +12,7 @@ pub Program: Program = {
 Stmt: Statement = {
     <d:Def> => Statement::Def(d),
     <m:Meta> => Statement::Meta(m),
+    <p:Prim> => Statement::Prim(p),
 };
 
 Meta: Meta = {
@@ -23,6 +24,12 @@ Meta: Meta = {
 Def: Def = {
     "def" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> => {
         Def::new(id, bs, ty.map(|(_, expr)| expr), value)
+    }
+};
+
+Prim: Prim = {
+    "prim" <id:Id> ":" <ty:Expr0> => {
+        Prim::new(id, ty)
     }
 };
 
@@ -58,9 +65,6 @@ Expr3: Box<Expression> = {
   <u:Underscore> => Box::new(Expression::Underscore(u)),
   <p:Paren> => Box::new(Expression::Paren(p)),
   <n:Num> => Box::new(Expression::Num(n)),
-  <q:Quote> => Box::new(Expression::Quote(q)),
-  <s:Splice> => Box::new(Expression::Splice(s)),
-  <r:Raise> => Box::new(Expression::Raise(r)),
 };
 
 // (x1 .. xn : X) (y1 .. yn : Y) -> Z
@@ -177,18 +181,6 @@ Match: Match = {
   }
 };
 
-Quote: Quote = {
-  "'" <expr:Expr3> => Quote::new(expr)
-};
-
-Splice: Splice = {
-  "~" <expr:Expr3> => Splice::new(expr)
-};
-
-Raise: Raise = {
-  "^" <expr:Expr3> => Raise::new(expr)
-};
-
 MatchClauses: Vec<MatchClause> = {
   <first:MatchClause?> <rest:MatchClauseRest*> => {
     let mut clauses = Vec::new();
@@ -219,6 +211,7 @@ extern {
   enum Token {
     "def" => Token::Def,
     "meta" => Token::Meta,
+    "prim" => Token::Prim,
     "rassoc" => Token::RAssoc,
     "lassoc" => Token::LAssoc,
     "let" => Token::Let,
@@ -243,9 +236,6 @@ extern {
     ":" => Token::Colon,
     ";" => Token::Semicolon,
     "_" => Token::Underscore,
-    "'" => Token::Quote,
-    "~" => Token::Splice,
-    "^" => Token::Raise,
     "num" => Token::Number,
     "id" => Token::Ident,
     "error" => Token::Error,
