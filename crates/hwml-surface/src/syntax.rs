@@ -49,24 +49,28 @@ pub enum Expression {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Pi {
+    pub loc: Location,
     pub bindings: TypedBindings,
     pub target: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Arrow {
+    pub loc: Location,
     pub source: Box<Expression>,
     pub target: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct FatArrow {
+    pub loc: Location,
     pub source: Box<Expression>,
     pub target: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct LetIn {
+    pub loc: Location,
     pub id: Id,
     pub bindings: Bindings,
     pub ty: Option<Box<Expression>>,
@@ -76,6 +80,7 @@ pub struct LetIn {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Fun {
+    pub loc: Location,
     pub bindings: Bindings,
     pub expr: Box<Expression>,
 }
@@ -119,6 +124,7 @@ pub struct UntypedBindingGroup {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct App {
+    pub loc: Location,
     pub elements: Vec<Box<Expression>>,
 }
 

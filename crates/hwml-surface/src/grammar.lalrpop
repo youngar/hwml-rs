@@ -37,11 +37,11 @@ Expr0: Box<Expression> = {
 };
 
 Expr1: Box<Expression> = {
-  <mut el:ExprList> => {
+  <l:@L> <mut el:ExprList> <r:@R> => {
     if el.len() == 1 {
         el.pop().unwrap()
     } else {
-        Box::new(Expression::App(App::new(el)))
+        Box::new(Expression::App(App::new(l..r, el)))
     }
   }
 };
@@ -65,42 +65,42 @@ Expr3: Box<Expression> = {
 
 // (x1 .. xn : X) (y1 .. yn : Y) -> Z
 Pi: Pi = {
-  <bgs:TypedBindings> "->" <e:Expr0> => {
-    Pi::new(bgs, e)
+  <l:@L> <bgs:TypedBindings> "->" <e:Expr0> <r:@R> => {
+    Pi::new(l..r, bgs, e)
   },
 };
 
 // Y -> Z
 Arrow: Arrow = {
-  <mut s:Expr3*> "->" <t:Expr0> => {
+  <l:@L> <mut s:Expr3*> "->" <t:Expr0> <r:@R> => {
     if s.len() == 1 {
-        Arrow::new(s.pop().unwrap(), t)
+        Arrow::new(l..r, s.pop().unwrap(), t)
     } else {
-        Arrow::new(Box::new(Expression::App(App::new(s))), t)
+        Arrow::new(l..r, Box::new(Expression::App(App::new(l..r, s))), t)
     }
   },
 };
 
 // Y => Z
 FatArrow: FatArrow = {
-  <mut s:Expr3*> "=>" <t:Expr0> => {
+  <l:@L> <mut s:Expr3*> "=>" <t:Expr0> <r:@R> => {
     if s.len() == 1 {
-        FatArrow::new(s.pop().unwrap(), t)
+        FatArrow::new(l..r, s.pop().unwrap(), t)
     } else {
-        FatArrow::new(Box::new(Expression::App(App::new(s))), t)
+        FatArrow::new(l..r, Box::new(Expression::App(App::new(l..r, s))), t)
     }
   },
 };
 
 LetIn: LetIn = {
-    "let" <id:Id> <bs:OptionalBindings> <t:(":" Expr0)?> ":=" <v:Expr0> "in" <e:Expr0> => {
-        LetIn::new(id, bs, t.map(|(_, t)| t), v, e)
+    <l:@L> "let" <id:Id> <bs:OptionalBindings> <t:(":" Expr0)?> ":=" <v:Expr0> "in" <e:Expr0> <r:@R> => {
+        LetIn::new(l..r, id, bs, t.map(|(_, t)| t), v, e)
     }
 };
 
 Fun: Fun = {
-  "fun" <bs:Bindings> "=>" <e:Expr0> => {
-    Fun::new(bs, e)
+  <l:@L> "fun" <bs:Bindings> "=>" <e:Expr0> <r:@R> => {
+    Fun::new(l..r, bs, e)
   },
 };
 
