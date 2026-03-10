@@ -1651,9 +1651,9 @@ mod tests {
         env.push_var(u0_val.clone());
 
         // Variable %0 should have type 𝒰0
-        // Note: We use manual AST construction here because the parser requires
-        // named variables to be in its name context.
-        let var = Syntax::variable_rc(Location::UNKNOWN, crate::common::Index(0));
+        // Parse at depth 1 since we have one variable in scope
+        let var = crate::syn::parse::parse_syntax_at_depth(&db, "%0", 1)
+            .expect("should parse");
         let ty = type_synth(&mut env, &var).expect("should synthesize");
 
         match &*ty {
@@ -1797,14 +1797,9 @@ mod tests {
         env.push_var(pi_val);
 
         // Now apply f to (^(^s Bit)) which has type 𝒰0
-        // Note: We use manual AST construction for the variable reference
-        // because the parser requires named variables to be in its name context.
-        let lift_bit = parse(&db, "^(^s Bit)");
-        let app = Syntax::application_rc(
-            Location::UNKNOWN,
-            Syntax::variable_rc(Location::UNKNOWN, crate::common::Index(0)),
-            lift_bit,
-        );
+        // Parse at depth 1 since we have one variable (f) in scope
+        let app = crate::syn::parse::parse_syntax_at_depth(&db, "%0 ^(^s Bit)", 1)
+            .expect("should parse");
 
         let ty = type_synth(&mut env, &app).expect("should synthesize");
 
@@ -2495,12 +2490,14 @@ mod tests {
         // Push x : A
         env.push_var(a.clone());
 
-        // Construct: transport [%0] |- %0 %h %x
-        let motive_body = Syntax::variable_rc(Location::UNKNOWN, Index(0)); // %0 (the motive body)
-        let motive = syn::Closure::new(motive_body); // [%0] |- %0
-        let proof = Syntax::variable_rc(Location::UNKNOWN, Index(1)); // h is at index 1
-        let value = Syntax::variable_rc(Location::UNKNOWN, Index(0)); // x is at index 0
-        let transport = Syntax::transport_rc(Location::UNKNOWN, motive, proof, value);
+        // Construct: transport [%0] |- %0 %1 %0
+        // Parse at depth 4 since we have 4 variables in scope (A, B, h, x)
+        // %0 = x (index 0), %1 = h (index 1), %2 = B (index 2), %3 = A (index 3)
+        let transport = crate::syn::parse::parse_syntax_at_depth(
+            &db,
+            "transport [%0] |- %0 %1 %0",
+            4
+        ).expect("should parse");
 
         // Synthesize the type - should be B
         let result = type_synth(&mut env, &transport);

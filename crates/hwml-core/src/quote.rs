@@ -660,11 +660,7 @@ pub fn quote_harrow<'db>(
     let sem_target = run_closure(global, &harrow.target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
-    Ok(Syntax::harrow_rc(
-        Location::UNKNOWN,
-        syn_source,
-        syn_target,
-    ))
+    Ok(Syntax::harrow_rc(Location::UNKNOWN, syn_source, syn_target))
 }
 
 /// Quote a Module to syntax, using its HArrow type.
@@ -1016,7 +1012,10 @@ mod tests {
 
         /// Create Bit → Bit HArrow type
         fn harrow_bit_bit(&self) -> Value<'db> {
-            Value::harrow(self.bit(), Closure::new(LocalEnv::new(), Syntax::bit_rc()))
+            Value::harrow(
+                self.bit(),
+                Closure::new(LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN)),
+            )
         }
 
         /// Create ∀ (x : U0) → U0 Pi type

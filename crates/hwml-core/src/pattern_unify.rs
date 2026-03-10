@@ -1,7 +1,7 @@
 //! Pattern unification for dependent pattern matching.
 
 use crate::{
-    common::{Level, MetaVariableId},
+    common::{Level, Location, MetaVariableId},
     equal, eval,
     val::{
         DataConstructorInfo, Environment, GlobalEnv, LocalEnv, TransparentEnv, TypeConstructorInfo,
@@ -637,7 +637,9 @@ mod tests {
                 eval_str(&db, &global, "U0"),
             )],
         ) {
-            Ok(EquationOutcome::Stuck(id)) => assert_eq!(id, MetaVariableId::new(42)),
+            Ok(EquationOutcome::Stuck(id)) => {
+                assert_eq!(id, MetaVariableId::new(Location::UNKNOWN, 42))
+            }
             Ok(EquationOutcome::Success(_)) => panic!("Expected stuck, got success"),
             Ok(EquationOutcome::Conflict) => panic!("Expected stuck, got conflict"),
             Err(e) => panic!("Unexpected error: {:?}", e),

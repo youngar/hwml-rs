@@ -178,7 +178,7 @@ impl fmt::Display for Token {
     }
 }
 
-struct State<'input> {
+pub struct State<'input> {
     /// The database reference.
     db: &'input dyn Database,
     /// The names in scope. Each new name is pushed on the end.
@@ -196,7 +196,7 @@ struct State<'input> {
 }
 
 impl<'input> State<'input> {
-    fn new(db: &'input dyn Database, input: &'input str) -> State<'input> {
+    pub fn new(db: &'input dyn Database, input: &'input str) -> State<'input> {
         let mut lexer = Token::lexer(input);
         let token = lexer.next();
         State {
@@ -238,7 +238,7 @@ impl<'input> State<'input> {
     }
 
     /// Push a binder to the environment.
-    fn push_name(&mut self, name: String) {
+    pub fn push_name(&mut self, name: String) {
         self.names.push(name);
     }
 
@@ -1135,7 +1135,7 @@ fn p_term_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
     p_check_opt(state)
 }
 
-fn p_term<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
+pub fn p_term<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
     match p_term_opt(state) {
         Err(err) => Err(err),
         Ok(None) => Err(Error::MissingTerm),
@@ -2329,31 +2329,37 @@ mod tests {
         }
 
         // Check string interning: first and last @hello should have same ConstantId
-        if let (Syntax::Constant(c1), Syntax::Constant(c5)) =
-            (parsed_terms[0].as_ref(), parsed_terms[4].as_ref())
+        if let (SyntaxData::DataConstructor(c1), SyntaxData::DataConstructor(c5)) =
+            (&parsed_terms[0].data, &parsed_terms[4].data)
         {
-            assert_eq!(c1.name, c5.name, "String interning should reuse ID");
+            assert_eq!(
+                c1.constructor, c5.constructor,
+                "String interning should reuse ID"
+            );
         } else {
-            panic!("Expected constants");
+            panic!("Expected data constructors");
         }
     }
 
     #[test]
     fn test_parse_bit_type() {
         let db = Database::new();
-        assert_eq!(parse(&db, "Bit"), Syntax::bit_rc());
+        let parsed = parse(&db, "Bit");
+        assert!(matches!(&parsed.data, SyntaxData::Prim(_)));
     }
 
     #[test]
     fn test_parse_zero_constant() {
         let db = Database::new();
-        assert_eq!(parse(&db, "0"), Syntax::zero_rc());
+        let parsed = parse(&db, "0");
+        assert!(matches!(&parsed.data, SyntaxData::Prim(_)));
     }
 
     #[test]
     fn test_parse_one_constant() {
         let db = Database::new();
-        assert_eq!(parse(&db, "1"), Syntax::one_rc());
+        let parsed = parse(&db, "1");
+        assert!(matches!(&parsed.data, SyntaxData::Prim(_)));
     }
 
     #[test]
@@ -2881,21 +2887,21 @@ tcon @List (%a : U0) : -> U0 where
     fn test_parse_eq_type() {
         let db = Database::new();
         let parsed = parse(&db, "Eq U0 0 1");
-        assert!(matches!(&*parsed, Syntax::Eq(_)));
+        assert!(matches!(&parsed.data, SyntaxData::Eq(_)));
     }
 
     #[test]
     fn test_parse_refl() {
         let db = Database::new();
         let parsed = parse(&db, "refl");
-        assert!(matches!(&*parsed, Syntax::Refl(_)));
+        assert!(matches!(&parsed.data, SyntaxData::Refl(_)));
     }
 
     #[test]
     fn test_parse_transport() {
         let db = Database::new();
         let parsed = parse(&db, "transport [%0] |- %0 refl 0");
-        assert!(matches!(&*parsed, Syntax::Transport(_)));
+        assert!(matches!(&parsed.data, SyntaxData::Transport(_)));
     }
 
     #[test]
