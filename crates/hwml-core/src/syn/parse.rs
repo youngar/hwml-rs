@@ -1143,18 +1143,20 @@ pub fn parse_syntax<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<
     p_term(&mut state)
 }
 
-/// Parse syntax with a specific depth context.
-/// This allows referencing variables by index (e.g., %0, %1, etc.).
-/// The `depth` parameter specifies how many variables are in scope.
-/// Variables are given dummy names ("0", "1", etc.) for parsing.
+/// Parse syntax with a specific depth context. This allows referencing variables by
+/// index using the %0, %1, etc. syntax. The `depth` parameter specifies how many variables
+/// are in scope. Variables are given dummy names in reverse order so that %0 refers to the
+/// most recent variable. For example, at depth 4 the names are ["3", "2", "1", "0"] so %0
+/// finds "0" at index 0, %1 finds "1" at index 1, and so on.
 pub fn parse_syntax_at_depth<'db>(
     db: &'db dyn Database,
     input: &'db str,
     depth: usize,
 ) -> ParseResult<RcSyntax<'db>> {
     let mut state = State::new(db, input);
-    // Add dummy variable names to the parser state
-    for i in 0..depth {
+    // Add dummy variable names to the parser state in reverse order. The most recent
+    // variable (index 0) should be named "0".
+    for i in (0..depth).rev() {
         state.push_name(format!("{}", i));
     }
     p_term(&mut state)
@@ -1423,6 +1425,20 @@ pub fn parse_module<'db>(db: &'db dyn Database, input: &'db str) -> ParseResult<
         all_declarations.extend(decls);
     }
 
+    // Check if there's unparsed input remaining.
+    if let Some(token) = state.peek_token() {
+        match token {
+            Ok(_) => {
+                // There's a valid token that we didn't parse, which is an error.
+                return Err(Error::Other);
+            }
+            Err(e) => {
+                // There's a lexer error, so return it.
+                return Err(e.clone());
+            }
+        }
+    }
+
     Ok(Module::from_declarations(all_declarations))
 }
 
@@ -1434,20 +1450,36 @@ mod tests {
     use crate::ConstantId;
     use crate::Database;
 
-    /// Parse helper - panics with message on failure
+    /// Parse helper that panics with a message on failure.
     fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
         parse_syntax(db, input).unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e))
+    }
+
+    /// Compare two syntax trees ignoring locations by comparing their printed output.
+    fn assert_syntax_eq_data<'db>(
+        db: &'db Database,
+        actual: &RcSyntax<'db>,
+        expected: &RcSyntax<'db>,
+    ) {
+        let actual_str = print_syntax_to_string(db, actual);
+        let expected_str = print_syntax_to_string(db, expected);
+        assert_eq!(
+            actual_str, expected_str,
+            "Syntax differs (locations ignored)\\nActual:   {}\\nExpected: {}",
+            actual_str, expected_str
+        );
     }
 
     #[test]
     fn test_parse_lambda_single_var() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "λ %0 → %0"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %0 → %0"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(0))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+            ),
         );
     }
 
@@ -1455,49 +1487,53 @@ mod tests {
     fn test_parse_lambda_multiple_vars() {
         let db = Database::new();
         // λ %x %y → %x  =>  λ → λ → %1 (nested lambdas, %x at index 1)
-        assert_eq!(
-            parse(&db, "λ %x %y → %x"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x %y → %x"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::lambda_rc(
                     Location::UNKNOWN,
-                    Syntax::variable_rc(Location::UNKNOWN, Index(1))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_lambda_with_parens() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "(λ %0 → %0)"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "(λ %0 → %0)"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(0))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_pi_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "∀(%x : 𝒰0) → 𝒰0"),
-            Syntax::pi_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "∀(%x : 𝒰0) → 𝒰0"),
+            &Syntax::pi_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-                Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
-            )
+                Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_universe() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "𝒰0"),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "𝒰0"),
+            &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
         );
     }
 
@@ -1505,17 +1541,18 @@ mod tests {
     fn test_parse_pi_multiple_vars() {
         let db = Database::new();
         // ∀(%x : 𝒰0) (%y : 𝒰0) → %x  =>  nested Pi, %x at index 1
-        assert_eq!(
-            parse(&db, "∀(%x : 𝒰0) (%y : 𝒰0) → %x"),
-            Syntax::pi_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "∀(%x : 𝒰0) (%y : 𝒰0) → %x"),
+            &Syntax::pi_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
                 Syntax::pi_rc(
                     Location::UNKNOWN,
                     Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-                    Syntax::variable_rc(Location::UNKNOWN, Index(1))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+                ),
+            ),
         );
     }
 
@@ -1523,19 +1560,20 @@ mod tests {
     fn test_parse_application_simple() {
         let db = Database::new();
         // λ %f %x → %f %x  =>  λ → λ → app(%1, %0)
-        assert_eq!(
-            parse(&db, "λ %f %x → %f %x"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %f %x → %f %x"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::lambda_rc(
                     Location::UNKNOWN,
                     Syntax::application_rc(
                         Location::UNKNOWN,
                         Syntax::variable_rc(Location::UNKNOWN, Index(1)),
-                        Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                    )
-                )
-            )
+                        Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1543,9 +1581,10 @@ mod tests {
     fn test_parse_application_left_associative() {
         let db = Database::new();
         // λ %f %x %y → %f %x %y  =>  λ → λ → λ → app(app(%2, %1), %0)
-        assert_eq!(
-            parse(&db, "λ %f %x %y → %f %x %y"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %f %x %y → %f %x %y"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::lambda_rc(
                     Location::UNKNOWN,
@@ -1556,38 +1595,40 @@ mod tests {
                             Syntax::application_rc(
                                 Location::UNKNOWN,
                                 Syntax::variable_rc(Location::UNKNOWN, Index(2)),
-                                Syntax::variable_rc(Location::UNKNOWN, Index(1))
+                                Syntax::variable_rc(Location::UNKNOWN, Index(1)),
                             ),
-                            Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                        )
-                    )
-                )
-            )
+                            Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                        ),
+                    ),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_check() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "(λ %x → %x) : 𝒰0"),
-            Syntax::check_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "(λ %x → %x) : 𝒰0"),
+            &Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
                 Syntax::lambda_rc(
                     Location::UNKNOWN,
-                    Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_check_with_application() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "(λ %f %x → %f %x) : 𝒰0"),
-            Syntax::check_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "(λ %f %x → %f %x) : 𝒰0"),
+            &Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
                 Syntax::lambda_rc(
@@ -1597,11 +1638,11 @@ mod tests {
                         Syntax::application_rc(
                             Location::UNKNOWN,
                             Syntax::variable_rc(Location::UNKNOWN, Index(1)),
-                            Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                        )
-                    )
-                )
-            )
+                            Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                        ),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1609,32 +1650,34 @@ mod tests {
     fn test_parse_lambda_application() {
         let db = Database::new();
         // λ %x → (λ %y → %y) %x  =>  λ → app(λ → %0, %0)
-        assert_eq!(
-            parse(&db, "λ %x → (λ %y → %y) %x"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → (λ %y → %y) %x"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
                     Syntax::lambda_rc(
                         Location::UNKNOWN,
-                        Syntax::variable_rc(Location::UNKNOWN, Index(0))
+                        Syntax::variable_rc(Location::UNKNOWN, Index(0)),
                     ),
-                    Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_metavariable_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "?[0]"),
-            Syntax::metavariable_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "?[0]"),
+            &Syntax::metavariable_rc(
                 Location::UNKNOWN,
                 MetaVariableId::new(Location::UNKNOWN, 0),
-                vec![]
-            )
+                vec![],
+            ),
         );
     }
 
@@ -1642,111 +1685,116 @@ mod tests {
     fn test_parse_metavariable_multiple() {
         let db = Database::new();
         // ?[0] ?[1] ?[0]  =>  app(app(?[0], ?[1]), ?[0])
-        assert_eq!(
-            parse(&db, "?[0] ?[1] ?[0]"),
-            Syntax::application_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "?[0] ?[1] ?[0]"),
+            &Syntax::application_rc(
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
                     Syntax::metavariable_rc(
                         Location::UNKNOWN,
                         MetaVariableId::new(Location::UNKNOWN, 0),
-                        vec![]
+                        vec![],
                     ),
                     Syntax::metavariable_rc(
                         Location::UNKNOWN,
                         MetaVariableId::new(Location::UNKNOWN, 1),
-                        vec![]
-                    )
+                        vec![],
+                    ),
                 ),
                 Syntax::metavariable_rc(
                     Location::UNKNOWN,
                     MetaVariableId::new(Location::UNKNOWN, 0),
-                    vec![]
-                )
-            )
+                    vec![],
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_metavariable_in_lambda() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "λ %x → ?[0] %x"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → ?[0] %x"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
                     Syntax::metavariable_rc(
                         Location::UNKNOWN,
                         MetaVariableId::new(Location::UNKNOWN, 0),
-                        vec![]
+                        vec![],
                     ),
-                    Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_metavariable_ordering() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "?[0] ?[1] ?[2]"),
-            Syntax::application_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "?[0] ?[1] ?[2]"),
+            &Syntax::application_rc(
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
                     Syntax::metavariable_rc(
                         Location::UNKNOWN,
                         MetaVariableId::new(Location::UNKNOWN, 0),
-                        vec![]
+                        vec![],
                     ),
                     Syntax::metavariable_rc(
                         Location::UNKNOWN,
                         MetaVariableId::new(Location::UNKNOWN, 1),
-                        vec![]
-                    )
+                        vec![],
+                    ),
                 ),
                 Syntax::metavariable_rc(
                     Location::UNKNOWN,
                     MetaVariableId::new(Location::UNKNOWN, 2),
-                    vec![]
-                )
-            )
+                    vec![],
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_metavariable_with_type() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "?[0] : 𝒰0"),
-            Syntax::check_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "?[0] : 𝒰0"),
+            &Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
                 Syntax::metavariable_rc(
                     Location::UNKNOWN,
                     MetaVariableId::new(Location::UNKNOWN, 0),
-                    vec![]
-                )
-            )
+                    vec![],
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_metavariable_with_substitution() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "?[0 !0 !1]"),
-            Syntax::metavariable_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "?[0 !0 !1]"),
+            &Syntax::metavariable_rc(
                 Location::UNKNOWN,
                 MetaVariableId::new(Location::UNKNOWN, 0),
                 vec![
                     Syntax::variable_rc(Location::UNKNOWN, Index(0)),
-                    Syntax::variable_rc(Location::UNKNOWN, Index(1))
-                ]
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+                ],
+            ),
         );
     }
 
@@ -1760,103 +1808,112 @@ mod tests {
     #[test]
     fn test_parse_constant_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@42"),
-            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@42"),
+            &Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
         );
     }
 
     #[test]
     fn test_parse_constant_zero() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@0"),
-            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "0"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@0"),
+            &Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "0")),
         );
     }
 
     #[test]
     fn test_parse_constant_large() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@123456789"),
-            Syntax::constant_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@123456789"),
+            &Syntax::constant_rc(
                 Location::UNKNOWN,
-                ConstantId::from_with_db(&db, "123456789")
-            )
+                ConstantId::from_with_db(&db, "123456789"),
+            ),
         );
     }
 
     #[test]
     fn test_parse_constant_application() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@42 @99"),
-            Syntax::application_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@42 @99"),
+            &Syntax::application_rc(
                 Location::UNKNOWN,
                 Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
-                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "99"))
-            )
+                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "99")),
+            ),
         );
     }
 
     #[test]
     fn test_parse_constant_with_type() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@42 : 𝒰0"),
-            Syntax::check_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@42 : 𝒰0"),
+            &Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42"))
-            )
+                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
+            ),
         );
     }
 
     #[test]
     fn test_parse_constant_in_lambda() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "λ %x → @42 %x"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → @42 %x"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::application_rc(
                     Location::UNKNOWN,
                     Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
-                    Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_constant_in_pi() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "∀(%x : @42) → 𝒰0"),
-            Syntax::pi_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "∀(%x : @42) → 𝒰0"),
+            &Syntax::pi_rc(
                 Location::UNKNOWN,
                 Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
-                Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
-            )
+                Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_unbound_variable_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "!0"),
-            Syntax::variable_rc(Location::UNKNOWN, Index(0))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "!0"),
+            &Syntax::variable_rc(Location::UNKNOWN, Index(0)),
         );
     }
 
     #[test]
     fn test_parse_unbound_variable_higher() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "!4"),
-            Syntax::variable_rc(Location::UNKNOWN, Index(4))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "!4"),
+            &Syntax::variable_rc(Location::UNKNOWN, Index(4)),
         );
     }
 
@@ -1864,12 +1921,13 @@ mod tests {
     fn test_parse_unbound_variable_in_lambda() {
         let db = Database::new();
         // λ %x → !0  =>  at depth 1, !0 becomes index 1
-        assert_eq!(
-            parse(&db, "λ %x → !0"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → !0"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(1))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+            ),
         );
     }
 
@@ -1877,15 +1935,16 @@ mod tests {
     fn test_parse_unbound_variable_in_nested_lambda() {
         let db = Database::new();
         // λ %x %y → !0  =>  at depth 2, !0 becomes index 2
-        assert_eq!(
-            parse(&db, "λ %x %y → !0"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x %y → !0"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::lambda_rc(
                     Location::UNKNOWN,
-                    Syntax::variable_rc(Location::UNKNOWN, Index(2))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(2)),
+                ),
+            ),
         );
     }
 
@@ -1893,19 +1952,20 @@ mod tests {
     fn test_parse_mixed_bound_and_unbound() {
         let db = Database::new();
         // λ %x %y → %y !0  =>  %y is index 0, !0 is index 2
-        assert_eq!(
-            parse(&db, "λ %x %y → %y !0"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x %y → %y !0"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::lambda_rc(
                     Location::UNKNOWN,
                     Syntax::application_rc(
                         Location::UNKNOWN,
                         Syntax::variable_rc(Location::UNKNOWN, Index(0)),
-                        Syntax::variable_rc(Location::UNKNOWN, Index(2))
-                    )
-                )
-            )
+                        Syntax::variable_rc(Location::UNKNOWN, Index(2)),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1913,26 +1973,28 @@ mod tests {
     fn test_parse_unbound_variable_in_pi() {
         let db = Database::new();
         // ∀(%x : 𝒰0) → !0  =>  at depth 1, !0 becomes index 1
-        assert_eq!(
-            parse(&db, "∀(%x : 𝒰0) → !0"),
-            Syntax::pi_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "∀(%x : 𝒰0) → !0"),
+            &Syntax::pi_rc(
                 Location::UNKNOWN,
                 Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-                Syntax::variable_rc(Location::UNKNOWN, Index(1))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_unbound_variable_application() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "!0 !1"),
-            Syntax::application_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "!0 !1"),
+            &Syntax::application_rc(
                 Location::UNKNOWN,
                 Syntax::variable_rc(Location::UNKNOWN, Index(0)),
-                Syntax::variable_rc(Location::UNKNOWN, Index(1))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+            ),
         );
     }
 
@@ -1983,7 +2045,7 @@ mod tests {
 
         for (input, expected) in test_cases {
             let parsed = parse(&db, input);
-            assert_eq!(parsed, expected, "Parse mismatch for: {}", input);
+            assert_syntax_eq_data(&db, &parsed, &expected);
             let printed = print_syntax_to_string(&db, &parsed);
             if input.contains("!") {
                 assert!(
@@ -2001,51 +2063,56 @@ mod tests {
     #[test]
     fn test_parse_hconstant_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@42"),
-            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@42"),
+            &Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
         );
     }
 
     #[test]
     fn test_parse_hconstant_zero() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@0"),
-            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "0"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@0"),
+            &Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "0")),
         );
     }
 
     #[test]
     fn test_parse_hconstant_large() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@123456789"),
-            Syntax::constant_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@123456789"),
+            &Syntax::constant_rc(
                 Location::UNKNOWN,
-                ConstantId::from_with_db(&db, "123456789")
-            )
+                ConstantId::from_with_db(&db, "123456789"),
+            ),
         );
     }
 
     #[test]
     fn test_parse_hvariable_bound() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "mod %x → %x"),
-            Syntax::module_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "mod %x → %x"),
+            &Syntax::module_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(0))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_hvariable_unbound() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "!0"),
-            Syntax::variable_rc(Location::UNKNOWN, Index(0))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "!0"),
+            &Syntax::variable_rc(Location::UNKNOWN, Index(0)),
         );
     }
 
@@ -2053,24 +2120,26 @@ mod tests {
     fn test_parse_hvariable_unbound_in_lambda() {
         let db = Database::new();
         // mod %x → !0  =>  at depth 1, !0 becomes index 1
-        assert_eq!(
-            parse(&db, "mod %x → !0"),
-            Syntax::module_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "mod %x → !0"),
+            &Syntax::module_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(1))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_module_single_var() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "mod %x → %x"),
-            Syntax::module_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "mod %x → %x"),
+            &Syntax::module_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(0))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+            ),
         );
     }
 
@@ -2078,41 +2147,44 @@ mod tests {
     fn test_parse_module_multiple_vars() {
         let db = Database::new();
         // mod %x %y → %x  =>  nested modules, %x at index 1
-        assert_eq!(
-            parse(&db, "mod %x %y → %x"),
-            Syntax::module_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "mod %x %y → %x"),
+            &Syntax::module_rc(
                 Location::UNKNOWN,
                 Syntax::module_rc(
                     Location::UNKNOWN,
-                    Syntax::variable_rc(Location::UNKNOWN, Index(1))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_module_with_parens() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "(mod %x → %x)"),
-            Syntax::module_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "(mod %x → %x)"),
+            &Syntax::module_rc(
                 Location::UNKNOWN,
-                Syntax::variable_rc(Location::UNKNOWN, Index(0))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+            ),
         );
     }
 
     #[test]
     fn test_parse_happlication_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@f<Bit>(@x)"),
-            Syntax::happlication_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@f<Bit>(@x)"),
+            &Syntax::happlication_rc(
                 Location::UNKNOWN,
                 Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "f")),
                 Syntax::bit_rc(Location::UNKNOWN),
-                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x"))
-            )
+                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x")),
+            ),
         );
     }
 
@@ -2120,37 +2192,39 @@ mod tests {
     fn test_parse_happlication_chained() {
         let db = Database::new();
         // @f<Bit>(@x)<Bit>(@y)  =>  happ(happ(f, Bit, x), Bit, y)
-        assert_eq!(
-            parse(&db, "@f<Bit>(@x)<Bit>(@y)"),
-            Syntax::happlication_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@f<Bit>(@x)<Bit>(@y)"),
+            &Syntax::happlication_rc(
                 Location::UNKNOWN,
                 Syntax::happlication_rc(
                     Location::UNKNOWN,
                     Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "f")),
                     Syntax::bit_rc(Location::UNKNOWN),
-                    Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x"))
+                    Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x")),
                 ),
                 Syntax::bit_rc(Location::UNKNOWN),
-                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "y"))
-            )
+                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "y")),
+            ),
         );
     }
 
     #[test]
     fn test_parse_happlication_with_harrow_type() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@f<Bit → Bit>(@x)"),
-            Syntax::happlication_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@f<Bit → Bit>(@x)"),
+            &Syntax::happlication_rc(
                 Location::UNKNOWN,
                 Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "f")),
                 Syntax::harrow_rc(
                     Location::UNKNOWN,
                     Syntax::bit_rc(Location::UNKNOWN),
-                    Syntax::bit_rc(Location::UNKNOWN)
+                    Syntax::bit_rc(Location::UNKNOWN),
                 ),
-                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x"))
-            )
+                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x")),
+            ),
         );
     }
 
@@ -2158,20 +2232,21 @@ mod tests {
     fn test_parse_hcheck_simple() {
         let db = Database::new();
         // (mod %x → %x) : Bit -> Bit
-        assert_eq!(
-            parse(&db, "(mod %x → %x) : Bit -> Bit"),
-            Syntax::check_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "(mod %x → %x) : Bit -> Bit"),
+            &Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::harrow_rc(
                     Location::UNKNOWN,
                     Syntax::bit_rc(Location::UNKNOWN),
-                    Syntax::bit_rc(Location::UNKNOWN)
+                    Syntax::bit_rc(Location::UNKNOWN),
                 ),
                 Syntax::module_rc(
                     Location::UNKNOWN,
-                    Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                ),
+            ),
         );
     }
 
@@ -2179,18 +2254,19 @@ mod tests {
     fn test_parse_hcheck_with_application() {
         let db = Database::new();
         // (@42<Bit>(@99)) : Bit
-        assert_eq!(
-            parse(&db, "(@42<Bit>(@99)) : Bit"),
-            Syntax::check_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "(@42<Bit>(@99)) : Bit"),
+            &Syntax::check_rc(
                 Location::UNKNOWN,
                 Syntax::bit_rc(Location::UNKNOWN),
                 Syntax::happlication_rc(
                     Location::UNKNOWN,
                     Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
                     Syntax::bit_rc(Location::UNKNOWN),
-                    Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "99"))
-                )
-            )
+                    Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "99")),
+                ),
+            ),
         );
     }
 
@@ -2198,17 +2274,18 @@ mod tests {
     fn test_parse_happlication_in_module() {
         let db = Database::new();
         // mod %f → @x<Bit>(%f)
-        assert_eq!(
-            parse(&db, "mod %f → @x<Bit>(%f)"),
-            Syntax::module_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "mod %f → @x<Bit>(%f)"),
+            &Syntax::module_rc(
                 Location::UNKNOWN,
                 Syntax::happlication_rc(
                     Location::UNKNOWN,
                     Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x")),
                     Syntax::bit_rc(Location::UNKNOWN),
-                    Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                )
-            )
+                    Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                ),
+            ),
         );
     }
 
@@ -2216,9 +2293,10 @@ mod tests {
     fn test_parse_happlication_with_nested_type() {
         let db = Database::new();
         // @f<Bit → Bit → Bit>(@x)
-        assert_eq!(
-            parse(&db, "@f<Bit → Bit → Bit>(@x)"),
-            Syntax::happlication_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@f<Bit → Bit → Bit>(@x)"),
+            &Syntax::happlication_rc(
                 Location::UNKNOWN,
                 Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "f")),
                 Syntax::harrow_rc(
@@ -2227,11 +2305,11 @@ mod tests {
                     Syntax::harrow_rc(
                         Location::UNKNOWN,
                         Syntax::bit_rc(Location::UNKNOWN),
-                        Syntax::bit_rc(Location::UNKNOWN)
-                    )
+                        Syntax::bit_rc(Location::UNKNOWN),
+                    ),
                 ),
-                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x"))
-            )
+                Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "x")),
+            ),
         );
     }
 
@@ -2239,14 +2317,15 @@ mod tests {
     fn test_parse_happlication_with_unbound_var() {
         let db = Database::new();
         // !0<Bit>(!1)
-        assert_eq!(
-            parse(&db, "!0<Bit>(!1)"),
-            Syntax::happlication_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "!0<Bit>(!1)"),
+            &Syntax::happlication_rc(
                 Location::UNKNOWN,
                 Syntax::variable_rc(Location::UNKNOWN, Index(0)),
                 Syntax::bit_rc(Location::UNKNOWN),
-                Syntax::variable_rc(Location::UNKNOWN, Index(1))
-            )
+                Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+            ),
         );
     }
 
@@ -2254,9 +2333,10 @@ mod tests {
     fn test_parse_happlication_nested_in_arg() {
         let db = Database::new();
         // @42<Bit>(@99<Bit>(@100))
-        assert_eq!(
-            parse(&db, "@42<Bit>(@99<Bit>(@100))"),
-            Syntax::happlication_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@42<Bit>(@99<Bit>(@100))"),
+            &Syntax::happlication_rc(
                 Location::UNKNOWN,
                 Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "42")),
                 Syntax::bit_rc(Location::UNKNOWN),
@@ -2264,9 +2344,9 @@ mod tests {
                     Location::UNKNOWN,
                     Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "99")),
                     Syntax::bit_rc(Location::UNKNOWN),
-                    Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "100"))
-                )
-            )
+                    Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "100")),
+                ),
+            ),
         );
     }
 
@@ -2324,15 +2404,12 @@ mod tests {
         }
 
         // Check string interning: first and last @hello should have same ConstantId
-        if let (SyntaxData::DataConstructor(c1), SyntaxData::DataConstructor(c5)) =
+        if let (SyntaxData::Constant(c1), SyntaxData::Constant(c5)) =
             (&parsed_terms[0].data, &parsed_terms[4].data)
         {
-            assert_eq!(
-                c1.constructor, c5.constructor,
-                "String interning should reuse ID"
-            );
+            assert_eq!(c1.name, c5.name, "String interning should reuse ID");
         } else {
-            panic!("Expected data constructors");
+            panic!("Expected constants");
         }
     }
 
@@ -2340,98 +2417,109 @@ mod tests {
     fn test_parse_bit_type() {
         let db = Database::new();
         let parsed = parse(&db, "Bit");
-        assert!(matches!(&parsed.data, SyntaxData::Prim(_)));
+        assert!(matches!(&parsed.data, SyntaxData::Bit(_)));
     }
 
     #[test]
     fn test_parse_zero_constant() {
         let db = Database::new();
         let parsed = parse(&db, "0");
-        assert!(matches!(&parsed.data, SyntaxData::Prim(_)));
+        assert!(matches!(&parsed.data, SyntaxData::Zero(_)));
     }
 
     #[test]
     fn test_parse_one_constant() {
         let db = Database::new();
         let parsed = parse(&db, "1");
-        assert!(matches!(&parsed.data, SyntaxData::Prim(_)));
+        assert!(matches!(&parsed.data, SyntaxData::One(_)));
     }
 
     #[test]
     fn test_parse_primitives() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "$xor"),
-            Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "xor"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$xor"),
+            &Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "xor")),
         );
-        assert_eq!(
-            parse(&db, "$and"),
-            Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "and"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$and"),
+            &Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "and")),
         );
-        assert_eq!(
-            parse(&db, "$or"),
-            Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "or"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$or"),
+            &Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "or")),
         );
-        assert_eq!(
-            parse(&db, "$not"),
-            Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "not"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$not"),
+            &Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "not")),
         );
-        assert_eq!(
-            parse(&db, "$custom"),
-            Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "custom"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$custom"),
+            &Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "custom")),
         );
-        assert_eq!(
-            parse(&db, "$Add"),
-            Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Add"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$Add"),
+            &Syntax::prim_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Add")),
         );
     }
 
     #[test]
     fn test_parse_hconstant() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "@Add"),
-            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Add"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@Add"),
+            &Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Add")),
         );
-        assert_eq!(
-            parse(&db, "@Multiply"),
-            Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Multiply"))
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@Multiply"),
+            &Syntax::constant_rc(Location::UNKNOWN, ConstantId::from_with_db(&db, "Multiply")),
         );
-        assert_eq!(
-            parse(&db, "@MyCircuit"),
-            Syntax::constant_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@MyCircuit"),
+            &Syntax::constant_rc(
                 Location::UNKNOWN,
-                ConstantId::from_with_db(&db, "MyCircuit")
-            )
+                ConstantId::from_with_db(&db, "MyCircuit"),
+            ),
         );
     }
 
     #[test]
     fn test_parse_data_constructor_nullary() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "[@Nil]"),
-            Syntax::data_constructor_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "[@Nil]"),
+            &Syntax::data_constructor_rc(
                 Location::UNKNOWN,
                 ConstantId::from_with_db(&db, "Nil"),
-                vec![]
-            )
+                vec![],
+            ),
         );
     }
 
     #[test]
     fn test_parse_data_constructor_unary_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "[@Some @42]"),
-            Syntax::data_constructor_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "[@Some @42]"),
+            &Syntax::data_constructor_rc(
                 Location::UNKNOWN,
                 ConstantId::from_with_db(&db, "Some"),
                 vec![Syntax::constant_rc(
                     Location::UNKNOWN,
-                    ConstantId::from_with_db(&db, "42")
-                )]
-            )
+                    ConstantId::from_with_db(&db, "42"),
+                )],
+            ),
         );
     }
 
@@ -2439,19 +2527,20 @@ mod tests {
     fn test_parse_data_constructor_unary_lambda() {
         let db = Database::new();
         // [@Some λ %0 → λ %0 → %0]
-        assert_eq!(
-            parse(&db, "[@Some λ %0 → λ %0 → %0]"),
-            Syntax::data_constructor_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "[@Some λ %0 → λ %0 → %0]"),
+            &Syntax::data_constructor_rc(
                 Location::UNKNOWN,
                 ConstantId::from_with_db(&db, "Some"),
                 vec![Syntax::lambda_rc(
                     Location::UNKNOWN,
                     Syntax::lambda_rc(
                         Location::UNKNOWN,
-                        Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                    )
-                )]
-            )
+                        Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                    ),
+                )],
+            ),
         );
     }
 
@@ -2459,22 +2548,23 @@ mod tests {
     fn test_parse_data_constructor_binary_lambda() {
         let db = Database::new();
         // [@Pair (λ %0 → %0) λ %0 → %0]
-        assert_eq!(
-            parse(&db, "[@Pair (λ %0 → %0) λ %0 → %0]"),
-            Syntax::data_constructor_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "[@Pair (λ %0 → %0) λ %0 → %0]"),
+            &Syntax::data_constructor_rc(
                 Location::UNKNOWN,
                 ConstantId::from_with_db(&db, "Pair"),
                 vec![
                     Syntax::lambda_rc(
                         Location::UNKNOWN,
-                        Syntax::variable_rc(Location::UNKNOWN, Index(0))
+                        Syntax::variable_rc(Location::UNKNOWN, Index(0)),
                     ),
                     Syntax::lambda_rc(
                         Location::UNKNOWN,
-                        Syntax::variable_rc(Location::UNKNOWN, Index(0))
-                    )
-                ]
-            )
+                        Syntax::variable_rc(Location::UNKNOWN, Index(0)),
+                    ),
+                ],
+            ),
         );
     }
 
@@ -2482,9 +2572,10 @@ mod tests {
     fn test_case_application() {
         let db = Database::new();
         // Case scrutinee must be a variable, wrapped in a lambda to bind %x
-        assert_eq!(
-            parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::case_rc(
                     Location::UNKNOWN,
@@ -2495,20 +2586,20 @@ mod tests {
                             0,
                             Syntax::constant_rc(
                                 Location::UNKNOWN,
-                                ConstantId::from_with_db(&db, "1")
-                            )
+                                ConstantId::from_with_db(&db, "1"),
+                            ),
                         ),
                         CaseBranch::new(
                             ConstantId::from_with_db(&db, "false"),
                             0,
                             Syntax::constant_rc(
                                 Location::UNKNOWN,
-                                ConstantId::from_with_db(&db, "0")
-                            )
+                                ConstantId::from_with_db(&db, "0"),
+                            ),
                         ),
                     ],
-                )
-            )
+                ),
+            ),
         );
     }
 
@@ -2516,9 +2607,10 @@ mod tests {
     fn test_constructor_only_patterns() {
         let db = Database::new();
         // Case scrutinee must be a variable, wrapped in a lambda to bind %x
-        assert_eq!(
-            parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::case_rc(
                     Location::UNKNOWN,
@@ -2529,49 +2621,51 @@ mod tests {
                             0,
                             Syntax::constant_rc(
                                 Location::UNKNOWN,
-                                ConstantId::from_with_db(&db, "1")
-                            )
+                                ConstantId::from_with_db(&db, "1"),
+                            ),
                         ),
                         CaseBranch::new(
                             ConstantId::from_with_db(&db, "false"),
                             0,
                             Syntax::constant_rc(
                                 Location::UNKNOWN,
-                                ConstantId::from_with_db(&db, "0")
-                            )
+                                ConstantId::from_with_db(&db, "0"),
+                            ),
                         ),
                     ],
-                )
-            )
+                ),
+            ),
         );
     }
 
     #[test]
     fn test_parse_type_constructor_simple() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "#[@Bool]"),
-            Syntax::type_constructor_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "#[@Bool]"),
+            &Syntax::type_constructor_rc(
                 Location::UNKNOWN,
                 ConstantId::from_with_db(&db, "Bool"),
-                vec![]
-            )
+                vec![],
+            ),
         );
     }
 
     #[test]
     fn test_parse_type_constructor_with_args() {
         let db = Database::new();
-        assert_eq!(
-            parse(&db, "#[@List 𝒰0]"),
-            Syntax::type_constructor_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "#[@List 𝒰0]"),
+            &Syntax::type_constructor_rc(
                 Location::UNKNOWN,
                 ConstantId::from_with_db(&db, "List"),
                 vec![Syntax::universe_rc(
                     Location::UNKNOWN,
-                    UniverseLevel::new(0)
-                )]
-            )
+                    UniverseLevel::new(0),
+                )],
+            ),
         );
     }
 
@@ -2580,9 +2674,10 @@ mod tests {
         let db = Database::new();
         // λ %x → %x case { @true => @1 | @false => @0 }
         // Case scrutinee must be a variable, wrapped in a lambda to bind %x
-        assert_eq!(
-            parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::case_rc(
                     Location::UNKNOWN,
@@ -2593,20 +2688,20 @@ mod tests {
                             0,
                             Syntax::constant_rc(
                                 Location::UNKNOWN,
-                                ConstantId::from_with_db(&db, "1")
-                            )
+                                ConstantId::from_with_db(&db, "1"),
+                            ),
                         ),
                         CaseBranch::new(
                             ConstantId::from_with_db(&db, "false"),
                             0,
                             Syntax::constant_rc(
                                 Location::UNKNOWN,
-                                ConstantId::from_with_db(&db, "0")
-                            )
+                                ConstantId::from_with_db(&db, "0"),
+                            ),
                         ),
                     ],
-                )
-            )
+                ),
+            ),
         );
     }
 
@@ -2616,9 +2711,10 @@ mod tests {
         // λ %n → %n case { @Succ %m => %m }
         // Case scrutinee must be a variable, wrapped in a lambda to bind %n
         // In the branch body, %m is Index(0) (innermost binding from the pattern)
-        assert_eq!(
-            parse(&db, "λ %n → %n case { @Succ %m => %m }"),
-            Syntax::lambda_rc(
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "λ %n → %n case { @Succ %m => %m }"),
+            &Syntax::lambda_rc(
                 Location::UNKNOWN,
                 Syntax::case_rc(
                     Location::UNKNOWN,
@@ -2626,10 +2722,10 @@ mod tests {
                     vec![CaseBranch::new(
                         ConstantId::from_with_db(&db, "Succ"),
                         1,
-                        Syntax::variable_rc(Location::UNKNOWN, Index(0))
+                        Syntax::variable_rc(Location::UNKNOWN, Index(0)),
                     )],
-                )
-            )
+                ),
+            ),
         );
     }
 
@@ -2719,9 +2815,10 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Option");
-            assert_eq!(
+            assert_syntax_eq_data(
+                &db,
                 &tc.universe,
-                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
+                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
             );
         } else {
             panic!("Expected TypeConstructor");
@@ -2756,9 +2853,10 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Pair");
-            assert_eq!(
+            assert_syntax_eq_data(
+                &db,
                 &tc.universe,
-                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
+                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
             );
         } else {
             panic!("Expected TypeConstructor");
@@ -2772,9 +2870,10 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Bool");
-            assert_eq!(
+            assert_syntax_eq_data(
+                &db,
                 &tc.universe,
-                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
+                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
             );
         } else {
             panic!("Expected TypeConstructor");
@@ -2812,9 +2911,10 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructor(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db), "Vec");
-            assert_eq!(
+            assert_syntax_eq_data(
+                &db,
                 &tc.universe,
-                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0))
+                &Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
             );
         } else {
             panic!("Expected TypeConstructor");

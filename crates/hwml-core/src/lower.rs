@@ -341,6 +341,7 @@ mod tests {
     use crate::val::LocalEnv;
     use crate::Database;
     use hwml_support::salsa::IntoWithDb;
+    use hwml_support::Location;
 
     /// Test that a simple value without HApplication passes through unchanged.
     #[test]

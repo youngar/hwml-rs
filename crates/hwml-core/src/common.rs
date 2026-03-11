@@ -282,9 +282,9 @@ impl MetaVariableId {
 
 impl std::fmt::Display for MetaVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        // Format as ?loc@index for debugging
-        // For Location::UNKNOWN, just show ?@index
-        write!(f, "?@{}", self.local_index)
+        // Format as just the index number
+        // The ?[ ] wrapper is added by the Metavariable printer
+        write!(f, "{}", self.local_index)
     }
 }
 

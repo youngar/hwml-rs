@@ -9,7 +9,7 @@
 #![allow(unused_imports)]
 
 use crate::{
-    common::{Level, Location},
+    common::{Index, Level, Location},
     eval::{self, eval_telescope, run_closure},
     syn::{CaseBranch, RcSyntax, Syntax},
     val::{
@@ -740,7 +740,17 @@ pub fn quote_flex<'db>(
 
 /// Quote a variable to syntax.
 fn quote_variable<'db>(depth: usize, var: &val::Variable) -> RcSyntax<'db> {
-    Syntax::variable_rc(Location::UNKNOWN, var.level.to_index(depth))
+    // Check if the variable is bound in the current context
+    // If level >= depth, it's unbound and we need to handle it specially
+    let index = if var.level.0 < depth {
+        // Bound variable: convert level to index normally
+        var.level.to_index(depth)
+    } else {
+        // Unbound variable: !N at depth d becomes Index(d + N)
+        // So for level L >= depth, we want Index(L) which prints as !(L - depth)
+        Index(var.level.0)
+    };
+    Syntax::variable_rc(Location::UNKNOWN, index)
 }
 
 /// Quote a metavariable to syntax.

@@ -1169,6 +1169,7 @@ mod tests {
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::syn::Syntax;
     use crate::val::{GlobalEnv, LocalEnv, Spine};
+    use hwml_support::Location;
     use std::rc::Rc;
 
     // =========================================================================

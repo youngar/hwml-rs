@@ -165,7 +165,10 @@ fn parse_context_binding<'db>(
     // Split on ':'
     let parts: Vec<&str> = binding.splitn(2, ':').collect();
     if parts.len() != 2 {
-        return Err(format!("Invalid context binding '{}': expected '%name : type'", binding));
+        return Err(format!(
+            "Invalid context binding '{}': expected '%name : type'",
+            binding
+        ));
     }
 
     let var_part = parts[0].trim();
@@ -199,8 +202,9 @@ fn parse_context_binding<'db>(
 /// ```ignore
 /// let db = Database::default();
 /// let global = load_prelude(&db, NAT_PRELUDE);
-/// // %0 refers to the first variable (n : #[@Nat])
-/// // %1 refers to the second variable (m : #[@Nat])
+/// // Context: n at level 0, m at level 1
+/// // %0 (index 0) refers to m (most recent variable)
+/// // %1 (index 1) refers to n (second most recent variable)
 /// let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %0]");
 /// ```
 pub fn eval_with_context<'db>(
@@ -211,7 +215,10 @@ pub fn eval_with_context<'db>(
     // Split on '|-'
     let parts: Vec<&str> = input.splitn(2, "|-").collect();
     if parts.len() != 2 {
-        panic!("Invalid context syntax '{}': expected 'context |- expression'", input);
+        panic!(
+            "Invalid context syntax '{}': expected 'context |- expression'",
+            input
+        );
     }
 
     let context_str = parts[0].trim();
@@ -355,15 +362,16 @@ mod tests {
         let global = GlobalEnv::new();
 
         // Parse "%1" with depth 2 (two variables in scope)
-        // %0 is at index 0 (level 1), %1 is at index 1 (level 0)
-        // But we're parsing %1 which refers to the name "1" at index 1
-        // which corresponds to level 1 (since we pushed "0" first, then "1")
+        // With standard de Bruijn indexing:
+        // - Variable at level 0 is referenced by index 1 (%1)
+        // - Variable at level 1 is referenced by index 0 (%0)
+        // So %1 refers to the variable at level 0
         let val = eval_str_at_depth(&db, &global, "%1", 2);
 
-        // Should be a rigid variable at level 1
+        // Should be a rigid variable at level 0
         match val.as_ref() {
             Value::Rigid(rigid) => {
-                assert_eq!(rigid.head.level, Level::new(1));
+                assert_eq!(rigid.head.level, Level::new(0));
             }
             other => panic!("Expected rigid variable, got {:?}", other),
         }
@@ -398,7 +406,7 @@ mod tests {
         // Print it back
         assert_eq!(
             print_value_to_string(&db, &global, &val, &ty),
-            "[@Succ [@Zero]]"
+            "[@Succ ([@Zero])]"
         );
     }
 
@@ -445,17 +453,19 @@ mod tests {
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate with two variables in context
-        // %0 refers to n, %1 refers to m
+        // Context: n at level 0, m at level 1
+        // %0 (index 0) refers to m (most recent, level 1)
+        // %1 (index 1) refers to n (second most recent, level 0)
         let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %0]");
 
-        // Should be [@Succ %0] where %0 is a rigid variable at level 0
+        // Should be [@Succ %0] where %0 is a rigid variable at level 1 (m)
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
                 assert_eq!(dcon.constructor.name(&db), "Succ");
                 assert_eq!(dcon.arguments.len(), 1);
                 match dcon.arguments[0].as_ref() {
                     Value::Rigid(rigid) => {
-                        assert_eq!(rigid.head.level, Level::new(0));
+                        assert_eq!(rigid.head.level, Level::new(1));
                     }
                     other => panic!("Expected rigid variable, got {:?}", other),
                 }
@@ -470,17 +480,19 @@ mod tests {
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate with two variables, using the second one
-        // %0 refers to n, %1 refers to m
+        // Context: n at level 0, m at level 1
+        // %0 (index 0) refers to m (most recent, level 1)
+        // %1 (index 1) refers to n (second most recent, level 0)
         let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %1]");
 
-        // Should be [@Succ %1] where %1 is a rigid variable at level 1
+        // Should be [@Succ %1] where %1 is a rigid variable at level 0 (n)
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
                 assert_eq!(dcon.constructor.name(&db), "Succ");
                 assert_eq!(dcon.arguments.len(), 1);
                 match dcon.arguments[0].as_ref() {
                     Value::Rigid(rigid) => {
-                        assert_eq!(rigid.head.level, Level::new(1));
+                        assert_eq!(rigid.head.level, Level::new(0));
                     }
                     other => panic!("Expected rigid variable, got {:?}", other),
                 }
@@ -561,11 +573,7 @@ mod tests {
 
         // Test with dependent types: Vec depends on Nat
         // %0 is the Nat, %1 is the element type
-        let val = eval_with_context(
-            &db,
-            &global,
-            "%n : #[@Nat]; %a : U0 |- #[@Vec %1 %0]",
-        );
+        let val = eval_with_context(&db, &global, "%n : #[@Nat]; %a : U0 |- #[@Vec %1 %0]");
 
         // Should be a type constructor application
         match val.as_ref() {

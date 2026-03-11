@@ -1118,7 +1118,7 @@ mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::Database;
-    use hwml_support::IntoWithDb;
+    use hwml_support::{IntoWithDb, Location};
     use insta::assert_snapshot;
 
     /// Helper to print syntax and return string
@@ -1351,7 +1351,7 @@ mod tests {
     #[test]
     fn print_metavariable() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::metavariable(Location::UNKNOWN, MetaVariableId::new(Location::UNKNOWN, 0), vec![])), @"?[?@0]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(Location::UNKNOWN, MetaVariableId::new(Location::UNKNOWN, 0), vec![])), @"?[0]");
         assert_snapshot!(p(&db, &Syntax::metavariable(Location::UNKNOWN, MetaVariableId::new(Location::UNKNOWN, 1), vec![Syntax::variable_rc(Location::UNKNOWN, Index(0)), Syntax::variable_rc(Location::UNKNOWN, Index(1))])), @"?[1 !0 !1]");
     }
 

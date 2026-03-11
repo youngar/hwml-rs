@@ -438,7 +438,7 @@ mod tests {
     use super::*;
     use crate::val::GlobalEnv;
     use crate::Database;
-    use hwml_support::IntoWithDb;
+    use hwml_support::{IntoWithDb, Location};
 
     use crate::test_utils::{load_prelude, VEC_PRELUDE};
 
