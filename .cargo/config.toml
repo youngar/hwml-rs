@@ -4,3 +4,9 @@ check-revoke = false
 [net]
 git-fetch-with-cli = true
 
+# Uncomment and configure if you have a cargo mirror/proxy
+# [source.crates-io]
+# replace-with = "mirror"
+#
+# [source.mirror]
+# registry = "https://your-cargo-mirror.example.com"
