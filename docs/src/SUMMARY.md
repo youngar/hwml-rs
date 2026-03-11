@@ -13,4 +13,5 @@
 # Internals
 
 - [Core IR](./internals/core-ir.md)
+- [Preprocessor Test](./test-preprocessor.md)
 

@@ -20,3 +20,6 @@ level = 0
 
 [output.html.search]
 enable = true
+
+[preprocessor.hwml-validator]
+command = "cargo run --manifest-path ../crates/mdbook-hwml/Cargo.toml --bin mdbook-hwml"
