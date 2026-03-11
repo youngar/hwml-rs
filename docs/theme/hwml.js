@@ -1,10 +1,10 @@
-// HWML syntax highlighting
-// Since this loads after book.js has already called highlightAll(),
-// we need to register languages and re-highlight
+// HWML syntax highlighting for mdBook
+// Uses the "second pass" pattern: register languages, then highlight blocks that book.js missed
 
-(function () {
+window.addEventListener('load', function () {
   if (typeof hljs === 'undefined') return;
 
+  // Register HWML Core language
   hljs.registerLanguage('hwmlc', function (hljs) {
     return {
       name: 'HWML Core',
@@ -28,6 +28,7 @@
     };
   });
 
+  // Register HWML Surface language
   hljs.registerLanguage('hwml', function (hljs) {
     return {
       name: 'HWML Surface',
@@ -45,9 +46,10 @@
     };
   });
 
-  // Re-highlight code blocks that use our custom languages
+  // Second pass: highlight blocks that book.js missed
+  // (mdBook uses hljs v10.x, so we use highlightBlock)
   document.querySelectorAll('code.language-hwml, code.language-hwmlc').forEach(function (block) {
-    hljs.highlightElement(block);
+    hljs.highlightBlock(block);
   });
-})();
+});
 

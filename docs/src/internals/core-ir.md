@@ -449,7 +449,7 @@ Expected type: M -> N
 
 **Design Note**: Module abstractions are the **introduction form** for hardware arrows. They represent sequential circuits with state.
 
-### Hardware Application (f<T>(x))
+### Hardware Application (f&lt;T&gt;(x))
 
 **Syntax**: `f<T>(x)`
 
