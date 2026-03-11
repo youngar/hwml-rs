@@ -12,11 +12,10 @@ rust-version.workspace = true
 links = "circt"
 
 [build-dependencies]
-bindgen = "0.70"
-cmake = "0.1"
+bindgen.workspace = true
+cmake.workspace = true
 
 [features]
 # Build CIRCT from source (30+ minute build)
 # Only enable if you don't have CIRCT installed via Nix or package manager
 build-from-source = []
-

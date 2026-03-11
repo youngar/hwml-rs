@@ -11,16 +11,25 @@ documentation.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "mdbook-hwml"
+path = "src/main.rs"
+
 [dependencies]
 # Core compiler library (clean API, no markdown dependencies)
 hwml_core.workspace = true
 
-# Markdown parsing
+# mdBook preprocessor integration
+mdbook.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+# Markdown parsing and processing
 pulldown-cmark.workspace = true
+regex.workspace = true
 
 # File system utilities
 walkdir.workspace = true
 
 [lints]
 workspace = true
-
