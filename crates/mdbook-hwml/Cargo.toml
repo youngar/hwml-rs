@@ -20,7 +20,8 @@ path = "src/main.rs"
 hwml_core.workspace = true
 
 # mdBook preprocessor integration
-mdbook.workspace = true
+mdbook-core.workspace = true
+mdbook-preprocessor.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 

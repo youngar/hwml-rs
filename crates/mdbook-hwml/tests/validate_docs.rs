@@ -2,10 +2,11 @@
 //!
 //! This test walks through all Markdown files in the docs/ directory and validates
 //! that all hwml and hwmlc code snippets type-check correctly.
+//!
+//! This test uses `process_chapter_content` which properly handles session state,
+//! allowing later snippets to reference earlier definitions on the same page.
 
-use mdbook_hwml::{
-    extract_snippets, typecheck_snippet_hwml, typecheck_snippet_hwmlc, SnippetLanguage,
-};
+use mdbook_hwml::process_chapter_content;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -27,8 +28,8 @@ fn test_all_documentation_snippets() {
         return;
     }
 
-    let mut total_snippets = 0;
-    let mut failed_snippets = 0;
+    let mut total_files = 0;
+    let mut failed_files = 0;
     let mut errors = Vec::new();
 
     // Walk through all .md files in docs/
@@ -44,83 +45,31 @@ fn test_all_documentation_snippets() {
             Ok(c) => c,
             Err(e) => {
                 errors.push(format!("Failed to read {}: {}", relative_path.display(), e));
+                failed_files += 1;
                 continue;
             }
         };
 
-        let snippets = extract_snippets(&content);
+        total_files += 1;
 
-        for snippet in snippets {
-            total_snippets += 1;
-
-            // Skip ignored snippets
-            if snippet.ignore {
-                continue;
-            }
-
-            let result = match snippet.language {
-                SnippetLanguage::Hwml => typecheck_snippet_hwml(&snippet.code),
-                SnippetLanguage::Hwmlc => typecheck_snippet_hwmlc(&snippet.code),
-            };
-
-            // Check if the result matches expectations
-            let should_fail = snippet.should_fail;
-            match (result, should_fail) {
-                (Ok(()), false) => {
-                    // Success: snippet is valid and should be valid
-                }
-                (Err(_), true) => {
-                    // Success: snippet is invalid and should be invalid
-                }
-                (Ok(()), true) => {
-                    // Failure: snippet is valid but should fail
-                    failed_snippets += 1;
-                    let line_info = snippet
-                        .line_number
-                        .map(|l| format!(":{}", l))
-                        .unwrap_or_default();
-                    errors.push(format!(
-                        "{}{} - {:?} snippet marked 'should_fail' but type-checked successfully",
-                        relative_path.display(),
-                        line_info,
-                        snippet.language
-                    ));
-                }
-                (Err(errs), false) => {
-                    // Failure: snippet is invalid but should be valid
-                    failed_snippets += 1;
-                    let line_info = snippet
-                        .line_number
-                        .map(|l| format!(":{}", l))
-                        .unwrap_or_default();
-                    let code_preview = snippet
-                        .code
-                        .lines()
-                        .enumerate()
-                        .take(10)
-                        .map(|(i, line)| format!("  {:3}: {}", i + 1, line))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    errors.push(format!(
-                        "{}{} - {:?} snippet failed type-checking:\n  {}\n  Code:\n{}",
-                        relative_path.display(),
-                        line_info,
-                        snippet.language,
-                        errs.join("\n  "),
-                        code_preview
-                    ));
-                }
-            }
+        // Process the entire chapter content (handles session state)
+        if let Err(chapter_errors) = process_chapter_content(&content) {
+            failed_files += 1;
+            errors.push(format!(
+                "{} - Validation errors:\n  {}",
+                relative_path.display(),
+                chapter_errors.join("\n  ")
+            ));
         }
     }
 
     // Print summary
-    if total_snippets == 0 {
-        eprintln!("Warning: No code snippets found in docs/");
+    if total_files == 0 {
+        eprintln!("Warning: No markdown files found in docs/");
     } else {
         eprintln!(
-            "Validated {} code snippets ({} failed)",
-            total_snippets, failed_snippets
+            "Validated {} markdown files ({} failed)",
+            total_files, failed_files
         );
     }
 
@@ -131,8 +80,8 @@ fn test_all_documentation_snippets() {
             eprintln!("{}\n", error);
         }
         panic!(
-            "{} out of {} documentation snippets failed validation",
-            failed_snippets, total_snippets
+            "{} out of {} documentation files failed validation",
+            failed_files, total_files
         );
     }
 }
