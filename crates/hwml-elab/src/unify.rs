@@ -790,6 +790,7 @@ fn values_match_for_intersection<'db>(v1: &Value<'db>, v2: &Value<'db>) -> bool 
         // For other value types (constants, universes, etc.), check structural equality
         (Value::Universe(u1), Value::Universe(u2)) => u1.level == u2.level,
         (Value::Constant(c1), Value::Constant(c2)) => c1 == c2,
+        (Value::Prim(p1), Value::Prim(p2)) => p1 == p2,
         // For complex values, be conservative and say they don't match
         _ => false,
     }
