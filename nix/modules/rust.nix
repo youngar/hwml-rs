@@ -6,8 +6,8 @@
   ];
   perSystem = { config, self', pkgs, lib, ... }: {
     rust-project.crates."hwml".crane.args = {
-      buildInputs = lib.optionals pkgs.stdenv.isDarwin [
-        pkgs.darwin.apple_sdk.frameworks.IOKit
+      buildInputs = lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+        pkgs.apple-sdk
       ];
     };
     packages.default = self'.packages.hwml;
