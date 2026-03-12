@@ -1,6 +1,6 @@
 use futures::future::join_all;
 use futures::join;
-use hwml_core::common::{Location, MetaVariableId, UniverseLevel};
+use hwml_core::common::{MetaVariableId, UniverseLevel};
 use hwml_core::eval::{self, run_application, run_closure, run_spine};
 use hwml_core::val::Environment;
 use hwml_core::val::LocalEnv;
@@ -878,15 +878,11 @@ async fn unify_flex_same<'db, 'g>(
         .iter()
         .map(|&level_idx| {
             let index = depth - 1 - level_idx;
-            hwml_core::syn::Syntax::variable_rc(
-                Location::UNKNOWN,
-                hwml_core::common::Index::new(index),
-            )
+            hwml_core::syn::Syntax::variable_rc(hwml_core::common::Index::new(index))
         })
         .collect();
 
-    let solution =
-        hwml_core::syn::Syntax::metavariable_rc(Location::UNKNOWN, new_meta_id, subst_vars);
+    let solution = hwml_core::syn::Syntax::metavariable_rc(new_meta_id, subst_vars);
 
     println!(
         "[Unify] Solving ?{} := ?{}[{:?}]",
@@ -1186,20 +1182,15 @@ async fn lower_flex<'db, 'g>(
                             ..extended_subst_len)
                             .rev()
                             .map(|i| {
-                                hwml_core::syn::Syntax::variable_rc(
-                                    Location::UNKNOWN,
-                                    hwml_core::common::Index::new(i),
-                                )
+                                hwml_core::syn::Syntax::variable_rc(hwml_core::common::Index::new(
+                                    i,
+                                ))
                             })
                             .collect();
 
-                        let new_meta_term = hwml_core::syn::Syntax::metavariable_rc(
-                            Location::UNKNOWN,
-                            new_meta_id,
-                            subst_vars,
-                        );
-                        let lambda_term =
-                            hwml_core::syn::Syntax::lambda_rc(Location::UNKNOWN, new_meta_term);
+                        let new_meta_term =
+                            hwml_core::syn::Syntax::metavariable_rc(new_meta_id, subst_vars);
+                        let lambda_term = hwml_core::syn::Syntax::lambda_rc(new_meta_term);
 
                         // Solve the old metavariable
                         println!(
@@ -1276,7 +1267,7 @@ async fn try_solve<'db, 'g>(
 mod tests {
     use super::*;
     use crate::engine::{SingleThreadedExecutor, SolverEnvironment};
-    use hwml_core::check::{check_type, type_check, TCEnvironment};
+    use hwml_core::check::TCEnvironment;
     use hwml_core::test_utils::{eval_term, load_prelude, parse};
     use hwml_core::val::{Environment, GlobalEnv};
     use hwml_core::Database;
@@ -1533,7 +1524,7 @@ mod tests {
         let c = Ctx::with_prelude(&db, "prim $Nat : U0; meta ?[0] (%A : U0) (%x : %A) : U0;");
         let meta_info = c
             .global
-            .metavariable(hwml_core::common::MetaVariableId::new(Location::UNKNOWN, 0));
+            .metavariable(hwml_core::common::MetaVariableId::new(0));
         assert!(meta_info.is_ok(), "Metavariable 0 should be in global env");
     }
 
@@ -2376,9 +2367,9 @@ mod tests {
             id_tcon,
             TypeConstructorInfo::new(
                 vec![
-                    Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), // A : U0
-                    Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(0)), // x : A
-                    Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(1)), // y : A
+                    Syntax::universe_rc(UniverseLevel::new(0)), // A : U0
+                    Syntax::variable_rc(hwml_core::common::Index::new(0)), // x : A
+                    Syntax::variable_rc(hwml_core::common::Index::new(1)), // y : A
                 ],
                 1, // num_parameters = 1 (only A)
                 UniverseLevel::new(0),
@@ -2398,17 +2389,13 @@ mod tests {
         global.add_data_constructor(
             "Refl".into_with_db(db),
             DataConstructorInfo::new(
-                vec![Syntax::variable_rc(
-                    Location::UNKNOWN,
-                    hwml_core::common::Index::new(0),
-                )], // x : A
+                vec![Syntax::variable_rc(hwml_core::common::Index::new(0))], // x : A
                 Syntax::type_constructor_rc(
-                    Location::UNKNOWN,
                     id_tcon,
                     vec![
-                        Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(1)), // A
-                        Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(0)), // x
-                        Syntax::variable_rc(Location::UNKNOWN, hwml_core::common::Index::new(0)), // x (same!)
+                        Syntax::variable_rc(hwml_core::common::Index::new(1)), // A
+                        Syntax::variable_rc(hwml_core::common::Index::new(0)), // x
+                        Syntax::variable_rc(hwml_core::common::Index::new(0)), // x (same!)
                     ],
                 ),
             ),

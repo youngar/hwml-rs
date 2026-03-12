@@ -267,16 +267,13 @@ where
 /// - Salsa-compatible incremental compilation
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MetaVariableId {
-    /// The source location that spawned this metavariable
-    pub loc: Location,
-    /// Local index for multiple metas at the same location
-    /// (e.g., inferred type + inferred term = 2 metas at same location)
+    /// Local index for metavariables
     pub local_index: u16,
 }
 
 impl MetaVariableId {
-    pub fn new(loc: Location, local_index: u16) -> MetaVariableId {
-        MetaVariableId { loc, local_index }
+    pub fn new(local_index: u16) -> MetaVariableId {
+        MetaVariableId { local_index }
     }
 }
 

@@ -27,10 +27,9 @@ impl<'db> MetaContext<'db> {
         }
     }
 
-    /// Allocate a new metavariable ID at the given location.
-    /// For testing, use Location::UNKNOWN.
-    pub fn fresh_id(&mut self, loc: Location, local_index: u16) -> MetaVariableId {
-        let id = MetaVariableId::new(loc, local_index);
+    /// Allocate a new metavariable ID.
+    pub fn fresh_id(&mut self, local_index: u16) -> MetaVariableId {
+        let id = MetaVariableId::new(local_index);
         // Don't insert a solution yet - it's unsolved
         id
     }
@@ -361,7 +360,7 @@ fn solve<'db>(
 
     // Wrap the syntax in binders.
     for _ in 0..depth {
-        rhs_syntax = Syntax::lambda_rc(Location::UNKNOWN, rhs_syntax);
+        rhs_syntax = Syntax::lambda_rc(rhs_syntax);
     }
 
     println!("Solved metavariable: {:?}", rhs_syntax);
@@ -1066,7 +1065,7 @@ mod tests {
         let mut mctx = MetaContext::new();
 
         // transport (λ x → Bit) refl 0 ~ transport (λ x → Bit) refl 0
-        let motive = Closure::new(val::LocalEnv::new(), Syntax::bit_rc(Location::UNKNOWN));
+        let motive = Closure::new(val::LocalEnv::new(), Syntax::bit_rc());
         let transport1 = Value::transport(
             motive.clone(),
             Rc::new(Value::refl()),

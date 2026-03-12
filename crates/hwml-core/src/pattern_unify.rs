@@ -438,7 +438,7 @@ mod tests {
     use super::*;
     use crate::val::GlobalEnv;
     use crate::Database;
-    use hwml_support::{IntoWithDb, Location};
+    use hwml_support::{IntoWithDb};
 
     use crate::test_utils::{load_prelude, VEC_PRELUDE};
 
@@ -638,7 +638,7 @@ mod tests {
             )],
         ) {
             Ok(EquationOutcome::Stuck(id)) => {
-                assert_eq!(id, MetaVariableId::new(Location::UNKNOWN, 42))
+                assert_eq!(id, MetaVariableId::new(42))
             }
             Ok(EquationOutcome::Success(_)) => panic!("Expected stuck, got success"),
             Ok(EquationOutcome::Conflict) => panic!("Expected stuck, got conflict"),

@@ -457,8 +457,8 @@ impl<'db> Print for Closure<'db> {
         let mut current = self;
         loop {
             arity += 1;
-            match &current.body.data {
-                SyntaxData::Closure(inner) => {
+            match current.body.as_ref() {
+                Syntax::Closure(inner) => {
                     current = inner;
                 }
                 _ => break,
@@ -491,45 +491,44 @@ impl<'db> Print for Syntax<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        use crate::syn::SyntaxData;
-        match &self.data {
-            SyntaxData::Universe(uni) => uni.print(db, st, p),
-            SyntaxData::Lift(lift) => lift.print(db, st, p),
+        match self {
+            Syntax::Universe(uni) => uni.print(db, st, p),
+            Syntax::Lift(lift) => lift.print(db, st, p),
 
-            SyntaxData::Pi(pi) => pi.print(db, st, p),
-            SyntaxData::Lambda(lam) => lam.print(db, st, p),
-            SyntaxData::Application(app) => app.print(db, st, p),
-            SyntaxData::Let(let_expr) => let_expr.print(db, st, p),
+            Syntax::Pi(pi) => pi.print(db, st, p),
+            Syntax::Lambda(lam) => lam.print(db, st, p),
+            Syntax::Application(app) => app.print(db, st, p),
+            Syntax::Let(let_expr) => let_expr.print(db, st, p),
 
-            SyntaxData::TypeConstructor(type_constructor) => type_constructor.print(db, st, p),
-            SyntaxData::DataConstructor(data_constructor) => data_constructor.print(db, st, p),
-            SyntaxData::Case(case) => case.print(db, st, p),
+            Syntax::TypeConstructor(type_constructor) => type_constructor.print(db, st, p),
+            Syntax::DataConstructor(data_constructor) => data_constructor.print(db, st, p),
+            Syntax::Case(case) => case.print(db, st, p),
 
-            SyntaxData::Eq(eq) => eq.print(db, st, p),
-            SyntaxData::Refl(refl) => refl.print(db, st, p),
-            SyntaxData::Transport(transport) => transport.print(db, st, p),
-            SyntaxData::Closure(closure) => closure.print(db, st, p),
+            Syntax::Eq(eq) => eq.print(db, st, p),
+            Syntax::Refl(refl) => refl.print(db, st, p),
+            Syntax::Transport(transport) => transport.print(db, st, p),
+            Syntax::Closure(closure) => closure.print(db, st, p),
 
-            SyntaxData::HardwareUniverse(hwu) => hwu.print(db, st, p),
-            SyntaxData::SLift(slift) => slift.print(db, st, p),
-            SyntaxData::MLift(mlift) => mlift.print(db, st, p),
+            Syntax::HardwareUniverse(hwu) => hwu.print(db, st, p),
+            Syntax::SLift(slift) => slift.print(db, st, p),
+            Syntax::MLift(mlift) => mlift.print(db, st, p),
 
-            SyntaxData::SignalUniverse(sig) => sig.print(db, st, p),
-            SyntaxData::Bit(bit) => bit.print(db, st, p),
-            SyntaxData::Zero(zero) => zero.print(db, st, p),
-            SyntaxData::One(one) => one.print(db, st, p),
+            Syntax::SignalUniverse(sig) => sig.print(db, st, p),
+            Syntax::Bit(bit) => bit.print(db, st, p),
+            Syntax::Zero(zero) => zero.print(db, st, p),
+            Syntax::One(one) => one.print(db, st, p),
 
-            SyntaxData::ModuleUniverse(mty) => mty.print(db, st, p),
-            SyntaxData::HArrow(harrow) => harrow.print(db, st, p),
-            SyntaxData::Module(module) => module.print(db, st, p),
-            SyntaxData::HApplication(app) => app.print(db, st, p),
+            Syntax::ModuleUniverse(mty) => mty.print(db, st, p),
+            Syntax::HArrow(harrow) => harrow.print(db, st, p),
+            Syntax::Module(module) => module.print(db, st, p),
+            Syntax::HApplication(app) => app.print(db, st, p),
 
-            SyntaxData::Prim(prim) => prim.print(db, st, p),
-            SyntaxData::Constant(constant) => constant.print(db, st, p),
-            SyntaxData::Variable(var) => var.print(db, st, p),
-            SyntaxData::Metavariable(meta) => meta.print(db, st, p),
+            Syntax::Prim(prim) => prim.print(db, st, p),
+            Syntax::Constant(constant) => constant.print(db, st, p),
+            Syntax::Variable(var) => var.print(db, st, p),
+            Syntax::Metavariable(meta) => meta.print(db, st, p),
 
-            SyntaxData::Check(chk) => chk.print(db, st, p),
+            Syntax::Check(chk) => chk.print(db, st, p),
         }
     }
 }
@@ -584,8 +583,8 @@ impl<'db> Print for Pi<'db> {
                         p.text(")")?;
                         st = st.inc_depth();
 
-                        match &next.target.data {
-                            SyntaxData::Pi(pi) => next = pi,
+                        match next.target.as_ref() {
+                            Syntax::Pi(pi) => next = pi,
                             _ => break,
                         }
                         p.space()?;
@@ -616,8 +615,8 @@ impl<'db> Print for Lambda<'db> {
                     loop {
                         print_binder(st, p)?;
                         st = st.inc_depth();
-                        match &next.body.data {
-                            SyntaxData::Lambda(lam) => next = lam,
+                        match next.body.as_ref() {
+                            Syntax::Lambda(lam) => next = lam,
                             _ => break,
                         }
                         p.space()?;
@@ -645,8 +644,8 @@ impl<'db> Print for Application<'db> {
             let mut current = self;
             let function = loop {
                 args.push(current.argument.clone());
-                match &current.function.data {
-                    SyntaxData::Application(app) => current = app,
+                match current.function.as_ref() {
+                    Syntax::Application(app) => current = app,
                     _ => break &current.function,
                 }
             };
@@ -1000,9 +999,8 @@ impl<'db> Print for Module<'db> {
                     loop {
                         print_binder(st, p)?;
                         st = st.inc_depth();
-                        use crate::syn::SyntaxData;
-                        match &next.body.data {
-                            SyntaxData::Module(lam) => next = lam,
+                        match next.body.as_ref() {
+                            Syntax::Module(lam) => next = lam,
                             _ => break,
                         }
                         p.space()?;
@@ -1133,35 +1131,35 @@ mod tests {
     #[test]
     fn print_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::universe(Location::UNKNOWN, UniverseLevel::new(0))), @"𝒰0");
-        assert_snapshot!(p(&db, &Syntax::universe(Location::UNKNOWN, UniverseLevel::new(1))), @"𝒰1");
+        assert_snapshot!(p(&db, &Syntax::universe(UniverseLevel::new(0))), @"𝒰0");
+        assert_snapshot!(p(&db, &Syntax::universe(UniverseLevel::new(1))), @"𝒰1");
     }
 
     #[test]
     fn print_lift() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lift(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN))), @"^Bit");
+        assert_snapshot!(p(&db, &Syntax::lift(Syntax::bit_rc())), @"^Bit");
     }
 
     #[test]
     fn print_pi() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::pi(Location::UNKNOWN, Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(1)))), @"∀ (%0 : 𝒰0) → 𝒰1");
-        assert_snapshot!(p(&db, &Syntax::pi(Location::UNKNOWN, Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), Syntax::pi_rc(Location::UNKNOWN, Syntax::variable_rc(Location::UNKNOWN, Index(0)), Syntax::variable_rc(Location::UNKNOWN, Index(0))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::universe_rc(UniverseLevel::new(1)))), @"∀ (%0 : 𝒰0) → 𝒰1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::pi_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(0))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
     }
 
     #[test]
     fn print_lambda() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lambda(Location::UNKNOWN, Syntax::variable_rc(Location::UNKNOWN, Index(0)))), @"λ %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::lambda(Location::UNKNOWN, Syntax::lambda_rc(Location::UNKNOWN, Syntax::variable_rc(Location::UNKNOWN, Index(1))))), @"λ %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::lambda_rc(Syntax::variable_rc(Index(1))))), @"λ %0 %1 → %0");
     }
 
     #[test]
     fn print_application() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::application(Location::UNKNOWN, Syntax::constant_rc(Location::UNKNOWN, "f".into_with_db(&db)), Syntax::constant_rc(Location::UNKNOWN, "x".into_with_db(&db)))), @"@f[@x]");
-        assert_snapshot!(p(&db, &Syntax::application(Location::UNKNOWN, Syntax::application_rc(Location::UNKNOWN, Syntax::constant_rc(Location::UNKNOWN, "f".into_with_db(&db)), Syntax::constant_rc(Location::UNKNOWN, "x".into_with_db(&db))), Syntax::constant_rc(Location::UNKNOWN, "y".into_with_db(&db)))), @"@f[@x, @y]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)))), @"@f[@x]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db))), Syntax::constant_rc("y".into_with_db(&db)))), @"@f[@x, @y]");
     }
 
     // =========================================================================
@@ -1171,15 +1169,15 @@ mod tests {
     #[test]
     fn print_type_constructor() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::type_constructor(Location::UNKNOWN, "Nat".into_with_db(&db), vec![])), @"#[@Nat]");
-        assert_snapshot!(p(&db, &Syntax::type_constructor(Location::UNKNOWN, "Vec".into_with_db(&db), vec![Syntax::constant_rc(Location::UNKNOWN, "A".into_with_db(&db)), Syntax::constant_rc(Location::UNKNOWN, "n".into_with_db(&db))])), @"#[@Vec @A @n]");
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Nat".into_with_db(&db), vec![])), @"#[@Nat]");
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![Syntax::constant_rc("A".into_with_db(&db)), Syntax::constant_rc("n".into_with_db(&db))])), @"#[@Vec @A @n]");
     }
 
     #[test]
     fn print_data_constructor() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::data_constructor(Location::UNKNOWN, "Nil".into_with_db(&db), vec![])), @"[@Nil]");
-        assert_snapshot!(p(&db, &Syntax::data_constructor(Location::UNKNOWN, "Cons".into_with_db(&db), vec![Syntax::constant_rc(Location::UNKNOWN, "x".into_with_db(&db)), Syntax::constant_rc(Location::UNKNOWN, "xs".into_with_db(&db))])), @"[@Cons @x @xs]");
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Nil".into_with_db(&db), vec![])), @"[@Nil]");
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![Syntax::constant_rc("x".into_with_db(&db)), Syntax::constant_rc("xs".into_with_db(&db))])), @"[@Cons @x @xs]");
     }
 
     #[test]
@@ -1187,12 +1185,11 @@ mod tests {
         let db = Database::new();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
-        assert_snapshot!(p(&db, &Syntax::lambda_rc(Location::UNKNOWN, Syntax::case_rc(
-            Location::UNKNOWN,
-            Index(0),
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Syntax::case_rc(
+                        Index(0),
             vec![
-                CaseBranch::new("Zero".into_with_db(&db), 0, Syntax::constant_rc(Location::UNKNOWN, "a".into_with_db(&db))),
-                CaseBranch::new("Succ".into_with_db(&db), 1, Syntax::variable_rc(Location::UNKNOWN, Index(0))),
+                CaseBranch::new("Zero".into_with_db(&db), 0, Syntax::constant_rc("a".into_with_db(&db))),
+                CaseBranch::new("Succ".into_with_db(&db), 1, Syntax::variable_rc(Index(0))),
             ]
         ))), @"λ %0 → %0 case { @Zero => @a | @Succ %1 => %1 }");
     }
@@ -1204,19 +1201,19 @@ mod tests {
     #[test]
     fn print_hardware_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::hardware(Location::UNKNOWN)), @"HardwareUniverse");
+        assert_snapshot!(p(&db, &Syntax::hardware()), @"HardwareUniverse");
     }
 
     #[test]
     fn print_slift() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::slift(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN))), @"^sBit");
+        assert_snapshot!(p(&db, &Syntax::slift(Syntax::bit_rc())), @"^sBit");
     }
 
     #[test]
     fn print_mlift() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::mlift(Location::UNKNOWN, Syntax::harrow_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN), Syntax::bit_rc(Location::UNKNOWN)))), @"^m(Bit → Bit)");
+        assert_snapshot!(p(&db, &Syntax::mlift(Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()))), @"^m(Bit → Bit)");
     }
 
     // =========================================================================
@@ -1226,25 +1223,25 @@ mod tests {
     #[test]
     fn print_signal_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::signal_universe(Location::UNKNOWN)), @"SignalUniverse");
+        assert_snapshot!(p(&db, &Syntax::signal_universe()), @"SignalUniverse");
     }
 
     #[test]
     fn print_bit() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::bit(Location::UNKNOWN)), @"Bit");
+        assert_snapshot!(p(&db, &Syntax::bit()), @"Bit");
     }
 
     #[test]
     fn print_zero() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::zero(Location::UNKNOWN)), @"0");
+        assert_snapshot!(p(&db, &Syntax::zero()), @"0");
     }
 
     #[test]
     fn print_one() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::one(Location::UNKNOWN)), @"1");
+        assert_snapshot!(p(&db, &Syntax::one()), @"1");
     }
 
     // =========================================================================
@@ -1255,10 +1252,9 @@ mod tests {
     fn print_eq_type() {
         let db = Database::new();
         let eq = Syntax::eq_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-            Syntax::variable_rc(Location::UNKNOWN, Index(0)),
-            Syntax::variable_rc(Location::UNKNOWN, Index(1)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::variable_rc(Index(0)),
+            Syntax::variable_rc(Index(1)),
         );
         // Variables are unbound at depth 0, so they print as !0, !1
         assert_snapshot!(p(&db, &eq), @"Eq 𝒰0 !0 !1");
@@ -1267,18 +1263,17 @@ mod tests {
     #[test]
     fn print_refl() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::refl(Location::UNKNOWN)), @"refl");
+        assert_snapshot!(p(&db, &Syntax::refl()), @"refl");
     }
 
     #[test]
     fn print_transport() {
         let db = Database::new();
-        let motive = Closure::new(Syntax::variable_rc(Location::UNKNOWN, Index(0))); // [%0] |- %0
+        let motive = Closure::new(Syntax::variable_rc(Index(0))); // [%0] |- %0
         let transport = Syntax::transport_rc(
-            Location::UNKNOWN,
             motive,
-            Syntax::refl_rc(Location::UNKNOWN),
-            Syntax::variable_rc(Location::UNKNOWN, Index(2)),
+            Syntax::refl_rc(),
+            Syntax::variable_rc(Index(2)),
         );
         // Prints as: transport [%0] |- body proof value
         assert_snapshot!(p(&db, &transport), @"transport [%0] |- %0 refl !2");
@@ -1291,31 +1286,30 @@ mod tests {
     #[test]
     fn print_module_universe() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::module_universe(Location::UNKNOWN)), @"ModuleUniverse");
+        assert_snapshot!(p(&db, &Syntax::module_universe()), @"ModuleUniverse");
     }
 
     #[test]
     fn print_harrow() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::harrow(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN), Syntax::bit_rc(Location::UNKNOWN))), @"Bit → Bit");
-        assert_snapshot!(p(&db, &Syntax::harrow(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN), Syntax::harrow_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN), Syntax::bit_rc(Location::UNKNOWN)))), @"Bit → Bit → Bit");
+        assert_snapshot!(p(&db, &Syntax::harrow(Syntax::bit_rc(), Syntax::bit_rc())), @"Bit → Bit");
+        assert_snapshot!(p(&db, &Syntax::harrow(Syntax::bit_rc(), Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()))), @"Bit → Bit → Bit");
     }
 
     #[test]
     fn print_module() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::module(Location::UNKNOWN, Syntax::variable_rc(Location::UNKNOWN, Index(0)))), @"mod %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::module(Location::UNKNOWN, Syntax::module_rc(Location::UNKNOWN, Syntax::variable_rc(Location::UNKNOWN, Index(1))))), @"mod %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Syntax::variable_rc(Index(0)))), @"mod %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Syntax::module_rc(Syntax::variable_rc(Index(1))))), @"mod %0 %1 → %0");
     }
 
     #[test]
     fn print_happlication() {
         let db = Database::new();
         assert_snapshot!(p(&db, &Syntax::happlication(
-            Location::UNKNOWN,
-            Syntax::constant_rc(Location::UNKNOWN, "m".into_with_db(&db)),
-            Syntax::harrow_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN), Syntax::bit_rc(Location::UNKNOWN)),
-            Syntax::constant_rc(Location::UNKNOWN, "x".into_with_db(&db))
+                        Syntax::constant_rc("m".into_with_db(&db)),
+            Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
+            Syntax::constant_rc("x".into_with_db(&db))
         )), @"@m<Bit → Bit>(@x)");
     }
 
@@ -1326,33 +1320,33 @@ mod tests {
     #[test]
     fn print_prim() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::prim_from(Location::UNKNOWN, &db, "and")), @"$and");
+        assert_snapshot!(p(&db, &Syntax::prim_from(&db, "and")), @"$and");
     }
 
     #[test]
     fn print_constant() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::constant_from(Location::UNKNOWN, &db, "myConst")), @"@myConst");
+        assert_snapshot!(p(&db, &Syntax::constant_from(&db, "myConst")), @"@myConst");
     }
 
     #[test]
     fn print_variable_bound() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lambda(Location::UNKNOWN, Syntax::variable_rc(Location::UNKNOWN, Index(0)))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))), @"λ %0 → %0");
     }
 
     #[test]
     fn print_variable_unbound() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::variable(Location::UNKNOWN, Index(0))), @"!0");
-        assert_snapshot!(p(&db, &Syntax::variable(Location::UNKNOWN, Index(1))), @"!1");
+        assert_snapshot!(p(&db, &Syntax::variable(Index(0))), @"!0");
+        assert_snapshot!(p(&db, &Syntax::variable(Index(1))), @"!1");
     }
 
     #[test]
     fn print_metavariable() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::metavariable(Location::UNKNOWN, MetaVariableId::new(Location::UNKNOWN, 0), vec![])), @"?[0]");
-        assert_snapshot!(p(&db, &Syntax::metavariable(Location::UNKNOWN, MetaVariableId::new(Location::UNKNOWN, 1), vec![Syntax::variable_rc(Location::UNKNOWN, Index(0)), Syntax::variable_rc(Location::UNKNOWN, Index(1))])), @"?[1 !0 !1]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId::new(0), vec![])), @"?[0]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId::new(1), vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))])), @"?[1 !0 !1]");
     }
 
     // =========================================================================
@@ -1362,6 +1356,6 @@ mod tests {
     #[test]
     fn print_check() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::check(Location::UNKNOWN, Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), Syntax::constant_rc(Location::UNKNOWN, "x".into_with_db(&db)))), @"@x : 𝒰0");
+        assert_snapshot!(p(&db, &Syntax::check(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
     }
 }

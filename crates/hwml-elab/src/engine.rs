@@ -61,15 +61,14 @@ fn quote_value_simple<'db>(
     _depth: usize,
     value: &Rc<Value<'db>>,
 ) -> syn::RcSyntax<'db> {
-    use hwml_core::common::Location;
     // For now, we can just return a placeholder - the key is that the type
     // is stored semantically. In practice, this closure won't be evaluated
     // directly, but used for typing information.
     // A proper implementation would use the full quote function.
     match value.as_ref() {
-        Value::Universe(u) => syn::Syntax::universe_rc(Location::UNKNOWN, u.level),
+        Value::Universe(u) => syn::Syntax::universe_rc(u.level),
         // For other cases, we'll need to handle them as they come up
-        _ => syn::Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), // Placeholder
+        _ => syn::Syntax::universe_rc(UniverseLevel::new(0)), // Placeholder
     }
 }
 
@@ -166,9 +165,8 @@ pub struct SolverState<'db> {
     /// Edge ?M -> ?N means "?M's solution mentions ?N"
     dependencies: HashMap<MetaVariableId, HashSet<MetaVariableId>>,
 
-    /// Counter for generating local indices at each location
-    /// Maps Location -> next local_index
-    local_counters: HashMap<Location, u16>,
+    /// Counter for generating metavariable indices
+    next_meta_index: u16,
 }
 
 impl<'db> SolverState<'db> {
@@ -176,18 +174,18 @@ impl<'db> SolverState<'db> {
         Self {
             metas: HashMap::new(),
             dependencies: HashMap::new(),
-            local_counters: HashMap::new(),
+            next_meta_index: 0,
         }
     }
 
-    /// Allocate a fresh metavariable at the given location.
+    /// Allocate a fresh metavariable.
     ///
     /// This is the **only** way to create new MetaVariableIds for this solver.
     /// By allocating through the state, we ensure deterministic ID generation.
-    pub fn fresh_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableId {
-        let local_index = self.local_counters.entry(loc).or_insert(0);
-        let id = MetaVariableId::new(loc, *local_index);
-        *local_index += 1;
+    pub fn fresh_meta(&mut self, ty: Rc<Value<'db>>) -> MetaVariableId {
+        let local_index = self.next_meta_index;
+        let id = MetaVariableId::new(local_index);
+        self.next_meta_index += 1;
 
         self.metas.insert(id, MetaSlot::new(ty));
         println!("[Solver] Allocated fresh meta {}", id);
@@ -195,10 +193,10 @@ impl<'db> SolverState<'db> {
     }
 
     /// Allocate a fresh poisoned metavariable (for error recovery).
-    pub fn fresh_poisoned_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableId {
-        let local_index = self.local_counters.entry(loc).or_insert(0);
-        let id = MetaVariableId::new(loc, *local_index);
-        *local_index += 1;
+    pub fn fresh_poisoned_meta(&mut self, ty: Rc<Value<'db>>) -> MetaVariableId {
+        let local_index = self.next_meta_index;
+        let id = MetaVariableId::new(local_index);
+        self.next_meta_index += 1;
 
         self.metas.insert(id, MetaSlot::new_poisoned(ty));
         println!("[Solver] Allocated fresh poisoned meta {}", id);
@@ -279,97 +277,96 @@ impl<'db> SolverState<'db> {
     /// Collect all metavariables that appear in a syntax term.
     /// This is used to build the dependency graph when solving a metavariable.
     fn collect_dependencies(&self, term: &Syntax<'db>) -> HashSet<MetaVariableId> {
-        use syn::SyntaxData;
         let mut deps = HashSet::new();
 
         fn collect_rec<'db>(term: &Syntax<'db>, deps: &mut HashSet<MetaVariableId>) {
-            match &term.data {
-                SyntaxData::Metavariable(meta) => {
+            match term {
+                Syntax::Metavariable(meta) => {
                     deps.insert(meta.id);
                     for arg in meta.substitution.iter() {
                         collect_rec(arg, deps);
                     }
                 }
-                SyntaxData::Variable(_) => {}
-                SyntaxData::Constant(_) => {}
-                SyntaxData::Universe(_) => {}
-                SyntaxData::Prim(_) => {}
-                SyntaxData::HardwareUniverse(_) => {}
-                SyntaxData::SignalUniverse(_) => {}
-                SyntaxData::ModuleUniverse(_) => {}
-                SyntaxData::Bit(_) => {}
-                SyntaxData::Zero(_) => {}
-                SyntaxData::One(_) => {}
-                SyntaxData::Pi(pi) => {
+                Syntax::Variable(_) => {}
+                Syntax::Constant(_) => {}
+                Syntax::Universe(_) => {}
+                Syntax::Prim(_) => {}
+                Syntax::HardwareUniverse(_) => {}
+                Syntax::SignalUniverse(_) => {}
+                Syntax::ModuleUniverse(_) => {}
+                Syntax::Bit(_) => {}
+                Syntax::Zero(_) => {}
+                Syntax::One(_) => {}
+                Syntax::Pi(pi) => {
                     collect_rec(&pi.source, deps);
                     collect_rec(&pi.target, deps);
                 }
-                SyntaxData::Lambda(lam) => {
+                Syntax::Lambda(lam) => {
                     collect_rec(&lam.body, deps);
                 }
-                SyntaxData::Application(app) => {
+                Syntax::Application(app) => {
                     collect_rec(&app.function, deps);
                     collect_rec(&app.argument, deps);
                 }
-                SyntaxData::Lift(lift) => {
+                Syntax::Lift(lift) => {
                     collect_rec(&lift.ty, deps);
                 }
-                SyntaxData::SLift(slift) => {
+                Syntax::SLift(slift) => {
                     collect_rec(&slift.ty, deps);
                 }
-                SyntaxData::MLift(mlift) => {
+                Syntax::MLift(mlift) => {
                     collect_rec(&mlift.ty, deps);
                 }
-                SyntaxData::TypeConstructor(tc) => {
+                Syntax::TypeConstructor(tc) => {
                     for arg in tc.arguments.iter() {
                         collect_rec(arg, deps);
                     }
                 }
-                SyntaxData::DataConstructor(dc) => {
+                Syntax::DataConstructor(dc) => {
                     for arg in dc.arguments.iter() {
                         collect_rec(arg, deps);
                     }
                 }
-                SyntaxData::Case(case) => {
+                Syntax::Case(case) => {
                     // scrutinee is a Variable, not a Syntax - no need to recurse
                     // Case doesn't have a ty field - just recurse into branches
                     for branch in case.branches.iter() {
                         collect_rec(&branch.body, deps);
                     }
                 }
-                SyntaxData::Let(let_expr) => {
+                Syntax::Let(let_expr) => {
                     collect_rec(&let_expr.ty, deps);
                     collect_rec(&let_expr.value, deps);
                     collect_rec(&let_expr.body, deps);
                 }
-                SyntaxData::Eq(eq) => {
+                Syntax::Eq(eq) => {
                     collect_rec(&eq.ty, deps);
                     collect_rec(&eq.lhs, deps);
                     collect_rec(&eq.rhs, deps);
                 }
-                SyntaxData::Refl(_) => {}
-                SyntaxData::Transport(transport) => {
+                Syntax::Refl(_) => {}
+                Syntax::Transport(transport) => {
                     collect_rec(&transport.motive.body, deps);
                     collect_rec(&transport.proof, deps);
                     collect_rec(&transport.value, deps);
                 }
-                SyntaxData::Closure(closure) => {
+                Syntax::Closure(closure) => {
                     collect_rec(&closure.body, deps);
                 }
-                SyntaxData::HArrow(harrow) => {
+                Syntax::HArrow(harrow) => {
                     collect_rec(&harrow.source, deps);
                     collect_rec(&harrow.target, deps);
                 }
-                SyntaxData::Module(module) => {
+                Syntax::Module(module) => {
                     collect_rec(&module.body, deps);
                 }
-                SyntaxData::HApplication(happ) => {
+                Syntax::HApplication(happ) => {
                     collect_rec(&happ.module, deps);
                     collect_rec(&happ.module_ty, deps);
                     collect_rec(&happ.argument, deps);
                 }
-                SyntaxData::Prim(_) => {}
-                SyntaxData::Check(check) => {
+                Syntax::Prim(_) => {}
+                Syntax::Check(check) => {
                     collect_rec(&check.ty, deps);
                     collect_rec(&check.term, deps);
                 }
@@ -479,7 +476,7 @@ impl<'db> SolverState<'db> {
         Self {
             metas,
             dependencies: HashMap::new(),
-            local_counters: HashMap::new(),
+            next_meta_index: 0,
         }
     }
 }
@@ -540,7 +537,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// The type is stored in the SolverState's MetaSlot.
     /// TODO: Accept a Location parameter once we add location tracking to the elaboration context.
     pub fn fresh_meta_id(&self, ty: Rc<Value<'db>>) -> MetaVariableId {
-        self.state.borrow_mut().fresh_meta(Location::UNKNOWN, ty)
+        self.state.borrow_mut().fresh_meta(ty)
     }
 
     /// Allocate a fresh metavariable and return it as a Flex value.
@@ -556,10 +553,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
     /// Allocate a fresh poisoned metavariable for error recovery.
     pub fn fresh_poisoned_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        let id = self
-            .state
-            .borrow_mut()
-            .fresh_poisoned_meta(Location::UNKNOWN, ty.clone());
+        let id = self.state.borrow_mut().fresh_poisoned_meta(ty.clone());
         Rc::new(Value::metavariable(
             id,
             self.tc_env.values.local.clone(),
@@ -923,7 +917,6 @@ impl<'db> SingleThreadedExecutor<'db> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hwml_core::common::Location;
     use hwml_core::syn::Syntax;
     use hwml_core::val::Value;
 
@@ -932,10 +925,10 @@ mod tests {
         // Test direct cycle: ?M := ?M
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_meta(Location::UNKNOWN, ty);
+        let meta_id = state.fresh_meta(ty);
 
         // Try to solve ?M := ?M (direct cycle)
-        let solution = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
+        let solution = Syntax::metavariable_rc(meta_id, vec![]);
         let deps = state.collect_dependencies(&solution);
         let result = state.check_cycle(meta_id, &deps);
 
@@ -948,16 +941,16 @@ mod tests {
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
 
-        let meta_m = state.fresh_meta(Location::UNKNOWN, ty.clone());
-        let meta_n = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta_m = state.fresh_meta(ty.clone());
+        let meta_n = state.fresh_meta(ty.clone());
 
         // First solve ?N := ?M
-        let solution_n = Syntax::metavariable_rc(Location::UNKNOWN, meta_m, vec![]);
+        let solution_n = Syntax::metavariable_rc(meta_m, vec![]);
         let deps_n = state.collect_dependencies(&solution_n);
         state.dependencies.insert(meta_n, deps_n);
 
         // Now try to solve ?M := ?N (would create a cycle)
-        let solution_m = Syntax::metavariable_rc(Location::UNKNOWN, meta_n, vec![]);
+        let solution_m = Syntax::metavariable_rc(meta_n, vec![]);
         let deps_m = state.collect_dependencies(&solution_m);
         let result = state.check_cycle(meta_m, &deps_m);
 
@@ -970,11 +963,11 @@ mod tests {
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
 
-        let meta_m = state.fresh_meta(Location::UNKNOWN, ty.clone());
-        let meta_n = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta_m = state.fresh_meta(ty.clone());
+        let meta_n = state.fresh_meta(ty.clone());
 
         // Solve ?M := ?N (no cycle)
-        let solution = Syntax::metavariable_rc(Location::UNKNOWN, meta_n, vec![]);
+        let solution = Syntax::metavariable_rc(meta_n, vec![]);
         let deps = state.collect_dependencies(&solution);
         let result = state.check_cycle(meta_m, &deps);
 
@@ -985,7 +978,7 @@ mod tests {
     fn test_poisoned_meta_creation() {
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_poisoned_meta(Location::UNKNOWN, ty);
+        let meta_id = state.fresh_poisoned_meta(ty);
 
         assert!(state.is_poisoned(meta_id), "Meta should be poisoned");
         assert!(
@@ -1000,17 +993,13 @@ mod tests {
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
 
         // Create multiple metas at the same location
-        let meta1 = state.fresh_meta(Location::UNKNOWN, ty.clone());
-        let meta2 = state.fresh_meta(Location::UNKNOWN, ty.clone());
-        let meta3 = state.fresh_meta(Location::UNKNOWN, ty.clone());
+        let meta1 = state.fresh_meta(ty.clone());
+        let meta2 = state.fresh_meta(ty.clone());
+        let meta3 = state.fresh_meta(ty.clone());
 
         // They should have different local indices
         assert_ne!(meta1, meta2);
         assert_ne!(meta2, meta3);
         assert_ne!(meta1, meta3);
-
-        // But same location
-        assert_eq!(meta1.loc, meta2.loc);
-        assert_eq!(meta2.loc, meta3.loc);
     }
 }

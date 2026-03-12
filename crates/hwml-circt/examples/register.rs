@@ -8,7 +8,6 @@
 //! `Syntax::happlication_rc(module, module_ty, argument)`.
 
 use hwml_circt::{translate, CirctContext};
-use hwml_core::common::Location;
 use hwml_core::syn::Syntax;
 use hwml_core::{ConstantId, Database};
 use hwml_support::salsa::FromWithDb;
@@ -32,34 +31,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For testing purposes, we'll use constants as placeholders for clock and input
     println!("Step 2: Creating Syntax expression...");
 
-    // Use Location::UNKNOWN for programmatically constructed syntax
-    let loc = Location::UNKNOWN;
-
     // Create the clock signal (for simplicity, using '1' as a placeholder)
-    let clk = Syntax::one_rc(loc);
+    let clk = Syntax::one_rc();
     // Create the data input (using '0')
-    let input = Syntax::zero_rc(loc);
+    let input = Syntax::zero_rc();
 
     // Create the $reg primitive
     let reg_name = ConstantId::from_with_db(&db, "reg");
-    let reg = Syntax::prim_rc(loc, reg_name);
+    let reg = Syntax::prim_rc(reg_name);
 
     // Create a placeholder type for the module type annotation
     // In a real scenario, this would be the actual hardware type ($Bit -> $Bit -> $Bit)
-    let bit_ty = Syntax::bit_rc(loc);
+    let bit_ty = Syntax::bit_rc();
     let harrow_ty = Syntax::harrow_rc(
-        loc,
         bit_ty.clone(),
-        Syntax::harrow_rc(loc, bit_ty.clone(), bit_ty.clone()),
+        Syntax::harrow_rc(bit_ty.clone(), bit_ty.clone()),
     );
 
     // Apply @reg<T>(clk): @reg applied to clock with type annotation
-    let reg_clk = Syntax::happlication_rc(loc, reg, harrow_ty.clone(), clk);
+    let reg_clk = Syntax::happlication_rc(reg, harrow_ty.clone(), clk);
     // Apply (@reg<T>(clk))<T'>(input): the result applied to input
     let reg_clk_input = Syntax::happlication_rc(
-        loc,
         reg_clk,
-        Syntax::harrow_rc(loc, bit_ty.clone(), bit_ty.clone()),
+        Syntax::harrow_rc(bit_ty.clone(), bit_ty.clone()),
         input,
     );
 

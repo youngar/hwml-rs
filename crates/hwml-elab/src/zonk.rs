@@ -8,7 +8,8 @@
 //! should not cause the zonking pass to fail.
 
 use hwml_core::common::MetaVariableId;
-use hwml_core::syn::{Syntax, SyntaxData};
+use hwml_core::Syntax;
+
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -33,8 +34,8 @@ fn zonk_with_cache<'db>(
     term: &Syntax<'db>,
     cache: &mut HashMap<MetaVariableId, Rc<Syntax<'db>>>,
 ) -> Rc<Syntax<'db>> {
-    match &term.data {
-        SyntaxData::Metavariable(meta) => {
+    match term {
+        Syntax::Metavariable(meta) => {
             // Check if we've already zonked this metavariable
             if let Some(cached) = cache.get(&meta.id) {
                 return cached.clone();
@@ -61,7 +62,7 @@ fn zonk_with_cache<'db>(
                         // Apply the arguments to the solution
                         let mut result = zonked;
                         for arg in zonked_args {
-                            result = Syntax::application_rc(term.loc, result, arg);
+                            result = Syntax::application_rc(result, arg);
                         }
                         result
                     }
@@ -77,75 +78,75 @@ fn zonk_with_cache<'db>(
                             .iter()
                             .map(|arg| zonk_with_cache(state, arg, cache))
                             .collect();
-                        Syntax::metavariable_rc(term.loc, meta.id, zonked_args)
+                        Syntax::metavariable_rc(meta.id, zonked_args)
                     }
                 }
             }
         }
 
         // Structural recursion for all other cases
-        SyntaxData::Variable(_) => Rc::new(term.clone()),
-        SyntaxData::Constant(_) => Rc::new(term.clone()),
-        SyntaxData::Universe(_) => Rc::new(term.clone()),
-        SyntaxData::Prim(_) => Rc::new(term.clone()),
-        SyntaxData::HardwareUniverse(_) => Rc::new(term.clone()),
-        SyntaxData::SignalUniverse(_) => Rc::new(term.clone()),
-        SyntaxData::ModuleUniverse(_) => Rc::new(term.clone()),
-        SyntaxData::Bit(_) => Rc::new(term.clone()),
-        SyntaxData::Zero(_) => Rc::new(term.clone()),
-        SyntaxData::One(_) => Rc::new(term.clone()),
+        Syntax::Variable(_) => Rc::new(term.clone()),
+        Syntax::Constant(_) => Rc::new(term.clone()),
+        Syntax::Universe(_) => Rc::new(term.clone()),
+        Syntax::Prim(_) => Rc::new(term.clone()),
+        Syntax::HardwareUniverse(_) => Rc::new(term.clone()),
+        Syntax::SignalUniverse(_) => Rc::new(term.clone()),
+        Syntax::ModuleUniverse(_) => Rc::new(term.clone()),
+        Syntax::Bit(_) => Rc::new(term.clone()),
+        Syntax::Zero(_) => Rc::new(term.clone()),
+        Syntax::One(_) => Rc::new(term.clone()),
 
-        SyntaxData::Pi(pi) => {
+        Syntax::Pi(pi) => {
             let source = zonk_with_cache(state, &pi.source, cache);
             let target = zonk_with_cache(state, &pi.target, cache);
-            Syntax::pi_rc(term.loc, source, target)
+            Syntax::pi_rc(source, target)
         }
 
-        SyntaxData::Lambda(lam) => {
+        Syntax::Lambda(lam) => {
             let body = zonk_with_cache(state, &lam.body, cache);
-            Syntax::lambda_rc(term.loc, body)
+            Syntax::lambda_rc(body)
         }
 
-        SyntaxData::Application(app) => {
+        Syntax::Application(app) => {
             let function = zonk_with_cache(state, &app.function, cache);
             let argument = zonk_with_cache(state, &app.argument, cache);
-            Syntax::application_rc(term.loc, function, argument)
+            Syntax::application_rc(function, argument)
         }
 
-        SyntaxData::Lift(lift) => {
+        Syntax::Lift(lift) => {
             let zonked = zonk_with_cache(state, &lift.ty, cache);
-            Syntax::lift_rc(term.loc, zonked)
+            Syntax::lift_rc(zonked)
         }
 
-        SyntaxData::SLift(slift) => {
+        Syntax::SLift(slift) => {
             let zonked = zonk_with_cache(state, &slift.ty, cache);
-            Syntax::slift_rc(term.loc, zonked)
+            Syntax::slift_rc(zonked)
         }
 
-        SyntaxData::MLift(mlift) => {
+        Syntax::MLift(mlift) => {
             let zonked = zonk_with_cache(state, &mlift.ty, cache);
-            Syntax::mlift_rc(term.loc, zonked)
+            Syntax::mlift_rc(zonked)
         }
 
-        SyntaxData::TypeConstructor(tc) => {
+        Syntax::TypeConstructor(tc) => {
             let arguments: Vec<_> = tc
                 .arguments
                 .iter()
                 .map(|arg| zonk_with_cache(state, arg, cache))
                 .collect();
-            Syntax::type_constructor_rc(term.loc, tc.constructor, arguments)
+            Syntax::type_constructor_rc(tc.constructor, arguments)
         }
 
-        SyntaxData::DataConstructor(dc) => {
+        Syntax::DataConstructor(dc) => {
             let arguments: Vec<_> = dc
                 .arguments
                 .iter()
                 .map(|arg| zonk_with_cache(state, arg, cache))
                 .collect();
-            Syntax::data_constructor_rc(term.loc, dc.constructor, arguments)
+            Syntax::data_constructor_rc(dc.constructor, arguments)
         }
 
-        SyntaxData::Case(case) => {
+        Syntax::Case(case) => {
             // Zonk each branch body
             let branches: Vec<_> = case
                 .branches
@@ -155,60 +156,60 @@ fn zonk_with_cache<'db>(
                     hwml_core::syn::CaseBranch::new(branch.constructor, branch.arity, body)
                 })
                 .collect();
-            Syntax::case_rc(term.loc, case.scrutinee.index, branches)
+            Syntax::case_rc(case.scrutinee.index, branches)
         }
 
-        SyntaxData::Let(let_expr) => {
+        Syntax::Let(let_expr) => {
             let ty = zonk_with_cache(state, &let_expr.ty, cache);
             let value = zonk_with_cache(state, &let_expr.value, cache);
             let body = zonk_with_cache(state, &let_expr.body, cache);
-            Syntax::let_rc(term.loc, ty, value, body)
+            Syntax::let_rc(ty, value, body)
         }
 
-        SyntaxData::Eq(eq) => {
+        Syntax::Eq(eq) => {
             let ty = zonk_with_cache(state, &eq.ty, cache);
             let lhs = zonk_with_cache(state, &eq.lhs, cache);
             let rhs = zonk_with_cache(state, &eq.rhs, cache);
-            Syntax::eq_rc(term.loc, ty, lhs, rhs)
+            Syntax::eq_rc(ty, lhs, rhs)
         }
 
-        SyntaxData::Refl(_) => Rc::new(term.clone()),
+        Syntax::Refl(_) => Rc::new(term.clone()),
 
-        SyntaxData::Transport(transport) => {
+        Syntax::Transport(transport) => {
             let motive_body = zonk_with_cache(state, &transport.motive.body, cache);
             let motive = hwml_core::syn::Closure::new(motive_body);
             let proof = zonk_with_cache(state, &transport.proof, cache);
             let value = zonk_with_cache(state, &transport.value, cache);
-            Syntax::transport_rc(term.loc, motive, proof, value)
+            Syntax::transport_rc(motive, proof, value)
         }
 
-        SyntaxData::Closure(closure) => {
+        Syntax::Closure(closure) => {
             let body = zonk_with_cache(state, &closure.body, cache);
-            Syntax::closure_rc(term.loc, body)
+            Syntax::closure_rc(body)
         }
 
-        SyntaxData::HArrow(harrow) => {
+        Syntax::HArrow(harrow) => {
             let source = zonk_with_cache(state, &harrow.source, cache);
             let target = zonk_with_cache(state, &harrow.target, cache);
-            Syntax::harrow_rc(term.loc, source, target)
+            Syntax::harrow_rc(source, target)
         }
 
-        SyntaxData::Module(module) => {
+        Syntax::Module(module) => {
             let body = zonk_with_cache(state, &module.body, cache);
-            Syntax::module_rc(term.loc, body)
+            Syntax::module_rc(body)
         }
 
-        SyntaxData::HApplication(happ) => {
+        Syntax::HApplication(happ) => {
             let module = zonk_with_cache(state, &happ.module, cache);
             let module_ty = zonk_with_cache(state, &happ.module_ty, cache);
             let argument = zonk_with_cache(state, &happ.argument, cache);
-            Syntax::happlication_rc(term.loc, module, module_ty, argument)
+            Syntax::happlication_rc(module, module_ty, argument)
         }
 
-        SyntaxData::Check(check) => {
+        Syntax::Check(check) => {
             let ty = zonk_with_cache(state, &check.ty, cache);
             let term_inner = zonk_with_cache(state, &check.term, cache);
-            Syntax::check_rc(term.loc, ty, term_inner)
+            Syntax::check_rc(ty, term_inner)
         }
     }
 }
@@ -227,15 +228,15 @@ mod tests {
         // Create a solver state with an unsolved metavariable
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_meta(Location::UNKNOWN, ty);
+        let meta_id = state.fresh_meta(ty);
 
         // Create a term with the unsolved metavariable
-        let term = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
+        let term = Syntax::metavariable_rc(meta_id, vec![]);
 
         // Zonk should leave it unchanged
         let zonked = zonk(&state, &term);
         assert!(
-            matches!(&zonked.data, hwml_core::syn::SyntaxData::Metavariable(m) if m.id == meta_id)
+            matches!(zonked.as_ref(), hwml_core::syn::Syntax::Metavariable(m) if m.id == meta_id)
         );
     }
 
@@ -244,23 +245,22 @@ mod tests {
         // Create a solver state with a solved metavariable
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_meta(Location::UNKNOWN, ty);
+        let meta_id = state.fresh_meta(ty);
 
         // Solve the metavariable to a universe
-        let solution =
-            Syntax::universe_rc(Location::UNKNOWN, hwml_core::common::UniverseLevel::new(1));
+        let solution = Syntax::universe_rc(hwml_core::common::UniverseLevel::new(1));
 
         // Manually set the solution (bypassing cycle check for this test)
         state.set_solution_unchecked(meta_id, solution.clone());
 
         // Create a term with the solved metavariable
-        let term = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
+        let term = Syntax::metavariable_rc(meta_id, vec![]);
 
         // Zonk should replace it with the solution
         let zonked = zonk(&state, &term);
         assert!(matches!(
-            &zonked.data,
-            hwml_core::syn::SyntaxData::Universe(_)
+            zonked.as_ref(),
+            hwml_core::syn::Syntax::Universe(_)
         ));
     }
 
@@ -269,15 +269,15 @@ mod tests {
         // Create a solver state with a poisoned metavariable
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_poisoned_meta(Location::UNKNOWN, ty);
+        let meta_id = state.fresh_poisoned_meta(ty);
 
         // Create a term with the poisoned metavariable
-        let term = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
+        let term = Syntax::metavariable_rc(meta_id, vec![]);
 
         // Zonk should leave it unchanged (poisoned metas are unsolved)
         let zonked = zonk(&state, &term);
         assert!(
-            matches!(&zonked.data, hwml_core::syn::SyntaxData::Metavariable(m) if m.id == meta_id)
+            matches!(zonked.as_ref(), hwml_core::syn::Syntax::Metavariable(m) if m.id == meta_id)
         );
 
         // Verify it's actually poisoned

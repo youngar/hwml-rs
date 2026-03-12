@@ -27,7 +27,9 @@
 use hwml_core::common::{Index, Location, UniverseLevel};
 use hwml_core::eval;
 use hwml_core::quote::type_quote;
-use hwml_core::syn::{CaseBranch, Syntax, SyntaxData};
+use hwml_core::syn::CaseBranch;
+use hwml_core::Syntax;
+
 use hwml_core::val::{Environment, LocalEnv, TransparentEnv, Value};
 use hwml_core::ConstantId;
 use hwml_support::{FromWithDb, SourceFile};
@@ -272,20 +274,20 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
     }
 
     /// Create a fresh metavariable with the given type
-    pub fn fresh_meta(&self, loc: Location, ty: Rc<Value<'db>>) -> Rc<Syntax<'db>> {
+    pub fn fresh_meta(&self, ty: Rc<Value<'db>>) -> Rc<Syntax<'db>> {
         let meta_id = self.solver.fresh_meta_id(ty);
-        Syntax::metavariable_rc(loc, meta_id, vec![])
+        Syntax::metavariable_rc(meta_id, vec![])
     }
 
     /// Create a poisoned metavariable for error recovery
-    pub fn fresh_poisoned_meta(&self, loc: Location, ty: Rc<Value<'db>>) -> Rc<Syntax<'db>> {
+    pub fn fresh_poisoned_meta(&self, ty: Rc<Value<'db>>) -> Rc<Syntax<'db>> {
         // Create a poisoned metavariable ID
         let meta_id = self
             .solver
             .state
             .borrow_mut()
-            .fresh_poisoned_meta(loc, ty.clone());
-        Syntax::metavariable_rc(loc, meta_id, vec![])
+            .fresh_poisoned_meta(ty.clone());
+        Syntax::metavariable_rc(meta_id, vec![])
     }
 
     /// Report an error and return a poisoned metavariable
@@ -301,7 +303,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
             message,
             expected_type: None, // We could store this if needed for better error messages
         });
-        self.fresh_poisoned_meta(loc, expected_ty)
+        self.fresh_poisoned_meta(expected_ty)
     }
 
     /// Evaluate a syntax term to a value in the current context
@@ -533,7 +535,7 @@ pub async fn check<'db, 'g>(
         Expression::Match(match_expr) => check_match(ctx, match_expr, expected_ty).await,
         Expression::Underscore(underscore) => {
             let loc = ctx.convert_location(&underscore.loc);
-            ctx.fresh_meta(loc, expected_ty)
+            ctx.fresh_meta(expected_ty)
         }
         _ => {
             let (term, inferred_ty) = synth(ctx, expr).await;
@@ -544,9 +546,9 @@ pub async fn check<'db, 'g>(
 
                 // Insert the appropriate lifting construct
                 let lifted_term = match lift_kind {
-                    LiftKind::Lift => Syntax::lift_rc(loc, term),
-                    LiftKind::SLift => Syntax::slift_rc(loc, term),
-                    LiftKind::MLift => Syntax::mlift_rc(loc, term),
+                    LiftKind::Lift => Syntax::lift_rc(term),
+                    LiftKind::SLift => Syntax::slift_rc(term),
+                    LiftKind::MLift => Syntax::mlift_rc(term),
                 };
 
                 // The lifted term should now have the expected type
@@ -717,7 +719,7 @@ async fn check_fun<'db, 'g>(
 
                     // Build the lambda term
                     let loc = ctx.expr_location(&surface::Expression::Fun(fun.clone()));
-                    Syntax::lambda_rc(loc, body)
+                    Syntax::lambda_rc(body)
                 }
                 _ => {
                     // Expected type is not a Pi type - create a fresh metavariable for param type
@@ -809,7 +811,7 @@ async fn check_pi<'db, 'g>(
 
     // Build Pi term
     let loc = ctx.expr_location(&surface::Expression::Pi(pi.clone()));
-    Syntax::pi_rc(loc, param_ty_term, target_term)
+    Syntax::pi_rc(param_ty_term, target_term)
 }
 
 async fn check_arrow<'db, 'g>(
@@ -830,7 +832,7 @@ async fn check_arrow<'db, 'g>(
 
     // Build Pi term
     let loc = ctx.expr_location(&surface::Expression::Arrow(arrow.clone()));
-    Syntax::pi_rc(loc, source_term, target_term)
+    Syntax::pi_rc(source_term, target_term)
 }
 
 async fn check_fat_arrow<'db, 'g>(
@@ -852,7 +854,7 @@ async fn check_fat_arrow<'db, 'g>(
 
     // Build HArrow term
     let loc = ctx.expr_location(&surface::Expression::FatArrow(fat_arrow.clone()));
-    Syntax::harrow_rc(loc, source_term, target_term)
+    Syntax::harrow_rc(source_term, target_term)
 }
 
 async fn synth_id<'db, 'g>(
@@ -868,7 +870,7 @@ async fn synth_id<'db, 'g>(
         Some(index) => {
             eprintln!("[Elaborator] Found variable {} at index {}", name, index);
             let ty = ctx.get_var_type(index).unwrap().clone();
-            let term = Syntax::variable_rc(loc, Index::from(index));
+            let term = Syntax::variable_rc(Index::from(index));
             (term, ty)
         }
         None => {
@@ -885,7 +887,7 @@ async fn synth_id<'db, 'g>(
                 match name {
                     "Signal" => {
                         eprintln!("[Elaborator] Recognized Signal built-in");
-                        let term = Syntax::signal_universe_rc(loc);
+                        let term = Syntax::signal_universe_rc();
                         let ty = Rc::new(Value::universe(UniverseLevel::new(0)));
                         (term, ty)
                     }
@@ -958,7 +960,7 @@ async fn synth_app<'db, 'g>(
 
                 // Build application
                 let loc = ctx.expr_location(&surface::Expression::App(app.clone()));
-                func_term = Syntax::application_rc(loc, func_term, arg_term);
+                func_term = Syntax::application_rc(func_term, arg_term);
             }
             _ => {
                 // Function type is not a Pi - error
@@ -1005,7 +1007,7 @@ async fn synth_let<'db, 'g>(
 
     // Quote the value type to syntax before moving value_ty
     let value_ty_syntax = type_quote(ctx.solver.tc_env.values.global, 0, &value_ty)
-        .unwrap_or_else(|_| Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)));
+        .unwrap_or_else(|_| Syntax::universe_rc(UniverseLevel::new(0)));
 
     // Push binding and elaborate body
     ctx.push_binding(name, value_ty);
@@ -1014,7 +1016,7 @@ async fn synth_let<'db, 'g>(
 
     // Build let term
     let loc = ctx.expr_location(&surface::Expression::LetIn(let_in.clone()));
-    let let_term = Syntax::let_rc(loc, value_ty_syntax, value_term, body_term);
+    let let_term = Syntax::let_rc(value_ty_syntax, value_term, body_term);
 
     (let_term, body_ty)
 }
@@ -1030,11 +1032,11 @@ async fn synth_num<'db, 'g>(
     let (term, ty) = match num_str {
         "0" => {
             // Zero : Bit
-            (Syntax::zero_rc(loc), Rc::new(Value::bit()))
+            (Syntax::zero_rc(), Rc::new(Value::bit()))
         }
         "1" => {
             // One : Bit
-            (Syntax::one_rc(loc), Rc::new(Value::bit()))
+            (Syntax::one_rc(), Rc::new(Value::bit()))
         }
         _ => {
             // Invalid numeric literal - only 0 and 1 are supported for Bit
@@ -1112,14 +1114,13 @@ async fn check_match<'db, 'g>(
 
     // Step 5: Push the scrutinee binding
     ctx.push_binding(scrutinee_var_name.clone(), scrutinee_ty.clone());
-    let scrutinee_var = Syntax::variable_rc(loc, Index::from(0));
+    let scrutinee_var = Syntax::variable_rc(Index::from(0));
 
     // Step 6: Push the proof binding (p : Eq scrutinee_ty scrutinee scrutinee = refl)
     // For now, we create a simple proof type
     let proof_ty = Syntax::eq_rc(
-        loc,
         type_quote(ctx.solver.tc_env.values.global, ctx.depth(), &scrutinee_ty)
-            .unwrap_or_else(|_| Syntax::universe_rc(loc, UniverseLevel::new(0))),
+            .unwrap_or_else(|_| Syntax::universe_rc(UniverseLevel::new(0))),
         scrutinee_term.clone(),
         scrutinee_var.clone(),
     );
@@ -1157,14 +1158,14 @@ async fn check_match<'db, 'g>(
 
     // Step 8: Wrap in let bindings for the scrutinee and proof
     // let p = refl in decision_tree
-    let refl_proof = Syntax::refl_rc(loc);
-    let with_proof = Syntax::let_rc(loc, proof_ty, refl_proof, decision_tree);
+    let refl_proof = Syntax::refl_rc();
+    let with_proof = Syntax::let_rc(proof_ty, refl_proof, decision_tree);
 
     // let scrut = scrutinee_term in with_proof
     let scrutinee_ty_syntax =
         type_quote(ctx.solver.tc_env.values.global, ctx.depth(), &scrutinee_ty)
-            .unwrap_or_else(|_| Syntax::universe_rc(loc, UniverseLevel::new(0)));
-    Syntax::let_rc(loc, scrutinee_ty_syntax, scrutinee_term, with_proof)
+            .unwrap_or_else(|_| Syntax::universe_rc(UniverseLevel::new(0)));
+    Syntax::let_rc(scrutinee_ty_syntax, scrutinee_term, with_proof)
 }
 
 /// Group matrix rows by their outer constructor in the first column.
@@ -1241,7 +1242,7 @@ async fn compile_matrix<'db, 'g>(
             message: "Inexhaustive pattern match".to_string(),
             expected_type: None,
         });
-        return Ok(ctx.fresh_poisoned_meta(loc, expected_ty.clone()));
+        return Ok(ctx.fresh_poisoned_meta(expected_ty.clone()));
     }
 
     // BASE CASE 2: Pure variable row (all patterns are variables/wildcards)
@@ -1275,17 +1276,10 @@ async fn compile_matrix<'db, 'g>(
 
         // Wrap in transport
         let loc = Location::UNKNOWN;
-        let proof_var = Syntax::variable_rc(
-            loc,
-            Index::from(ctx.lookup_var(proof_var_name).unwrap_or(0)),
-        );
+        let proof_var =
+            Syntax::variable_rc(Index::from(ctx.lookup_var(proof_var_name).unwrap_or(0)));
 
-        return Ok(Syntax::transport_rc(
-            loc,
-            motive.clone(),
-            proof_var,
-            core_body,
-        ));
+        return Ok(Syntax::transport_rc(motive.clone(), proof_var, core_body));
     }
 
     // INDUCTIVE CASE: Split on the first scrutinee
@@ -1310,7 +1304,7 @@ async fn compile_matrix<'db, 'g>(
             ctx.push_binding(var_name.clone(), var_ty);
 
             let var_index = Index::from(0); // Most recently bound
-            fresh_vars.push(Syntax::variable_rc(Location::UNKNOWN, var_index));
+            fresh_vars.push(Syntax::variable_rc(var_index));
         }
 
         // Build the new scrutinee list: [fresh_vars..., remaining_scrutinees...]
@@ -1339,13 +1333,13 @@ async fn compile_matrix<'db, 'g>(
 
     // Build the case expression
     // The scrutinee must be a variable, so extract its index
-    let scrutinee_var = match &current_scrutinee.data {
-        SyntaxData::Variable(var) => var.clone(),
+    let scrutinee_var = match current_scrutinee.as_ref() {
+        Syntax::Variable(var) => var.clone(),
         _ => return Err("Scrutinee must be a variable in core case expression".to_string()),
     };
 
     let loc = Location::UNKNOWN;
-    Ok(Syntax::case_rc(loc, scrutinee_var.index, core_branches))
+    Ok(Syntax::case_rc(scrutinee_var.index, core_branches))
 }
 
 #[cfg(test)]
@@ -1406,11 +1400,10 @@ mod tests {
         let ctx = setup_test_context(&db, &global);
 
         let ty = Rc::new(Value::universe(UniverseLevel::new(0)));
-        let loc = Location::UNKNOWN;
-        let meta = ctx.fresh_meta(loc, ty.clone());
+        let meta = ctx.fresh_meta(ty.clone());
 
         // Should be a metavariable
-        assert!(matches!(&meta.data, SyntaxData::Metavariable(_)));
+        assert!(matches!(meta.as_ref(), Syntax::Metavariable(_)));
     }
 
     #[test]
@@ -1420,12 +1413,11 @@ mod tests {
         let ctx = setup_test_context(&db, &global);
 
         let ty = Rc::new(Value::universe(UniverseLevel::new(0)));
-        let loc = Location::UNKNOWN;
-        let meta = ctx.fresh_poisoned_meta(loc, ty.clone());
+        let meta = ctx.fresh_poisoned_meta(ty.clone());
 
         // Should be a metavariable
         assert!(
-            matches!(&meta.data, SyntaxData::Metavariable(m) if ctx.solver.state.borrow().is_poisoned(m.id))
+            matches!(meta.as_ref(), Syntax::Metavariable(m) if ctx.solver.state.borrow().is_poisoned(m.id))
         );
     }
 
@@ -1495,9 +1487,9 @@ mod tests {
             let (term, ty) = synth_num(&mut ctx, &num).await;
 
             // Check that the term is Zero
-            match &term.data {
-                hwml_core::syn::SyntaxData::Zero(_) => {}
-                _ => panic!("Expected Zero, got {:?}", term.data),
+            match term.as_ref() {
+                hwml_core::syn::Syntax::Zero(_) => {}
+                _ => panic!("Expected Zero, got {:?}", term),
             }
 
             // Check that the type is Bit
@@ -1543,9 +1535,9 @@ mod tests {
             let (term, ty) = synth_num(&mut ctx, &num).await;
 
             // Check that the term is One
-            match &term.data {
-                hwml_core::syn::SyntaxData::One(_) => {}
-                _ => panic!("Expected One, got {:?}", term.data),
+            match term.as_ref() {
+                hwml_core::syn::Syntax::One(_) => {}
+                _ => panic!("Expected One, got {:?}", term),
             }
 
             // Check that the type is Bit

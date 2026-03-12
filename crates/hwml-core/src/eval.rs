@@ -1,4 +1,3 @@
-use crate::syn::SyntaxData;
 use crate::val::{
     self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
     MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
@@ -85,53 +84,48 @@ pub fn eval<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     stx: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error> {
-    use crate::syn::SyntaxData;
-    match &stx.data {
-        SyntaxData::Universe(uni) => eval_universe(env, &uni),
-        SyntaxData::Lift(lift) => eval_lift(env, lift),
+    match stx {
+        Syntax::Universe(uni) => eval_universe(env, &uni),
+        Syntax::Lift(lift) => eval_lift(env, lift),
 
-        SyntaxData::Pi(pi) => eval_pi(env, pi),
-        SyntaxData::Lambda(lam) => eval_lambda(env, lam),
-        SyntaxData::Application(app) => eval_application(env, &app),
-        SyntaxData::Let(let_expr) => eval_let(env, let_expr),
+        Syntax::Pi(pi) => eval_pi(env, pi),
+        Syntax::Lambda(lam) => eval_lambda(env, lam),
+        Syntax::Application(app) => eval_application(env, &app),
+        Syntax::Let(let_expr) => eval_let(env, let_expr),
 
-        SyntaxData::TypeConstructor(type_constructor) => {
-            eval_type_constructor(env, type_constructor)
-        }
-        SyntaxData::DataConstructor(data_constructor) => {
-            eval_data_constructor(env, data_constructor)
-        }
-        SyntaxData::Case(case) => eval_case(env, case),
+        Syntax::TypeConstructor(type_constructor) => eval_type_constructor(env, type_constructor),
+        Syntax::DataConstructor(data_constructor) => eval_data_constructor(env, data_constructor),
+        Syntax::Case(case) => eval_case(env, case),
 
-        SyntaxData::Eq(eq) => eval_eq(env, eq),
-        SyntaxData::Refl(refl) => eval_refl(env, refl),
-        SyntaxData::Transport(transport) => eval_transport(env, transport),
-        SyntaxData::Closure(_) => {
+        Syntax::Eq(eq) => eval_eq(env, eq),
+        Syntax::Refl(refl) => eval_refl(env, refl),
+        Syntax::Transport(transport) => eval_transport(env, transport),
+        Syntax::Closure(_) => {
             // Closures should not appear in evaluated terms - they only exist in Transport motives
             // This is a malformed term
-            Err(Error::BadApplication { loc: Some(stx.loc) })
+            Err(Error::BadApplication { loc: None })
         }
 
-        SyntaxData::HardwareUniverse(hw) => eval_hardware_universe(env, hw),
-        SyntaxData::SLift(slift) => eval_slift(env, slift),
-        SyntaxData::MLift(mlift) => eval_mlift(env, mlift),
+        Syntax::HardwareUniverse(hw) => eval_hardware_universe(env, hw),
+        Syntax::SLift(slift) => eval_slift(env, slift),
+        Syntax::MLift(mlift) => eval_mlift(env, mlift),
 
-        SyntaxData::SignalUniverse(sig) => eval_signal_universe(env, sig),
-        SyntaxData::Bit(bit) => eval_bit(env, bit),
-        SyntaxData::Zero(zero) => eval_zero(env, zero),
-        SyntaxData::One(one) => eval_one(env, one),
+        Syntax::SignalUniverse(sig) => eval_signal_universe(env, sig),
+        Syntax::Bit(bit) => eval_bit(env, bit),
+        Syntax::Zero(zero) => eval_zero(env, zero),
+        Syntax::One(one) => eval_one(env, one),
 
-        SyntaxData::ModuleUniverse(mod_uni) => eval_module_universe(env, mod_uni),
-        SyntaxData::HArrow(harrow) => eval_harrow(env, harrow),
-        SyntaxData::Module(module) => eval_module(env, module),
-        SyntaxData::HApplication(happ) => eval_happlication(env, happ),
+        Syntax::ModuleUniverse(mod_uni) => eval_module_universe(env, mod_uni),
+        Syntax::HArrow(harrow) => eval_harrow(env, harrow),
+        Syntax::Module(module) => eval_module(env, module),
+        Syntax::HApplication(happ) => eval_happlication(env, happ),
 
-        SyntaxData::Prim(prim) => eval_prim(env, prim),
-        SyntaxData::Constant(constant) => eval_constant(env, &constant),
-        SyntaxData::Variable(var) => eval_variable(env, &var),
-        SyntaxData::Metavariable(meta) => eval_metavariable(env, meta),
+        Syntax::Prim(prim) => eval_prim(env, prim),
+        Syntax::Constant(constant) => eval_constant(env, &constant),
+        Syntax::Variable(var) => eval_variable(env, &var),
+        Syntax::Metavariable(meta) => eval_metavariable(env, meta),
 
-        SyntaxData::Check(chk) => eval_check(env, chk),
+        Syntax::Check(chk) => eval_check(env, chk),
     }
 }
 
@@ -641,8 +635,8 @@ fn eval_transport<'db, 'g>(
 fn get_closure_body<'db>(closure: &syn::Closure<'db>) -> syn::RcSyntax<'db> {
     let mut current = &closure.body;
     loop {
-        match &current.data {
-            SyntaxData::Closure(inner) => {
+        match current.as_ref() {
+            Syntax::Closure(inner) => {
                 current = &inner.body;
             }
             _ => return current.clone(),
@@ -972,15 +966,11 @@ mod tests {
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : U0
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
-        global.add_metavariable(
-            meta_id,
-            vec![],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-        );
+        let meta_id = MetaVariableId::new(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let mut env = Environment::new(&global);
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![]);
+        let meta_stx = Syntax::metavariable(meta_id, vec![]);
         let result = eval(&mut env, &meta_stx).expect("eval should succeed");
 
         // Should be a Flex neutral
@@ -1013,20 +1003,17 @@ mod tests {
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
+        let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::universe_rc(
-                Location::UNKNOWN,
-                UniverseLevel::new(0),
-            )],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         let mut env = Environment::new(&global);
         // ?[0 ^Bit] - apply metavariable to ^Bit
-        let lift_bit = Syntax::lift_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN));
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![lift_bit]);
+        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
+        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit]);
         let result = eval(&mut env, &meta_stx).expect("eval should succeed");
 
         // Should be a Flex neutral with the argument in its local env
@@ -1065,19 +1052,18 @@ mod tests {
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : ∀ (%x : U0) → U0
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
+        let meta_id = MetaVariableId::new(0);
         let pi_ty = Syntax::pi_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
         global.add_metavariable(meta_id, vec![], pi_ty);
 
         let mut env = Environment::new(&global);
         // (?[0])[^Bit] - apply metavariable to ^Bit
-        let meta_stx = Syntax::metavariable_rc(Location::UNKNOWN, meta_id, vec![]);
-        let lift_bit = Syntax::lift_rc(Location::UNKNOWN, Syntax::bit_rc(Location::UNKNOWN));
-        let app_stx = Syntax::application(Location::UNKNOWN, meta_stx, lift_bit);
+        let meta_stx = Syntax::metavariable_rc(meta_id, vec![]);
+        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
+        let app_stx = Syntax::application(meta_stx, lift_bit);
         let result = eval(&mut env, &app_stx).expect("eval should succeed");
 
         // Should be a Flex neutral with the application in its spine

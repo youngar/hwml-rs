@@ -26,7 +26,10 @@ use hwml_circt_sys::{
     MlirLocationWrapper, MlirModuleWrapper, MlirRegionWrapper, MlirTypeWrapper, MlirValueWrapper,
     OperationBuilder,
 };
-use hwml_core::{declaration::Module, syn::RcSyntax};
+use hwml_core::{
+    declaration::Module,
+    syn::{RcSyntax, Syntax},
+};
 
 /// Translation context that tracks state during translation.
 pub struct TranslationContext<'c> {
@@ -205,16 +208,14 @@ fn saturate_and_quote_for_circt<'db>(
 fn extract_hsyntax_from_syntax<'db>(
     syntax: &hwml_core::syn::RcSyntax<'db>,
 ) -> Option<RcSyntax<'db>> {
-    use hwml_core::syn::SyntaxData;
-
-    match &syntax.data {
+    match &**syntax {
         // Lambda with a body - recurse into the body.  This is how we
         // handle generators like `QueueGen :  n. ^ht`, where normalisation
         // yields a lambda whose body is a quote.
-        SyntaxData::Lambda(lambda) => extract_hsyntax_from_syntax(&lambda.body),
+        Syntax::Lambda(lambda) => extract_hsyntax_from_syntax(&lambda.body),
 
         // Check node - recurse into the term
-        SyntaxData::Check(check) => extract_hsyntax_from_syntax(&check.term),
+        Syntax::Check(check) => extract_hsyntax_from_syntax(&check.term),
 
         // For anything else, this IS the hardware syntax
         _ => Some(syntax.clone()),
@@ -233,14 +234,12 @@ fn extract_hsyntax_from_syntax<'db>(
 fn extract_input_types<'db>(
     ty: &hwml_core::syn::RcSyntax<'db>,
 ) -> Vec<hwml_core::syn::RcSyntax<'db>> {
-    use hwml_core::syn::SyntaxData;
-
     // Strip off outer Pi binders – these are meta-level parameters, not
     // hardware ports.
     let mut current = ty;
     loop {
-        match &current.data {
-            SyntaxData::Pi(pi) => {
+        match &**current {
+            Syntax::Pi(pi) => {
                 current = &pi.target;
             }
             _ => break,
@@ -249,8 +248,8 @@ fn extract_input_types<'db>(
 
     // At this point we expect a lifted hardware type. If so, delegate to
     // the HArrow helper to extract the actual hardware argument types.
-    match &current.data {
-        SyntaxData::Lift(lift) => extract_hardware_input_types(&lift.ty),
+    match &**current {
+        Syntax::Lift(lift) => extract_hardware_input_types(&lift.ty),
         _ => Vec::new(),
     }
 }
@@ -260,15 +259,13 @@ fn extract_input_types<'db>(
 fn extract_hardware_input_types<'db>(
     ty: &hwml_core::syn::RcSyntax<'db>,
 ) -> Vec<hwml_core::syn::RcSyntax<'db>> {
-    use hwml_core::syn::SyntaxData;
-
     let mut types = Vec::new();
     let mut current = ty;
 
     // Traverse nested HArrow types to collect all input types
     loop {
-        match &current.data {
-            SyntaxData::HArrow(arrow) => {
+        match &**current {
+            Syntax::HArrow(arrow) => {
                 types.push(arrow.source.clone());
                 current = &arrow.target;
             }
@@ -282,14 +279,12 @@ fn extract_hardware_input_types<'db>(
 /// Unwrap nested Module nodes to get the innermost body expression.
 /// Returns the body and the count of lambdas unwrapped.
 fn unwrap_modules<'a, 'db>(expr: &'a RcSyntax<'db>) -> (&'a RcSyntax<'db>, usize) {
-    use hwml_core::syn::SyntaxData;
-
     let mut current = expr;
     let mut count = 0;
 
     loop {
-        match &current.data {
-            SyntaxData::Module(lambda) => {
+        match &**current {
+            Syntax::Module(lambda) => {
                 current = &lambda.body;
                 count += 1;
             }
@@ -330,15 +325,13 @@ fn translate_constant_to_module<'c, 'db>(
     // For now, we only support $Bit types (possibly wrapped in Lift)
     let mut input_ports = Vec::new();
     for (i, input_ty) in input_types.iter().enumerate() {
-        use hwml_core::syn::SyntaxData;
-
         // Unwrap Lift if present, then check if this is a Bit type
-        let inner_ty = match &input_ty.data {
-            SyntaxData::Lift(lift) => &lift.ty,
+        let inner_ty = match &**input_ty {
+            Syntax::Lift(lift) => &lift.ty,
             _ => input_ty,
         };
 
-        if !matches!(&inner_ty.data, SyntaxData::Bit(_)) {
+        if !matches!(&**inner_ty, Syntax::Bit(_)) {
             return Err(Error::UnsupportedConstruct(format!(
                 "Only $Bit (or ^$Bit) input types are currently supported, got: {:?}",
                 input_ty
@@ -535,13 +528,11 @@ fn translate_hsyntax_expr<'c, 'db>(
     block: &MlirBlockWrapper,
     expr: &RcSyntax<'db>,
 ) -> Result<MlirValueWrapper> {
-    use hwml_core::syn::SyntaxData;
-
     let mlir_ctx = ctx.context();
     let bit_type = dialects::hw::bit_type(mlir_ctx);
 
-    match &expr.data {
-        SyntaxData::Zero(_) => {
+    match &**expr {
+        Syntax::Zero(_) => {
             // Create hw.constant 0 : i1
             let zero_attr = MlirAttributeWrapper::integer(bit_type, 0);
             let const_op = OperationBuilder::new("hw.constant", location)
@@ -552,7 +543,7 @@ fn translate_hsyntax_expr<'c, 'db>(
             block.append_operation(const_op);
             operation_result(const_op, 0).map_err(|e| Error::MlirOperation(e))
         }
-        SyntaxData::One(_) => {
+        Syntax::One(_) => {
             // Create hw.constant 1 : i1
             let one_attr = MlirAttributeWrapper::integer(bit_type, 1);
             let const_op = OperationBuilder::new("hw.constant", location)
@@ -563,12 +554,12 @@ fn translate_hsyntax_expr<'c, 'db>(
             block.append_operation(const_op);
             operation_result(const_op, 0).map_err(|e| Error::MlirOperation(e))
         }
-        SyntaxData::HApplication(app) => {
+        Syntax::HApplication(app) => {
             // Check if this is a binary operation application
             // Pattern: ((Op arg1) arg2)
-            if let SyntaxData::HApplication(inner_app) = &app.module.data {
+            if let Syntax::HApplication(inner_app) = app.module.as_ref() {
                 // Check if the inner function is a primitive
-                if let SyntaxData::Prim(prim) = &inner_app.module.data {
+                if let Syntax::Prim(prim) = inner_app.module.as_ref() {
                     let prim_name = prim.name.name(db);
 
                     // Handle $reg specially - it generates seq.compreg
@@ -643,7 +634,7 @@ fn translate_hsyntax_expr<'c, 'db>(
                     "Unsupported nested application: {:?}",
                     inner_app.module
                 )));
-            } else if let SyntaxData::Prim(prim) = &app.module.data {
+            } else if let Syntax::Prim(prim) = app.module.as_ref() {
                 let prim_name = prim.name.name(db);
                 if prim_name == "not" {
                     // Unary NOT operation
@@ -684,7 +675,7 @@ fn translate_hsyntax_expr<'c, 'db>(
                 )))
             }
         }
-        SyntaxData::Variable(var) => {
+        Syntax::Variable(var) => {
             // Get the block argument corresponding to this variable
             // Variables are indexed from the end (De Bruijn indices)
             let num_args = unsafe { hwml_circt_sys::mlirBlockGetNumArguments(block.as_raw()) };

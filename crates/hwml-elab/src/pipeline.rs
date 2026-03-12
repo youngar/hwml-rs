@@ -3,7 +3,7 @@
 use hwml_core::check::TCEnvironment;
 use hwml_core::syn::Syntax;
 use hwml_core::val::{Environment, GlobalEnv};
-use hwml_support::{Location, SourceFile};
+use hwml_support::SourceFile;
 use hwml_surface::syntax as surface;
 use std::rc::Rc;
 
@@ -268,15 +268,15 @@ fn elaborate_prim_declaration<'db, 'g>(
             let (term, actual_ty) = match name {
                 "Bit" => {
                     // Bit : Signal, but we lift it to ^Bit : Universe(0) for use in Pi types
-                    let bit_term = Syntax::bit_rc(loc);
-                    let lifted_bit = Syntax::lift_rc(loc, bit_term);
+                    let bit_term = Syntax::bit_rc();
+                    let lifted_bit = Syntax::lift_rc(bit_term);
                     let ty = std::rc::Rc::new(hwml_core::val::Value::universe(
                         hwml_core::common::UniverseLevel::new(0),
                     ));
                     (lifted_bit, ty)
                 }
                 "Signal" => {
-                    let term = Syntax::signal_universe_rc(loc);
+                    let term = Syntax::signal_universe_rc();
                     let ty = std::rc::Rc::new(hwml_core::val::Value::universe(
                         hwml_core::common::UniverseLevel::new(0),
                     ));
@@ -286,7 +286,7 @@ fn elaborate_prim_declaration<'db, 'g>(
                     // For unknown primitives, create a placeholder
                     // In a real implementation, this would be an error
                     eprintln!("[Pipeline] Warning: unknown primitive {}", name);
-                    let term = Syntax::bit_rc(loc);
+                    let term = Syntax::bit_rc();
                     (term, ty_value)
                 }
             };

@@ -1,11 +1,11 @@
-use crate::common::{ConstantId, Level, Location};
+use crate::common::{ConstantId, Level};
 use crate::equal;
 use crate::eval;
 use crate::pattern_unify;
 use crate::quote;
 use crate::syn as stx;
 use crate::syn;
-use crate::syn::{Syntax, SyntaxData};
+use crate::syn::Syntax;
 use crate::val;
 use crate::val::{Environment, LocalEnv, Value};
 use salsa::Database;
@@ -162,43 +162,29 @@ impl<'db> From<pattern_unify::Error<'db>> for Error<'db> {
 
 impl<'db> std::fmt::Display for Error<'db> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use crate::common::Location;
-
-        // Helper to format location info
-        let fmt_loc = |loc: Location| -> String {
-            if loc == Location::UNKNOWN {
-                String::new()
-            } else {
-                format!(" [at {}]", loc)
-            }
-        };
-
         match self {
             Error::BadSynth { tm } => {
-                write!(f, "cannot infer type for term{}: {tm:?}", fmt_loc(tm.loc))
+                write!(f, "cannot infer type for term: {tm:?}")
             }
             Error::BadType { tm } => {
-                write!(f, "expected a type{}, but got: {tm:?}", fmt_loc(tm.loc))
+                write!(f, "expected a type, but got: {tm:?}")
             }
             Error::BadElim { tm, ty_got } => {
                 write!(
                     f,
-                    "bad elimination{}: cannot apply or match on term of type {ty_got:?}\n  in: {tm:?}",
-                    fmt_loc(tm.loc)
+                    "bad elimination: cannot apply or match on term of type {ty_got:?}\n  in: {tm:?}"
                 )
             }
             Error::BadCtor { tm, ty_exp } => {
                 write!(
                     f,
-                    "constructor does not match expected type {ty_exp:?}{}\n  in: {tm:?}",
-                    fmt_loc(tm.loc)
+                    "constructor does not match expected type {ty_exp:?}\n  in: {tm:?}"
                 )
             }
             Error::BadCheck { tm, ty_exp, ty_got } => {
                 write!(
                     f,
-                    "type mismatch{}:\n  expected: {ty_exp:?}\n  got: {ty_got:?}\n  in: {tm:?}",
-                    fmt_loc(tm.loc)
+                    "type mismatch:\n  expected: {ty_exp:?}\n  got: {ty_got:?}\n  in: {tm:?}"
                 )
             }
             Error::EvaluationFailure(e) => {
@@ -219,18 +205,13 @@ impl<'db> std::fmt::Display for Error<'db> {
             Error::PatternUnifyStuck { tm, meta_id } => {
                 write!(
                     f,
-                    "pattern match blocked on unsolved metavariable ?{}{}\n\
+                    "pattern match blocked on unsolved metavariable ?{}\n\
                      help: add a type annotation to resolve the ambiguity",
-                    meta_id.local_index,
-                    fmt_loc(tm.loc)
+                    meta_id.local_index
                 )
             }
             Error::NonExhaustiveMatch { tm, missing } => {
-                write!(
-                    f,
-                    "non-exhaustive pattern match{}\n  missing constructor",
-                    fmt_loc(tm.loc)
-                )?;
+                write!(f, "non-exhaustive pattern match\n  missing constructor")?;
                 if missing.len() > 1 {
                     write!(f, "s")?;
                 }
@@ -277,19 +258,18 @@ pub fn type_synth<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<Rc<Value<'db>>, Error<'db>> {
-    use crate::syn::SyntaxData;
-    match &term.data {
-        SyntaxData::Variable(variable) => type_synth_variable(env, variable),
-        SyntaxData::Constant(constant) => type_synth_constant(env, constant),
-        SyntaxData::Prim(prim) => type_synth_prim(env, prim),
-        SyntaxData::Check(check) => type_synth_check(env, check),
-        SyntaxData::Let(let_expr) => type_synth_let(env, let_expr),
-        SyntaxData::Application(application) => type_synth_application(env, application),
-        SyntaxData::Metavariable(metavariable) => type_synth_metavariable(env, metavariable),
+    match term {
+        Syntax::Variable(variable) => type_synth_variable(env, variable),
+        Syntax::Constant(constant) => type_synth_constant(env, constant),
+        Syntax::Prim(prim) => type_synth_prim(env, prim),
+        Syntax::Check(check) => type_synth_check(env, check),
+        Syntax::Let(let_expr) => type_synth_let(env, let_expr),
+        Syntax::Application(application) => type_synth_application(env, application),
+        Syntax::Metavariable(metavariable) => type_synth_metavariable(env, metavariable),
 
         // Universe: U_n : U_(n+1)
         // For simplicity, we use predicative universes where U_n : U_(n+1)
-        SyntaxData::Universe(universe) => {
+        Syntax::Universe(universe) => {
             let current_level: usize = universe.level.into();
             let next_level = crate::common::UniverseLevel::new(current_level + 1);
             Ok(Rc::new(Value::universe(next_level)))
@@ -297,13 +277,13 @@ pub fn type_synth<'db, 'g>(
 
         // HardwareUniverse constructs - Lift is the only one that can be synthesized
         // Bit, HArrow, and Quote need to be checked against expected types
-        SyntaxData::Lift(lift) => type_synth_lift(env, lift),
+        Syntax::Lift(lift) => type_synth_lift(env, lift),
 
         // Eq type can synthesize: Eq A x y : U_i if A : U_i
-        SyntaxData::Eq(eq) => type_synth_eq(env, eq),
+        Syntax::Eq(eq) => type_synth_eq(env, eq),
 
         // Transport is an eliminator and synthesizes its type
-        SyntaxData::Transport(transport) => type_synth_transport(env, transport),
+        Syntax::Transport(transport) => type_synth_transport(env, transport),
 
         _ => Err(Error::BadSynth {
             tm: Rc::new(term.clone()),
@@ -389,22 +369,14 @@ pub fn type_synth_metavariable<'db, 'g>(
         .global
         .metavariable(metavariable.id)
         .map_err(|_| Error::BadSynth {
-            tm: Syntax::metavariable_rc(
-                Location::UNKNOWN,
-                metavariable.id,
-                metavariable.substitution.clone(),
-            ),
+            tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
         })?;
 
     // The metavariable has a telescope of argument types.
     // We need to check that the substitution has the right number of arguments.
     if metavariable.substitution.len() != meta_info.arguments.len() {
         return Err(Error::BadSynth {
-            tm: Syntax::metavariable_rc(
-                Location::UNKNOWN,
-                metavariable.id,
-                metavariable.substitution.clone(),
-            ),
+            tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
         });
     }
 
@@ -422,11 +394,7 @@ pub fn type_synth_metavariable<'db, 'g>(
             transparent: val::TransparentEnv::new(),
         };
         let expected_ty = eval::eval(&mut temp_env, arg_ty).map_err(|_| Error::BadSynth {
-            tm: Syntax::metavariable_rc(
-                Location::UNKNOWN,
-                metavariable.id,
-                metavariable.substitution.clone(),
-            ),
+            tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
         })?;
 
         // Check the argument against the expected type.
@@ -444,11 +412,7 @@ pub fn type_synth_metavariable<'db, 'g>(
         transparent: val::TransparentEnv::new(),
     };
     let meta_ty = eval::eval(&mut temp_env, &meta_info.ty).map_err(|_| Error::BadSynth {
-        tm: Syntax::metavariable_rc(
-            Location::UNKNOWN,
-            metavariable.id,
-            metavariable.substitution.clone(),
-        ),
+        tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
     })?;
 
     Ok(meta_ty)
@@ -465,11 +429,7 @@ pub fn type_synth_application<'db, 'g>(
     // Ensure that the applied term is a function `(x : src) -> tgt(x)`.
     let Value::Pi(pi) = &*fun_ty else {
         return Err(Error::BadElim {
-            tm: Syntax::application_rc(
-                Location::UNKNOWN,
-                application.function.clone(),
-                application.argument.clone(),
-            ),
+            tm: Syntax::application_rc(application.function.clone(), application.argument.clone()),
             ty_got: fun_ty,
         });
     };
@@ -492,11 +452,7 @@ pub fn type_check_case<'db, 'g>(
 
     let Value::TypeConstructor(type_constructor) = &*scrutinee_ty else {
         return Err(Error::BadElim {
-            tm: Syntax::case_rc(
-                Location::UNKNOWN,
-                case.scrutinee.index,
-                case.branches.clone(),
-            ),
+            tm: Syntax::case_rc(case.scrutinee.index, case.branches.clone()),
             ty_got: scrutinee_ty,
         });
     };
@@ -539,11 +495,7 @@ pub fn type_check_case<'db, 'g>(
             pattern_unify::PatternUnifyOutcome::Conflict => {}
             pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
                 return Err(Error::PatternUnifyStuck {
-                    tm: Syntax::case_rc(
-                        Location::UNKNOWN,
-                        case.scrutinee.index,
-                        case.branches.clone(),
-                    ),
+                    tm: Syntax::case_rc(case.scrutinee.index, case.branches.clone()),
                     meta_id,
                 });
             }
@@ -558,11 +510,7 @@ pub fn type_check_case<'db, 'g>(
 
     if !missing.is_empty() {
         return Err(Error::NonExhaustiveMatch {
-            tm: Syntax::case_rc(
-                Location::UNKNOWN,
-                case.scrutinee.index,
-                case.branches.clone(),
-            ),
+            tm: Syntax::case_rc(case.scrutinee.index, case.branches.clone()),
             missing,
         });
     }
@@ -611,11 +559,7 @@ pub fn type_check_case<'db, 'g>(
 
             pattern_unify::PatternUnifyOutcome::Stuck(meta_id) => {
                 return Err(Error::PatternUnifyStuck {
-                    tm: Syntax::case_rc(
-                        Location::UNKNOWN,
-                        case.scrutinee.index,
-                        case.branches.clone(),
-                    ),
+                    tm: Syntax::case_rc(case.scrutinee.index, case.branches.clone()),
                     meta_id,
                 });
             }
@@ -631,30 +575,29 @@ pub fn type_check<'db, 'g>(
     term: &Syntax<'db>,
     ty: &Value<'db>,
 ) -> Result<(), Error<'db>> {
-    use crate::syn::SyntaxData;
-    match &term.data {
-        SyntaxData::Pi(pi) => type_check_pi(env, pi, ty),
-        SyntaxData::Lambda(lam) => type_check_lambda(env, lam, ty),
-        SyntaxData::Let(let_expr) => type_check_let(env, let_expr, ty),
-        SyntaxData::TypeConstructor(tc) => type_check_type_constructor(env, tc, ty),
-        SyntaxData::DataConstructor(dc) => type_check_data_constructor(env, dc, ty),
-        SyntaxData::Case(case) => type_check_case(env, case, ty),
+    match term {
+        Syntax::Pi(pi) => type_check_pi(env, pi, ty),
+        Syntax::Lambda(lam) => type_check_lambda(env, lam, ty),
+        Syntax::Let(let_expr) => type_check_let(env, let_expr, ty),
+        Syntax::TypeConstructor(tc) => type_check_type_constructor(env, tc, ty),
+        Syntax::DataConstructor(dc) => type_check_data_constructor(env, dc, ty),
+        Syntax::Case(case) => type_check_case(env, case, ty),
 
         // Signal types (Bit) live in SignalUniverse
-        SyntaxData::Bit(_) => type_check_bit(env, ty),
+        Syntax::Bit(_) => type_check_bit(env, ty),
         // Module types (HArrow) live in ModuleUniverse
-        SyntaxData::HArrow(harrow) => type_check_harrow(env, harrow, ty),
+        Syntax::HArrow(harrow) => type_check_harrow(env, harrow, ty),
         // Hardware types (SLift, MLift) live in HardwareUniverse
-        SyntaxData::SLift(slift) => type_check_slift(env, slift, ty),
-        SyntaxData::MLift(mlift) => type_check_mlift(env, mlift, ty),
+        Syntax::SLift(slift) => type_check_slift(env, slift, ty),
+        Syntax::MLift(mlift) => type_check_mlift(env, mlift, ty),
 
         // Bit values (0 and 1) can be checked against ^(Sig Bit)
-        SyntaxData::Zero(zero) => type_check_zero(env, zero, ty),
-        SyntaxData::One(one) => type_check_one(env, one, ty),
+        Syntax::Zero(zero) => type_check_zero(env, zero, ty),
+        Syntax::One(one) => type_check_one(env, one, ty),
 
         // Equality types and proofs
-        SyntaxData::Eq(eq) => type_check_eq(env, eq, ty),
-        SyntaxData::Refl(_) => type_check_refl(env, term, ty),
+        Syntax::Eq(eq) => type_check_eq(env, eq, ty),
+        Syntax::Refl(_) => type_check_refl(env, term, ty),
         // Transport is an eliminator - it synthesizes, so falls through to type_check_synth_term
         _ => type_check_synth_term(env, term, ty),
     }
@@ -667,7 +610,7 @@ fn type_check_pi<'db, 'g>(
 ) -> Result<(), Error<'db>> {
     let Value::Universe(expected_univ) = ty else {
         return Err(Error::BadCtor {
-            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
+            tm: Syntax::pi_rc(pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -675,7 +618,7 @@ fn type_check_pi<'db, 'g>(
     let source_ty = type_synth(env, &pi.source)?;
     let Value::Universe(source_univ) = &*source_ty else {
         return Err(Error::BadCtor {
-            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
+            tm: Syntax::pi_rc(pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -688,7 +631,7 @@ fn type_check_pi<'db, 'g>(
 
     let Value::Universe(target_univ) = &*target_ty else {
         return Err(Error::BadCtor {
-            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
+            tm: Syntax::pi_rc(pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -701,7 +644,7 @@ fn type_check_pi<'db, 'g>(
 
     if pi_level > expected_level {
         return Err(Error::BadCtor {
-            tm: Syntax::pi_rc(Location::UNKNOWN, pi.source.clone(), pi.target.clone()),
+            tm: Syntax::pi_rc(pi.source.clone(), pi.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     }
@@ -727,7 +670,7 @@ fn type_check_lambda<'db, 'g>(
             r
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::lambda_rc(Location::UNKNOWN, lam.body.clone()),
+            tm: Syntax::lambda_rc(lam.body.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -767,11 +710,7 @@ fn type_check_type_constructor<'db, 'g>(
             // Check that the number of arguments matches the number of parameters.
             if tcon.arguments.len() != tcon_info.arguments.len() {
                 return Err(Error::BadType {
-                    tm: Syntax::type_constructor_rc(
-                        Location::UNKNOWN,
-                        tcon.constructor,
-                        tcon.arguments.clone(),
-                    ),
+                    tm: Syntax::type_constructor_rc(tcon.constructor, tcon.arguments.clone()),
                 });
             }
 
@@ -791,11 +730,7 @@ fn type_check_type_constructor<'db, 'g>(
             Ok(())
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::type_constructor_rc(
-                Location::UNKNOWN,
-                tcon.constructor,
-                tcon.arguments.clone(),
-            ),
+            tm: Syntax::type_constructor_rc(tcon.constructor, tcon.arguments.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -847,22 +782,14 @@ fn type_check_data_constructor<'db, 'g>(
             ) {
                 Ok(_) => Ok(()),
                 Err(_) => Err(Error::BadCheck {
-                    tm: Syntax::data_constructor_rc(
-                        Location::UNKNOWN,
-                        dc.constructor,
-                        dc.arguments.clone(),
-                    ),
+                    tm: Syntax::data_constructor_rc(dc.constructor, dc.arguments.clone()),
                     ty_exp: Rc::new(ty_exp.clone()),
                     ty_got,
                 }),
             }
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::data_constructor_rc(
-                Location::UNKNOWN,
-                dc.constructor,
-                dc.arguments.clone(),
-            ),
+            tm: Syntax::data_constructor_rc(dc.constructor, dc.arguments.clone()),
             ty_exp: Rc::new(ty_exp.clone()),
         }),
     }
@@ -893,7 +820,7 @@ fn type_check_bit<'db, 'g>(
     match ty {
         Value::SignalUniverse(_) => Ok(()),
         _ => Err(Error::BadCtor {
-            tm: Syntax::bit_rc(Location::UNKNOWN),
+            tm: Syntax::bit_rc(),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -912,11 +839,7 @@ fn type_check_harrow<'db, 'g>(
             Ok(())
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::harrow_rc(
-                Location::UNKNOWN,
-                harrow.source.clone(),
-                harrow.target.clone(),
-            ),
+            tm: Syntax::harrow_rc(harrow.source.clone(), harrow.target.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -935,7 +858,7 @@ fn type_check_slift<'db, 'g>(
             check_signal_type(env, &slift.ty)
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::slift_rc(Location::UNKNOWN, slift.ty.clone()),
+            tm: Syntax::slift_rc(slift.ty.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -954,7 +877,7 @@ fn type_check_mlift<'db, 'g>(
             check_module_type(env, &mlift.ty)
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::mlift_rc(Location::UNKNOWN, mlift.ty.clone()),
+            tm: Syntax::mlift_rc(mlift.ty.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -973,17 +896,17 @@ fn type_check_zero<'db, 'g>(
             Value::SLift(slift) => match slift.ty.as_ref() {
                 Value::Bit(_) => Ok(()),
                 _ => Err(Error::BadCtor {
-                    tm: Syntax::zero_rc(Location::UNKNOWN),
+                    tm: Syntax::zero_rc(),
                     ty_exp: Rc::new(ty.clone()),
                 }),
             },
             _ => Err(Error::BadCtor {
-                tm: Syntax::zero_rc(Location::UNKNOWN),
+                tm: Syntax::zero_rc(),
                 ty_exp: Rc::new(ty.clone()),
             }),
         },
         _ => Err(Error::BadCtor {
-            tm: Syntax::zero_rc(Location::UNKNOWN),
+            tm: Syntax::zero_rc(),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -1002,17 +925,17 @@ fn type_check_one<'db, 'g>(
             Value::SLift(slift) => match slift.ty.as_ref() {
                 Value::Bit(_) => Ok(()),
                 _ => Err(Error::BadCtor {
-                    tm: Syntax::one_rc(Location::UNKNOWN),
+                    tm: Syntax::one_rc(),
                     ty_exp: Rc::new(ty.clone()),
                 }),
             },
             _ => Err(Error::BadCtor {
-                tm: Syntax::one_rc(Location::UNKNOWN),
+                tm: Syntax::one_rc(),
                 ty_exp: Rc::new(ty.clone()),
             }),
         },
         _ => Err(Error::BadCtor {
-            tm: Syntax::one_rc(Location::UNKNOWN),
+            tm: Syntax::one_rc(),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -1027,12 +950,11 @@ fn check_hwtype<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
-    use crate::syn::SyntaxData;
-    match &term.data {
+    match term {
         // SLift wraps a signal type to make a hardware type: Sig s : HType where s : SType
-        SyntaxData::SLift(slift) => check_signal_type(env, &slift.ty),
+        Syntax::SLift(slift) => check_signal_type(env, &slift.ty),
         // MLift wraps a module type to make a hardware type: Mod m : HType where m : MType
-        SyntaxData::MLift(mlift) => check_module_type(env, &mlift.ty),
+        Syntax::MLift(mlift) => check_module_type(env, &mlift.ty),
         // Variables and other neutrals - synthesize and check for HardwareUniverse
         _ => {
             let ty = type_synth(env, term)?;
@@ -1052,9 +974,8 @@ fn check_signal_type<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
-    use crate::syn::SyntaxData;
-    match &term.data {
-        SyntaxData::Bit(_) => Ok(()),
+    match term {
+        Syntax::Bit(_) => Ok(()),
         _ => {
             let ty = type_synth(env, term)?;
             match &*ty {
@@ -1073,9 +994,8 @@ fn check_module_type<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
-    use crate::syn::SyntaxData;
-    match &term.data {
-        SyntaxData::HArrow(harrow) => {
+    match term {
+        Syntax::HArrow(harrow) => {
             // HArrow components must be hardware types
             check_hwtype(env, &harrow.source)?;
             check_hwtype(env, &harrow.target)
@@ -1099,12 +1019,7 @@ fn type_check_eq<'db, 'g>(
 ) -> Result<(), Error<'db>> {
     let Value::Universe(_) = ty else {
         return Err(Error::BadCtor {
-            tm: Syntax::eq_rc(
-                Location::UNKNOWN,
-                eq.ty.clone(),
-                eq.lhs.clone(),
-                eq.rhs.clone(),
-            ),
+            tm: Syntax::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()),
             ty_exp: Rc::new(ty.clone()),
         });
     };
@@ -1126,12 +1041,7 @@ fn type_synth_eq<'db, 'g>(
 
     let Value::Universe(universe) = ty_ty.as_ref() else {
         return Err(Error::BadCtor {
-            tm: Syntax::eq_rc(
-                Location::UNKNOWN,
-                eq.ty.clone(),
-                eq.lhs.clone(),
-                eq.rhs.clone(),
-            ),
+            tm: Syntax::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()),
             ty_exp: ty_ty,
         });
     };
@@ -1177,7 +1087,6 @@ fn type_synth_transport<'db, 'g>(
     let Value::EqType(eq_ty) = &*proof_ty else {
         return Err(Error::BadSynth {
             tm: Syntax::transport_rc(
-                Location::UNKNOWN,
                 transport.motive.clone(),
                 transport.proof.clone(),
                 transport.value.clone(),
@@ -1214,8 +1123,8 @@ fn count_closure_arity<'db>(closure: &syn::Closure<'db>) -> (usize, syn::RcSynta
     let mut current = &closure.body;
 
     loop {
-        match &current.data {
-            SyntaxData::Closure(inner) => {
+        match current.as_ref() {
+            Syntax::Closure(inner) => {
                 arity += 1;
                 current = &inner.body;
             }
@@ -1255,11 +1164,10 @@ fn check_meta_type<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
-    use crate::syn::SyntaxData;
     // HardwareUniverse types (Bit, HArrow, HardwareUniverse) are NOT valid meta-level types
     if matches!(
-        &term.data,
-        SyntaxData::Bit(_) | SyntaxData::HArrow(_) | SyntaxData::HardwareUniverse(_)
+        term,
+        Syntax::Bit(_) | Syntax::HArrow(_) | Syntax::HardwareUniverse(_)
     ) {
         return Err(Error::BadType {
             tm: Rc::new(term.clone()),
@@ -1267,16 +1175,16 @@ fn check_meta_type<'db, 'g>(
     }
 
     // Pi types are valid if source and target are valid meta-level types
-    if let SyntaxData::Pi(pi) = &term.data {
+    if let Syntax::Pi(pi) = term {
         return check_meta_pi_type(env, pi);
     }
 
-    if let SyntaxData::TypeConstructor(tc) = &term.data {
+    if let Syntax::TypeConstructor(tc) = term {
         return check_type_constructor_type(env, tc);
     }
 
     // Lifted hardware types are valid meta-level types (^$Bit is in Universe)
-    if let SyntaxData::Lift(lift) = &term.data {
+    if let Syntax::Lift(lift) = term {
         return check_hwtype(env, &lift.ty);
     }
 
@@ -1324,50 +1232,43 @@ pub fn check_type<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
-    use crate::syn::SyntaxData;
     // If the term is a pi, then we just check that it is valid.
-    if let SyntaxData::Pi(pi) = &term.data {
+    if let Syntax::Pi(pi) = term {
         return check_pi_type(env, pi);
     }
 
-    if let SyntaxData::TypeConstructor(tc) = &term.data {
+    if let Syntax::TypeConstructor(tc) = term {
         return check_type_constructor_type(env, tc);
     }
 
     // Lifted hardware types are valid types
-    if let SyntaxData::Lift(lift) = &term.data {
+    if let Syntax::Lift(lift) = term {
         return check_hwtype(env, &lift.ty);
     }
 
     // The hardware universe HardwareUniverse (whose semantic value is `Type`) is a
     // valid type for classifying hardware types.
-    if let SyntaxData::HardwareUniverse(_) = &term.data {
+    if let Syntax::HardwareUniverse(_) = term {
         return Ok(());
     }
 
     // Signal types (Bit) are valid types - they live in SType
-    if let SyntaxData::Bit(_) = &term.data {
+    if let Syntax::Bit(_) = term {
         return check_signal_type(env, term);
     }
 
     // Module types (HArrow) are valid types - they live in MType
-    if let SyntaxData::HArrow(harrow) = &term.data {
-        return check_module_type(
-            env,
-            &Syntax {
-                loc: term.loc,
-                data: SyntaxData::HArrow(harrow.clone()),
-            },
-        );
+    if let Syntax::HArrow(harrow) = term {
+        return check_module_type(env, term);
     }
 
     // SLift/MLift (hardware types) are valid types - they live in HType
-    if matches!(&term.data, SyntaxData::SLift(_) | SyntaxData::MLift(_)) {
+    if matches!(term, Syntax::SLift(_) | Syntax::MLift(_)) {
         return check_hwtype(env, term);
     }
 
     // Equality types are valid types - they live in universes
-    if let SyntaxData::Eq(eq) = &term.data {
+    if let Syntax::Eq(eq) = term {
         return check_eq_type(env, eq);
     }
 
@@ -1427,11 +1328,7 @@ fn check_type_constructor_type<'db, 'g>(
     // Check that the number of arguments matches the number of parameters.
     if tcon.arguments.len() != tcon_info.arguments.len() {
         return Err(Error::BadType {
-            tm: Syntax::type_constructor_rc(
-                Location::UNKNOWN,
-                tcon.constructor,
-                tcon.arguments.clone(),
-            ),
+            tm: Syntax::type_constructor_rc(tcon.constructor, tcon.arguments.clone()),
         });
     }
 
@@ -1820,17 +1717,13 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] : U0
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
-        global.add_metavariable(
-            meta_id,
-            vec![],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-        );
+        let meta_id = MetaVariableId::new(0);
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let mut env = make_env(&db, &global);
 
         // ?[0] should synthesize to U0
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![]);
+        let meta_stx = Syntax::metavariable(meta_id, vec![]);
         let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
 
         match &*ty {
@@ -1848,21 +1741,18 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
+        let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::universe_rc(
-                Location::UNKNOWN,
-                UniverseLevel::new(0),
-            )],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         let mut env = make_env(&db, &global);
 
         // ?[0 ^(^s Bit)] should synthesize to U0
         let lift_bit = parse(&db, "^(^s Bit)");
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![lift_bit]);
+        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit]);
         let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
 
         match &*ty {
@@ -1880,20 +1770,17 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0 (expects 1 argument)
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
+        let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::universe_rc(
-                Location::UNKNOWN,
-                UniverseLevel::new(0),
-            )],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         let mut env = make_env(&db, &global);
 
         // ?[0] with no arguments should fail
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![]);
+        let meta_stx = Syntax::metavariable(meta_id, vec![]);
         assert!(type_synth(&mut env, &meta_stx).is_err());
     }
 
@@ -1906,21 +1793,18 @@ mod tests {
         let mut global = val::GlobalEnv::new();
 
         // Declare ?[0] (%x : ^Bit) : U0 (expects lifted bit type)
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
+        let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::lift_rc(
-                Location::UNKNOWN,
-                Syntax::bit_rc(Location::UNKNOWN),
-            )],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            vec![Syntax::lift_rc(Syntax::bit_rc())],
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         let mut env = make_env(&db, &global);
 
         // ?[0 U0] with universe instead of ^Bit should fail
         let u0 = parse(&db, "U0");
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![u0]);
+        let meta_stx = Syntax::metavariable(meta_id, vec![u0]);
         assert!(type_synth(&mut env, &meta_stx).is_err());
     }
 
@@ -1934,26 +1818,22 @@ mod tests {
 
         // Declare ?[0] (%A : U0) (%x : %A) : U0
         // The second argument type depends on the first argument
-        let meta_id = MetaVariableId::new(Location::UNKNOWN, 0);
+        let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
             vec![
-                Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)), // %A : U0
-                Syntax::variable_rc(Location::UNKNOWN, Index(0)), // %x : %A (references %A)
+                Syntax::universe_rc(UniverseLevel::new(0)), // %A : U0
+                Syntax::variable_rc(Index(0)),              // %x : %A (references %A)
             ],
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
 
         let mut env = make_env(&db, &global);
 
         // ?[0 ^(^s Bit) (0 : ^(^s Bit))] - provide ^(^s Bit) for A, and a bit value 0 for x
         let lift_bit = parse(&db, "^(^s Bit)");
-        let zero = Syntax::check_rc(
-            Location::UNKNOWN,
-            lift_bit.clone(),
-            Syntax::zero_rc(Location::UNKNOWN),
-        );
-        let meta_stx = Syntax::metavariable(Location::UNKNOWN, meta_id, vec![lift_bit, zero]);
+        let zero = Syntax::check_rc(lift_bit.clone(), Syntax::zero_rc());
+        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit, zero]);
         let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
 
         match &*ty {
@@ -2288,7 +2168,7 @@ mod tests {
         // Parse case: !0 case { @Zero => [@Zero] | @Succ %m => [@Zero] }
         // !0 refers to the variable at index 0 (the most recent variable, n)
         let case_stx = parse(&db, "!0 case { @Zero => [@Zero] | @Succ %m => [@Zero] }");
-        let SyntaxData::Case(case) = &case_stx.data else {
+        let Syntax::Case(case) = case_stx.as_ref() else {
             panic!("Expected Case syntax");
         };
 
@@ -2316,7 +2196,7 @@ mod tests {
         // Parse case: !0 case { @Zero => [@Zero] }  (missing @Succ)
         // !0 refers to the variable at index 0 (the most recent variable, n)
         let case_stx = parse(&db, "!0 case { @Zero => [@Zero] }");
-        let SyntaxData::Case(case) = &case_stx.data else {
+        let Syntax::Case(case) = case_stx.as_ref() else {
             panic!("Expected Case syntax");
         };
 
@@ -2365,7 +2245,7 @@ mod tests {
         // !0 refers to the variable at index 0 (the most recent variable, v)
         // This should be exhaustive because @VCons is impossible at index @Zero
         let case_stx = parse(&db, "!0 case { @VNil => [@Zero] }");
-        let SyntaxData::Case(case) = &case_stx.data else {
+        let Syntax::Case(case) = case_stx.as_ref() else {
             panic!("Expected Case syntax");
         };
 
@@ -2407,7 +2287,7 @@ mod tests {
         // Parse case: !0 case { @VNil => [@Zero] }  (missing @VCons)
         // !0 refers to the variable at index 0 (the most recent variable, v)
         let case_stx = parse(&db, "!0 case { @VNil => [@Zero] }");
-        let SyntaxData::Case(case) = &case_stx.data else {
+        let Syntax::Case(case) = case_stx.as_ref() else {
             panic!("Expected Case syntax");
         };
 
@@ -2653,7 +2533,7 @@ mod tests {
         let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
         let u0_closure = val::Closure::new(
             val::LocalEnv::new(),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let pi_ty = Rc::new(Value::pi(u0, u0_closure));
         let result = type_check(&mut env, &lam_expr, &pi_ty);
@@ -2672,7 +2552,7 @@ mod tests {
         let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
         let u0_closure = val::Closure::new(
             val::LocalEnv::new(),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let pi_ty = Rc::new(Value::pi(u0.clone(), u0_closure));
         let result = type_check(&mut env, &lam_expr, &pi_ty);
@@ -2689,9 +2569,8 @@ mod tests {
 
         // ∀ (%x : U0) → U0 should have type U1 (max(0, 0) = 0, so Pi : U1)
         let pi_expr = Syntax::pi_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
         let result = type_check(&mut env, &pi_expr, &u1);
@@ -2699,9 +2578,8 @@ mod tests {
 
         // ∀ (%x : U0) → U1 should have type U2 (max(0, 1) = 1, so Pi : U2)
         let pi_expr = Syntax::pi_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(1)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(1)),
         );
         let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2709,9 +2587,8 @@ mod tests {
 
         // ∀ (%x : U1) → U0 should have type U2 (max(1, 0) = 1, so Pi : U2)
         let pi_expr = Syntax::pi_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(1)),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(1)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2726,9 +2603,8 @@ mod tests {
 
         // ∀ (%x : U0) → U0 can be checked against U2 (cumulativity: U1 <= U2)
         let pi_expr = Syntax::pi_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2747,9 +2623,8 @@ mod tests {
         // ∀ (%x : U0) → U1 should NOT be checkable against U1
         // (max(0, 1) = 1, so Pi : U2, but we're checking against U1)
         let pi_expr = Syntax::pi_rc(
-            Location::UNKNOWN,
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0)),
-            Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(1)),
+            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::universe_rc(UniverseLevel::new(1)),
         );
         let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
         let result = type_check(&mut env, &pi_expr, &u1);
@@ -2766,7 +2641,7 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // U0 : U1
-        let u0 = Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0));
+        let u0 = Syntax::universe_rc(UniverseLevel::new(0));
         let ty = type_synth(&mut env, &u0).expect("should synthesize");
         match &*ty {
             Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(1)),
@@ -2774,7 +2649,7 @@ mod tests {
         }
 
         // U5 : U6
-        let u5 = Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(5));
+        let u5 = Syntax::universe_rc(UniverseLevel::new(5));
         let ty = type_synth(&mut env, &u5).expect("should synthesize");
         match &*ty {
             Value::Universe(u) => assert_eq!(u.level, UniverseLevel::new(6)),

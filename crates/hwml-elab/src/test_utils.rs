@@ -86,8 +86,7 @@ pub fn elaborate_synth<'db, 'g>(
     let ty_syntax = type_quote(ctx.solver.tc_env.values.global, ctx.depth(), &ty_value)
         .unwrap_or_else(|_| {
             hwml_core::syn::Syntax::universe_rc(
-                hwml_core::common::Location::UNKNOWN,
-                UniverseLevel::new(0),
+                hwml_core::common::                UniverseLevel::new(0),
             )
         });
 
