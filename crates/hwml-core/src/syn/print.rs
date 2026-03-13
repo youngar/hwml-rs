@@ -1,13 +1,190 @@
-use crate::{
-    common::Index,
-    declaration::{self, Declaration, Metavariable as DeclMetavariable, Primitive},
-    syn::*,
-    ConstantId,
-};
+use crate::syn::*;
+use crate::*;
 use elegance::{Io, Printer, Render};
 
 const INDENT: isize = 2;
 const COLUMNS: usize = 80;
+
+pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
+    let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
+    let st = State::new();
+    let _ = syntax.print(db, st, &mut p);
+    let _ = p.hard_break();
+    let _ = p.finish();
+}
+
+pub fn print_syntax_to_string<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) -> String {
+    let mut p = Printer::new(String::new(), 80);
+    let st = State::new();
+    let _ = syntax.print(db, st, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+pub fn dump_module<'db>(db: &'db dyn salsa::Database, module: &CompilationUnit<'db>) {
+    let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
+    let _ = print_module(db, module, &mut p);
+    let _ = p.hard_break();
+    let _ = p.finish();
+}
+
+pub fn print_module_to_string<'db>(
+    db: &'db dyn salsa::Database,
+    module: &CompilationUnit<'db>,
+) -> String {
+    let mut p = Printer::new(String::new(), 80);
+    let _ = print_module(db, module, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+fn print_module<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    module: &CompilationUnit<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    let mut iter = module.declarations.iter();
+
+    // Print the first element
+    if let Some(first) = iter.next() {
+        print_declaration(db, first, p)?;
+
+        // Print remaining elements with hard break before each
+        for decl in iter {
+            p.hard_break()?;
+            print_declaration(db, decl, p)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn print_declaration<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    decl: &Declaration<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    match decl {
+        Declaration::PrimitiveDecl(prim) => print_primitive_decl(db, prim, p),
+        Declaration::ConstantDecl(c) => print_constant_decl(db, c, p),
+        Declaration::TypeConstructorDecl(tc) => print_type_constructor_decl(db, tc, p),
+        Declaration::MetavariableDecl(meta) => print_metavariable_decl(db, meta, p),
+    }
+}
+
+pub fn print_primitive_decl<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    prim: &PrimitiveDecl<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    p.text("prim $")?;
+    p.text_owned(prim.name.name(db))?;
+    p.text(" : ")?;
+    let st = State::new();
+    prim.ty.print(db, st, p)?;
+    p.text(";")?;
+    Ok(())
+}
+
+pub fn print_constant_decl<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    c: &ConstantDecl<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    p.text("const @")?;
+    p.text_owned(c.name.name(db))?;
+    p.text(" : ")?;
+    let st = State::new();
+    c.ty.print(db, st, p)?;
+    p.text(" = ")?;
+    c.value.print(db, st, p)?;
+    p.text(";")?;
+    Ok(())
+}
+
+pub fn print_type_constructor_decl<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    tc: &TypeConstructorDecl<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    p.text("tcon @")?;
+    p.text_owned(tc.name.name(db))?;
+
+    // Print parameters as telescope
+    let mut st = State::new();
+    for param_ty in tc.parameters.iter() {
+        p.text(" (%")?;
+        p.text_owned(format!("{}", st.depth))?;
+        p.text(" : ")?;
+        param_ty.print(db, st, p)?;
+        p.text(")")?;
+        st = st.inc_depth();
+    }
+
+    p.text(" : ")?;
+
+    // Print indices as telescope
+    for index_ty in tc.indices.iter() {
+        p.text("(%")?;
+        p.text_owned(format!("{}", st.depth))?;
+        p.text(" : ")?;
+        index_ty.print(db, st, p)?;
+        p.text(") ")?;
+        st = st.inc_depth();
+    }
+
+    p.text("-> ")?;
+    tc.universe.print(db, st, p)?;
+
+    let dcon_base_st = State::new().with_depth(tc.parameters.len());
+
+    if !tc.data_constructors.is_empty() {
+        p.text(" where")?;
+        p.hard_break()?;
+        for dcon in &tc.data_constructors {
+            p.text("    dcon @")?;
+            p.text_owned(dcon.name.name(db))?;
+            // Print dcon parameters as telescope, then result type
+            let mut dcon_st = dcon_base_st;
+            for param_ty in dcon.parameters.iter() {
+                p.text(" (%")?;
+                p.text_owned(format!("{}", dcon_st.depth))?;
+                p.text(" : ")?;
+                param_ty.print(db, dcon_st, p)?;
+                p.text(")")?;
+                dcon_st = dcon_st.inc_depth();
+            }
+            p.text(" : ")?;
+            dcon.result_type.print(db, dcon_st, p)?;
+            p.hard_break()?;
+        }
+    }
+    p.text(";")?;
+    Ok(())
+}
+
+pub fn print_metavariable_decl<'db, R: Render>(
+    db: &'db dyn salsa::Database,
+    meta: &MetavariableDecl<'db>,
+    p: &mut Printer<R>,
+) -> Result<(), R::Error> {
+    p.text("meta ?[")?;
+    p.text_owned(format!("{}", meta.id))?;
+    p.text("]")?;
+    let mut st = State::new();
+    // Print argument telescope
+    for arg_ty in meta.arguments.iter() {
+        p.text(" (")?;
+        p.text("%")?;
+        p.text_owned(format!("{}", st.depth))?;
+        p.text(" : ")?;
+        arg_ty.print(db, st, p)?;
+        p.text(")")?;
+        st = st.inc_depth();
+    }
+    p.text(" : ")?;
+    meta.ty.print(db, st, p)?;
+    p.text(";")?;
+    Ok(())
+}
 
 type Precedence = (Option<usize>, Option<usize>);
 
@@ -54,189 +231,6 @@ const HARROW: Properties = Properties::new((Some(4), Some(3)));
 const MODULE: Properties = LAMBDA;
 const HAPP: Properties = APP;
 const CHECK: Properties = Properties::new((Some(2), Some(3)));
-
-pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
-    let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
-    let st = State::new();
-    let _ = syntax.print(db, st, &mut p);
-    let _ = p.hard_break();
-    let _ = p.finish();
-}
-
-pub fn print_syntax_to_string<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) -> String {
-    let mut p = Printer::new(String::new(), 80);
-    let st = State::new();
-    let _ = syntax.print(db, st, &mut p);
-    p.finish().unwrap_or_default()
-}
-
-pub fn dump_module<'db>(db: &'db dyn salsa::Database, module: &crate::declaration::Module<'db>) {
-    let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
-    let _ = print_module(db, module, &mut p);
-    let _ = p.hard_break();
-    let _ = p.finish();
-}
-
-pub fn print_module_to_string<'db>(
-    db: &'db dyn salsa::Database,
-    module: &crate::declaration::Module<'db>,
-) -> String {
-    let mut p = Printer::new(String::new(), 80);
-    let _ = print_module(db, module, &mut p);
-    p.finish().unwrap_or_default()
-}
-
-fn print_module<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    module: &crate::declaration::Module<'db>,
-    p: &mut Printer<R>,
-) -> Result<(), R::Error> {
-    let mut iter = module.declarations.iter();
-
-    // Print the first element
-    if let Some(first) = iter.next() {
-        print_declaration(db, first, p)?;
-
-        // Print remaining elements with hard break before each
-        for decl in iter {
-            p.hard_break()?;
-            print_declaration(db, decl, p)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn print_declaration<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    decl: &crate::declaration::Declaration<'db>,
-    p: &mut Printer<R>,
-) -> Result<(), R::Error> {
-    match decl {
-        Declaration::Primitive(prim) => print_primitive(db, prim, p),
-        Declaration::Constant(c) => print_constant(db, c, p),
-        Declaration::TypeConstructor(tc) => print_type_constructor(db, tc, p),
-        Declaration::Metavariable(meta) => print_metavariable(db, meta, p),
-    }
-}
-
-pub fn print_primitive<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    prim: &Primitive<'db>,
-    p: &mut Printer<R>,
-) -> Result<(), R::Error> {
-    p.text("prim $")?;
-    p.text_owned(prim.name.name(db))?;
-    p.text(" : ")?;
-    let st = State::new();
-    prim.ty.print(db, st, p)?;
-    p.text(";")?;
-    Ok(())
-}
-
-pub fn print_constant<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    c: &declaration::Constant<'db>,
-    p: &mut Printer<R>,
-) -> Result<(), R::Error> {
-    p.text("const @")?;
-    p.text_owned(c.name.name(db))?;
-    p.text(" : ")?;
-    let st = State::new();
-    c.ty.print(db, st, p)?;
-    p.text(" = ")?;
-    c.value.print(db, st, p)?;
-    p.text(";")?;
-    Ok(())
-}
-
-pub fn print_type_constructor<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    tc: &declaration::TypeConstructor<'db>,
-    p: &mut Printer<R>,
-) -> Result<(), R::Error> {
-    p.text("tcon @")?;
-    p.text_owned(tc.name.name(db))?;
-
-    // Print parameters as telescope
-    let mut st = State::new();
-    for param_ty in tc.parameters.iter() {
-        p.text(" (%")?;
-        p.text_owned(format!("{}", st.depth))?;
-        p.text(" : ")?;
-        param_ty.print(db, st, p)?;
-        p.text(")")?;
-        st = st.inc_depth();
-    }
-
-    p.text(" : ")?;
-
-    // Print indices as telescope
-    for index_ty in tc.indices.iter() {
-        p.text("(%")?;
-        p.text_owned(format!("{}", st.depth))?;
-        p.text(" : ")?;
-        index_ty.print(db, st, p)?;
-        p.text(") ")?;
-        st = st.inc_depth();
-    }
-
-    p.text("-> ")?;
-    tc.universe.print(db, st, p)?;
-
-    // State for data constructors should start after parameters (not indices)
-    // Data constructors can reference parameters but use their own bindings for args
-    let dcon_base_st = State::new().with_depth(tc.parameters.len());
-
-    if !tc.data_constructors.is_empty() {
-        p.text(" where")?;
-        p.hard_break()?;
-        for dcon in &tc.data_constructors {
-            p.text("    dcon @")?;
-            p.text_owned(dcon.name.name(db))?;
-            // Print dcon parameters as telescope, then result type
-            let mut dcon_st = dcon_base_st;
-            for param_ty in dcon.parameters.iter() {
-                p.text(" (%")?;
-                p.text_owned(format!("{}", dcon_st.depth))?;
-                p.text(" : ")?;
-                param_ty.print(db, dcon_st, p)?;
-                p.text(")")?;
-                dcon_st = dcon_st.inc_depth();
-            }
-            p.text(" : ")?;
-            dcon.result_type.print(db, dcon_st, p)?;
-            p.hard_break()?;
-        }
-    }
-    p.text(";")?;
-    Ok(())
-}
-
-pub fn print_metavariable<'db, R: Render>(
-    db: &'db dyn salsa::Database,
-    meta: &DeclMetavariable<'db>,
-    p: &mut Printer<R>,
-) -> Result<(), R::Error> {
-    p.text("meta ?[")?;
-    p.text_owned(format!("{}", meta.id))?;
-    p.text("]")?;
-    let mut st = State::new();
-    // Print argument telescope
-    for arg_ty in meta.arguments.iter() {
-        p.text(" (")?;
-        p.text("%")?;
-        p.text_owned(format!("{}", st.depth))?;
-        p.text(" : ")?;
-        arg_ty.print(db, st, p)?;
-        p.text(")")?;
-        st = st.inc_depth();
-    }
-    p.text(" : ")?;
-    meta.ty.print(db, st, p)?;
-    p.text(";")?;
-    Ok(())
-}
 
 #[derive(Clone, Copy)]
 struct State {
@@ -328,20 +322,6 @@ where
     x.print(db, st.set_lhs_prec(rhs_prec), p)
 }
 
-#[allow(dead_code)]
-fn print_internal<F, R>(
-    _db: &dyn salsa::Database,
-    st: State,
-    p: &mut Printer<R>,
-    f: F,
-) -> Result<(), R::Error>
-where
-    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
-    R: Render,
-{
-    f(st.set_prec((None, None)), p)
-}
-
 fn print_internal_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
@@ -397,38 +377,34 @@ where
     ensure_precedence(st, p, properties.precedence, f)
 }
 
-fn print_binder<R>(st: State, p: &mut Printer<R>) -> Result<(), R::Error>
+fn print_binder<'db, R>(
+    st: State,
+    p: &mut Printer<R>,
+    _binding: &BindingSyntax<'db>,
+) -> Result<(), R::Error>
 where
     R: Render,
 {
     p.text_owned(format!("%{}", st.depth))
 }
 
-/// Print a variable reference (de Bruijn index) at the current depth.
 #[allow(dead_code)]
-fn print_variable<R>(st: State, p: &mut Printer<R>, index: Index) -> Result<(), R::Error>
+fn print_binders<'db, R>(
+    st: State,
+    p: &mut Printer<R>,
+    binding: &DynBindingSyntax<'db>,
+) -> Result<(), R::Error>
 where
     R: Render,
 {
-    if index.is_bound(st.depth) {
-        p.text_owned(&format!("{}", index.to_level(st.depth)))
-    } else {
-        p.text_owned(&format!("{}", index.to_negative_level(st.depth)))
-    }
-}
-
-#[allow(dead_code)]
-fn print_binders<R>(st: State, p: &mut Printer<R>, n: usize) -> Result<(), R::Error>
-where
-    R: Render,
-{
-    if n == 0 {
+    if binding.arity == 0 {
         return Ok(());
     }
-    print_binder(st, p)?;
-    for _i in 0..n - 1 {
+    let depth = st.depth;
+    let _ = p.text_owned(format!("%{}", depth));
+    for i in 1..binding.arity {
         p.space()?;
-        print_binder(st, p)?;
+        let _ = p.text_owned(format!("%{}", depth + i));
     }
     Ok(())
 }
@@ -445,42 +421,41 @@ impl<'db> Print for ConstantId<'db> {
     }
 }
 
-impl<'db> Print for Closure<'db> {
+impl<'db> Print for RcSyntax<'db> {
     fn print<R: Render>(
         &self,
         db: &dyn salsa::Database,
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        // Count nested closures to print all binders at once
-        let mut arity = 0;
-        let mut current = self;
-        loop {
-            arity += 1;
-            match current.body.as_ref() {
-                Syntax::Closure(inner) => {
-                    current = inner;
-                }
-                _ => break,
-            }
-        }
+        self.as_ref().print(db, st, p)
+    }
+}
 
-        // Print opening bracket and all binders
-        p.text("[")?;
-        for i in 0..arity {
-            if i > 0 {
-                p.space()?;
-            }
-            p.text_owned(format!("%{}", i))?;
-        }
-        p.text("]")?;
-        p.space()?;
-        p.text("|-")?;
-        p.space()?;
+impl<'db, A> Print for Binding<A>
+where
+    A: Print,
+{
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        let st = st.inc_depth();
+        self.body.print(db, st, p)
+    }
+}
 
-        // Print the innermost body under all the binders
-        current.body.print(db, st.under_binders(arity), p)?;
-        Ok(())
+impl<'db> Print for DynBindingSyntax<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        let st = st.under_binders(st.depth + self.arity);
+        self.body.print(db, st, p)
     }
 }
 
@@ -507,7 +482,6 @@ impl<'db> Print for Syntax<'db> {
             Syntax::Eq(eq) => eq.print(db, st, p),
             Syntax::Refl(refl) => refl.print(db, st, p),
             Syntax::Transport(transport) => transport.print(db, st, p),
-            Syntax::Closure(closure) => closure.print(db, st, p),
 
             Syntax::HardwareUniverse(hwu) => hwu.print(db, st, p),
             Syntax::SLift(slift) => slift.print(db, st, p),
@@ -560,6 +534,61 @@ impl<'db> Print for Lift<'db> {
     }
 }
 
+impl<'db> Print for EqType<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        ensure(st, p, APP, |st, p| {
+            p.text("Eq")?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.ty, APP.rhs_prec())?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.lhs, APP.rhs_prec())?;
+            p.space()?;
+            print_rhs_subterm(db, st, p, &*self.rhs, APP.rhs_prec())
+        })
+    }
+}
+
+impl<'db> Print for Refl<'db> {
+    fn print<R: Render>(
+        &self,
+        _db: &dyn salsa::Database,
+        _st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        p.text("refl")
+    }
+}
+
+impl<'db> Print for Transport<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        // Print as: transport VALUE to MOTIVE by PROOF
+        // Keywords provide clear boundaries, so we can use print_internal_subterm
+        ensure(st, p, APP, |st, p| {
+            p.text("transport")?;
+            p.space()?;
+            print_internal_subterm(db, st, p, &*self.value)?;
+            p.space()?;
+            p.text("to")?;
+            p.space()?;
+            print_internal_subterm(db, st, p, &*self.motive)?;
+            p.space()?;
+            p.text("by")?;
+            p.space()?;
+            print_internal_subterm(db, st, p, &*self.proof)
+        })
+    }
+}
+
 impl<'db> Print for Pi<'db> {
     fn print<R: Render>(
         &self,
@@ -575,7 +604,7 @@ impl<'db> Print for Pi<'db> {
                     loop {
                         p.text("(")?;
                         p.cgroup(INDENT, |p| {
-                            print_binder(st, p)?;
+                            print_binder(st, p, &next.target)?;
                             p.text(" :")?;
                             p.space()?;
                             print_rhs_subterm(db, st, p, &*next.source, CHECK.rhs_prec())
@@ -613,7 +642,7 @@ impl<'db> Print for Lambda<'db> {
                 p.cgroup(0, |p| {
                     p.text("λ ")?;
                     loop {
-                        print_binder(st, p)?;
+                        print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
                         match next.body.as_ref() {
                             Syntax::Lambda(lam) => next = lam,
@@ -665,29 +694,6 @@ impl<'db> Print for Application<'db> {
                 }
                 p.text("]")
             })
-        })
-    }
-}
-
-impl<'db> Print for Let<'db> {
-    fn print<R: Render>(
-        &self,
-        db: &dyn salsa::Database,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        // Print: let %x : ty = value; body
-        p.cgroup(2, |p| {
-            p.text("let ")?;
-            print_binder(st, p)?;
-            p.text(" : ")?;
-            print_internal_subterm(db, st, p, &*self.ty)?;
-            p.text(" = ")?;
-            print_internal_subterm(db, st, p, &*self.value)?;
-            p.text(";")?;
-            p.space()?;
-            let st = st.inc_depth();
-            print_internal_subterm(db, st, p, &*self.body)
         })
     }
 }
@@ -745,42 +751,17 @@ fn print_constructor<'db, R: Render>(
     })
 }
 
-fn print_case_branch<'db, R>(
-    db: &dyn salsa::Database,
-    st: State,
-    p: &mut Printer<R>,
-    branch: &CaseBranch<'db>,
-) -> Result<(), R::Error>
-where
-    R: Render,
-{
-    branch.constructor.print(db, st, p)?;
-
-    // Print the pattern variables and increment depth for each
-    let mut st = st;
-    for _i in 0..branch.arity {
-        p.space()?;
-        print_binder(st, p)?;
-        st = st.inc_depth();
-    }
-
-    p.space()?;
-    p.text("=>")?;
-    p.space()?;
-    print_internal_subterm(db, st, p, &*branch.body)
-}
-
 impl<'db> Print for Case<'db> {
     fn print<R: Render>(
         &self,
-        _db: &dyn salsa::Database,
+        db: &dyn salsa::Database,
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         ensure(st, p, CASE, |st, p| {
             // Print the scrutinee as a variable (de Bruijn index).
             // The scrutinee is always a variable, never an arbitrary expression.
-            self.scrutinee.print(_db, st, p)?;
+            self.scrutinee.print(db, st, p)?;
             p.space()?;
             p.text("case")?;
             p.space()?;
@@ -788,12 +769,12 @@ impl<'db> Print for Case<'db> {
             p.cgroup(0, |p| {
                 p.space()?;
                 if let Some((first, rest)) = self.branches.split_first() {
-                    print_case_branch(_db, st, p, first)?;
+                    print_internal_subterm(db, st, p, first)?;
                     p.space()?;
                     for branch in rest {
                         p.text("|")?;
                         p.space()?;
-                        print_case_branch(_db, st, p, branch)?;
+                        print_internal_subterm(db, st, p, branch)?;
                         p.space()?;
                     }
                 }
@@ -811,60 +792,18 @@ impl<'db> Print for CaseBranch<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        print_case_branch(db, st, p, self)
-    }
-}
-
-impl<'db> Print for EqType<'db> {
-    fn print<R: Render>(
-        &self,
-        db: &dyn salsa::Database,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        // Print as: Eq A x y
-        ensure(st, p, APP, |st, p| {
-            p.text("Eq")?;
+        self.constructor.print(db, st, p)?;
+        if self.body.arity > 0 {
             p.space()?;
-            print_rhs_subterm(db, st, p, &*self.ty, APP.rhs_prec())?;
-            p.space()?;
-            print_rhs_subterm(db, st, p, &*self.lhs, APP.rhs_prec())?;
-            p.space()?;
-            print_rhs_subterm(db, st, p, &*self.rhs, APP.rhs_prec())
-        })
-    }
-}
-
-impl<'db> Print for Refl<'db> {
-    fn print<R: Render>(
-        &self,
-        _db: &dyn salsa::Database,
-        _st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        p.text("refl")
-    }
-}
-
-impl<'db> Print for Transport<'db> {
-    fn print<R: Render>(
-        &self,
-        db: &dyn salsa::Database,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        // Print as: transport [%0 %1 ...] |- body proof value
-        ensure(st, p, APP, |st, p| {
-            p.text("transport")?;
-            p.space()?;
-            // Print the motive closure
-            self.motive.print(db, st, p)?;
-            p.space()?;
-            // Print proof and value
-            print_rhs_subterm(db, st, p, &*self.proof, APP.rhs_prec())?;
-            p.space()?;
-            print_rhs_subterm(db, st, p, &*self.value, APP.rhs_prec())
-        })
+        }
+        print_binders(st, p, &self.body)?;
+        p.space()?;
+        p.text("=>")?;
+        p.space()?;
+        // Print the body with the state incremented by the number of binders
+        // We've already printed the binders manually, so print the body directly
+        let body_st = st.under_binders(self.body.arity);
+        print_internal_subterm(db, body_st, p, &*self.body.body)
     }
 }
 
@@ -997,7 +936,7 @@ impl<'db> Print for Module<'db> {
                 p.cgroup(0, |p| {
                     p.text("mod ")?;
                     loop {
-                        print_binder(st, p)?;
+                        print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
                         match next.body.as_ref() {
                             Syntax::Module(lam) => next = lam,
@@ -1093,6 +1032,28 @@ impl<'db> Print for Metavariable<'db> {
     }
 }
 
+impl<'db> Print for Let<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        // Print: let %x : ty = value; body
+        p.cgroup(2, |p| {
+            p.text("let ")?;
+            print_binder(st, p, &self.body)?;
+            p.text(" : ")?;
+            print_internal_subterm(db, st, p, &*self.ty)?;
+            p.text(" = ")?;
+            print_internal_subterm(db, st, p, &*self.value)?;
+            p.text(";")?;
+            p.space()?;
+            print_internal_subterm(db, st, p, &self.body)
+        })
+    }
+}
+
 impl<'db> Print for Check<'db> {
     fn print<R: Render>(
         &self,
@@ -1116,7 +1077,7 @@ mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::Database;
-    use hwml_support::{IntoWithDb, Location};
+    use hwml_support::IntoWithDb;
     use insta::assert_snapshot;
 
     /// Helper to print syntax and return string
@@ -1144,15 +1105,15 @@ mod tests {
     #[test]
     fn print_pi() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::universe_rc(UniverseLevel::new(1)))), @"∀ (%0 : 𝒰0) → 𝒰1");
-        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::pi_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(0))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding::new(Syntax::universe_rc(UniverseLevel::new(1))))), @"∀ (%0 : 𝒰0) → 𝒰1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding::new(Syntax::pi_rc(Syntax::variable_rc(Index(0)), Binding::new(Syntax::variable_rc(Index(0))))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
     }
 
     #[test]
     fn print_lambda() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))), @"λ %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::lambda_rc(Syntax::variable_rc(Index(1))))), @"λ %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Binding::new(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Binding::new(Syntax::lambda_rc(Binding::new(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
     }
 
     #[test]
@@ -1185,13 +1146,13 @@ mod tests {
         let db = Database::new();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
-        assert_snapshot!(p(&db, &Syntax::lambda_rc(Syntax::case_rc(
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Binding::new(Syntax::case_rc(
                         Index(0),
             vec![
-                CaseBranch::new("Zero".into_with_db(&db), 0, Syntax::constant_rc("a".into_with_db(&db))),
-                CaseBranch::new("Succ".into_with_db(&db), 1, Syntax::variable_rc(Index(0))),
+                CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(0, Syntax::constant_rc("a".into_with_db(&db)))),
+                CaseBranch::new("Succ".into_with_db(&db), DynBinding::new(1, Syntax::variable_rc(Index(0)))),
             ]
-        ))), @"λ %0 → %0 case { @Zero => @a | @Succ %1 => %1 }");
+        )))), @"λ %0 → %0 case { @Zero => @a | @Succ %1 => %1 }");
     }
 
     // =========================================================================
@@ -1269,14 +1230,17 @@ mod tests {
     #[test]
     fn print_transport() {
         let db = Database::new();
-        let motive = Closure::new(Syntax::variable_rc(Index(0))); // [%0] |- %0
-        let transport = Syntax::transport_rc(
-            motive,
-            Syntax::refl_rc(),
-            Syntax::variable_rc(Index(2)),
-        );
-        // Prints as: transport [%0] |- body proof value
-        assert_snapshot!(p(&db, &transport), @"transport [%0] |- %0 refl !2");
+        // The motive is just a regular syntax term now, not a Closure
+        let motive = Syntax::variable_rc(Index(0)); // !0 (unbound at depth 0)
+        let transport =
+            Syntax::transport_rc(motive, Syntax::refl_rc(), Syntax::variable_rc(Index(2)));
+        // Prints as: transport VALUE to MOTIVE by PROOF
+        assert_snapshot!(p(&db, &transport), @"transport !2 to !0 by refl");
+
+        // Test with lambda motive - keywords eliminate need for parentheses
+        let lambda_motive = Syntax::lambda_rc(Binding::new(Syntax::bit_rc()));
+        let transport2 = Syntax::transport_rc(lambda_motive, Syntax::refl_rc(), Syntax::zero_rc());
+        assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %0 → Bit by refl");
     }
 
     // =========================================================================
@@ -1299,8 +1263,8 @@ mod tests {
     #[test]
     fn print_module() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::module(Syntax::variable_rc(Index(0)))), @"mod %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::module(Syntax::module_rc(Syntax::variable_rc(Index(1))))), @"mod %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Binding::new(Syntax::variable_rc(Index(0))))), @"mod %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Binding::new(Syntax::module_rc(Binding::new(Syntax::variable_rc(Index(1))))))), @"mod %0 %1 → %0");
     }
 
     #[test]
@@ -1332,7 +1296,7 @@ mod tests {
     #[test]
     fn print_variable_bound() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lambda(Syntax::variable_rc(Index(0)))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Binding::new(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
     }
 
     #[test]
