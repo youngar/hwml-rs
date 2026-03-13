@@ -1,8 +1,9 @@
 // Re-export location types from hwml-support
 pub use hwml_support::{Location, LocationData, SourceFile};
 
-pub mod kernel;
-pub use kernel::trusted::{TrustSyntax, Trusted, TrustedTerm};
+pub mod trusted;
+pub use trusted::rules;
+pub use trusted::trusted::{Trusted, TrustedSyntax, TrustedTypedSyntax};
 
 pub mod elaborator;
 pub use elaborator::*;
@@ -15,9 +16,6 @@ pub use force::*;
 
 pub mod renaming;
 pub use renaming::*;
-
-pub mod rules;
-pub use rules::*;
 
 pub mod unify;
 pub use unify::UnificationError;

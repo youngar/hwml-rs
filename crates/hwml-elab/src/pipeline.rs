@@ -10,6 +10,7 @@ use std::rc::Rc;
 use crate::elaborator::{check, synth, Diagnostic, ElaborationContext};
 use crate::engine::{SingleThreadedExecutor, SolverEnvironment};
 use crate::zonk::zonk;
+use crate::TrustedSyntax;
 
 pub struct ElaborationResult<'db> {
     pub term: Option<Rc<Syntax<'db>>>,
@@ -34,10 +35,10 @@ pub fn elaborate_expression<'db>(
     let solver = SolverEnvironment::new(tc_env, spawner);
     let mut ctx = ElaborationContext::new(db, Some(source_file), solver);
 
-    let (term, _ty) = futures::executor::block_on(async { synth(&mut ctx, expr).await });
+    let result = futures::executor::block_on(async { synth(&mut ctx, expr).await });
 
     ElaborationResult {
-        term: Some(term.into_inner()),
+        term: Some(result.as_inner().subject.clone()),
         diagnostics: ctx.diagnostics().to_vec(),
     }
 }
@@ -256,7 +257,8 @@ fn elaborate_prim_declaration<'db, 'g>(
     eprintln!("[Pipeline] Registering primitive: {}", name);
 
     // Elaborate the type expression
-    let (ty_term, _ty_ty) = futures::executor::block_on(async { synth(ctx, &prim.ty).await });
+    let ty_result = futures::executor::block_on(async { synth(ctx, &prim.ty).await });
+    let ty_term = crate::TrustedSyntax::assume_trusted(ty_result.subject.clone());
 
     // Evaluate the type to get a Value
     match ctx.eval(&ty_term) {
@@ -393,9 +395,9 @@ fn elaborate_def_with_context<'db>(
             ctx.register_primitive(name.clone(), info.clone());
         }
 
-        let (term, _ty) = futures::executor::block_on(async { synth(&mut ctx, &value_expr).await });
+        let result = futures::executor::block_on(async { synth(&mut ctx, &value_expr).await });
 
-        let zonked_term = zonk(&*ctx.solver.state.borrow(), term.as_inner());
+        let zonked_term = zonk(&*ctx.solver.state.borrow(), &result.subject);
 
         ElaborationResult {
             term: Some(zonked_term),
@@ -429,9 +431,9 @@ fn elaborate_meta_with_context<'db>(
         ctx.register_primitive(name.clone(), info.clone());
     }
 
-    let (term, _ty) = futures::executor::block_on(async { synth(&mut ctx, &meta.value).await });
+    let result = futures::executor::block_on(async { synth(&mut ctx, &meta.value).await });
 
-    let zonked_term = zonk(&*ctx.solver.state.borrow(), term.as_inner());
+    let zonked_term = zonk(&*ctx.solver.state.borrow(), &result.subject);
 
     ElaborationResult {
         term: Some(zonked_term),

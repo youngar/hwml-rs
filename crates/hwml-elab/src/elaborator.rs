@@ -24,13 +24,14 @@
 //! a **poisoned metavariable** instead of failing. This allows elaboration to continue and
 //! report multiple errors at once.
 
-use crate::TrustedTerm;
+use crate::trusted::trusted::{Trusted, TrustedTypedSyntax};
+use crate::TrustedSyntax;
 use hwml_core::binding::DynBinding;
 use hwml_core::common::{Index, Location, UniverseLevel};
 use hwml_core::eval;
 use hwml_core::quote::type_quote;
 use hwml_core::syn::CaseBranch;
-use hwml_core::Syntax;
+use hwml_core::{Syntax, TypedSyntax};
 
 use hwml_core::val::{Closure, Environment, LocalEnv, RcValue, TransparentEnv, Value};
 use hwml_core::ConstantId;
@@ -143,6 +144,35 @@ pub struct ElaborationContext<'db, 'g> {
     diagnostics: Vec<Diagnostic>,
 }
 
+/// RAII guard that automatically pops bindings when dropped
+pub struct ScopeGuard<'db, 'g, 'ctx> {
+    ctx: &'ctx mut ElaborationContext<'db, 'g>,
+    count: usize,
+}
+
+impl<'db, 'g, 'ctx> Drop for ScopeGuard<'db, 'g, 'ctx> {
+    fn drop(&mut self) {
+        for _ in 0..self.count {
+            self.ctx.scope.pop();
+            self.ctx.types.pop();
+        }
+    }
+}
+
+impl<'db, 'g, 'ctx> std::ops::Deref for ScopeGuard<'db, 'g, 'ctx> {
+    type Target = ElaborationContext<'db, 'g>;
+
+    fn deref(&self) -> &Self::Target {
+        self.ctx
+    }
+}
+
+impl<'db, 'g, 'ctx> std::ops::DerefMut for ScopeGuard<'db, 'g, 'ctx> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.ctx
+    }
+}
+
 impl<'db, 'g> ElaborationContext<'db, 'g> {
     /// Create a new elaboration context with the given solver environment
     pub fn new(
@@ -169,6 +199,29 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
     /// Look up a primitive by name
     pub fn lookup_primitive(&self, name: &str) -> Option<&PrimitiveInfo<'db>> {
         self.primitives.get(name)
+    }
+
+    /// Push bindings and return an RAII guard that will pop them on drop
+    ///
+    /// Usage:
+    /// ```ignore
+    /// {
+    ///     let mut scoped_ctx = ctx.push_bindings(&bindings);
+    ///     // Use scoped_ctx like normal ctx
+    ///     elaborate_something(&mut scoped_ctx, ...).await?;
+    /// } // Bindings automatically popped here
+    /// ```
+    pub fn push_bindings(
+        &mut self,
+        bindings: &[(String, RcValue<'db>)],
+    ) -> ScopeGuard<'db, 'g, '_> {
+        for (name, ty) in bindings {
+            self.push_binding(name.clone(), ty.clone());
+        }
+        ScopeGuard {
+            ctx: self,
+            count: bindings.len(),
+        }
     }
 
     /// Get an iterator over all registered primitives
@@ -200,7 +253,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
     pub async fn synth_expr(
         &mut self,
         expr: &surface::Expression,
-    ) -> Result<(TrustedTerm<'db>, RcValue<'db>), String> {
+    ) -> Result<TrustedTypedSyntax<'db>, String> {
         Ok(synth(self, expr).await)
     }
 
@@ -209,7 +262,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
         &mut self,
         expr: &surface::Expression,
         expected_ty: RcValue<'db>,
-    ) -> Result<TrustedTerm<'db>, String> {
+    ) -> Result<TrustedSyntax<'db>, String> {
         Ok(check(self, expr, expected_ty).await)
     }
 
@@ -271,18 +324,19 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
             Expression::Underscore(underscore) => self.convert_location(&underscore.loc),
             Expression::Paren(paren) => self.expr_location(&paren.expr),
             Expression::Match(m) => self.expr_location(&m.scrutinee),
+            Expression::Universe(univ) => self.convert_location(&univ.loc),
             Expression::Str(_) => Location::UNKNOWN,
         }
     }
 
     /// Create a fresh metavariable with the given type at the given location
-    pub fn fresh_meta(&self, ty: RcValue<'db>, loc: Location) -> TrustedTerm<'db> {
+    pub fn fresh_meta(&self, ty: RcValue<'db>, loc: Location) -> TrustedSyntax<'db> {
         let meta_id = self.solver.fresh_meta_id(ty, loc);
         crate::rules::form_meta(meta_id)
     }
 
     /// Create a poisoned metavariable for error recovery
-    pub fn fresh_poisoned_meta(&self, ty: RcValue<'db>, loc: Location) -> TrustedTerm<'db> {
+    pub fn fresh_poisoned_meta(&self, ty: RcValue<'db>, loc: Location) -> TrustedSyntax<'db> {
         // Create a poisoned metavariable ID
         let meta_id = self
             .solver
@@ -298,7 +352,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
         loc: Location,
         message: String,
         expected_ty: RcValue<'db>,
-    ) -> TrustedTerm<'db> {
+    ) -> TrustedSyntax<'db> {
         // Collect the diagnostic instead of printing
         self.diagnostics.push(Diagnostic {
             location: loc,
@@ -309,7 +363,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
     }
 
     /// Evaluate a syntax term to a value in the current context
-    pub fn eval(&self, term: &TrustedTerm<'db>) -> Result<RcValue<'db>, eval::Error> {
+    pub fn eval(&self, term: &TrustedSyntax<'db>) -> Result<RcValue<'db>, eval::Error> {
         let mut env = Environment {
             global: self.solver.tc_env.values.global,
             local: self.build_value_env(),
@@ -330,7 +384,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
     }
 
     /// Force a value to weak head normal form (async)
-    async fn whnf(&self, value: RcValue<'db>) -> RcValue<'db> {
+    pub async fn whnf(&self, value: RcValue<'db>) -> RcValue<'db> {
         // Use the force function from hwml-elab to substitute solved metavariables
         force(&self.solver, value).unwrap_or_else(|e| {
             eprintln!("Warning: force failed during whnf: {}", e);
@@ -429,7 +483,7 @@ impl<'db, 'g> ElaborationContext<'db, 'g> {
     fn synthesize_motive(
         &self,
         expected_ty: &RcValue<'db>,
-        _scrutinee: &TrustedTerm<'db>,
+        _scrutinee: &TrustedSyntax<'db>,
     ) -> Result<Closure<'db>, String> {
         // Quote the expected type to syntax
         let expected_ty_syntax =
@@ -529,7 +583,7 @@ pub async fn check<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     expr: &surface::Expression,
     expected_ty: RcValue<'db>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     use surface::Expression;
 
     match expr {
@@ -543,7 +597,9 @@ pub async fn check<'db, 'g>(
             ctx.fresh_meta(expected_ty, loc)
         }
         _ => {
-            let (term, inferred_ty) = synth(ctx, expr).await;
+            let synth_result = synth(ctx, expr).await;
+            let term = TrustedSyntax::assume_trusted(synth_result.subject.clone());
+            let inferred_ty = synth_result.ty.clone();
 
             // Check if we need to insert implicit lifting
             if let Some(lift_kind) = ctx.should_insert_lift(&expected_ty, &inferred_ty) {
@@ -552,13 +608,13 @@ pub async fn check<'db, 'g>(
                 // Insert the appropriate lifting construct
                 let lifted_term = match lift_kind {
                     LiftKind::Lift => {
-                        TrustedTerm::assume_trusted(Syntax::lift_rc(term.as_inner().clone()))
+                        TrustedSyntax::assume_trusted(Syntax::lift_rc(term.as_inner().clone()))
                     }
                     LiftKind::SLift => {
-                        TrustedTerm::assume_trusted(Syntax::slift_rc(term.as_inner().clone()))
+                        TrustedSyntax::assume_trusted(Syntax::slift_rc(term.as_inner().clone()))
                     }
                     LiftKind::MLift => {
-                        TrustedTerm::assume_trusted(Syntax::mlift_rc(term.as_inner().clone()))
+                        TrustedSyntax::assume_trusted(Syntax::mlift_rc(term.as_inner().clone()))
                     }
                 };
 
@@ -615,7 +671,7 @@ pub async fn check<'db, 'g>(
 pub async fn synth<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     expr: &surface::Expression,
-) -> (TrustedTerm<'db>, RcValue<'db>) {
+) -> TrustedTypedSyntax<'db> {
     use surface::Expression;
 
     match expr {
@@ -624,33 +680,46 @@ pub async fn synth<'db, 'g>(
         Expression::LetIn(let_in) => synth_let(ctx, let_in).await,
         Expression::Paren(paren) => synth(ctx, &paren.expr).await,
         Expression::Num(num) => synth_num(ctx, num).await,
+        Expression::Universe(univ) => synth_universe(ctx, univ).await,
         Expression::Fun(_) | Expression::Pi(_) | Expression::Arrow(_) | Expression::FatArrow(_) => {
             let loc = ctx.expr_location(expr);
             let message = "Cannot infer type for lambda/pi/arrow without annotation".to_string();
             let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
             let error_term = ctx.error(loc, message, error_ty.clone());
-            (error_term, error_ty)
+            Trusted::assume_trusted(TypedSyntax {
+                subject: error_term.into_inner(),
+                ty: error_ty,
+            })
         }
         Expression::Underscore(_) => {
             let loc = ctx.expr_location(expr);
             let message = "Cannot infer type for underscore".to_string();
             let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
             let error_term = ctx.error(loc, message, error_ty.clone());
-            (error_term, error_ty)
+            Trusted::assume_trusted(TypedSyntax {
+                subject: error_term.into_inner(),
+                ty: error_ty,
+            })
         }
         Expression::Str(_) => {
             let loc = ctx.expr_location(expr);
             let message = "String literals not yet supported".to_string();
             let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
             let error_term = ctx.error(loc, message, error_ty.clone());
-            (error_term, error_ty)
+            Trusted::assume_trusted(TypedSyntax {
+                subject: error_term.into_inner(),
+                ty: error_ty,
+            })
         }
         Expression::Match(_) => {
             let loc = ctx.expr_location(expr);
             let message = "Cannot infer type for match expression without annotation".to_string();
             let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
             let error_term = ctx.error(loc, message, error_ty.clone());
-            (error_term, error_ty)
+            Trusted::assume_trusted(TypedSyntax {
+                subject: error_term.into_inner(),
+                ty: error_ty,
+            })
         }
     }
 }
@@ -661,7 +730,7 @@ async fn check_fun<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     fun: &surface::Fun,
     expected_ty: RcValue<'db>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     // Lambda checking: we expect a Pi type
     // For now, handle the simple case of a single untyped parameter
     // TODO: Handle multiple parameters and typed parameters
@@ -766,7 +835,7 @@ async fn check_pi<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     pi: &surface::Pi,
     expected_ty: RcValue<'db>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     // Pi type checking: (x : A) -> B
     // The expected type should be a universe
     // TODO: Check that expected_ty is actually a universe
@@ -800,16 +869,21 @@ async fn check_pi<'db, 'g>(
         })
         .collect();
 
-    // Elaborate the parameter type
+    // Elaborate the parameter type using synth to infer its universe level
     let param_ty_expr = &binding_group.ty;
-    let universe_ty = Rc::new(Value::universe(UniverseLevel::new(0))); // TODO: proper universe
-    let param_ty_term = check(ctx, param_ty_expr, universe_ty.clone()).await;
+    let param_ty_result = synth(ctx, param_ty_expr).await;
+    let param_ty_term = TrustedSyntax::assume_trusted(param_ty_result.subject.clone());
+    let param_ty_type = param_ty_result.ty.clone();
 
     // Evaluate the parameter type to get a Value
     let param_ty_val = ctx.eval(&param_ty_term).unwrap_or_else(|e| {
         eprintln!("Failed to evaluate parameter type: {}", e);
-        universe_ty.clone()
+        Rc::new(Value::universe(UniverseLevel::new(0)))
     });
+
+    // The target type should also be checked against the same universe as the parameter type
+    // Extract the universe level from param_ty_type
+    let target_universe_ty = param_ty_type;
 
     // For simplicity, handle only single parameter for now
     if param_names.len() > 1 {
@@ -825,7 +899,7 @@ async fn check_pi<'db, 'g>(
 
     // Push binding and elaborate target type
     ctx.push_binding(param_name, param_ty_val);
-    let target_term = check(ctx, &pi.target, universe_ty).await;
+    let target_term = check(ctx, &pi.target, target_universe_ty).await;
     ctx.pop_binding();
 
     // Use the kernel API to construct the Pi term
@@ -841,7 +915,7 @@ async fn check_arrow<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     arrow: &surface::Arrow,
     expected_ty: RcValue<'db>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     // Arrow type: A -> B
     // Desugar to Pi with unused parameter: (_ : A) -> B
 
@@ -866,7 +940,7 @@ async fn check_fat_arrow<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     fat_arrow: &surface::FatArrow,
     _expected_ty: RcValue<'db>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     // Hardware arrow type: A => B
     // This is the hardware arrow (HArrow) type constructor
 
@@ -883,16 +957,30 @@ async fn check_fat_arrow<'db, 'g>(
     crate::rules::form_harrow(source_term, target_term)
 }
 
+async fn synth_universe<'db, 'g>(
+    ctx: &mut ElaborationContext<'db, 'g>,
+    univ: &surface::Universe,
+) -> TrustedTypedSyntax<'db> {
+    // Type : Type1, Type 0 : Type 1, Type n : Type (n+1)
+    let level = univ.level.unwrap_or(0) as usize;
+    let term = TrustedSyntax::assume_trusted(Syntax::universe_rc(UniverseLevel::new(level)));
+    let ty = Rc::new(Value::universe(UniverseLevel::new(level + 1)));
+    Trusted::assume_trusted(TypedSyntax {
+        subject: term.into_inner(),
+        ty,
+    })
+}
+
 async fn synth_id<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     id: &surface::Id,
-) -> (TrustedTerm<'db>, RcValue<'db>) {
+) -> TrustedTypedSyntax<'db> {
     let name = std::str::from_utf8(&id.value).unwrap_or("<invalid utf8>");
     let loc = ctx.convert_location(&id.loc);
 
     eprintln!("[Elaborator] synth_id: {}", name);
 
-    match ctx.lookup_var(name) {
+    let (term, ty) = match ctx.lookup_var(name) {
         Some(index) => {
             eprintln!("[Elaborator] Found variable {} at index {}", name, index);
             let ty = ctx.get_var_type(index).unwrap().clone();
@@ -908,7 +996,7 @@ async fn synth_id<'db, 'g>(
             if let Some(prim_info) = ctx.lookup_primitive(name) {
                 eprintln!("[Elaborator] Found primitive: {}", name);
                 (
-                    TrustedTerm::assume_trusted(prim_info.term.clone()),
+                    TrustedSyntax::assume_trusted(prim_info.term.clone()),
                     prim_info.ty.clone(),
                 )
             } else {
@@ -916,7 +1004,7 @@ async fn synth_id<'db, 'g>(
                 match name {
                     "Signal" => {
                         eprintln!("[Elaborator] Recognized Signal built-in");
-                        let term = TrustedTerm::assume_trusted(Syntax::signal_universe_rc());
+                        let term = TrustedSyntax::assume_trusted(Syntax::signal_universe_rc());
                         let ty = Rc::new(Value::universe(UniverseLevel::new(0)));
                         (term, ty)
                     }
@@ -930,13 +1018,17 @@ async fn synth_id<'db, 'g>(
                 }
             }
         }
-    }
+    };
+    Trusted::assume_trusted(TypedSyntax {
+        subject: term.into_inner(),
+        ty,
+    })
 }
 
 async fn synth_app<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     app: &surface::App,
-) -> (TrustedTerm<'db>, RcValue<'db>) {
+) -> TrustedTypedSyntax<'db> {
     // Application: f x y z
     // Synthesize the type of f, then check each argument
 
@@ -945,7 +1037,10 @@ async fn synth_app<'db, 'g>(
         let message = "Empty application".to_string();
         let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
         let error_term = ctx.error(loc, message, error_ty.clone());
-        return (error_term, error_ty);
+        return Trusted::assume_trusted(TypedSyntax {
+            subject: error_term.into_inner(),
+            ty: error_ty,
+        });
     }
 
     // If there's only one element, it's not really an application
@@ -954,7 +1049,9 @@ async fn synth_app<'db, 'g>(
     }
 
     // Synthesize the function type
-    let (mut func_term, mut func_ty) = synth(ctx, &app.elements[0]).await;
+    let func_result = synth(ctx, &app.elements[0]).await;
+    let mut func_term = TrustedSyntax::assume_trusted(func_result.subject.clone());
+    let mut func_ty = func_result.ty.clone();
 
     // Apply each argument
     for arg_expr in &app.elements[1..] {
@@ -970,9 +1067,27 @@ async fn synth_app<'db, 'g>(
                 // Check the argument
                 let arg_term = check(ctx, arg_expr, arg_ty.clone()).await;
 
+                // Create a temporary solver environment with the current local bindings
+                // This is necessary because rules::synth_app needs to evaluate the argument term
+                // in the correct environment (with all local bindings in scope)
+                let temp_tc_env = hwml_core::check::TCEnvironment {
+                    db: ctx.solver.tc_env.db,
+                    values: hwml_core::val::Environment {
+                        global: ctx.solver.tc_env.values.global,
+                        local: ctx.build_value_env(),
+                        transparent: hwml_core::val::TransparentEnv::new(),
+                    },
+                    types: ctx.types.clone(),
+                };
+                let temp_solver = crate::engine::SolverEnvironment {
+                    state: ctx.solver.state.clone(),
+                    tc_env: temp_tc_env,
+                    spawner: ctx.solver.spawner.clone(),
+                };
+
                 // Use the kernel API to construct the application and get the result type
                 match crate::rules::synth_app(
-                    &ctx.solver,
+                    &temp_solver,
                     func_term,
                     func_ty.clone(),
                     arg_term,
@@ -989,7 +1104,10 @@ async fn synth_app<'db, 'g>(
                         let message = format!("Application failed: {}", e);
                         let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
                         let error_term = ctx.error(loc, message, error_ty.clone());
-                        return (error_term, error_ty);
+                        return Trusted::assume_trusted(TypedSyntax {
+                            subject: error_term.into_inner(),
+                            ty: error_ty,
+                        });
                     }
                 }
             }
@@ -999,18 +1117,24 @@ async fn synth_app<'db, 'g>(
                 let message = format!("Expected function type, got {:?}", func_ty);
                 let error_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
                 let error_term = ctx.error(loc, message, error_ty.clone());
-                return (error_term, error_ty);
+                return Trusted::assume_trusted(TypedSyntax {
+                    subject: error_term.into_inner(),
+                    ty: error_ty,
+                });
             }
         }
     }
 
-    (func_term, func_ty)
+    Trusted::assume_trusted(TypedSyntax {
+        subject: func_term.into_inner(),
+        ty: func_ty,
+    })
 }
 
 async fn synth_let<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     let_in: &surface::LetIn,
-) -> (TrustedTerm<'db>, RcValue<'db>) {
+) -> TrustedTypedSyntax<'db> {
     // Let binding: let x : T = v in body
     // Elaborate the value, bind it, then elaborate the body
 
@@ -1029,8 +1153,8 @@ async fn synth_let<'db, 'g>(
         })
     } else {
         // No type annotation, synthesize
-        let (_, inferred_ty) = synth(ctx, &let_in.value).await;
-        inferred_ty
+        let synth_result = synth(ctx, &let_in.value).await;
+        synth_result.ty.clone()
     };
 
     // Elaborate the value
@@ -1042,23 +1166,28 @@ async fn synth_let<'db, 'g>(
 
     // Push binding and elaborate body
     ctx.push_binding(name, value_ty);
-    let (body_term, body_ty) = synth(ctx, &let_in.expr).await;
+    let body_result = synth(ctx, &let_in.expr).await;
+    let body_term = TrustedSyntax::assume_trusted(body_result.subject.clone());
+    let body_ty = body_result.ty.clone();
     ctx.pop_binding();
 
     // Use the kernel API to construct the let term
     let let_term = crate::rules::form_let(
-        TrustedTerm::assume_trusted(value_ty_syntax),
+        TrustedSyntax::assume_trusted(value_ty_syntax),
         value_term,
         body_term,
     );
 
-    (let_term, body_ty)
+    Trusted::assume_trusted(TypedSyntax {
+        subject: let_term.into_inner(),
+        ty: body_ty,
+    })
 }
 
 async fn synth_num<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     num: &surface::Num,
-) -> (TrustedTerm<'db>, RcValue<'db>) {
+) -> TrustedTypedSyntax<'db> {
     // Numeric literals: 0 and 1 are the only valid bit values
     let loc = ctx.convert_location(&num.loc);
     let num_str = std::str::from_utf8(&num.value).unwrap_or("0");
@@ -1067,14 +1196,14 @@ async fn synth_num<'db, 'g>(
         "0" => {
             // Zero : Bit
             (
-                TrustedTerm::assume_trusted(Syntax::zero_rc()),
+                TrustedSyntax::assume_trusted(Syntax::zero_rc()),
                 Rc::new(Value::bit()),
             )
         }
         "1" => {
             // One : Bit
             (
-                TrustedTerm::assume_trusted(Syntax::one_rc()),
+                TrustedSyntax::assume_trusted(Syntax::one_rc()),
                 Rc::new(Value::bit()),
             )
         }
@@ -1090,7 +1219,10 @@ async fn synth_num<'db, 'g>(
         }
     };
 
-    (term, ty)
+    Trusted::assume_trusted(TypedSyntax {
+        subject: term.into_inner(),
+        ty,
+    })
 }
 
 // ============================================================================
@@ -1104,11 +1236,13 @@ async fn check_match<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     match_expr: &surface::Match,
     expected_ty: RcValue<'db>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     let loc = ctx.expr_location(&surface::Expression::Match(match_expr.clone()));
 
     // Step 1: Infer the scrutinee and bind it to a rigid variable
-    let (scrutinee_term, scrutinee_ty) = synth(ctx, &match_expr.scrutinee).await;
+    let scrutinee_result = synth(ctx, &match_expr.scrutinee).await;
+    let scrutinee_term = TrustedSyntax::assume_trusted(scrutinee_result.subject.clone());
+    let scrutinee_ty = scrutinee_result.ty.clone();
 
     // Generate a fresh name for the scrutinee variable
     let scrutinee_var_name = ctx.fresh_var_name("scrut", 0);
@@ -1164,7 +1298,7 @@ async fn check_match<'db, 'g>(
         scrutinee_term.view().clone().into(),
         scrutinee_var.clone(),
     );
-    let proof_ty = TrustedTerm::assume_trusted(proof_ty_syntax_rc.clone());
+    let proof_ty = TrustedSyntax::assume_trusted(proof_ty_syntax_rc.clone());
     let proof_ty_val = ctx
         .eval(&proof_ty)
         .unwrap_or_else(|_| Rc::new(Value::universe(UniverseLevel::new(0))));
@@ -1199,9 +1333,9 @@ async fn check_match<'db, 'g>(
 
     // Step 8: Wrap in let bindings for the scrutinee and proof
     // let p = refl in decision_tree
-    let refl_proof = TrustedTerm::assume_trusted(Syntax::refl_rc());
+    let refl_proof = TrustedSyntax::assume_trusted(Syntax::refl_rc());
     let with_proof = crate::rules::form_let(
-        TrustedTerm::assume_trusted(proof_ty_syntax_rc),
+        TrustedSyntax::assume_trusted(proof_ty_syntax_rc),
         refl_proof,
         decision_tree,
     );
@@ -1211,7 +1345,7 @@ async fn check_match<'db, 'g>(
         type_quote(ctx.solver.tc_env.values.global, ctx.depth(), &scrutinee_ty)
             .unwrap_or_else(|_| Syntax::universe_rc(UniverseLevel::new(0)));
     crate::rules::form_let(
-        TrustedTerm::assume_trusted(scrutinee_ty_syntax),
+        TrustedSyntax::assume_trusted(scrutinee_ty_syntax),
         scrutinee_term,
         with_proof,
     )
@@ -1282,7 +1416,7 @@ async fn compile_matrix<'db, 'g>(
     motive: &Closure<'db>,
     proof_var_name: &str,
     expected_ty: &RcValue<'db>,
-) -> Result<TrustedTerm<'db>, String> {
+) -> Result<TrustedSyntax<'db>, String> {
     // BASE CASE 1: Empty matrix (inexhaustive match)
     if matrix.rows.is_empty() {
         let loc = Location::UNKNOWN;
@@ -1325,7 +1459,7 @@ async fn compile_matrix<'db, 'g>(
 
         // Wrap in transport
         let _loc = Location::UNKNOWN;
-        let proof_var = TrustedTerm::assume_trusted(Syntax::variable_rc(Index::from(
+        let proof_var = TrustedSyntax::assume_trusted(Syntax::variable_rc(Index::from(
             ctx.lookup_var(proof_var_name).unwrap_or(0),
         )));
 
@@ -1381,7 +1515,7 @@ async fn compile_matrix<'db, 'g>(
             ctx.pop_binding();
         }
 
-        // Create the case branch - need to extract the Rc<Syntax> from TrustedTerm
+        // Create the case branch - need to extract the Rc<Syntax> from TrustedSyntax
         core_branches.push(CaseBranch::new(
             ctor_id,
             DynBinding::new(arity, branch_body.as_inner().clone()),
@@ -1396,7 +1530,7 @@ async fn compile_matrix<'db, 'g>(
     };
 
     let _loc = Location::UNKNOWN;
-    Ok(TrustedTerm::assume_trusted(Syntax::case_rc(
+    Ok(TrustedSyntax::assume_trusted(Syntax::case_rc(
         scrutinee_var.index,
         core_branches,
     )))
@@ -1544,18 +1678,18 @@ mod tests {
 
         // Spawn the async test as a task
         executor.spawn(async move {
-            let (term, ty) = synth_num(&mut ctx, &num).await;
+            let result = synth_num(&mut ctx, &num).await;
 
             // Check that the term is Zero
-            match term.view() {
+            match result.subject.as_ref() {
                 hwml_core::syn::Syntax::Zero(_) => {}
-                _ => panic!("Expected Zero, got {:?}", term),
+                _ => panic!("Expected Zero, got {:?}", result.subject),
             }
 
             // Check that the type is Bit
-            match ty.as_ref() {
+            match result.ty.as_ref() {
                 Value::Bit(_) => {}
-                _ => panic!("Expected Bit type, got {:?}", ty),
+                _ => panic!("Expected Bit type, got {:?}", result.ty),
             }
             Ok(())
         });
@@ -1592,18 +1726,18 @@ mod tests {
 
         // Spawn the async test as a task
         executor.spawn(async move {
-            let (term, ty) = synth_num(&mut ctx, &num).await;
+            let result = synth_num(&mut ctx, &num).await;
 
             // Check that the term is One
-            match term.view() {
+            match result.subject.as_ref() {
                 hwml_core::syn::Syntax::One(_) => {}
-                _ => panic!("Expected One, got {:?}", term),
+                _ => panic!("Expected One, got {:?}", result.subject),
             }
 
             // Check that the type is Bit
-            match ty.as_ref() {
+            match result.ty.as_ref() {
                 Value::Bit(_) => {}
-                _ => panic!("Expected Bit type, got {:?}", ty),
+                _ => panic!("Expected Bit type, got {:?}", result.ty),
             }
             Ok(())
         });
@@ -1640,7 +1774,7 @@ mod tests {
 
         // Spawn the async test as a task
         executor.spawn(async move {
-            let (_term, _ty) = synth_num(&mut ctx, &num).await;
+            let _result = synth_num(&mut ctx, &num).await;
 
             // Should have reported an error
             assert_eq!(ctx.diagnostics.len(), 1);

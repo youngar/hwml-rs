@@ -1,7 +1,7 @@
 use crate::engine::SolverEnvironment;
 use crate::force::force;
 use crate::unify::{unify, UnificationError};
-use crate::TrustedTerm;
+use crate::TrustedSyntax;
 use hwml_core::eval;
 use hwml_core::syn::Syntax;
 use hwml_core::val::{Closure, RcValue, Value};
@@ -58,11 +58,11 @@ impl std::error::Error for RuleError {}
 /// This is the elimination rule for Pi types.
 pub async fn synth_app<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
-    f_tm: TrustedTerm<'db>,
+    f_tm: TrustedSyntax<'db>,
     f_type: RcValue<'db>,
-    arg_tm: TrustedTerm<'db>,
+    arg_tm: TrustedSyntax<'db>,
     arg_type: RcValue<'db>,
-) -> Result<(RcValue<'db>, TrustedTerm<'db>), RuleError> {
+) -> Result<(RcValue<'db>, TrustedSyntax<'db>), RuleError> {
     // 1. Force f_type to ensure it's a VPi
     let f_type_whnf =
         force(ctx, f_type.clone()).map_err(|e| RuleError::ForceFailed(format!("{:?}", e)))?;
@@ -89,16 +89,40 @@ pub async fn synth_app<'db, 'g>(
 
     // 4. Evaluate the argument to instantiate the codomain
     let mut env = ctx.tc_env.values.clone();
-    let arg_val = eval::eval(&mut env, arg_tm.view())?; // FIX: was f_tm, should be arg_tm
+    eprintln!("[synth_app] About to evaluate arg_tm");
+    eprintln!("[synth_app] env.depth() = {}", env.depth());
+    eprintln!("[synth_app] arg_tm = {:?}", arg_tm.view());
+    let arg_val = match eval::eval(&mut env, arg_tm.view()) {
+        Ok(val) => {
+            eprintln!("[synth_app] Successfully evaluated arg to: {:?}", val);
+            val
+        }
+        Err(e) => {
+            eprintln!("[synth_app] Failed to evaluate arg: {:?}", e);
+            return Err(e.into());
+        }
+    };
 
     // 5. Instantiate the codomain closure with the argument value
     let result_type = eval::run_closure(ctx.tc_env.values.global, &codomain_closure, [arg_val])?;
 
     // 6. Construct the application syntax
-    let app_syntax = Syntax::application_rc(f_tm.as_inner().clone(), arg_tm.as_inner().clone());
+    // Special case: if f_tm is a TypeConstructor, extend its arguments instead of wrapping in Application
+    let app_syntax = match f_tm.view() {
+        Syntax::TypeConstructor(tcon) => {
+            // Extend the type constructor's arguments
+            let mut new_args = tcon.arguments.clone();
+            new_args.push(arg_tm.as_inner().clone());
+            Syntax::type_constructor_rc(tcon.constructor, new_args)
+        }
+        _ => {
+            // Regular application
+            Syntax::application_rc(f_tm.as_inner().clone(), arg_tm.as_inner().clone())
+        }
+    };
 
-    // 7. Seal it in a TrustedTerm
-    Ok((result_type, TrustedTerm::assume_trusted(app_syntax)))
+    // 7. Seal it in a TrustedSyntax
+    Ok((result_type, TrustedSyntax::assume_trusted(app_syntax)))
 }
 
 /// **Pi Formation (Formation Rule)**
@@ -116,9 +140,9 @@ pub async fn synth_app<'db, 'g>(
 /// have been checked against a universe type before calling this function.
 /// This function performs defensive validation but relies on the elaborator's type checking.
 pub async fn form_pi<'db>(
-    domain: TrustedTerm<'db>,
-    codomain: TrustedTerm<'db>,
-) -> Result<TrustedTerm<'db>, RuleError> {
+    domain: TrustedSyntax<'db>,
+    codomain: TrustedSyntax<'db>,
+) -> Result<TrustedSyntax<'db>, RuleError> {
     // DEFENSIVE CHECK: Verify the domain and codomain are not obviously malformed
     // (e.g., not metavariables that should have been solved)
     // This is a sanity check, not full type checking.
@@ -130,8 +154,8 @@ pub async fn form_pi<'db>(
         hwml_core::binding::Binding::new(codomain.as_inner().clone()),
     );
 
-    // Seal it in a TrustedTerm
-    Ok(TrustedTerm::assume_trusted(pi_syntax))
+    // Seal it in a TrustedSyntax
+    Ok(TrustedSyntax::assume_trusted(pi_syntax))
 }
 
 /// **Lambda (Checking Rule)**
@@ -147,8 +171,8 @@ pub async fn form_pi<'db>(
 pub async fn check_lam<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
     expected_type: RcValue<'db>,
-    body: TrustedTerm<'db>,
-) -> Result<TrustedTerm<'db>, RuleError> {
+    body: TrustedSyntax<'db>,
+) -> Result<TrustedSyntax<'db>, RuleError> {
     // 1. Force expected_type to ensure it's a VPi
     let expected_whnf = force(ctx, expected_type.clone())
         .map_err(|e| RuleError::ForceFailed(format!("{:?}", e)))?;
@@ -163,8 +187,8 @@ pub async fn check_lam<'db, 'g>(
             let lam_syntax =
                 Syntax::lambda_rc(hwml_core::binding::Binding::new(body.as_inner().clone()));
 
-            // Seal it in a TrustedTerm
-            Ok(TrustedTerm::assume_trusted(lam_syntax))
+            // Seal it in a TrustedSyntax
+            Ok(TrustedSyntax::assume_trusted(lam_syntax))
         }
         other => Err(RuleError::ExpectedPi {
             got: format!("{:?}", other),
@@ -181,27 +205,27 @@ pub async fn check_lam<'db, 'g>(
 /// Produces: `Type_i : Type_{i+1}`
 ///
 /// This is the formation rule for universe types.
-pub fn form_universe<'db>(level: hwml_core::common::UniverseLevel) -> TrustedTerm<'db> {
+pub fn form_universe<'db>(level: hwml_core::common::UniverseLevel) -> TrustedSyntax<'db> {
     let univ_syntax = Syntax::universe_rc(level);
-    TrustedTerm::assume_trusted(univ_syntax)
+    TrustedSyntax::assume_trusted(univ_syntax)
 }
 
 /// **Variable Reference**
 ///
 /// Given a de Bruijn index, produces a variable reference.
 /// The elaborator is responsible for ensuring the variable is in scope.
-pub fn var_ref<'db>(index: hwml_core::common::Index) -> TrustedTerm<'db> {
+pub fn var_ref<'db>(index: hwml_core::common::Index) -> TrustedSyntax<'db> {
     let var_syntax = Syntax::variable_rc(index);
-    TrustedTerm::assume_trusted(var_syntax)
+    TrustedSyntax::assume_trusted(var_syntax)
 }
 
 /// **Metavariable / Hole**
 ///
 /// Constructs a metavariable reference.
 /// The elaborator creates the metavariable ID and this rule wraps it.
-pub fn form_meta<'db>(id: hwml_core::common::MetaVariableId) -> TrustedTerm<'db> {
+pub fn form_meta<'db>(id: hwml_core::common::MetaVariableId) -> TrustedSyntax<'db> {
     let meta_syntax = Syntax::metavariable_rc(id, vec![]);
-    TrustedTerm::assume_trusted(meta_syntax)
+    TrustedSyntax::assume_trusted(meta_syntax)
 }
 
 /// **Let Binding (Trusted Constructor)**
@@ -219,16 +243,16 @@ pub fn form_meta<'db>(id: hwml_core::common::MetaVariableId) -> TrustedTerm<'db>
 /// 2. `value` has been checked against `value_ty`
 /// 3. `body` has been elaborated with the binding in scope
 pub fn form_let<'db>(
-    value_ty: TrustedTerm<'db>,
-    value: TrustedTerm<'db>,
-    body: TrustedTerm<'db>,
-) -> TrustedTerm<'db> {
+    value_ty: TrustedSyntax<'db>,
+    value: TrustedSyntax<'db>,
+    body: TrustedSyntax<'db>,
+) -> TrustedSyntax<'db> {
     let let_syntax = Syntax::let_rc(
         value_ty.as_inner().clone(),
         value.as_inner().clone(),
         hwml_core::binding::Binding::new(body.as_inner().clone()),
     );
-    TrustedTerm::assume_trusted(let_syntax)
+    TrustedSyntax::assume_trusted(let_syntax)
 }
 
 /// **Hardware Arrow (HArrow) (Trusted Constructor)**
@@ -242,33 +266,36 @@ pub fn form_let<'db>(
 ///
 /// **Validation Contract**: The elaborator MUST ensure that both `source` and `target`
 /// are well-typed hardware types before calling this function.
-pub fn form_harrow<'db>(source: TrustedTerm<'db>, target: TrustedTerm<'db>) -> TrustedTerm<'db> {
+pub fn form_harrow<'db>(
+    source: TrustedSyntax<'db>,
+    target: TrustedSyntax<'db>,
+) -> TrustedSyntax<'db> {
     let harrow_syntax = Syntax::harrow_rc(source.as_inner().clone(), target.as_inner().clone());
-    TrustedTerm::assume_trusted(harrow_syntax)
+    TrustedSyntax::assume_trusted(harrow_syntax)
 }
 
 /// **Bit Type**
 ///
 /// Produces: `Bit : HType`
-pub fn form_bit<'db>() -> TrustedTerm<'db> {
+pub fn form_bit<'db>() -> TrustedSyntax<'db> {
     let bit_syntax = Syntax::bit_rc();
-    TrustedTerm::assume_trusted(bit_syntax)
+    TrustedSyntax::assume_trusted(bit_syntax)
 }
 
 /// **Zero Constant**
 ///
 /// Produces: `0 : Bit`
-pub fn form_zero<'db>() -> TrustedTerm<'db> {
+pub fn form_zero<'db>() -> TrustedSyntax<'db> {
     let zero_syntax = Syntax::zero_rc();
-    TrustedTerm::assume_trusted(zero_syntax)
+    TrustedSyntax::assume_trusted(zero_syntax)
 }
 
 /// **One Constant**
 ///
 /// Produces: `1 : Bit`
-pub fn form_one<'db>() -> TrustedTerm<'db> {
+pub fn form_one<'db>() -> TrustedSyntax<'db> {
     let one_syntax = Syntax::one_rc();
-    TrustedTerm::assume_trusted(one_syntax)
+    TrustedSyntax::assume_trusted(one_syntax)
 }
 
 /// **Equality Type (Trusted Constructor)**
@@ -286,24 +313,24 @@ pub fn form_one<'db>() -> TrustedTerm<'db> {
 /// 2. `lhs` has been checked against `ty`
 /// 3. `rhs` has been checked against `ty`
 pub fn form_eq<'db>(
-    ty: TrustedTerm<'db>,
-    lhs: TrustedTerm<'db>,
-    rhs: TrustedTerm<'db>,
-) -> TrustedTerm<'db> {
+    ty: TrustedSyntax<'db>,
+    lhs: TrustedSyntax<'db>,
+    rhs: TrustedSyntax<'db>,
+) -> TrustedSyntax<'db> {
     let eq_syntax = Syntax::eq_rc(
         ty.as_inner().clone(),
         lhs.as_inner().clone(),
         rhs.as_inner().clone(),
     );
-    TrustedTerm::assume_trusted(eq_syntax)
+    TrustedSyntax::assume_trusted(eq_syntax)
 }
 
 /// **Reflexivity**
 ///
 /// Produces: `refl : Eq A x x`
-pub fn form_refl<'db>() -> TrustedTerm<'db> {
+pub fn form_refl<'db>() -> TrustedSyntax<'db> {
     let refl_syntax = Syntax::refl_rc();
-    TrustedTerm::assume_trusted(refl_syntax)
+    TrustedSyntax::assume_trusted(refl_syntax)
 }
 
 /// **Transport (Trusted Constructor)**
@@ -322,9 +349,9 @@ pub fn form_refl<'db>() -> TrustedTerm<'db> {
 /// 3. `value` has been checked against `motive x`
 pub fn form_transport<'db>(
     motive: Closure<'db>,
-    proof: TrustedTerm<'db>,
-    value: TrustedTerm<'db>,
-) -> TrustedTerm<'db> {
+    proof: TrustedSyntax<'db>,
+    value: TrustedSyntax<'db>,
+) -> TrustedSyntax<'db> {
     // Quote the closure to a lambda syntax
     let motive_syntax = Syntax::lambda_rc(hwml_core::binding::Binding::new(motive.term));
     let transport_syntax = Syntax::transport_rc(
@@ -332,7 +359,7 @@ pub fn form_transport<'db>(
         proof.as_inner().clone(),
         value.as_inner().clone(),
     );
-    TrustedTerm::assume_trusted(transport_syntax)
+    TrustedSyntax::assume_trusted(transport_syntax)
 }
 
 /// **Case Expression**
@@ -346,7 +373,7 @@ pub fn form_transport<'db>(
 pub fn form_case<'db>(
     scrutinee_index: hwml_core::common::Index,
     branches: Vec<hwml_core::syn::CaseBranch<'db>>,
-) -> TrustedTerm<'db> {
+) -> TrustedSyntax<'db> {
     let case_syntax = Syntax::case_rc(scrutinee_index, branches);
-    TrustedTerm::assume_trusted(case_syntax)
+    TrustedSyntax::assume_trusted(case_syntax)
 }

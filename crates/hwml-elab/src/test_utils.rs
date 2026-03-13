@@ -76,8 +76,10 @@ pub fn elaborate_synth<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     expr: &hwml_surface::syntax::Expression,
 ) -> (RcSyntax<'db>, RcSyntax<'db>) {
-    let (term, ty_value) =
-        futures::executor::block_on(async { crate::elaborator::synth(ctx, expr).await });
+    let result = futures::executor::block_on(async { crate::elaborator::synth(ctx, expr).await });
+
+    let term = result.as_inner().subject.clone();
+    let ty_value = result.as_inner().ty.clone();
 
     // Quote the type back to syntax for easier inspection
     let ty_syntax = type_quote(ctx.solver.tc_env.values.global, ctx.depth(), &ty_value)
@@ -85,7 +87,7 @@ pub fn elaborate_synth<'db, 'g>(
             hwml_core::syn::Syntax::universe_rc(hwml_core::common::UniverseLevel::new(0))
         });
 
-    (term.into_inner(), ty_syntax)
+    (term, ty_syntax)
 }
 
 /// Elaborate a surface expression against an expected type.
