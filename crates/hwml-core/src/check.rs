@@ -2400,6 +2400,117 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_dependent_pattern_matching_with_equality() {
+        // This test demonstrates how dependent pattern matching on equality proofs
+        // enables type refinement using the transport primitive.
+        //
+        // Example: A function that takes a vector of length (n + n) and an equality
+        // proof that (n + n) = m, and returns a vector of length m.
+        //
+        // In a real implementation with pattern matching, matching on the equality
+        // proof (which must be `refl`) would allow the type checker to unify
+        // (n + n) with m, enabling the type refinement.
+        //
+        // Since we don't have full pattern matching in the core, we demonstrate
+        // the underlying mechanism: using transport to cast from Vec A (n + n)
+        // to Vec A m given a proof that (n + n) = m.
+
+        let db = Database::default();
+        let mut global = val::GlobalEnv::new();
+
+        // First, set up the type environment with Nat and Vec
+        // For this test, we'll use primitives to represent these types
+
+        // Register Nat : U0
+        let nat_id = "Nat".into_with_db(&db);
+        global.add_type_constructor(
+            nat_id,
+            val::TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
+        );
+
+        // Register Vec : (A : U0) -> Nat -> U0
+        // Vec has one parameter (A : U0) and one index (n : Nat)
+        let vec_id = "Vec".into_with_db(&db);
+        let u0_syn = Syntax::universe_rc(UniverseLevel::new(0));
+        let nat_syn = Syntax::type_constructor_rc(nat_id, vec![]);
+        global.add_type_constructor(
+            vec_id,
+            val::TypeConstructorInfo::new(
+                vec![u0_syn.clone(), nat_syn.clone()],
+                1, // One parameter (A), one index (n)
+                UniverseLevel::new(0),
+            ),
+        );
+
+        let mut env = make_env(&db, &global);
+        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let nat_val = Rc::new(Value::type_constructor(nat_id, vec![]));
+
+        // Context:
+        // A : U0
+        // n : Nat
+        // m : Nat
+        // eq_proof : Eq Nat n m
+        // v : Vec A n
+
+        // Push A : U0
+        let a = env.push_var(u0.clone());
+
+        // Push n : Nat
+        let n = env.push_var(nat_val.clone());
+
+        // Push m : Nat
+        let m = env.push_var(nat_val.clone());
+
+        // Push eq_proof : Eq Nat n m
+        let eq_ty = Rc::new(Value::eq(nat_val.clone(), n.clone(), m.clone()));
+        env.push_var(eq_ty);
+
+        // Push v : Vec A n
+        let vec_a_n = Rc::new(Value::type_constructor(vec_id, vec![a.clone(), n.clone()]));
+        env.push_var(vec_a_n.clone());
+
+        // Now we want to construct a term of type Vec A m
+        // We use transport with a motive that maps a Nat to Vec A (that Nat)
+        //
+        // transport v to (λ i → Vec A i) by eq_proof : Vec A m
+        //
+        // At depth 5: %0 = v, %1 = eq_proof, %2 = m, %3 = n, %4 = A
+
+        let transport_term = crate::syn::parse::parse_syntax_at_depth(
+            &db,
+            "transport %0 to λ %i → #[@Vec %4 %i] by %1",
+            5,
+        )
+        .expect("should parse");
+
+        // Type check: should synthesize Vec A m
+        let result = type_synth(&mut env, &transport_term);
+        assert!(result.is_ok(), "type_synth failed: {:?}", result.err());
+
+        let synth_ty = result.unwrap();
+
+        // The synthesized type should be Vec A m
+        let expected_ty = Rc::new(Value::type_constructor(vec_id, vec![a.clone(), m.clone()]));
+
+        assert!(
+            equal::type_equiv(
+                &global,
+                &env.values.transparent,
+                env.depth(),
+                &synth_ty,
+                &expected_ty
+            )
+            .is_ok(),
+            "Expected type Vec A m, got {:?}",
+            synth_ty
+        );
+
+        // This demonstrates that transport successfully performs the type refinement
+        // that would occur when pattern matching on an equality proof!
+    }
+
     // ========== Let expression tests ==========
 
     #[test]
