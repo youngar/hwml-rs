@@ -13,6 +13,7 @@ Stmt: Statement = {
     <d:Def> => Statement::Def(d),
     <m:Meta> => Statement::Meta(m),
     <p:Prim> => Statement::Prim(p),
+    <i:Inductive> => Statement::Inductive(i),
 };
 
 Meta: Meta = {
@@ -30,6 +31,41 @@ Def: Def = {
 Prim: Prim = {
     "prim" <id:Id> ":" <ty:Expr0> => {
         Prim::new(id, ty)
+    }
+};
+
+// inductive Name (params...) : (indices...) -> Universe where
+//   | Constructor1 : Type1
+//   | Constructor2 : Type2
+Inductive: Inductive = {
+    <l:@L> "inductive" <name:Id> <params:OptionalTypedBindings> ":" <indices_and_universe:IndicesAndUniverse> "where" <ctors:Constructors> <r:@R> => {
+        let (indices, universe) = indices_and_universe;
+        Inductive::new(l..r, name, params, indices, universe, ctors)
+    }
+};
+
+// Parse: (indices...) -> Universe
+// or just: Universe (no arrow, no indices)
+// We need to be careful to avoid ambiguity with Pi types
+IndicesAndUniverse: (TypedBindings, Box<Expression>) = {
+    // Just a universe expression (no indices)
+    <universe:Expr3> => {
+        (TypedBindings::new(vec![]), universe)
+    },
+    // With indices: (n : Nat) -> Type
+    <indices:TypedBindings> "->" <universe:Expr3> => {
+        (indices, universe)
+    },
+};
+
+// Parse constructor list: | name : type | name : type ...
+Constructors: Vec<Constructor> = {
+    <ctors:Constructor+> => ctors
+};
+
+Constructor: Constructor = {
+    <l:@L> "|" <name:Id> ":" <ty:Expr0> <r:@R> => {
+        Constructor::new(l..r, name, ty)
     }
 };
 
@@ -65,6 +101,11 @@ Expr3: Box<Expression> = {
   <u:Underscore> => Box::new(Expression::Underscore(u)),
   <p:Paren> => Box::new(Expression::Paren(p)),
   <n:Num> => Box::new(Expression::Num(n)),
+  <univ:Universe> => Box::new(Expression::Universe(univ)),
+};
+
+Universe: Universe = {
+  <l:@L> "Type" <r:@R> => Universe::new(l..r, None),
 };
 
 // (x1 .. xn : X) (y1 .. yn : Y) -> Z
@@ -146,6 +187,12 @@ TypedBindings: TypedBindings = {
   <bgs:TypedBindingGroup+> => TypedBindings::new(bgs),
 };
 
+#[inline]
+OptionalTypedBindings: TypedBindings = {
+  TypedBindings,
+  => TypedBindings::new(vec![]),
+};
+
 BindingGroup: BindingGroup = {
   <ubg:UntypedBindingGroup> => BindingGroup::Untyped(ubg),
   <tbg:TypedBindingGroup> => BindingGroup::Typed(tbg),
@@ -220,6 +267,9 @@ extern {
     "match" => Token::Match,
     "with" => Token::With,
     "end" => Token::End,
+    "inductive" => Token::Inductive,
+    "where" => Token::Where,
+    "Type" => Token::Type,
     "|" => Token::Pipe,
     "(" => Token::LParen,
     ")" => Token::RParen,

@@ -11,6 +11,7 @@ pub enum Statement {
     Def(Def),
     Meta(Meta),
     Prim(Prim),
+    Inductive(Inductive),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -49,6 +50,13 @@ pub enum Expression {
     Num(Num),
     Str(Str),
     Id(Id),
+    Universe(Universe),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Universe {
+    pub loc: Location,
+    pub level: Option<u32>, // None means Type, Some(n) means Type n
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -149,8 +157,6 @@ pub struct Str {
     pub value: String,
 }
 
-type Location = Range<usize>;
-
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Match {
     pub scrutinee: Box<Expression>,
@@ -162,3 +168,22 @@ pub struct MatchClause {
     pub pattern: Box<Expression>,
     pub body: Box<Expression>,
 }
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Inductive {
+    pub loc: Location,
+    pub name: Id,
+    pub parameters: TypedBindings,
+    pub indices: TypedBindings,
+    pub universe: Box<Expression>,
+    pub constructors: Vec<Constructor>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Constructor {
+    pub loc: Location,
+    pub name: Id,
+    pub ty: Box<Expression>,
+}
+
+type Location = Range<usize>;

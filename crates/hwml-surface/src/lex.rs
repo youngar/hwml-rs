@@ -66,6 +66,12 @@ pub enum Token {
     With,
     #[token("end", priority = 4)]
     End,
+    #[token("inductive", priority = 4)]
+    Inductive,
+    #[token("where", priority = 4)]
+    Where,
+    #[token("Type", priority = 4)]
+    Type,
     #[token("(", priority = 10)]
     LParen,
     #[token(")", priority = 10)]
