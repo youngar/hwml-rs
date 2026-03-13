@@ -12,7 +12,7 @@ use crate::quote::{quote, type_quote};
 use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
 use crate::syn::print::print_syntax_to_string;
 use crate::syn::RcSyntax;
-use crate::val::{Environment, GlobalEnv, Value};
+use crate::val::{Environment, GlobalEnv, RcValue, Value};
 use crate::Database;
 
 // ========== Prelude String Constants ==========
@@ -66,17 +66,13 @@ pub fn load_prelude<'db>(db: &'db Database, prelude: &'db str) -> GlobalEnv<'db>
 }
 
 /// Evaluate a syntax term to a value.
-pub fn eval_term<'db>(global: &GlobalEnv<'db>, stx: &RcSyntax<'db>) -> Rc<Value<'db>> {
+pub fn eval_term<'db>(global: &GlobalEnv<'db>, stx: &RcSyntax<'db>) -> RcValue<'db> {
     let mut env = Environment::new(global);
     eval::eval(&mut env, stx).unwrap_or_else(|e| panic!("Failed to eval '{:?}': {:?}", stx, e))
 }
 
 /// Parse and evaluate a string to a value.
-pub fn eval_str<'db>(
-    db: &'db Database,
-    global: &GlobalEnv<'db>,
-    input: &'db str,
-) -> Rc<Value<'db>> {
+pub fn eval_str<'db>(db: &'db Database, global: &GlobalEnv<'db>, input: &'db str) -> RcValue<'db> {
     let stx = parse(db, input);
     eval_term(global, &stx)
 }
@@ -97,7 +93,7 @@ pub fn eval_str_at_depth<'db>(
     global: &GlobalEnv<'db>,
     input: &'db str,
     depth: usize,
-) -> Rc<Value<'db>> {
+) -> RcValue<'db> {
     let stx = parse_syntax_at_depth(db, input, depth)
         .unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e));
     let mut env = Environment::new(global);
@@ -211,7 +207,7 @@ pub fn eval_with_context<'db>(
     db: &'db Database,
     global: &GlobalEnv<'db>,
     input: &'db str,
-) -> Rc<Value<'db>> {
+) -> RcValue<'db> {
     // Split on '|-'
     let parts: Vec<&str> = input.splitn(2, "|-").collect();
     if parts.len() != 2 {
@@ -276,7 +272,7 @@ pub fn eval_with_prelude_and_context<'db>(
     db: &'db Database,
     prelude: &'db str,
     context_and_expr: &'db str,
-) -> Rc<Value<'db>> {
+) -> RcValue<'db> {
     let global = load_prelude(db, prelude);
     eval_with_context(db, &global, context_and_expr)
 }
@@ -292,7 +288,7 @@ pub fn eval_with_prelude<'db>(
     db: &'db Database,
     prelude: &'db str,
     expr: &'db str,
-) -> Rc<Value<'db>> {
+) -> RcValue<'db> {
     let global = load_prelude(db, prelude);
     eval_str(db, &global, expr)
 }

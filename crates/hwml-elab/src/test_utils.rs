@@ -3,14 +3,11 @@
 //! This module provides helper functions for writing elaboration tests,
 //! including snapshot testing support similar to LLVM's FileCheck/lit tests.
 
-use std::rc::Rc;
-
 use hwml_core::{
     check::TCEnvironment,
-    common::UniverseLevel,
     quote::type_quote,
     syn::{print::print_syntax_to_string, RcSyntax},
-    val::{Environment, GlobalEnv, Value},
+    val::{Environment, GlobalEnv, RcValue},
 };
 
 use crate::{
@@ -85,12 +82,10 @@ pub fn elaborate_synth<'db, 'g>(
     // Quote the type back to syntax for easier inspection
     let ty_syntax = type_quote(ctx.solver.tc_env.values.global, ctx.depth(), &ty_value)
         .unwrap_or_else(|_| {
-            hwml_core::syn::Syntax::universe_rc(
-                hwml_core::common::                UniverseLevel::new(0),
-            )
+            hwml_core::syn::Syntax::universe_rc(hwml_core::common::UniverseLevel::new(0))
         });
 
-    (term, ty_syntax)
+    (term.into_inner(), ty_syntax)
 }
 
 /// Elaborate a surface expression against an expected type.
@@ -98,22 +93,23 @@ pub fn elaborate_synth<'db, 'g>(
 pub fn elaborate_check<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     expr: &hwml_surface::syntax::Expression,
-    expected_ty: Rc<Value<'db>>,
+    expected_ty: RcValue<'db>,
 ) -> RcSyntax<'db> {
     futures::executor::block_on(async { crate::elaborator::check(ctx, expr, expected_ty).await })
+        .into_inner()
 }
 
 // ========== Pretty Printing Helpers ==========
 
 /// Print a core syntax term to a string.
-pub fn print_term(db: &dyn salsa::Database, term: &RcSyntax) -> String {
+pub fn print_term(_db: &dyn salsa::Database, term: &RcSyntax) -> String {
     // We need the concrete Database type for printing
     let db_impl = hwml_core::Database::default();
     print_syntax_to_string(&db_impl, term)
 }
 
 /// Print a core syntax type to a string.
-pub fn print_type(db: &dyn salsa::Database, ty: &RcSyntax) -> String {
+pub fn print_type(_db: &dyn salsa::Database, ty: &RcSyntax) -> String {
     // We need the concrete Database type for printing
     let db_impl = hwml_core::Database::default();
     print_syntax_to_string(&db_impl, ty)

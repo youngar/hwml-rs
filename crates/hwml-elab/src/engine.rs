@@ -17,7 +17,7 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 fn eval_metavariable_type<'db>(
     global: &val::GlobalEnv<'db>,
     info: &val::MetavariableInfo<'db>,
-) -> Result<Rc<Value<'db>>, eval::Error> {
+) -> Result<RcValue<'db>, eval::Error> {
     use hwml_core::val::Environment;
 
     let mut env = Environment::new(global);
@@ -59,7 +59,7 @@ fn eval_metavariable_type<'db>(
 fn quote_value_simple<'db>(
     _global: &val::GlobalEnv<'db>,
     _depth: usize,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> syn::RcSyntax<'db> {
     // For now, we can just return a placeholder - the key is that the type
     // is stored semantically. In practice, this closure won't be evaluated
@@ -116,7 +116,7 @@ type TaskId = usize;
 #[derive(Clone)]
 struct MetaSlot<'db> {
     /// The type of the metavariable.
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
     /// The solution for this metavariable, if solved.
     solution: Option<Rc<Syntax<'db>>>,
     /// Tasks waiting for this metavariable to be solved.
@@ -124,24 +124,29 @@ struct MetaSlot<'db> {
     /// Whether this metavariable is poisoned (represents an error).
     /// Poisoned metavariables unify with anything to prevent error cascades.
     poisoned: bool,
+    /// The source location where this metavariable was created.
+    /// Used for better error reporting and deadlock detection.
+    location: Location,
 }
 
 impl<'db> MetaSlot<'db> {
-    fn new(ty: Rc<Value<'db>>) -> Self {
+    fn new(ty: RcValue<'db>, location: Location) -> Self {
         Self {
             ty,
             solution: None,
             waiters: Vec::new(),
             poisoned: false,
+            location,
         }
     }
 
-    fn new_poisoned(ty: Rc<Value<'db>>) -> Self {
+    fn new_poisoned(ty: RcValue<'db>, location: Location) -> Self {
         Self {
             ty,
             solution: None,
             waiters: Vec::new(),
             poisoned: true,
+            location,
         }
     }
 
@@ -182,24 +187,24 @@ impl<'db> SolverState<'db> {
     ///
     /// This is the **only** way to create new MetaVariableIds for this solver.
     /// By allocating through the state, we ensure deterministic ID generation.
-    pub fn fresh_meta(&mut self, ty: Rc<Value<'db>>) -> MetaVariableId {
+    pub fn fresh_meta(&mut self, ty: RcValue<'db>, loc: Location) -> MetaVariableId {
         let local_index = self.next_meta_index;
         let id = MetaVariableId::new(local_index);
         self.next_meta_index += 1;
 
-        self.metas.insert(id, MetaSlot::new(ty));
-        println!("[Solver] Allocated fresh meta {}", id);
+        self.metas.insert(id, MetaSlot::new(ty, loc));
+        println!("[Solver] Allocated fresh meta {} at {:?}", id, loc);
         id
     }
 
     /// Allocate a fresh poisoned metavariable (for error recovery).
-    pub fn fresh_poisoned_meta(&mut self, ty: Rc<Value<'db>>) -> MetaVariableId {
+    pub fn fresh_poisoned_meta(&mut self, ty: RcValue<'db>, loc: Location) -> MetaVariableId {
         let local_index = self.next_meta_index;
         let id = MetaVariableId::new(local_index);
         self.next_meta_index += 1;
 
-        self.metas.insert(id, MetaSlot::new_poisoned(ty));
-        println!("[Solver] Allocated fresh poisoned meta {}", id);
+        self.metas.insert(id, MetaSlot::new_poisoned(ty, loc));
+        println!("[Solver] Allocated fresh poisoned meta {} at {:?}", id, loc);
         id
     }
 
@@ -266,7 +271,7 @@ impl<'db> SolverState<'db> {
     }
 
     /// Get the type of a metavariable.
-    pub fn meta_type(&self, id: MetaVariableId) -> Rc<Value<'db>> {
+    pub fn meta_type(&self, id: MetaVariableId) -> RcValue<'db> {
         self.metas
             .get(&id)
             .expect(&format!("Meta {} not found", id))
@@ -346,12 +351,9 @@ impl<'db> SolverState<'db> {
                 }
                 Syntax::Refl(_) => {}
                 Syntax::Transport(transport) => {
-                    collect_rec(&transport.motive.body, deps);
+                    collect_rec(&transport.motive, deps);
                     collect_rec(&transport.proof, deps);
                     collect_rec(&transport.value, deps);
-                }
-                Syntax::Closure(closure) => {
-                    collect_rec(&closure.body, deps);
                 }
                 Syntax::HArrow(harrow) => {
                     collect_rec(&harrow.source, deps);
@@ -470,7 +472,8 @@ impl<'db> SolverState<'db> {
                 eval_metavariable_type(global, info).unwrap_or(placeholder_ty.clone())
             };
 
-            metas.insert(*id, MetaSlot::new(ty));
+            // Use UNKNOWN location for metavariables from global environment
+            metas.insert(*id, MetaSlot::new(ty, Location::UNKNOWN));
         }
 
         Self {
@@ -535,15 +538,14 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
     /// Allocate a fresh metavariable and return its ID.
     /// The type is stored in the SolverState's MetaSlot.
-    /// TODO: Accept a Location parameter once we add location tracking to the elaboration context.
-    pub fn fresh_meta_id(&self, ty: Rc<Value<'db>>) -> MetaVariableId {
-        self.state.borrow_mut().fresh_meta(ty)
+    pub fn fresh_meta_id(&self, ty: RcValue<'db>, loc: Location) -> MetaVariableId {
+        self.state.borrow_mut().fresh_meta(ty, loc)
     }
 
     /// Allocate a fresh metavariable and return it as a Flex value.
     /// The metavariable captures the current local environment as its substitution.
-    pub fn fresh_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        let id = self.fresh_meta_id(ty.clone());
+    pub fn fresh_meta(&self, ty: RcValue<'db>, loc: Location) -> RcValue<'db> {
+        let id = self.fresh_meta_id(ty.clone(), loc);
         Rc::new(Value::metavariable(
             id,
             self.tc_env.values.local.clone(),
@@ -552,8 +554,8 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     }
 
     /// Allocate a fresh poisoned metavariable for error recovery.
-    pub fn fresh_poisoned_meta(&self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-        let id = self.state.borrow_mut().fresh_poisoned_meta(ty.clone());
+    pub fn fresh_poisoned_meta(&self, ty: RcValue<'db>, loc: Location) -> RcValue<'db> {
+        let id = self.state.borrow_mut().fresh_poisoned_meta(ty.clone(), loc);
         Rc::new(Value::metavariable(
             id,
             self.tc_env.values.local.clone(),
@@ -571,7 +573,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     }
 
     /// Get the type of a metavariable.
-    pub fn meta_type(&self, meta: MetaVariableId) -> Rc<Value<'db>> {
+    pub fn meta_type(&self, meta: MetaVariableId) -> RcValue<'db> {
         self.state.borrow().meta_type(meta)
     }
 
@@ -925,7 +927,7 @@ mod tests {
         // Test direct cycle: ?M := ?M
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_meta(ty);
+        let meta_id = state.fresh_meta(ty, Location::UNKNOWN);
 
         // Try to solve ?M := ?M (direct cycle)
         let solution = Syntax::metavariable_rc(meta_id, vec![]);
@@ -941,8 +943,8 @@ mod tests {
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
 
-        let meta_m = state.fresh_meta(ty.clone());
-        let meta_n = state.fresh_meta(ty.clone());
+        let meta_m = state.fresh_meta(ty.clone(), Location::UNKNOWN);
+        let meta_n = state.fresh_meta(ty.clone(), Location::UNKNOWN);
 
         // First solve ?N := ?M
         let solution_n = Syntax::metavariable_rc(meta_m, vec![]);
@@ -963,8 +965,8 @@ mod tests {
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
 
-        let meta_m = state.fresh_meta(ty.clone());
-        let meta_n = state.fresh_meta(ty.clone());
+        let meta_m = state.fresh_meta(ty.clone(), Location::UNKNOWN);
+        let meta_n = state.fresh_meta(ty.clone(), Location::UNKNOWN);
 
         // Solve ?M := ?N (no cycle)
         let solution = Syntax::metavariable_rc(meta_n, vec![]);
@@ -978,7 +980,7 @@ mod tests {
     fn test_poisoned_meta_creation() {
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_poisoned_meta(ty);
+        let meta_id = state.fresh_poisoned_meta(ty, Location::UNKNOWN);
 
         assert!(state.is_poisoned(meta_id), "Meta should be poisoned");
         assert!(
@@ -993,9 +995,9 @@ mod tests {
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
 
         // Create multiple metas at the same location
-        let meta1 = state.fresh_meta(ty.clone());
-        let meta2 = state.fresh_meta(ty.clone());
-        let meta3 = state.fresh_meta(ty.clone());
+        let meta1 = state.fresh_meta(ty.clone(), Location::UNKNOWN);
+        let meta2 = state.fresh_meta(ty.clone(), Location::UNKNOWN);
+        let meta3 = state.fresh_meta(ty.clone(), Location::UNKNOWN);
 
         // They should have different local indices
         assert_ne!(meta1, meta2);

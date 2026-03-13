@@ -115,20 +115,20 @@ fn run_core(args: Args) {
         );
         for decl in &module.declarations {
             match decl {
-                hwml_core::declaration::Declaration::Primitive(p) => {
+                hwml_core::syn::declaration::Declaration::PrimitiveDecl(p) => {
                     println!("  - prim {}: {:?}", p.name.name(&db), p.ty);
                 }
-                hwml_core::declaration::Declaration::Constant(c) => {
+                hwml_core::syn::declaration::Declaration::ConstantDecl(c) => {
                     println!("  - const {}: {:?} = {:?}", c.name.name(&db), c.ty, c.value);
                 }
-                hwml_core::declaration::Declaration::TypeConstructor(tc) => {
+                hwml_core::syn::declaration::Declaration::TypeConstructorDecl(tc) => {
                     println!(
                         "  - tcon {} with {} data constructors",
                         tc.name.name(&db),
                         tc.data_constructors.len()
                     );
                 }
-                hwml_core::declaration::Declaration::Metavariable(m) => {
+                hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {
                     println!("  - meta ?{}: {:?}", m.id.local_index, m.ty);
                 }
             }
@@ -139,15 +139,15 @@ fn run_core(args: Args) {
     println!("Module:");
     for decl in &module.declarations {
         match decl {
-            hwml_core::declaration::Declaration::Primitive(p) => {
+            hwml_core::syn::declaration::Declaration::PrimitiveDecl(p) => {
                 print!("  prim ${} : ", p.name.name(&db));
                 hwml_core::syn::dump_syntax(&db, &p.ty);
             }
-            hwml_core::declaration::Declaration::Constant(c) => {
+            hwml_core::syn::declaration::Declaration::ConstantDecl(c) => {
                 print!("  const @{} : ", c.name.name(&db));
                 hwml_core::syn::dump_syntax(&db, &c.ty);
             }
-            hwml_core::declaration::Declaration::TypeConstructor(tc) => {
+            hwml_core::syn::declaration::Declaration::TypeConstructorDecl(tc) => {
                 print!("  tcon @{} : ", tc.name.name(&db));
                 hwml_core::syn::dump_syntax(&db, &tc.universe);
 
@@ -157,7 +157,7 @@ fn run_core(args: Args) {
                     hwml_core::syn::dump_syntax(&db, &dcon.full_type());
                 }
             }
-            hwml_core::declaration::Declaration::Metavariable(m) => {
+            hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {
                 print!("  meta ?{} : ", m.id.local_index);
                 hwml_core::syn::dump_syntax(&db, &m.ty);
             }
@@ -174,7 +174,7 @@ fn run_core(args: Args) {
 #[cfg(feature = "circt")]
 fn emit_circt_module(
     db: &hwml_core::Database,
-    module: &hwml_core::declaration::Module,
+    module: &hwml_core::syn::declaration::CompilationUnit,
     emit_mlir: bool,
     emit_verilog: bool,
 ) {

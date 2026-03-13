@@ -9,6 +9,7 @@
 #![allow(unused_imports)]
 
 use crate::{
+    binding::{Binding, DynBinding},
     common::{Index, Level, Location},
     eval::{self, eval_telescope, run_closure},
     syn::{CaseBranch, RcSyntax, Syntax},
@@ -24,7 +25,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub enum Error<'db> {
     /// Something about the input was ill-typed, preventing quotation.
-        IllTyped,
+    IllTyped,
     /// Quotation can force evaluation, which may itself error.
     EvalError(eval::Error),
     LookupError(val::LookupError<'db>),
@@ -166,7 +167,7 @@ fn eta_expand_pi<'db>(
     // Quote the result at the target type
     let syn_body = quote(global, depth + 1, &applied, &result_ty)?;
 
-    Ok(Syntax::lambda_rc(syn_body))
+    Ok(Syntax::lambda_rc(Binding::new(syn_body)))
 }
 
 /// Quote an instance of a TypeConstructor.
@@ -290,11 +291,7 @@ pub fn quote_happlication<'db>(
             _ => return Err(Error::IllTyped),
         },
     )?;
-    Ok(Syntax::happlication_rc(
-        module,
-        domain_ty,
-        argument,
-    ))
+    Ok(Syntax::happlication_rc(module, domain_ty, argument))
 }
 
 /// Quote an instance of SignalUniverse (a signal type).
@@ -461,7 +458,7 @@ pub fn quote_pi<'db>(
     let sem_target = run_closure(global, &pi.target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
-    Ok(Syntax::pi_rc(syn_source, syn_target))
+    Ok(Syntax::pi_rc(syn_source, Binding::new(syn_target)))
 }
 
 /// Quote a Lambda to syntax, using its Pi type.
@@ -481,7 +478,7 @@ pub fn quote_lambda<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    Ok(Syntax::lambda_rc(syn_body))
+    Ok(Syntax::lambda_rc(Binding::new(syn_body)))
 }
 
 pub fn quote_let<'db>(
@@ -493,11 +490,7 @@ pub fn quote_let<'db>(
     let syn_ty = quote_at_unknown_type(global, depth, &let_val.ty)?;
     let syn_value = quote(global, depth, &let_val.value, &let_val.ty)?;
     let syn_body = quote(global, depth + 1, &let_val.body, _expected_ty)?;
-    Ok(Syntax::let_rc(
-        syn_ty,
-        syn_value,
-        syn_body,
-    ))
+    Ok(Syntax::let_rc(syn_ty, syn_value, Binding::new(syn_body)))
 }
 
 fn quote_at_unknown_type<'db>(
@@ -536,10 +529,7 @@ pub fn quote_type_constructor<'db>(
         env.push(sem_arg.clone());
     }
 
-    Ok(Syntax::type_constructor_rc(
-                tcon.constructor,
-        arguments,
-    ))
+    Ok(Syntax::type_constructor_rc(tcon.constructor, arguments))
 }
 
 /// Quote a DataConstructor to syntax.
@@ -580,10 +570,7 @@ pub fn quote_data_constructor<'db>(
         env.push(sem_arg.clone());
     }
 
-    Ok(Syntax::data_constructor_rc(
-                dcon.constructor,
-        arguments,
-    ))
+    Ok(Syntax::data_constructor_rc(dcon.constructor, arguments))
 }
 
 /// Quote HardwareUniverse to syntax.
@@ -676,7 +663,7 @@ pub fn quote_module<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    Ok(Syntax::module_rc(syn_body))
+    Ok(Syntax::module_rc(Binding::new(syn_body)))
 }
 // ============================================================================
 // Neutral Quotation Functions
@@ -774,10 +761,7 @@ fn quote_metavariable<'db>(
         env.push(value.clone());
     }
 
-    Ok(Syntax::metavariable_rc(
-                meta.id,
-        substitution,
-    ))
+    Ok(Syntax::metavariable_rc(meta.id, substitution))
 }
 
 /// Quote an eliminator applied to a head term.
@@ -836,7 +820,7 @@ fn quote_case_eliminator<'db>(
         for ty in dcon_arg_tys.types {
             dcon_args.push(Rc::new(Value::variable(
                 Level::new(depth + dcon_args.len()),
-        ty,
+                ty,
             )));
         }
 
@@ -845,16 +829,12 @@ fn quote_case_eliminator<'db>(
         let branch_syn = quote(global, depth + branch.arity, &branch_val, &placeholder_ty)?;
         branches.push(CaseBranch::new(
             branch.constructor,
-            branch.arity,
-        branch_syn,
+            DynBinding::new(branch.arity, branch_syn),
         ));
     }
 
     // No return_type to quote - case expressions are check-only
-    Ok(Syntax::case_rc(
-                scrutinee_var.index,
-        branches,
-    ))
+    Ok(Syntax::case_rc(scrutinee_var.index, branches))
 }
 
 // ============================================================================
@@ -900,11 +880,11 @@ fn quote_transport<'db>(
     eq: &val::EqType<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Quote the motive by eta-expansion
-    // The motive is a closure with arity 1, so we create a single Closure wrapping the body
+    // The motive is a closure with arity 1, so we quote it as a lambda
     let var = Rc::new(Value::variable(Level::new(depth), eq.ty.clone()));
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
     let motive_body = type_quote(global, depth + 1, &motive_result)?;
-    let motive = crate::syn::Closure::new(motive_body);
+    let motive = Syntax::lambda_rc(Binding::new(motive_body));
 
     // Quote the proof at the equality type
     let eq_ty = Rc::new(Value::eq(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()));
@@ -914,11 +894,7 @@ fn quote_transport<'db>(
     let lhs_ty = run_closure(global, &transport.motive, vec![eq.lhs.clone()])?;
     let value = quote(global, depth, &transport.value, &lhs_ty)?;
 
-    Ok(Syntax::transport_rc(
-        motive,
-        proof,
-        value,
-    ))
+    Ok(Syntax::transport_rc(motive, proof, value))
 }
 
 // ============================================================================
@@ -932,7 +908,7 @@ mod tests {
     use crate::eval;
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
-    use crate::val::{DataConstructorInfo, TypeConstructorInfo};
+    use crate::val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
     use crate::Database;
     use hwml_support::salsa::IntoWithDb;
 
@@ -949,13 +925,13 @@ mod tests {
     impl<'db> Ctx<'db> {
         fn new(db: &'db Database) -> Self {
             Self {
-        db,
+                db,
                 global: GlobalEnv::new(),
             }
         }
 
         /// Parse and evaluate a string to a value
-        fn eval(&self, input: &'db str) -> Rc<Value<'db>> {
+        fn eval(&self, input: &'db str) -> RcValue<'db> {
             let stx = parse_syntax(self.db, input).expect("parse failed");
             let mut env = Environment {
                 global: &self.global,
@@ -1005,38 +981,29 @@ mod tests {
         }
 
         // Common type constructors
-        fn u0(&self) -> Rc<Value<'db>> {
+        fn u0(&self) -> RcValue<'db> {
             Rc::new(Value::universe(UniverseLevel::new(0)))
         }
-        fn bit(&self) -> Rc<Value<'db>> {
+        fn bit(&self) -> RcValue<'db> {
             Rc::new(Value::bit())
         }
 
         /// Create Bit → Bit HArrow type
         fn harrow_bit_bit(&self) -> Value<'db> {
-            Value::harrow(
-                self.bit(),
-                Closure::new(LocalEnv::new(), Syntax::bit_rc()),
-            )
+            Value::harrow(self.bit(), Closure::new(LocalEnv::new(), Syntax::bit_rc()))
         }
 
         /// Create ∀ (x : U0) → U0 Pi type
         fn pi_u0_u0(&self) -> Value<'db> {
             Value::pi(
                 self.u0(),
-                Closure::new(
-                    LocalEnv::new(),
-                    Syntax::universe_rc(UniverseLevel::new(0)),
-                ),
+                Closure::new(LocalEnv::new(), Syntax::universe_rc(UniverseLevel::new(0))),
             )
         }
 
         /// Create identity closure (returns variable at index 0)
         fn identity_closure(&self) -> Closure<'db> {
-            Closure::new(
-                LocalEnv::new(),
-                Syntax::variable_rc(Index(0)),
-            )
+            Closure::new(LocalEnv::new(), Syntax::variable_rc(Index(0)))
         }
     }
 
@@ -1240,7 +1207,7 @@ mod tests {
         // No args: #[@Nat]
         let nat_id = "Nat".into_with_db(&db);
         global.add_type_constructor(
-        nat_id,
+            nat_id,
             TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
         );
         let nat = Value::type_constructor(nat_id, vec![]);
@@ -1250,12 +1217,10 @@ mod tests {
         // With args: #[@Vec Bit]
         let vec_id = "Vec".into_with_db(&db);
         global.add_type_constructor(
-        vec_id,
+            vec_id,
             TypeConstructorInfo::new(
-                vec![Syntax::universe_rc(
-                                        UniverseLevel::new(0),
-                )],
-        1,
+                vec![Syntax::universe_rc(UniverseLevel::new(0))],
+                1,
                 UniverseLevel::new(0),
             ),
         );
@@ -1276,23 +1241,20 @@ mod tests {
         // Register Unit type and tt constructor
         let unit_id = "Unit".into_with_db(&db);
         global.add_type_constructor(
-        unit_id,
+            unit_id,
             TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
         );
         let tt_id = "tt".into_with_db(&db);
         global.add_data_constructor(
-        tt_id,
-            DataConstructorInfo::new(
-                vec![],
-                Syntax::type_constructor_rc(unit_id, vec![]),
-            ),
+            tt_id,
+            DataConstructorInfo::new(vec![], Syntax::type_constructor_rc(unit_id, vec![])),
         );
 
         let unit_tcon = crate::val::TypeConstructor::new(unit_id, vec![]);
         let tt_dcon = Value::data_constructor(tt_id, vec![]);
         let syntax = quote_data_constructor(
             &global,
-        0,
+            0,
             match &tt_dcon {
                 Value::DataConstructor(d) => d,
                 _ => panic!(),
@@ -1317,11 +1279,7 @@ mod tests {
 
         // No args: ?[0]
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(
-        meta_id,
-            vec![],
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
         let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_rc.clone());
         let syntax = quote(&global, 0, &meta, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
@@ -1329,10 +1287,8 @@ mod tests {
         // With args: ?[1 Bit]
         let meta_id2 = MetaVariableId::new(1);
         global.add_metavariable(
-        meta_id2,
-            vec![Syntax::universe_rc(
-                                UniverseLevel::new(0),
-            )],
+            meta_id2,
+            vec![Syntax::universe_rc(UniverseLevel::new(0))],
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let mut local = LocalEnv::new();
@@ -1353,8 +1309,8 @@ mod tests {
 
         // ∀ (A : U0) → ∀ (x : A) → A
         let inner = Syntax::pi_rc(
-                        Syntax::variable_rc(Index(0)), // domain is A
-            Syntax::variable_rc(Index(1)), // codomain is A
+            Syntax::variable_rc(Index(0)),               // domain is A
+            Binding::new(Syntax::variable_rc(Index(1))), // codomain is A
         );
         let outer = Value::pi(c.u0(), Closure::new(LocalEnv::new(), inner));
         assert_eq!(c.tq(&outer), "∀ (%0 : 𝒰0) (%1 : %0) → %0");
@@ -1470,9 +1426,9 @@ mod tests {
     fn test_quote_transport() {
         let db = Database::new();
         let c = Ctx::new(&db);
-        // transport [%0] |- Bit refl 0 reduces to 0 during eval
+        // transport 0 to λ %x → Bit by refl reduces to 0 during eval
         // So we just verify the reduction works
-        assert_eq!(c.quote_at("transport [%0] |- Bit refl 0", "Bit"), "0");
+        assert_eq!(c.quote_at("transport 0 to λ %x → Bit by refl", "Bit"), "0");
     }
 
     #[test]

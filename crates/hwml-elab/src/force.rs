@@ -8,7 +8,7 @@ pub fn substitute<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
     flex: &val::Flex<'db>,
     solution: &Rc<Syntax<'db>>,
-) -> Rc<Value<'db>> {
+) -> RcValue<'db> {
     let global = ctx.tc_env.values.global;
     eval::substitute(global, solution, flex.head.local.clone()).unwrap()
 }
@@ -24,8 +24,8 @@ pub fn substitute<'db, 'g>(
 /// concurrently by other tasks, and we need to pick up those solutions.
 pub fn force<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
-    mut value: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, eval::Error> {
+    mut value: RcValue<'db>,
+) -> Result<RcValue<'db>, eval::Error> {
     let global = ctx.tc_env.values.global;
     while let Value::Flex(flex) = &*value {
         match ctx.solution(flex.head.id) {
@@ -78,7 +78,7 @@ mod tests {
         global: &GlobalEnv<'db>,
         meta_ty: &'db str,
         solution: &'db str,
-    ) -> Rc<Value<'db>> {
+    ) -> RcValue<'db> {
         let mut executor = SingleThreadedExecutor::new();
         let tc_env = TCEnvironment {
             db,
@@ -88,7 +88,7 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         let ty = eval_str(db, global, meta_ty);
-        let meta_val = ctx.fresh_meta(ty);
+        let meta_val = ctx.fresh_meta(ty, Location::UNKNOWN);
         let meta_id = match &*meta_val {
             Value::Flex(flex) => flex.head.id,
             _ => panic!("Expected Flex"),
@@ -137,7 +137,7 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         let ty = eval_str(&db, &global, "U0");
-        let meta_val = ctx.fresh_meta(ty);
+        let meta_val = ctx.fresh_meta(ty, Location::UNKNOWN);
         let result = force(&ctx, meta_val.clone()).expect("force failed");
         assert!(Rc::ptr_eq(&meta_val, &result));
     }

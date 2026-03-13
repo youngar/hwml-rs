@@ -49,9 +49,9 @@ impl Renaming {
         self.get(src).map(|tgt| tgt.to_index(self.depth))
     }
 
-    pub fn under_binder<'db, R, F>(&mut self, ty: Rc<Value<'db>>, f: F) -> R
+    pub fn under_binder<'db, R, F>(&mut self, ty: RcValue<'db>, f: F) -> R
     where
-        F: FnOnce(&mut Renaming, Rc<Value<'db>>) -> R,
+        F: FnOnce(&mut Renaming, RcValue<'db>) -> R,
     {
         self.depth = self.depth + 1;
         let a = Level::new(self.source_depth());
@@ -70,9 +70,9 @@ pub enum InversionError<'db> {
     EvalError(eval::Error),
     /// One of the values of the substitution is not a plain variable, which prevents us from inverting the
     /// substitution. All values in the substitution must be a plain variable.
-    NonInvertibleValue(usize, Rc<Value<'db>>),
+    NonInvertibleValue(usize, RcValue<'db>),
     /// A variable appears as a value in the substitution more than once.
-    NonLinearVariable(usize, usize, Rc<Value<'db>>),
+    NonLinearVariable(usize, usize, RcValue<'db>),
 }
 
 impl<'db> From<eval::Error> for InversionError<'db> {
@@ -131,8 +131,8 @@ pub fn invert_substitution<'db, 'g>(
 pub enum Error<'db> {
     /// Something about the input was ill-typed, preventing quotation.
     IllTyped {
-        tm: Rc<Value<'db>>,
-        ty: Rc<Value<'db>>,
+        tm: RcValue<'db>,
+        ty: RcValue<'db>,
     },
     /// Quotation can force evaluation, which may itself prevent an error.
     EvalError(eval::Error),
@@ -140,7 +140,7 @@ pub enum Error<'db> {
     /// A variable occurred in the solution which was not renamed.
     ScopeError(Level),
     Occurs,
-    NotAType(Rc<Value<'db>>),
+    NotAType(RcValue<'db>),
     /// Case scrutinee must be a variable (not a complex expression).
     CaseScrutineeMustBeVariable,
 }
@@ -179,8 +179,8 @@ pub fn rename<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    ty: &Rc<Value<'db>>,
-    value: &Rc<Value<'db>>,
+    ty: &RcValue<'db>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match &**ty {
         Value::Universe(_) => rename_type(db, global, meta, renaming, value),
@@ -220,7 +220,7 @@ fn rename_pi_instance<'db>(
     meta: MetaVariableId,
     renaming: &mut Renaming,
     pi: &val::Pi<'db>,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match &**value {
         Value::Lambda(lambda) => rename_lambda(db, global, meta, renaming, pi, lambda),
@@ -297,7 +297,7 @@ fn rename_neutral_instance<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match &**value {
         Value::Prim(prim) => rename_prim(prim),
@@ -321,7 +321,7 @@ fn rename_lift_instance<'db>(
     meta: MetaVariableId,
     renaming: &mut Renaming,
     lift: &val::Lift<'db>,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // Lift's inner type determines what kind of values we expect
     match lift.ty.as_ref() {
@@ -339,7 +339,7 @@ fn rename_hwuniverse_instance<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // HardwareUniverse has two type constructors: SLift and MLift
     match &**value {
@@ -361,7 +361,7 @@ fn rename_signal_universe_instance<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // SignalUniverse has Bit as its type constructor
     match &**value {
@@ -382,7 +382,7 @@ fn rename_module_universe_instance<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // ModuleUniverse has HArrow as its type constructor
     match &**value {
@@ -404,7 +404,7 @@ fn rename_slift_instance<'db>(
     meta: MetaVariableId,
     renaming: &mut Renaming,
     slift: &val::SLift<'db>,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // SLift wraps a signal type (like Bit)
     match slift.ty.as_ref() {
@@ -422,7 +422,7 @@ fn rename_mlift_instance<'db>(
     meta: MetaVariableId,
     renaming: &mut Renaming,
     mlift: &val::MLift<'db>,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     // MLift wraps a module type (like HArrow)
     match mlift.ty.as_ref() {
@@ -439,7 +439,7 @@ fn rename_bit_instance<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match &**value {
         Value::Zero(_) => Ok(Syntax::zero_rc()),
@@ -461,7 +461,7 @@ fn rename_harrow_instance<'db>(
     meta: MetaVariableId,
     renaming: &mut Renaming,
     harrow: &val::HArrow<'db>,
-    value: &Rc<Value<'db>>,
+    value: &RcValue<'db>,
 ) -> Result<RcSyntax<'db>, Error<'db>> {
     match &**value {
         Value::Module(module) => rename_module(db, global, meta, renaming, harrow, module),
@@ -531,7 +531,10 @@ fn rename_pi<'db>(
         let sem_target = eval::run_closure(global, &sem_target_closure, [var])?;
         rename_type(db, global, meta, renaming, &sem_target)
     })?;
-    Ok(Rc::new(Syntax::pi(syn_source, syn_target)))
+    Ok(Rc::new(Syntax::pi(
+        syn_source,
+        hwml_core::binding::Binding::new(syn_target),
+    )))
 }
 
 fn rename_type_constructor<'db>(
@@ -625,12 +628,14 @@ fn rename_lambda<'db>(
     } = sem_pi;
     let syn_body: Rc<Syntax<'db>> =
         renaming.under_binder(sem_source.clone(), |renaming, var| {
-            let sem_body_ty: Rc<Value<'db>> =
+            let sem_body_ty: RcValue<'db> =
                 eval::run_closure(global, sem_target_closure, [var.clone()])?;
-            let sem_body: Rc<Value<'db>> = eval::apply_lambda(global, sem_lambda, var)?;
+            let sem_body: RcValue<'db> = eval::apply_lambda(global, sem_lambda, var)?;
             rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
         })?;
-    Ok(Rc::new(Syntax::lambda(syn_body)))
+    Ok(Rc::new(Syntax::lambda(hwml_core::binding::Binding::new(
+        syn_body,
+    ))))
 }
 
 fn rename_module<'db>(
@@ -647,12 +652,14 @@ fn rename_module<'db>(
     } = sem_harrow;
     let syn_body: Rc<Syntax<'db>> =
         renaming.under_binder(sem_source.clone(), |renaming, var| {
-            let sem_body_ty: Rc<Value<'db>> =
+            let sem_body_ty: RcValue<'db> =
                 eval::run_closure(global, sem_target_closure, [var.clone()])?;
-            let sem_body: Rc<Value<'db>> = eval::run_closure(global, &sem_module.body, [var])?;
+            let sem_body: RcValue<'db> = eval::run_closure(global, &sem_module.body, [var])?;
             rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
         })?;
-    Ok(Syntax::module_rc(syn_body))
+    Ok(Syntax::module_rc(hwml_core::binding::Binding::new(
+        syn_body,
+    )))
 }
 
 fn rename_prim<'db>(prim: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
@@ -836,8 +843,7 @@ fn rename_case<'db>(
 
         branches.push(syn::CaseBranch::new(
             branch.constructor,
-            branch.arity,
-            branch_syn,
+            hwml_core::binding::DynBinding::new(branch.arity, branch_syn),
         ));
     }
 
@@ -926,7 +932,7 @@ mod tests {
         }
 
         /// Parse and evaluate a string to a value
-        fn eval(&self, input: &'db str) -> Rc<Value<'db>> {
+        fn eval(&self, input: &'db str) -> RcValue<'db> {
             eval_str(self.db, &self.global, input)
         }
 

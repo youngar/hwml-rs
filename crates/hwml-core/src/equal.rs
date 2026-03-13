@@ -1169,7 +1169,7 @@ mod tests {
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::syn::Syntax;
     use crate::val::{GlobalEnv, LocalEnv, Spine};
-        use std::rc::Rc;
+    use std::rc::Rc;
 
     // =========================================================================
     // Metavariable Equality Tests
@@ -1194,11 +1194,7 @@ mod tests {
     fn test_equate_flexes_same_meta_empty_spine() {
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(
-            meta_id,
-            vec![],
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let transparent = TransparentEnv::new();
         let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
@@ -1214,16 +1210,8 @@ mod tests {
         let mut global = GlobalEnv::new();
         let meta_id1 = MetaVariableId::new(0);
         let meta_id2 = MetaVariableId::new(1);
-        global.add_metavariable(
-            meta_id1,
-            vec![],
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
-        global.add_metavariable(
-            meta_id2,
-            vec![],
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
+        global.add_metavariable(meta_id1, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(meta_id2, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let transparent = TransparentEnv::new();
         let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
@@ -1246,11 +1234,7 @@ mod tests {
         // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(
-            meta_id,
-            vec![],
-            Syntax::universe_rc(UniverseLevel::new(0)),
-        );
+        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let transparent = TransparentEnv::new();
         let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));

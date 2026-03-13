@@ -71,7 +71,7 @@ pub fn substitute<'db, 'g>(
     global: &GlobalEnv<'db>,
     tm: &Syntax<'db>,
     substitution: LocalEnv<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let mut env = Environment {
         global,
         local: substitution,
@@ -83,7 +83,7 @@ pub fn substitute<'db, 'g>(
 pub fn eval<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     stx: &Syntax<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     match stx {
         Syntax::Universe(uni) => eval_universe(env, &uni),
         Syntax::Lift(lift) => eval_lift(env, lift),
@@ -100,11 +100,6 @@ pub fn eval<'db, 'g>(
         Syntax::Eq(eq) => eval_eq(env, eq),
         Syntax::Refl(refl) => eval_refl(env, refl),
         Syntax::Transport(transport) => eval_transport(env, transport),
-        Syntax::Closure(_) => {
-            // Closures should not appear in evaluated terms - they only exist in Transport motives
-            // This is a malformed term
-            Err(Error::BadApplication { loc: None })
-        }
 
         Syntax::HardwareUniverse(hw) => eval_hardware_universe(env, hw),
         Syntax::SLift(slift) => eval_slift(env, slift),
@@ -132,14 +127,14 @@ pub fn eval<'db, 'g>(
 fn eval_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     universe: &syn::Universe<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::universe(universe.level)))
 }
 
 fn eval_lift<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     lift: &syn::Lift<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &lift.ty)?;
     Ok(Rc::new(Value::lift(ty)))
 }
@@ -147,25 +142,25 @@ fn eval_lift<'db, 'g>(
 fn eval_pi<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     pi: &syn::Pi<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let source = eval(env, &pi.source)?;
-    let target = Closure::new(env.local.clone(), pi.target.clone());
+    let target = Closure::new(env.local.clone(), pi.target.body.clone());
     Ok(Rc::new(Value::pi(source, target)))
 }
 
 fn eval_lambda<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     lambda: &syn::Lambda<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::Lambda(dom::Lambda {
-        body: Closure::new(env.local.clone(), lambda.body.clone()),
+        body: Closure::new(env.local.clone(), lambda.body.body.clone()),
     })))
 }
 
 fn eval_let<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     let_expr: &syn::Let<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Evaluate the type and value
     let ty = eval(env, &let_expr.ty)?;
     let value = eval(env, &let_expr.value)?;
@@ -182,10 +177,10 @@ fn eval_let<'db, 'g>(
 fn eval_type_constructor<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     type_constructor: &syn::TypeConstructor<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Evaluate all the arguments
     let mut evaluated_args = Vec::new();
-    for arg in type_constructor {
+    for arg in &type_constructor.arguments {
         let evaluated_arg = eval(env, arg)?;
         evaluated_args.push(evaluated_arg);
     }
@@ -199,10 +194,10 @@ fn eval_type_constructor<'db, 'g>(
 fn eval_data_constructor<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     data_constructor: &syn::DataConstructor<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Evaluate all the arguments
     let mut evaluated_args = Vec::new();
-    for arg in data_constructor {
+    for arg in &data_constructor.arguments {
         let evaluated_arg = eval(env, arg)?;
         evaluated_args.push(evaluated_arg);
     }
@@ -215,14 +210,14 @@ fn eval_data_constructor<'db, 'g>(
 fn eval_hardware_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::HardwareUniverse<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::hardware_universe()))
 }
 
 fn eval_slift<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     slift: &syn::SLift<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &slift.ty)?;
     Ok(Rc::new(Value::slift(ty)))
 }
@@ -230,7 +225,7 @@ fn eval_slift<'db, 'g>(
 fn eval_mlift<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     mlift: &syn::MLift<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &mlift.ty)?;
     Ok(Rc::new(Value::mlift(ty)))
 }
@@ -238,42 +233,42 @@ fn eval_mlift<'db, 'g>(
 fn eval_signal_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::SignalUniverse<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::signal_universe()))
 }
 
 fn eval_bit<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::Bit<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::bit()))
 }
 
 fn eval_zero<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::Zero<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::zero()))
 }
 
 fn eval_one<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::One<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::one()))
 }
 
 fn eval_module_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::ModuleUniverse<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::module_universe()))
 }
 
 fn eval_harrow<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     harrow: &syn::HArrow<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let source = eval(env, &harrow.source)?;
     let target = Closure::new(env.local.clone(), harrow.target.clone());
     Ok(Rc::new(Value::harrow(source, target)))
@@ -282,17 +277,17 @@ fn eval_harrow<'db, 'g>(
 fn eval_module<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     module: &syn::Module<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::module(Closure::new(
         env.local.clone(),
-        module.body.clone(),
+        module.body.body.clone(),
     ))))
 }
 
 fn eval_happlication<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     happ: &syn::HApplication<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let module = eval(env, &happ.module)?;
     let module_ty = eval(env, &happ.module_ty)?;
     let arg = eval(env, &happ.argument)?;
@@ -302,14 +297,14 @@ fn eval_happlication<'db, 'g>(
 fn eval_prim<'db, 'g>(
     _env: &mut Environment<'db, 'g>,
     prim: &syn::Prim<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::Prim(prim.name)))
 }
 
 fn eval_constant<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     constant: &syn::Constant<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let info = env
         .global
         .constant(constant.name)
@@ -325,14 +320,14 @@ fn eval_constant<'db, 'g>(
 fn eval_variable<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     var: &syn::Variable<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(env.get(var.index.to_level(env.depth())))
 }
 
 fn eval_metavariable<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     meta: &syn::Metavariable<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Evaluate all the arguments in the substitution to build the local environment.
     let mut local_env = val::LocalEnv::new();
     for arg in meta.iter() {
@@ -365,7 +360,7 @@ fn eval_metavariable<'db, 'g>(
 fn eval_check<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     chk: &syn::Check<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     eval(env, &chk.term)
 }
 
@@ -373,8 +368,8 @@ fn eval_check<'db, 'g>(
 fn apply_rigid<'db>(
     global: &GlobalEnv<'db>,
     rigid: &Rigid<'db>,
-    arg: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+    arg: RcValue<'db>,
+) -> Result<RcValue<'db>, Error> {
     // If the operator is not pi-typed, bail.
     let Value::Pi(pi) = rigid.ty.as_ref() else {
         return Err(Error::BadApplication { loc: None });
@@ -401,8 +396,8 @@ fn apply_rigid<'db>(
 fn apply_flex<'db>(
     global: &GlobalEnv<'db>,
     flex: &Flex<'db>,
-    arg: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+    arg: RcValue<'db>,
+) -> Result<RcValue<'db>, Error> {
     // If the operator is not pi-typed, bail.
     let Value::Pi(pi) = flex.ty.as_ref() else {
         return Err(Error::BadApplication { loc: None });
@@ -428,7 +423,7 @@ fn apply_flex<'db>(
 fn eval_application<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     application: &syn::Application<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Evaluate the function and argument to a value, then perform the substitution.
     let fun: Rc<Value> = eval(env, &application.function)?;
     let arg: Rc<Value> = eval(env, &application.argument)?;
@@ -439,8 +434,8 @@ fn eval_application<'db, 'g>(
 pub fn run_application<'db>(
     global: &GlobalEnv<'db>,
     fun: &Value<'db>,
-    arg: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+    arg: RcValue<'db>,
+) -> Result<RcValue<'db>, Error> {
     match fun {
         Value::Lambda(lambda) => apply_lambda(global, lambda, arg),
         Value::Rigid(rigid) => apply_rigid(global, rigid, arg),
@@ -453,15 +448,15 @@ pub fn run_application<'db>(
 pub fn apply_lambda<'db>(
     global: &GlobalEnv<'db>,
     lambda: &val::Lambda<'db>,
-    arg: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+    arg: RcValue<'db>,
+) -> Result<RcValue<'db>, Error> {
     run_closure(global, &lambda.body, [arg])
 }
 
 fn eval_case<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     case: &syn::Case<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // The scrutinee is a variable (de Bruijn index).
     // Convert it to a level and look up its value in the environment.
     let scrutinee_level = case.scrutinee.index.to_level(env.depth());
@@ -473,8 +468,8 @@ fn eval_case<'db, 'g>(
         .branches
         .iter()
         .map(|branch| {
-            let body = Closure::new(env.local.clone(), branch.body.clone());
-            dom::CaseBranch::new(branch.constructor, branch.arity, body)
+            let body = Closure::new(env.local.clone(), branch.body.body.clone());
+            dom::CaseBranch::new(branch.constructor, branch.body.arity, body)
         })
         .collect();
     run_case(&env.global, scrutinee, branches)
@@ -482,9 +477,9 @@ fn eval_case<'db, 'g>(
 
 fn run_case<'db>(
     global: &GlobalEnv<'db>,
-    scrutinee: Rc<Value<'db>>,
+    scrutinee: RcValue<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     match scrutinee.as_ref() {
         Value::DataConstructor(scrutinee) => {
             run_case_on_data_constructor(global, scrutinee, branches)
@@ -499,7 +494,7 @@ fn run_case_on_data_constructor<'db>(
     global: &GlobalEnv<'db>,
     scrutinee: &DataConstructor<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Find the matching branch.
     for branch in &branches {
         if branch.constructor == scrutinee.constructor {
@@ -512,10 +507,10 @@ fn run_case_on_data_constructor<'db>(
 
 fn run_case_on_rigid<'db>(
     global: &GlobalEnv<'db>,
-    _scrutinee: Rc<Value<'db>>,
+    _scrutinee: RcValue<'db>,
     rigid: &Rigid<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Verify that the type is a type constructor.
     let Value::TypeConstructor(type_constructor) = rigid.ty.as_ref() else {
         return Err(Error::BadCase { loc: None });
@@ -551,10 +546,10 @@ fn run_case_on_rigid<'db>(
 
 fn run_case_on_flex<'db>(
     global: &GlobalEnv<'db>,
-    _scrutinee: Rc<Value<'db>>,
+    _scrutinee: RcValue<'db>,
     flex: &Flex<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // Verify that the type is a type constructor.
     let Value::TypeConstructor(type_constructor) = flex.ty.as_ref() else {
         return Err(Error::BadCase { loc: None });
@@ -591,7 +586,7 @@ fn run_case_on_flex<'db>(
 fn eval_eq<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     eq: &syn::EqType<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &eq.ty)?;
     let lhs = eval(env, &eq.lhs)?;
     let rhs = eval(env, &eq.rhs)?;
@@ -601,18 +596,16 @@ fn eval_eq<'db, 'g>(
 fn eval_refl<'db, 'g>(
     _env: &mut Environment<'db, 'g>,
     _refl: &syn::Refl<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     Ok(Rc::new(Value::refl()))
 }
 
 fn eval_transport<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     transport: &syn::Transport<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
-    // The motive is a nested closure structure [%0 %1 ...] |- body
-    // We need to find the innermost body by traversing the nested Syntax::Closure nodes
-    let innermost_body = get_closure_body(&transport.motive);
-    let motive = Closure::new(env.local.clone(), innermost_body);
+) -> Result<RcValue<'db>, Error> {
+    // The motive is now just a regular syntax term
+    let motive = Closure::new(env.local.clone(), transport.motive.clone());
 
     // Evaluate the proof.
     let proof = eval(env, &transport.proof)?;
@@ -631,24 +624,11 @@ fn eval_transport<'db, 'g>(
     }
 }
 
-/// Helper function to extract the innermost body from a nested closure structure
-fn get_closure_body<'db>(closure: &syn::Closure<'db>) -> syn::RcSyntax<'db> {
-    let mut current = &closure.body;
-    loop {
-        match current.as_ref() {
-            Syntax::Closure(inner) => {
-                current = &inner.body;
-            }
-            _ => return current.clone(),
-        }
-    }
-}
-
 pub fn run_spine<'db>(
     global: &GlobalEnv<'db>,
-    mut eliminatee: Rc<Value<'db>>,
+    mut eliminatee: RcValue<'db>,
     spine: &val::Spine<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     for eliminator in spine.iter() {
         match eliminator {
             Eliminator::Application(application) => {
@@ -670,9 +650,9 @@ pub fn run_closure<'db, T>(
     global: &GlobalEnv<'db>,
     closure: &Closure<'db>,
     args: T,
-) -> Result<Rc<Value<'db>>, Error>
+) -> Result<RcValue<'db>, Error>
 where
-    T: IntoIterator<Item = Rc<Value<'db>>>,
+    T: IntoIterator<Item = RcValue<'db>>,
 {
     let mut local = closure.local.clone();
     local.extend(args);
@@ -691,7 +671,7 @@ pub fn eval_telescope<'db, 'g, T>(
     telescope: &syn::Telescope<'db>,
 ) -> Result<SemTelescope<'db>, Error>
 where
-    T: IntoIterator<Item = Rc<Value<'db>>>,
+    T: IntoIterator<Item = RcValue<'db>>,
 {
     // We start with a fresh local environment since types are defined in the
     // global environment.
@@ -745,7 +725,7 @@ mod tests {
         }
 
         /// Evaluate a syntax term and return the result
-        fn eval(&self, stx: &Syntax<'db>) -> Rc<Value<'db>> {
+        fn eval(&self, stx: &Syntax<'db>) -> RcValue<'db> {
             let mut env = Environment {
                 global: &self.global,
                 local: LocalEnv::new(),
@@ -1055,7 +1035,7 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         let pi_ty = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         global.add_metavariable(meta_id, vec![], pi_ty);
 
@@ -1110,8 +1090,8 @@ mod tests {
         let db = Database::new();
         let c = Ctx::new(&db);
         // transport P refl v should reduce to v (critical optimization!)
-        // transport [%0] |- Bit refl 0  should reduce to 0
-        assert_eq!(c.eval_at("transport [%0] |- Bit refl 0", "Bit"), "0");
+        // transport 0 to λ %x → Bit by refl  should reduce to 0
+        assert_eq!(c.eval_at("transport 0 to λ %x → Bit by refl", "Bit"), "0");
     }
 
     #[test]
@@ -1121,7 +1101,7 @@ mod tests {
         // transport with a neutral proof should remain stuck
         // We can't easily test this without a proper type context,
         // so we just verify that transport with refl reduces
-        assert_eq!(c.eval_at("transport [%0] |- Bit refl 0", "Bit"), "0");
+        assert_eq!(c.eval_at("transport 0 to λ %x → Bit by refl", "Bit"), "0");
     }
 
     #[test]

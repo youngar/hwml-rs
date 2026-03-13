@@ -31,7 +31,7 @@ mod translate_new;
 pub use context::CirctContext;
 pub use error::{Error, Result};
 
-use hwml_core::declaration::Module;
+use hwml_core::syn::declaration::CompilationUnit;
 
 /// The main CIRCT backend for compiling HWML to Verilog.
 pub struct CirctBackend {
@@ -48,7 +48,7 @@ impl CirctBackend {
     pub fn compile_to_verilog<'db>(
         &self,
         db: &'db dyn salsa::Database,
-        module: &Module<'db>,
+        module: &CompilationUnit<'db>,
     ) -> Result<String> {
         // Create MLIR context with CIRCT dialects
         let ctx = CirctContext::new()?;
@@ -64,7 +64,7 @@ impl CirctBackend {
     pub fn compile_to_mlir<'db>(
         &self,
         db: &'db dyn salsa::Database,
-        module: &Module<'db>,
+        module: &CompilationUnit<'db>,
     ) -> Result<String> {
         let ctx = CirctContext::new()?;
         let mlir_module = translate::translate_module(&ctx, db, module)?;

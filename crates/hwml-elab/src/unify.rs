@@ -4,6 +4,7 @@ use hwml_core::common::{MetaVariableId, UniverseLevel};
 use hwml_core::eval::{self, run_application, run_closure, run_spine};
 use hwml_core::val::Environment;
 use hwml_core::val::LocalEnv;
+use hwml_core::val::RcValue;
 use hwml_core::val::TransparentEnv;
 use hwml_core::val::{Eliminator, Value};
 use itertools::izip;
@@ -20,7 +21,7 @@ pub enum UnificationError<'db> {
     /// Evaluation error during unification
     Eval(eval::Error),
     /// Type mismatch between two values
-    Mismatch(Rc<Value<'db>>, Rc<Value<'db>>),
+    Mismatch(RcValue<'db>, RcValue<'db>),
     /// Eliminator mismatch
     MismatchEliminator(Eliminator<'db>, Eliminator<'db>),
     /// Spine mismatch (general case)
@@ -42,7 +43,7 @@ pub enum UnificationError<'db> {
     /// Occurs check failure (metavariable occurs in its own solution)
     OccursCheck(MetaVariableId),
     /// Scoping error (solution references out-of-scope variables)
-    ScopingError(Rc<Value<'db>>),
+    ScopingError(RcValue<'db>),
     /// Quotation error
     Quote(String),
     /// Inversion error
@@ -140,8 +141,8 @@ impl<'db> From<renaming::Error<'db>> for UnificationError<'db> {
 
 async fn whnf<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
-    mut value: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
+    mut value: RcValue<'db>,
+) -> Result<RcValue<'db>, UnificationError<'db>> {
     let global = ctx.tc_env.values.global;
     while let Value::Flex(flex) = &*value {
         println!("[WHNF] Substituting meta {} with solution", flex.head.id);
@@ -156,8 +157,12 @@ async fn whnf<'db, 'g>(
 
 type UnifyResult<'db> = Result<(), UnificationError<'db>>;
 
-pub fn fresh_meta<'db, 'g>(ctx: SolverEnvironment<'db, 'g>, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
-    let id = ctx.fresh_meta_id(ty.clone());
+pub fn fresh_meta<'db, 'g>(
+    ctx: SolverEnvironment<'db, 'g>,
+    ty: RcValue<'db>,
+    loc: Location,
+) -> RcValue<'db> {
+    let id = ctx.fresh_meta_id(ty.clone(), loc);
     let substitution = ctx.tc_env.values.local.clone();
     Rc::new(Value::metavariable(id, substitution, ty))
 }
@@ -165,11 +170,11 @@ pub fn fresh_meta<'db, 'g>(ctx: SolverEnvironment<'db, 'g>, ty: Rc<Value<'db>>) 
 pub fn antiunify<'db, 'g>(
     db: &'db dyn salsa::Database,
     ctx: SolverEnvironment<'db, 'g>,
-    lhs: Rc<Value<'db>>,
-    rhs: Rc<Value<'db>>,
-    ty: Rc<Value<'db>>,
-) -> (impl Future<Output = UnifyResult<'db>> + 'g, Rc<Value<'db>>) {
-    let anti_meta = fresh_meta(ctx.clone(), ty.clone());
+    lhs: RcValue<'db>,
+    rhs: RcValue<'db>,
+    ty: RcValue<'db>,
+) -> (impl Future<Output = UnifyResult<'db>> + 'g, RcValue<'db>) {
+    let anti_meta = fresh_meta(ctx.clone(), ty.clone(), Location::UNKNOWN);
     let anti_meta_clone = anti_meta.clone();
     let future = async move {
         Box::pin(unify(db, ctx.clone(), lhs.clone(), rhs, ty.clone())).await?;
@@ -185,8 +190,8 @@ pub fn antiunify<'db, 'g>(
 
 /// Unify two constants (structural equality)
 fn unify_constant<'db>(
-    lhs: &Rc<Value<'db>>,
-    rhs: &Rc<Value<'db>>,
+    lhs: &RcValue<'db>,
+    rhs: &RcValue<'db>,
     c1: &hwml_core::common::ConstantId,
     c2: &hwml_core::common::ConstantId,
 ) -> UnifyResult<'db> {
@@ -200,8 +205,8 @@ fn unify_constant<'db>(
 
 /// Unify two universes (level equality)
 fn unify_universe<'db>(
-    lhs: &Rc<Value<'db>>,
-    rhs: &Rc<Value<'db>>,
+    lhs: &RcValue<'db>,
+    rhs: &RcValue<'db>,
     u1: &hwml_core::val::Universe,
     u2: &hwml_core::val::Universe,
 ) -> UnifyResult<'db> {
@@ -215,8 +220,8 @@ fn unify_universe<'db>(
 
 /// Unify two Prim references (structural equality)
 fn unify_prim<'db>(
-    lhs: &Rc<Value<'db>>,
-    rhs: &Rc<Value<'db>>,
+    lhs: &RcValue<'db>,
+    rhs: &RcValue<'db>,
     p1: &hwml_core::ConstantId<'db>,
     p2: &hwml_core::ConstantId<'db>,
 ) -> UnifyResult<'db> {
@@ -270,7 +275,7 @@ async fn unify_lift<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     l1: &hwml_core::val::Lift<'db>,
     l2: &hwml_core::val::Lift<'db>,
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Lift injectivity");
     Box::pin(unify(db, ctx, l1.ty.clone(), l2.ty.clone(), ty)).await
@@ -282,7 +287,7 @@ async fn unify_slift<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     s1: &hwml_core::val::SLift<'db>,
     s2: &hwml_core::val::SLift<'db>,
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] SLift injectivity");
     Box::pin(unify(db, ctx, s1.ty.clone(), s2.ty.clone(), ty)).await
@@ -294,7 +299,7 @@ async fn unify_mlift<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     m1: &hwml_core::val::MLift<'db>,
     m2: &hwml_core::val::MLift<'db>,
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] MLift injectivity");
     Box::pin(unify(db, ctx, m1.ty.clone(), m2.ty.clone(), ty)).await
@@ -306,7 +311,7 @@ async fn unify_pi<'db, 'g>(
     mut ctx: SolverEnvironment<'db, 'g>,
     pi1: &hwml_core::val::Pi<'db>,
     pi2: &hwml_core::val::Pi<'db>,
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Pi injectivity");
     let global = ctx.tc_env.values.global;
@@ -336,7 +341,7 @@ async fn unify_lambda<'db, 'g>(
     mut ctx: SolverEnvironment<'db, 'g>,
     lam1: &hwml_core::val::Lambda<'db>,
     lam2: &hwml_core::val::Lambda<'db>,
-    ty: &Rc<Value<'db>>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Lambda injectivity");
     let global = ctx.tc_env.values.global;
@@ -358,8 +363,8 @@ async fn unify_eta_lambda_left<'db, 'g>(
     db: &'db dyn salsa::Database,
     mut ctx: SolverEnvironment<'db, 'g>,
     lam: &hwml_core::val::Lambda<'db>,
-    rhs: Rc<Value<'db>>,
-    ty: &Rc<Value<'db>>,
+    rhs: RcValue<'db>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Eta-expansion: Lambda on left");
     let global = ctx.tc_env.values.global;
@@ -380,9 +385,9 @@ async fn unify_eta_lambda_left<'db, 'g>(
 async fn unify_eta_lambda_right<'db, 'g>(
     db: &'db dyn salsa::Database,
     mut ctx: SolverEnvironment<'db, 'g>,
-    lhs: Rc<Value<'db>>,
+    lhs: RcValue<'db>,
     lam: &hwml_core::val::Lambda<'db>,
-    ty: &Rc<Value<'db>>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Eta-expansion: Lambda on right");
     let global = ctx.tc_env.values.global;
@@ -405,7 +410,7 @@ async fn unify_harrow<'db, 'g>(
     mut ctx: SolverEnvironment<'db, 'g>,
     ha1: &hwml_core::val::HArrow<'db>,
     ha2: &hwml_core::val::HArrow<'db>,
-    _ty: Rc<Value<'db>>,
+    _ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] HArrow injectivity");
     let global = ctx.tc_env.values.global;
@@ -439,7 +444,7 @@ async fn unify_module<'db, 'g>(
     mut ctx: SolverEnvironment<'db, 'g>,
     mod1: &hwml_core::val::Module<'db>,
     mod2: &hwml_core::val::Module<'db>,
-    ty: &Rc<Value<'db>>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Module injectivity");
     let global = ctx.tc_env.values.global;
@@ -461,8 +466,8 @@ async fn unify_eta_module_left<'db, 'g>(
     db: &'db dyn salsa::Database,
     mut ctx: SolverEnvironment<'db, 'g>,
     mod1: &hwml_core::val::Module<'db>,
-    rhs: Rc<Value<'db>>,
-    ty: &Rc<Value<'db>>,
+    rhs: RcValue<'db>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Eta-expansion: Module on left");
     let global = ctx.tc_env.values.global;
@@ -483,9 +488,9 @@ async fn unify_eta_module_left<'db, 'g>(
 async fn unify_eta_module_right<'db, 'g>(
     db: &'db dyn salsa::Database,
     mut ctx: SolverEnvironment<'db, 'g>,
-    lhs: Rc<Value<'db>>,
+    lhs: RcValue<'db>,
     mod2: &hwml_core::val::Module<'db>,
-    ty: &Rc<Value<'db>>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Eta-expansion: Module on right");
     let global = ctx.tc_env.values.global;
@@ -668,7 +673,7 @@ async fn unify_data_constructor<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     dc1: &hwml_core::val::DataConstructor<'db>,
     dc2: &hwml_core::val::DataConstructor<'db>,
-    ty: &Rc<Value<'db>>,
+    ty: &RcValue<'db>,
 ) -> UnifyResult<'db> {
     // Check that the type is a type constructor.
     let Value::TypeConstructor(tc) = &**ty else {
@@ -756,7 +761,7 @@ async fn unify_happlication<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     ha1: &hwml_core::val::HApplication<'db>,
     ha2: &hwml_core::val::HApplication<'db>,
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] HApplication unification");
     // First unify the modules
@@ -862,7 +867,7 @@ async fn unify_flex_same<'db, 'g>(
 
     // Create new metavariable with restricted context
     // The new meta has the same type but lives in a smaller context
-    let new_meta_id = ctx.fresh_meta_id(meta_ty);
+    let new_meta_id = ctx.fresh_meta_id(meta_ty, Location::UNKNOWN);
 
     // Build the solution: ?u := ?v[projection]
     // The substitution for ?v selects only the intersecting positions
@@ -914,9 +919,9 @@ async fn unify_rigid<'db, 'g>(
 pub async fn unify<'db, 'g>(
     db: &'db dyn salsa::Database,
     ctx: SolverEnvironment<'db, 'g>,
-    lhs: Rc<Value<'db>>,
-    rhs: Rc<Value<'db>>,
-    ty: Rc<Value<'db>>,
+    lhs: RcValue<'db>,
+    rhs: RcValue<'db>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     println!("[Unify] Unifying {:?} == {:?}", lhs, rhs);
     let _global = ctx.tc_env.values.global;
@@ -1135,7 +1140,7 @@ async fn unify_spine<'db, 'g>(
 async fn lower_flex<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     flex: hwml_core::val::Flex<'db>,
-) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
+) -> Result<RcValue<'db>, UnificationError<'db>> {
     if flex.spine.is_empty() {
         // No spine, no lowering needed
         return Ok(Rc::new(Value::flex(flex.head, flex.spine, flex.ty)));
@@ -1173,7 +1178,7 @@ async fn lower_flex<'db, 'g>(
 
                         // Create a new metavariable with the codomain type
                         // The new meta lives in the same context as the old one, extended by one variable
-                        let new_meta_id = ctx.fresh_meta_id(codomain_ty.clone());
+                        let new_meta_id = ctx.fresh_meta_id(codomain_ty.clone(), Location::UNKNOWN);
 
                         // Build the solution for the old meta: λ. ?v[var(n), var(n-1), ..., var(0)]
                         // where n is the size of the original substitution
@@ -1190,7 +1195,9 @@ async fn lower_flex<'db, 'g>(
 
                         let new_meta_term =
                             hwml_core::syn::Syntax::metavariable_rc(new_meta_id, subst_vars);
-                        let lambda_term = hwml_core::syn::Syntax::lambda_rc(new_meta_term);
+                        let lambda_term = hwml_core::syn::Syntax::lambda_rc(
+                            hwml_core::binding::Binding::new(new_meta_term),
+                        );
 
                         // Solve the old metavariable
                         println!(
@@ -1235,8 +1242,8 @@ async fn try_solve<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     depth: usize,
     meta_variable: &hwml_core::val::MetaVariable<'db>,
-    sem_solution: Rc<Value<'db>>,
-    ty: &Rc<Value<'db>>,
+    sem_solution: RcValue<'db>,
+    ty: &RcValue<'db>,
 ) -> Result<(), UnificationError<'db>> {
     println!(
         "[Solve] Solving metavariable {} with pattern unification",
@@ -1310,9 +1317,9 @@ mod tests {
         /// Run unification on two values at a type.
         fn run_unify(
             &self,
-            lhs: Rc<Value<'db>>,
-            rhs: Rc<Value<'db>>,
-            ty: Rc<Value<'db>>,
+            lhs: RcValue<'db>,
+            rhs: RcValue<'db>,
+            ty: RcValue<'db>,
         ) -> Result<(), String> {
             let mut executor = SingleThreadedExecutor::new();
             let tc_env = self.tc_env();
@@ -1354,7 +1361,7 @@ mod tests {
             let tc_env = self.tc_env();
             // Use new_from_global to pick up any declared metavariables from prelude
             let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
-            let lhs = ctx.fresh_meta(ty.clone());
+            let lhs = ctx.fresh_meta(ty.clone(), Location::UNKNOWN);
 
             let db_ref: &'db dyn salsa::Database = self.db;
             let unify_future = async move {
@@ -2052,7 +2059,7 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         // Create a fresh metavariable with the given type
-        let meta_id = ctx.fresh_meta_id(meta_ty.clone());
+        let meta_id = ctx.fresh_meta_id(meta_ty.clone(), Location::UNKNOWN);
 
         // Build the local environment with bound variables
         // Each variable is represented as a Rigid neutral
@@ -2252,8 +2259,8 @@ mod tests {
     fn make_flex<'db>(
         meta_id: MetaVariableId,
         var_levels: &[usize],
-        meta_ty: Rc<Value<'db>>,
-    ) -> Rc<Value<'db>> {
+        meta_ty: RcValue<'db>,
+    ) -> RcValue<'db> {
         let mut local = hwml_core::val::LocalEnv::new();
         for &level in var_levels {
             local.push(make_rigid_var(level));
@@ -2282,7 +2289,7 @@ mod tests {
 
         // Create a metavariable ?M : U0
         let meta_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
-        let meta_id = ctx.fresh_meta_id(meta_ty.clone());
+        let meta_id = ctx.fresh_meta_id(meta_ty.clone(), Location::UNKNOWN);
 
         // Build flex terms with the given substitutions
         let lhs = make_flex(meta_id, lhs_vars, meta_ty.clone());

@@ -1,4 +1,5 @@
-use crate::common::{ConstantId, Level};
+use crate::binding::{Binding, DynBinding};
+use crate::common::{ConstantId, Level, UniverseLevel};
 use crate::equal;
 use crate::eval;
 use crate::pattern_unify;
@@ -8,6 +9,7 @@ use crate::syn;
 use crate::syn::Syntax;
 use crate::val;
 use crate::val::{Environment, LocalEnv, Value};
+use crate::RcValue;
 use salsa::Database;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -16,43 +18,43 @@ use std::rc::Rc;
 pub struct TCEnvironment<'db, 'g> {
     pub db: &'db dyn Database,
     pub values: val::Environment<'db, 'g>,
-    pub types: Vec<Rc<Value<'db>>>,
+    pub types: Vec<RcValue<'db>>,
 }
 
 impl<'db, 'g> TCEnvironment<'db, 'g> {
-    fn type_of(&self, level: Level) -> &Rc<Value<'db>> {
+    fn type_of(&self, level: Level) -> &RcValue<'db> {
         let index: usize = level.into();
         &self.types[index]
     }
 
-    fn var_type(&self, var: &stx::Variable) -> &Rc<Value<'db>> {
+    fn var_type(&self, var: &stx::Variable) -> &RcValue<'db> {
         let level = var.index.to_level(self.depth());
         self.type_of(level)
     }
 
     #[allow(dead_code)]
-    fn value_of(&self, level: Level) -> Rc<Value<'db>> {
+    fn value_of(&self, level: Level) -> RcValue<'db> {
         self.values.get(level)
     }
 
     #[allow(dead_code)]
-    fn var_value(&self, var: &stx::Variable) -> Rc<Value<'db>> {
+    fn var_value(&self, var: &stx::Variable) -> RcValue<'db> {
         let level = var.index.to_level(self.depth());
         self.value_of(level)
     }
 
-    fn push(&mut self, value: Rc<Value<'db>>, ty: Rc<Value<'db>>) {
+    fn push(&mut self, value: RcValue<'db>, ty: RcValue<'db>) {
         self.values.push(value);
         self.types.push(ty);
     }
 
-    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+    pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
         let var = Rc::new(Value::variable(Level::new(self.depth()), ty.clone()));
         self.push(var.clone(), ty);
         var
     }
 
-    fn push_transparent(&mut self, ty: Rc<Value<'db>>, value: Rc<Value<'db>>) {
+    fn push_transparent(&mut self, ty: RcValue<'db>, value: RcValue<'db>) {
         self.values.push_transparent(ty.clone(), value);
         self.types.push(ty);
     }
@@ -74,7 +76,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
     #[allow(dead_code)]
     fn extend_vars<T>(&mut self, types: T)
     where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
+        T: IntoIterator<Item = RcValue<'db>>,
     {
         for ty in types {
             self.values.push_var(ty.clone());
@@ -84,7 +86,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
 
     /// Apply substitutions from pattern unification.
     /// Mutates variables to let-bindings and re-evaluates dependent types.
-    pub fn apply_subst(&mut self, solutions: &[(Level, Rc<Value<'db>>)]) -> Result<(), Error<'db>> {
+    pub fn apply_subst(&mut self, solutions: &[(Level, RcValue<'db>)]) -> Result<(), Error<'db>> {
         for (level, value) in solutions {
             self.values.set(*level, value.clone());
         }
@@ -114,22 +116,22 @@ pub enum Error<'db> {
     /// Bad elimination.
     BadElim {
         tm: Rc<Syntax<'db>>,
-        ty_got: Rc<Value<'db>>,
+        ty_got: RcValue<'db>,
     },
     /// Bad constructor.
     BadCtor {
         tm: Rc<Syntax<'db>>,
-        ty_exp: Rc<Value<'db>>,
+        ty_exp: RcValue<'db>,
     },
     /// Inferred a type that did not match the expected type.
     BadCheck {
         tm: Rc<Syntax<'db>>,
-        ty_exp: Rc<Value<'db>>,
-        ty_got: Rc<Value<'db>>,
+        ty_exp: RcValue<'db>,
+        ty_got: RcValue<'db>,
     },
     EvaluationFailure(eval::Error),
     LookupError(val::LookupError<'db>),
-    MatchOnNonDatatype(Rc<Value<'db>>),
+    MatchOnNonDatatype(RcValue<'db>),
     QuoteError(quote::Error<'db>),
     PatternUnifyError(pattern_unify::Error<'db>),
     PatternUnifyStuck {
@@ -236,7 +238,7 @@ use std::result::Result;
 fn eval<'db, 'g>(
     env: &TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     let mut sem_env = env.values.clone();
     eval::eval(&mut sem_env, term).map_err(Error::EvaluationFailure)
 }
@@ -246,9 +248,9 @@ fn run_closure<'db, 'g, T>(
     env: &TCEnvironment<'db, 'g>,
     closure: &val::Closure<'db>,
     args: T,
-) -> Result<Rc<Value<'db>>, Error<'db>>
+) -> Result<RcValue<'db>, Error<'db>>
 where
-    T: IntoIterator<Item = Rc<Value<'db>>>,
+    T: IntoIterator<Item = RcValue<'db>>,
 {
     eval::run_closure(env.values.global, closure, args).map_err(Error::EvaluationFailure)
 }
@@ -257,7 +259,7 @@ where
 pub fn type_synth<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     match term {
         Syntax::Variable(variable) => type_synth_variable(env, variable),
         Syntax::Constant(constant) => type_synth_constant(env, constant),
@@ -295,7 +297,7 @@ pub fn type_synth<'db, 'g>(
 pub fn type_synth_variable<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     variable: &syn::Variable<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Pull the type from the typing environment.
     Ok(env.var_type(variable).clone())
 }
@@ -303,7 +305,7 @@ pub fn type_synth_variable<'db, 'g>(
 pub fn type_synth_constant<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     constant: &syn::Constant<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     let constant_info = env
         .values
         .global
@@ -317,7 +319,7 @@ pub fn type_synth_constant<'db, 'g>(
 pub fn type_synth_prim<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     prim: &syn::Prim<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Look up the primitive in the global environment
     let prim_info = env
         .values
@@ -334,7 +336,7 @@ pub fn type_synth_prim<'db, 'g>(
 pub fn type_synth_check<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     check: &syn::Check<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Check that the type is a valid meta-level type (not a hardware type)
     check_meta_type(env, &check.ty)?;
     let ty = eval(env, &check.ty)?;
@@ -345,14 +347,14 @@ pub fn type_synth_check<'db, 'g>(
 pub fn type_synth_let<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     let_expr: &syn::Let<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     check_type(env, &let_expr.ty)?;
     let sem_ty = eval(env, &let_expr.ty)?;
     type_check(env, &let_expr.value, &sem_ty)?;
     let sem_value = eval(env, &let_expr.value)?;
 
     env.push_transparent(sem_ty, sem_value);
-    let body_ty = type_synth(env, &let_expr.body)?;
+    let body_ty = type_synth(env, &let_expr.body.body)?;
     env.pop();
 
     Ok(body_ty)
@@ -362,7 +364,7 @@ pub fn type_synth_let<'db, 'g>(
 pub fn type_synth_metavariable<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     metavariable: &syn::Metavariable<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Lookup the metavariable info in the global environment.
     let meta_info = env
         .values
@@ -422,7 +424,7 @@ pub fn type_synth_metavariable<'db, 'g>(
 pub fn type_synth_application<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     application: &syn::Application<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // First synthesize the type of the term being applied.
     let fun_ty = type_synth(env, &application.function)?;
 
@@ -803,7 +805,7 @@ fn type_check_data_constructor<'db, 'g>(
 fn type_synth_lift<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     lift: &syn::Lift<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Check that the inner term is a valid hardware type
     check_hwtype(env, &lift.ty)?;
 
@@ -1035,7 +1037,7 @@ fn type_check_eq<'db, 'g>(
 fn type_synth_eq<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     eq: &syn::EqType<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     check_type(env, &eq.ty)?;
     let ty_ty = type_synth(env, &eq.ty)?;
 
@@ -1082,7 +1084,7 @@ fn type_check_refl<'db, 'g>(
 fn type_synth_transport<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     transport: &syn::Transport<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     let proof_ty = type_synth(env, &transport.proof)?;
     let Value::EqType(eq_ty) = &*proof_ty else {
         return Err(Error::BadSynth {
@@ -1094,44 +1096,52 @@ fn type_synth_transport<'db, 'g>(
         });
     };
 
-    let (arity, innermost_body) = count_closure_arity(&transport.motive);
+    // The motive should be a function that takes a value of type eq_ty.ty and returns a type
+    // Check: Γ ⊢ motive : A → Type
+    //
+    // According to the design notes, we need to:
+    // 1. Check that M has type A → Type
+    // 2. Compute M a (motive applied to lhs)
+    // 3. Check that x : M a
+    // 4. Return M b as the synthesized type
+    //
+    // To check M : A → Type, we need to construct the Pi type (A → Type).
+    // The codomain should be Type (a universe), but which universe?
+    // We need to infer it from the equality type's universe level.
 
-    for _ in 0..arity {
-        env.push_var(eq_ty.ty.clone());
-    }
+    // Construct the expected type for the motive: A → Type
+    // For now, we use U0 as the codomain. In a more sophisticated system,
+    // we would infer the universe level from the type of A.
+    // Since A : U_i for some i, the motive should have type A → U_i.
+    // For simplicity, we use U0 here.
+    let universe_syntax = Syntax::universe_rc(UniverseLevel::new(0));
+    let constant_closure = val::Closure::new(LocalEnv::new(), universe_syntax);
+    let motive_expected_ty = Rc::new(Value::pi(eq_ty.ty.clone(), constant_closure));
 
-    let motive_check_result = check_type(env, &innermost_body);
+    // Check the motive against this type
+    type_check(env, &transport.motive, &motive_expected_ty)?;
 
-    for _ in 0..arity {
-        env.pop();
-    }
+    // Evaluate the motive to get a closure we can apply
+    let motive_val = eval(env, &transport.motive)?;
+    let Value::Lambda(lambda) = &*motive_val else {
+        return Err(Error::BadSynth {
+            tm: transport.motive.clone(),
+        });
+    };
 
-    motive_check_result?;
-
-    let motive_closure = val::Closure::new(env.values.local.clone(), innermost_body.clone());
-    let p_of_x = run_closure(env, &motive_closure, [eq_ty.lhs.clone()])?;
+    // Apply the motive to the lhs to get the type of the value
+    let p_of_x = run_closure(env, &lambda.body, [eq_ty.lhs.clone()])?;
 
     type_check(env, &transport.value, &p_of_x)?;
 
-    let p_of_y = run_closure(env, &motive_closure, [eq_ty.rhs.clone()])?;
+    // Apply the motive to the rhs to get the result type
+    let p_of_y = run_closure(env, &lambda.body, [eq_ty.rhs.clone()])?;
 
     Ok(p_of_y)
 }
 
-fn count_closure_arity<'db>(closure: &syn::Closure<'db>) -> (usize, syn::RcSyntax<'db>) {
-    let mut arity = 1;
-    let mut current = &closure.body;
-
-    loop {
-        match current.as_ref() {
-            Syntax::Closure(inner) => {
-                arity += 1;
-                current = &inner.body;
-            }
-            _ => return (arity, current.clone()),
-        }
-    }
-}
+// The syn::Closure type has been removed. This function is no longer needed.
+// Arity is now stored directly in DynBinding structures.
 
 // Synthesize a type for the term, then check for equality against the expected type.
 pub fn type_check_synth_term<'db, 'g>(
@@ -2369,11 +2379,12 @@ mod tests {
         // Push x : A
         env.push_var(a.clone());
 
-        // Construct: transport [%0] |- %0 %1 %0
+        // Construct: transport %0 to (λ %y → %y) by %1
         // Parse at depth 4 since we have 4 variables in scope (A, B, h, x)
         // %0 = x (index 0), %1 = h (index 1), %2 = B (index 2), %3 = A (index 3)
+        // The motive (λ %y → %y) is the identity function on types
         let transport =
-            crate::syn::parse::parse_syntax_at_depth(&db, "transport [%0] |- %0 %1 %0", 4)
+            crate::syn::parse::parse_syntax_at_depth(&db, "transport %0 to λ %y → %y by %1", 4)
                 .expect("should parse");
 
         // Synthesize the type - should be B
@@ -2570,7 +2581,7 @@ mod tests {
         // ∀ (%x : U0) → U0 should have type U1 (max(0, 0) = 0, so Pi : U1)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
         let result = type_check(&mut env, &pi_expr, &u1);
@@ -2579,7 +2590,7 @@ mod tests {
         // ∀ (%x : U0) → U1 should have type U2 (max(0, 1) = 1, so Pi : U2)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(1)),
+            Binding::new(Syntax::universe_rc(UniverseLevel::new(1))),
         );
         let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2588,7 +2599,7 @@ mod tests {
         // ∀ (%x : U1) → U0 should have type U2 (max(1, 0) = 1, so Pi : U2)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(1)),
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2604,7 +2615,7 @@ mod tests {
         // ∀ (%x : U0) → U0 can be checked against U2 (cumulativity: U1 <= U2)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2624,7 +2635,7 @@ mod tests {
         // (max(0, 1) = 1, so Pi : U2, but we're checking against U1)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Syntax::universe_rc(UniverseLevel::new(1)),
+            Binding::new(Syntax::universe_rc(UniverseLevel::new(1))),
         );
         let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
         let result = type_check(&mut env, &pi_expr, &u1);

@@ -23,15 +23,17 @@ impl<'db> Closure<'db> {
 /// A value in normal form.
 #[derive(Clone, Debug)]
 pub struct Normal<'db> {
-    pub ty: Rc<Value<'db>>,
-    pub value: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
+    pub value: RcValue<'db>,
 }
 
 impl<'db> Normal<'db> {
-    pub fn new(ty: Rc<Value<'db>>, value: Rc<Value<'db>>) -> Normal<'db> {
+    pub fn new(ty: RcValue<'db>, value: RcValue<'db>) -> Normal<'db> {
         Normal { ty, value }
     }
 }
+
+pub type RcValue<'db> = Rc<Value<'db>>;
 
 /// Fully normalized values in the semantic domain.
 #[derive(Clone, Debug)]
@@ -77,11 +79,11 @@ impl<'db> Value<'db> {
         Value::Universe(Universe::new(level))
     }
 
-    pub fn lift(ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn lift(ty: RcValue<'db>) -> Value<'db> {
         Value::Lift(Lift::new(ty))
     }
 
-    pub fn pi(source: Rc<Value<'db>>, target: Closure<'db>) -> Value<'db> {
+    pub fn pi(source: RcValue<'db>, target: Closure<'db>) -> Value<'db> {
         Value::Pi(Pi::new(source, target))
     }
 
@@ -91,19 +93,19 @@ impl<'db> Value<'db> {
 
     pub fn type_constructor(
         constructor: ConstantId<'db>,
-        arguments: Vec<Rc<Value<'db>>>,
+        arguments: Vec<RcValue<'db>>,
     ) -> Value<'db> {
         Value::TypeConstructor(TypeConstructor::new(constructor, arguments))
     }
 
     pub fn data_constructor(
         constructor: ConstantId<'db>,
-        arguments: Vec<Rc<Value<'db>>>,
+        arguments: Vec<RcValue<'db>>,
     ) -> Value<'db> {
         Value::DataConstructor(DataConstructor::new(constructor, arguments))
     }
 
-    pub fn eq(ty: Rc<Value<'db>>, lhs: Rc<Value<'db>>, rhs: Rc<Value<'db>>) -> Value<'db> {
+    pub fn eq(ty: RcValue<'db>, lhs: RcValue<'db>, rhs: RcValue<'db>) -> Value<'db> {
         Value::EqType(EqType::new(ty, lhs, rhs))
     }
 
@@ -111,11 +113,7 @@ impl<'db> Value<'db> {
         Value::Refl(Refl::new())
     }
 
-    pub fn transport(
-        motive: Closure<'db>,
-        proof: Rc<Value<'db>>,
-        value: Rc<Value<'db>>,
-    ) -> Value<'db> {
+    pub fn transport(motive: Closure<'db>, proof: RcValue<'db>, value: RcValue<'db>) -> Value<'db> {
         Value::Transport(Transport::new(motive, proof, value))
     }
 
@@ -123,11 +121,11 @@ impl<'db> Value<'db> {
         Value::HardwareUniverse(HardwareUniverse::new())
     }
 
-    pub fn slift(ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn slift(ty: RcValue<'db>) -> Value<'db> {
         Value::SLift(SLift::new(ty))
     }
 
-    pub fn mlift(ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn mlift(ty: RcValue<'db>) -> Value<'db> {
         Value::MLift(MLift::new(ty))
     }
 
@@ -151,7 +149,7 @@ impl<'db> Value<'db> {
         Value::ModuleUniverse(ModuleUniverse::new())
     }
 
-    pub fn harrow(source: Rc<Value<'db>>, target: Closure<'db>) -> Value<'db> {
+    pub fn harrow(source: RcValue<'db>, target: Closure<'db>) -> Value<'db> {
         Value::HArrow(HArrow::new(source, target))
     }
 
@@ -160,9 +158,9 @@ impl<'db> Value<'db> {
     }
 
     pub fn happlication(
-        module: Rc<Value<'db>>,
-        module_ty: Rc<Value<'db>>,
-        argument: Rc<Value<'db>>,
+        module: RcValue<'db>,
+        module_ty: RcValue<'db>,
+        argument: RcValue<'db>,
     ) -> Value<'db> {
         Value::HApplication(HApplication::new(module, module_ty, argument))
     }
@@ -175,27 +173,23 @@ impl<'db> Value<'db> {
         Value::Constant(name)
     }
 
-    pub fn rigid(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn rigid(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
         Value::Rigid(Rigid { head, spine, ty })
     }
 
-    pub fn variable(level: Level, ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn variable(level: Level, ty: RcValue<'db>) -> Value<'db> {
         Value::rigid(Variable::new(level), Spine::empty(), ty)
     }
 
-    pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
         Value::Flex(Flex { head, spine, ty })
     }
 
-    pub fn metavariable(
-        id: MetaVariableId,
-        local: LocalEnv<'db>,
-        ty: Rc<Value<'db>>,
-    ) -> Value<'db> {
+    pub fn metavariable(id: MetaVariableId, local: LocalEnv<'db>, ty: RcValue<'db>) -> Value<'db> {
         Value::flex(MetaVariable::new(id, local), Spine::empty(), ty)
     }
 
-    pub fn identity_closure(id: MetaVariableId, ty: Rc<Value<'db>>) -> Value<'db> {
+    pub fn identity_closure(id: MetaVariableId, ty: RcValue<'db>) -> Value<'db> {
         Value::flex(MetaVariable::new(id, LocalEnv::new()), Spine::empty(), ty)
     }
 }
@@ -217,23 +211,23 @@ impl<'db> Universe<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Lift<'db> {
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
 }
 
 impl<'db> Lift<'db> {
-    pub fn new(ty: Rc<Value<'db>>) -> Lift<'db> {
+    pub fn new(ty: RcValue<'db>) -> Lift<'db> {
         Lift { ty }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Pi<'db> {
-    pub source: Rc<Value<'db>>,
+    pub source: RcValue<'db>,
     pub target: Closure<'db>,
 }
 
 impl<'db> Pi<'db> {
-    pub fn new(source: Rc<Value<'db>>, target: Closure<'db>) -> Pi<'db> {
+    pub fn new(source: RcValue<'db>, target: Closure<'db>) -> Pi<'db> {
         Pi { source, target }
     }
 }
@@ -251,13 +245,13 @@ impl<'db> Lambda<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Let<'db> {
-    pub ty: Rc<Value<'db>>,
-    pub value: Rc<Value<'db>>,
-    pub body: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
+    pub value: RcValue<'db>,
+    pub body: RcValue<'db>,
 }
 
 impl<'db> Let<'db> {
-    pub fn new(ty: Rc<Value<'db>>, value: Rc<Value<'db>>, body: Rc<Value<'db>>) -> Let<'db> {
+    pub fn new(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> Let<'db> {
         Let { ty, value, body }
     }
 }
@@ -267,29 +261,26 @@ pub struct TypeConstructor<'db> {
     /// The constructor constant id.
     pub constructor: ConstantId<'db>,
     /// The argument values for this constructor instance
-    pub arguments: Vec<Rc<Value<'db>>>,
+    pub arguments: Vec<RcValue<'db>>,
 }
 
 impl<'db> TypeConstructor<'db> {
-    pub fn new(
-        constructor: ConstantId<'db>,
-        arguments: Vec<Rc<Value<'db>>>,
-    ) -> TypeConstructor<'db> {
+    pub fn new(constructor: ConstantId<'db>, arguments: Vec<RcValue<'db>>) -> TypeConstructor<'db> {
         TypeConstructor {
             constructor,
             arguments,
         }
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, RcValue<'db>> {
         self.arguments.iter()
     }
 }
 
 // Implement IntoIterator for &TypeConstructor to allow iteration by reference
 impl<'a, 'db> IntoIterator for &'a TypeConstructor<'db> {
-    type Item = &'a Rc<Value<'db>>;
-    type IntoIter = std::slice::Iter<'a, Rc<Value<'db>>>;
+    type Item = &'a RcValue<'db>;
+    type IntoIter = std::slice::Iter<'a, RcValue<'db>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.arguments.iter()
@@ -302,29 +293,26 @@ pub struct DataConstructor<'db> {
     /// The constructor constant id
     pub constructor: ConstantId<'db>,
     /// The argument values for this constructor instance
-    pub arguments: Vec<Rc<Value<'db>>>,
+    pub arguments: Vec<RcValue<'db>>,
 }
 
 impl<'db> DataConstructor<'db> {
-    pub fn new(
-        constructor: ConstantId<'db>,
-        arguments: Vec<Rc<Value<'db>>>,
-    ) -> DataConstructor<'db> {
+    pub fn new(constructor: ConstantId<'db>, arguments: Vec<RcValue<'db>>) -> DataConstructor<'db> {
         DataConstructor {
             constructor,
             arguments,
         }
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, RcValue<'db>> {
         self.arguments.iter()
     }
 }
 
 // Implement IntoIterator for &DataConstructor to allow iteration by reference
 impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
-    type Item = &'a Rc<Value<'db>>;
-    type IntoIter = std::slice::Iter<'a, Rc<Value<'db>>>;
+    type Item = &'a RcValue<'db>;
+    type IntoIter = std::slice::Iter<'a, RcValue<'db>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.arguments.iter()
@@ -333,13 +321,13 @@ impl<'a, 'db> IntoIterator for &'a DataConstructor<'db> {
 
 #[derive(Clone, Debug)]
 pub struct EqType<'db> {
-    pub ty: Rc<Value<'db>>,
-    pub lhs: Rc<Value<'db>>,
-    pub rhs: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
+    pub lhs: RcValue<'db>,
+    pub rhs: RcValue<'db>,
 }
 
 impl<'db> EqType<'db> {
-    pub fn new(ty: Rc<Value<'db>>, lhs: Rc<Value<'db>>, rhs: Rc<Value<'db>>) -> EqType<'db> {
+    pub fn new(ty: RcValue<'db>, lhs: RcValue<'db>, rhs: RcValue<'db>) -> EqType<'db> {
         EqType { ty, lhs, rhs }
     }
 }
@@ -360,16 +348,12 @@ impl<'db> Refl<'db> {
 #[derive(Clone, Debug)]
 pub struct Transport<'db> {
     pub motive: Closure<'db>,
-    pub proof: Rc<Value<'db>>,
-    pub value: Rc<Value<'db>>,
+    pub proof: RcValue<'db>,
+    pub value: RcValue<'db>,
 }
 
 impl<'db> Transport<'db> {
-    pub fn new(
-        motive: Closure<'db>,
-        proof: Rc<Value<'db>>,
-        value: Rc<Value<'db>>,
-    ) -> Transport<'db> {
+    pub fn new(motive: Closure<'db>, proof: RcValue<'db>, value: RcValue<'db>) -> Transport<'db> {
         Transport {
             motive,
             proof,
@@ -393,22 +377,22 @@ impl<'db> HardwareUniverse<'db> {
 
 #[derive(Debug, Clone)]
 pub struct SLift<'db> {
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
 }
 
 impl<'db> SLift<'db> {
-    pub fn new(ty: Rc<Value<'db>>) -> SLift<'db> {
+    pub fn new(ty: RcValue<'db>) -> SLift<'db> {
         SLift { ty }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct MLift<'db> {
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
 }
 
 impl<'db> MLift<'db> {
-    pub fn new(ty: Rc<Value<'db>>) -> MLift<'db> {
+    pub fn new(ty: RcValue<'db>) -> MLift<'db> {
         MLift { ty }
     }
 }
@@ -480,12 +464,12 @@ impl<'db> ModuleUniverse<'db> {
 
 #[derive(Clone, Debug)]
 pub struct HArrow<'db> {
-    pub source: Rc<Value<'db>>,
+    pub source: RcValue<'db>,
     pub target: Closure<'db>,
 }
 
 impl<'db> HArrow<'db> {
-    pub fn new(source: Rc<Value<'db>>, target: Closure<'db>) -> HArrow<'db> {
+    pub fn new(source: RcValue<'db>, target: Closure<'db>) -> HArrow<'db> {
         HArrow { source, target }
     }
 }
@@ -503,16 +487,16 @@ impl<'db> Module<'db> {
 
 #[derive(Debug, Clone)]
 pub struct HApplication<'db> {
-    pub module: Rc<Value<'db>>,
-    pub module_ty: Rc<Value<'db>>,
-    pub argument: Rc<Value<'db>>,
+    pub module: RcValue<'db>,
+    pub module_ty: RcValue<'db>,
+    pub argument: RcValue<'db>,
 }
 
 impl<'db> HApplication<'db> {
     pub fn new(
-        module: Rc<Value<'db>>,
-        module_ty: Rc<Value<'db>>,
-        argument: Rc<Value<'db>>,
+        module: RcValue<'db>,
+        module_ty: RcValue<'db>,
+        argument: RcValue<'db>,
     ) -> HApplication<'db> {
         HApplication {
             module,
@@ -529,13 +513,13 @@ pub struct Constant<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Flex<'db> {
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
     pub head: MetaVariable<'db>,
     pub spine: Spine<'db>,
 }
 
 impl<'db> Flex<'db> {
-    pub fn new(head: MetaVariable<'db>, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Flex<'db> {
+    pub fn new(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> Flex<'db> {
         Flex { head, spine, ty }
     }
 }
@@ -562,13 +546,13 @@ impl<'db> MetaVariable<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Rigid<'db> {
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
     pub head: Variable,
     pub spine: Spine<'db>,
 }
 
 impl<'db> Rigid<'db> {
-    pub fn new(head: Variable, spine: Spine<'db>, ty: Rc<Value<'db>>) -> Rigid<'db> {
+    pub fn new(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> Rigid<'db> {
         Rigid { head, spine, ty }
     }
 }
@@ -626,7 +610,7 @@ impl<'db> Eliminator<'db> {
 
     pub fn case(
         type_constructor: ConstantId<'db>,
-        parameters: Vec<Rc<Value<'db>>>,
+        parameters: Vec<RcValue<'db>>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Eliminator<'db> {
         Eliminator::Case(Case::new(type_constructor, parameters, branches))
@@ -647,14 +631,14 @@ impl<'db> Application<'db> {
 #[derive(Clone, Debug)]
 pub struct Case<'db> {
     pub type_constructor: ConstantId<'db>,
-    pub parameters: Vec<Rc<Value<'db>>>,
+    pub parameters: Vec<RcValue<'db>>,
     pub branches: Vec<CaseBranch<'db>>,
 }
 
 impl<'db> Case<'db> {
     pub fn new(
         type_constructor: ConstantId<'db>,
-        parameters: Vec<Rc<Value<'db>>>,
+        parameters: Vec<RcValue<'db>>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Case<'db> {
         Case {
@@ -685,7 +669,7 @@ impl<'db> CaseBranch<'db> {
 /// Tracks transparent bindings (Let-bound variables) for δ-reduction.
 #[derive(Clone, Debug)]
 pub struct TransparentEnv<'db> {
-    bindings: im::Vector<Option<Rc<Value<'db>>>>,
+    bindings: im::Vector<Option<RcValue<'db>>>,
 }
 
 impl<'db> TransparentEnv<'db> {
@@ -695,12 +679,12 @@ impl<'db> TransparentEnv<'db> {
         }
     }
 
-    pub fn lookup(&self, level: Level) -> Option<Rc<Value<'db>>> {
+    pub fn lookup(&self, level: Level) -> Option<RcValue<'db>> {
         let index: usize = level.into();
         self.bindings.get(index).and_then(|opt| opt.clone())
     }
 
-    pub fn push_transparent(&mut self, value: Rc<Value<'db>>) {
+    pub fn push_transparent(&mut self, value: RcValue<'db>) {
         self.bindings.push_back(Some(value));
     }
 
@@ -760,11 +744,11 @@ impl<'db, 'g> Environment<'db, 'g> {
     /// Get a local variable by level.
     /// Returns the rigid variable representation.
     /// NOTE: Does NOT unfold transparent bindings - that's the job of the conversion checker!
-    pub fn get(&self, level: Level) -> Rc<Value<'db>> {
+    pub fn get(&self, level: Level) -> RcValue<'db> {
         self.local.get(level).clone()
     }
 
-    pub fn set(&mut self, level: Level, value: Rc<Value<'db>>) {
+    pub fn set(&mut self, level: Level, value: RcValue<'db>) {
         self.local.set(level, value)
     }
 
@@ -775,13 +759,13 @@ impl<'db, 'g> Environment<'db, 'g> {
 
     /// Extend the environment by pushing a definition onto the end.
     /// This is rigid (not transparent) by default.
-    pub fn push(&mut self, value: Rc<Value<'db>>) {
+    pub fn push(&mut self, value: RcValue<'db>) {
         self.transparent.push_rigid();
         self.local.push(value)
     }
 
     /// Extend the environment by pushing a variable onto the end.
-    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+    pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
         self.transparent.push_rigid();
         self.local.push_var(ty)
     }
@@ -789,7 +773,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     /// Extend the environment with multiple variables.
     pub fn extend_vars<T>(&mut self, types: T)
     where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
+        T: IntoIterator<Item = RcValue<'db>>,
     {
         for ty in types {
             self.push_var(ty);
@@ -798,18 +782,14 @@ impl<'db, 'g> Environment<'db, 'g> {
 
     /// Push a transparent binding (for Let expressions).
     /// This adds both the variable to the local environment and tracks it as transparent.
-    pub fn push_transparent(
-        &mut self,
-        ty: Rc<Value<'db>>,
-        value: Rc<Value<'db>>,
-    ) -> Rc<Value<'db>> {
+    pub fn push_transparent(&mut self, ty: RcValue<'db>, value: RcValue<'db>) -> RcValue<'db> {
         let var = self.local.push_var(ty);
         self.transparent.push_transparent(value);
         var
     }
 
     /// Look up a transparent binding for a variable.
-    pub fn lookup_transparent(&self, level: Level) -> Option<Rc<Value<'db>>> {
+    pub fn lookup_transparent(&self, level: Level) -> Option<RcValue<'db>> {
         self.transparent.lookup(level)
     }
 
@@ -1139,7 +1119,7 @@ impl<'db> MetavariableInfo<'db> {
 #[derive(Clone, Debug)]
 pub struct LocalEnv<'db> {
     /// The typing environment.
-    locals: Vec<Rc<Value<'db>>>,
+    locals: Vec<RcValue<'db>>,
 }
 
 impl<'db> LocalEnv<'db> {
@@ -1147,7 +1127,7 @@ impl<'db> LocalEnv<'db> {
         Self { locals: Vec::new() }
     }
 
-    pub fn get(&self, level: Level) -> &Rc<Value<'db>> {
+    pub fn get(&self, level: Level) -> &RcValue<'db> {
         let index: usize = level.into();
         &self.locals[index]
     }
@@ -1157,7 +1137,7 @@ impl<'db> LocalEnv<'db> {
     /// Used by pattern matching to turn a variable into a transparent let-binding
     /// when we learn its value (e.g., `n ~ @zero`). After this, any evaluation
     /// that looks up this level will see the new value instead of a rigid variable.
-    pub fn set(&mut self, level: Level, value: Rc<Value<'db>>) {
+    pub fn set(&mut self, level: Level, value: RcValue<'db>) {
         let index: usize = level.into();
         self.locals[index] = value;
     }
@@ -1168,12 +1148,12 @@ impl<'db> LocalEnv<'db> {
     }
 
     /// Extend the environment by pushing a definition onto the end.
-    pub fn push(&mut self, value: Rc<Value<'db>>) {
+    pub fn push(&mut self, value: RcValue<'db>) {
         self.locals.push(value);
     }
 
     /// Extend the environment by pushing a variable onto the end.
-    pub fn push_var(&mut self, ty: Rc<Value<'db>>) -> Rc<Value<'db>> {
+    pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
         let depth = self.depth();
         let value = Rc::new(Value::variable(Level::new(depth), ty));
         self.push(value.clone());
@@ -1187,7 +1167,7 @@ impl<'db> LocalEnv<'db> {
     /// Extend the environment with multiple values.
     pub fn extend<T>(&mut self, values: T)
     where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
+        T: IntoIterator<Item = RcValue<'db>>,
     {
         self.locals.extend(values);
     }
@@ -1199,7 +1179,7 @@ impl<'db> LocalEnv<'db> {
 
     pub fn extend_vars<T>(&mut self, types: T)
     where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
+        T: IntoIterator<Item = RcValue<'db>>,
     {
         for ty in types {
             self.push_var(ty);
@@ -1207,15 +1187,15 @@ impl<'db> LocalEnv<'db> {
     }
 
     /// Iterate over the values in the environment.
-    pub fn iter(&self) -> std::slice::Iter<'_, Rc<Value<'db>>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, RcValue<'db>> {
         self.locals.iter()
     }
 }
 
-impl<'db, 'g> Extend<Rc<Value<'db>>> for Environment<'db, 'g> {
+impl<'db, 'g> Extend<RcValue<'db>> for Environment<'db, 'g> {
     fn extend<T>(&mut self, iter: T)
     where
-        T: IntoIterator<Item = Rc<Value<'db>>>,
+        T: IntoIterator<Item = RcValue<'db>>,
     {
         self.local.locals.extend(iter);
     }
@@ -1223,5 +1203,5 @@ impl<'db, 'g> Extend<Rc<Value<'db>>> for Environment<'db, 'g> {
 
 #[derive(Clone, Debug)]
 pub struct SemTelescope<'db> {
-    pub types: Vec<Rc<Value<'db>>>,
+    pub types: Vec<RcValue<'db>>,
 }

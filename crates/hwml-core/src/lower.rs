@@ -16,7 +16,7 @@ use crate::{
     eval::run_closure,
     quote,
     syn::RcSyntax,
-    val::{self, Closure, GlobalEnv, Value},
+    val::{self, Closure, GlobalEnv, RcValue, Value},
 };
 use std::rc::Rc;
 
@@ -54,7 +54,7 @@ type Result<'db, T> = std::result::Result<T, Error<'db>>;
 pub fn saturate_value<'db>(
     global: &GlobalEnv<'db>,
     value: &Value<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+) -> Result<'db, RcValue<'db>> {
     match value {
         // The key case: HApplication - try to beta-reduce
         Value::HApplication(happ) => saturate_happlication(global, happ),
@@ -137,7 +137,7 @@ pub fn saturate_value<'db>(
 fn saturate_happlication<'db>(
     global: &GlobalEnv<'db>,
     happ: &val::HApplication<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+) -> Result<'db, RcValue<'db>> {
     // First saturate the argument (always needed)
     let saturated_arg = saturate_value(global, &happ.argument)?;
 
@@ -177,7 +177,7 @@ fn saturate_happlication<'db>(
 fn saturate_closure<'db>(
     global: &GlobalEnv<'db>,
     closure: &Closure<'db>,
-    var_ty: Rc<Value<'db>>,
+    var_ty: RcValue<'db>,
 ) -> Result<'db, Closure<'db>> {
     // Create a fresh variable at the closure's depth
     let depth = closure.local.depth();
@@ -208,14 +208,14 @@ fn saturate_closure<'db>(
 fn saturate_lambda<'db>(
     global: &GlobalEnv<'db>,
     lam: &val::Lambda<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+) -> Result<'db, RcValue<'db>> {
     // Use a placeholder type for the bound variable
     let placeholder_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
     let new_body = saturate_closure(global, &lam.body, placeholder_ty)?;
     Ok(Rc::new(Value::lambda(new_body)))
 }
 
-fn saturate_pi<'db>(global: &GlobalEnv<'db>, pi: &val::Pi<'db>) -> Result<'db, Rc<Value<'db>>> {
+fn saturate_pi<'db>(global: &GlobalEnv<'db>, pi: &val::Pi<'db>) -> Result<'db, RcValue<'db>> {
     let new_source = saturate_value(global, &pi.source)?;
     let new_target = saturate_closure(global, &pi.target, new_source.clone())?;
     Ok(Rc::new(Value::pi(new_source, new_target)))
@@ -224,7 +224,7 @@ fn saturate_pi<'db>(global: &GlobalEnv<'db>, pi: &val::Pi<'db>) -> Result<'db, R
 fn saturate_module<'db>(
     global: &GlobalEnv<'db>,
     module: &val::Module<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+) -> Result<'db, RcValue<'db>> {
     // Use Bit as placeholder type for module argument
     let placeholder_ty = Rc::new(Value::bit());
     let new_body = saturate_closure(global, &module.body, placeholder_ty)?;
@@ -234,7 +234,7 @@ fn saturate_module<'db>(
 fn saturate_harrow<'db>(
     global: &GlobalEnv<'db>,
     harrow: &val::HArrow<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+) -> Result<'db, RcValue<'db>> {
     let new_source = saturate_value(global, &harrow.source)?;
     let new_target = saturate_closure(global, &harrow.target, new_source.clone())?;
     Ok(Rc::new(Value::harrow(new_source, new_target)))
@@ -247,7 +247,7 @@ fn saturate_harrow<'db>(
 fn saturate_rigid<'db>(
     global: &GlobalEnv<'db>,
     rigid: &val::Rigid<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+) -> Result<'db, RcValue<'db>> {
     let new_ty = saturate_value(global, &rigid.ty)?;
     let new_spine = saturate_spine(global, &rigid.spine)?;
     Ok(Rc::new(Value::Rigid(val::Rigid {
@@ -257,10 +257,7 @@ fn saturate_rigid<'db>(
     })))
 }
 
-fn saturate_flex<'db>(
-    global: &GlobalEnv<'db>,
-    flex: &val::Flex<'db>,
-) -> Result<'db, Rc<Value<'db>>> {
+fn saturate_flex<'db>(global: &GlobalEnv<'db>, flex: &val::Flex<'db>) -> Result<'db, RcValue<'db>> {
     let new_ty = saturate_value(global, &flex.ty)?;
     let new_spine = saturate_spine(global, &flex.spine)?;
     Ok(Rc::new(Value::Flex(val::Flex {
@@ -341,7 +338,7 @@ mod tests {
     use crate::val::LocalEnv;
     use crate::Database;
     use hwml_support::salsa::IntoWithDb;
-    
+
     /// Test that a simple value without HApplication passes through unchanged.
     #[test]
     fn test_saturate_no_happlication() {

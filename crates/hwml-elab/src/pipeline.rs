@@ -37,7 +37,7 @@ pub fn elaborate_expression<'db>(
     let (term, _ty) = futures::executor::block_on(async { synth(&mut ctx, expr).await });
 
     ElaborationResult {
-        term: Some(term),
+        term: Some(term.into_inner()),
         diagnostics: ctx.diagnostics().to_vec(),
     }
 }
@@ -149,7 +149,7 @@ fn elaborate_def<'db>(
         eprintln!("[Pipeline] Type checked");
 
         // Evaluate the type to get a Value
-        let ty_value = hwml_core::eval::eval(&mut ctx.solver.tc_env.values, &ty_term)
+        let ty_value = hwml_core::eval::eval(&mut ctx.solver.tc_env.values, ty_term.as_inner())
             .unwrap_or_else(|e| {
                 eprintln!("Failed to evaluate type: {}", e);
                 std::rc::Rc::new(hwml_core::val::Value::universe(
@@ -162,7 +162,7 @@ fn elaborate_def<'db>(
             futures::executor::block_on(async { check(&mut ctx, &value_expr, ty_value).await });
 
         ElaborationResult {
-            term: Some(term),
+            term: Some(term.into_inner()),
             diagnostics: ctx.diagnostics().to_vec(),
         }
     } else {
@@ -356,7 +356,7 @@ fn elaborate_def_with_context<'db>(
                     check(&mut ctx, &value_expr, ty_value).await
                 });
 
-                let zonked_term = zonk(&*ctx.solver.state.borrow(), &value_term);
+                let zonked_term = zonk(&*ctx.solver.state.borrow(), value_term.as_inner());
 
                 ElaborationResult {
                     term: Some(zonked_term),
@@ -395,7 +395,7 @@ fn elaborate_def_with_context<'db>(
 
         let (term, _ty) = futures::executor::block_on(async { synth(&mut ctx, &value_expr).await });
 
-        let zonked_term = zonk(&*ctx.solver.state.borrow(), &term);
+        let zonked_term = zonk(&*ctx.solver.state.borrow(), term.as_inner());
 
         ElaborationResult {
             term: Some(zonked_term),
@@ -431,7 +431,7 @@ fn elaborate_meta_with_context<'db>(
 
     let (term, _ty) = futures::executor::block_on(async { synth(&mut ctx, &meta.value).await });
 
-    let zonked_term = zonk(&*ctx.solver.state.borrow(), &term);
+    let zonked_term = zonk(&*ctx.solver.state.borrow(), term.as_inner());
 
     ElaborationResult {
         term: Some(zonked_term),

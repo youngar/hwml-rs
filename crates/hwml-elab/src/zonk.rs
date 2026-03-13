@@ -98,13 +98,13 @@ fn zonk_with_cache<'db>(
 
         Syntax::Pi(pi) => {
             let source = zonk_with_cache(state, &pi.source, cache);
-            let target = zonk_with_cache(state, &pi.target, cache);
-            Syntax::pi_rc(source, target)
+            let target_body = zonk_with_cache(state, &pi.target.body, cache);
+            Syntax::pi_rc(source, hwml_core::binding::Binding::new(target_body))
         }
 
         Syntax::Lambda(lam) => {
-            let body = zonk_with_cache(state, &lam.body, cache);
-            Syntax::lambda_rc(body)
+            let body_term = zonk_with_cache(state, &lam.body.body, cache);
+            Syntax::lambda_rc(hwml_core::binding::Binding::new(body_term))
         }
 
         Syntax::Application(app) => {
@@ -152,8 +152,12 @@ fn zonk_with_cache<'db>(
                 .branches
                 .iter()
                 .map(|branch| {
-                    let body = zonk_with_cache(state, &branch.body, cache);
-                    hwml_core::syn::CaseBranch::new(branch.constructor, branch.arity, body)
+                    let body_term = zonk_with_cache(state, &branch.body.body, cache);
+                    let arity = branch.body.arity;
+                    hwml_core::syn::CaseBranch::new(
+                        branch.constructor,
+                        hwml_core::binding::DynBinding::new(arity, body_term),
+                    )
                 })
                 .collect();
             Syntax::case_rc(case.scrutinee.index, branches)
@@ -162,8 +166,8 @@ fn zonk_with_cache<'db>(
         Syntax::Let(let_expr) => {
             let ty = zonk_with_cache(state, &let_expr.ty, cache);
             let value = zonk_with_cache(state, &let_expr.value, cache);
-            let body = zonk_with_cache(state, &let_expr.body, cache);
-            Syntax::let_rc(ty, value, body)
+            let body_term = zonk_with_cache(state, &let_expr.body.body, cache);
+            Syntax::let_rc(ty, value, hwml_core::binding::Binding::new(body_term))
         }
 
         Syntax::Eq(eq) => {
@@ -176,16 +180,10 @@ fn zonk_with_cache<'db>(
         Syntax::Refl(_) => Rc::new(term.clone()),
 
         Syntax::Transport(transport) => {
-            let motive_body = zonk_with_cache(state, &transport.motive.body, cache);
-            let motive = hwml_core::syn::Closure::new(motive_body);
+            let motive = zonk_with_cache(state, &transport.motive, cache);
             let proof = zonk_with_cache(state, &transport.proof, cache);
             let value = zonk_with_cache(state, &transport.value, cache);
             Syntax::transport_rc(motive, proof, value)
-        }
-
-        Syntax::Closure(closure) => {
-            let body = zonk_with_cache(state, &closure.body, cache);
-            Syntax::closure_rc(body)
         }
 
         Syntax::HArrow(harrow) => {
@@ -195,8 +193,8 @@ fn zonk_with_cache<'db>(
         }
 
         Syntax::Module(module) => {
-            let body = zonk_with_cache(state, &module.body, cache);
-            Syntax::module_rc(body)
+            let body_term = zonk_with_cache(state, &module.body.body, cache);
+            Syntax::module_rc(hwml_core::binding::Binding::new(body_term))
         }
 
         Syntax::HApplication(happ) => {
@@ -228,7 +226,7 @@ mod tests {
         // Create a solver state with an unsolved metavariable
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_meta(ty);
+        let meta_id = state.fresh_meta(ty, hwml_support::Location::UNKNOWN);
 
         // Create a term with the unsolved metavariable
         let term = Syntax::metavariable_rc(meta_id, vec![]);
@@ -245,7 +243,7 @@ mod tests {
         // Create a solver state with a solved metavariable
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_meta(ty);
+        let meta_id = state.fresh_meta(ty, hwml_support::Location::UNKNOWN);
 
         // Solve the metavariable to a universe
         let solution = Syntax::universe_rc(hwml_core::common::UniverseLevel::new(1));
@@ -269,7 +267,7 @@ mod tests {
         // Create a solver state with a poisoned metavariable
         let mut state = SolverState::new();
         let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
-        let meta_id = state.fresh_poisoned_meta(ty);
+        let meta_id = state.fresh_poisoned_meta(ty, hwml_support::Location::UNKNOWN);
 
         // Create a term with the poisoned metavariable
         let term = Syntax::metavariable_rc(meta_id, vec![]);

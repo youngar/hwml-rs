@@ -1,7 +1,7 @@
 //! Basic example of using the CIRCT backend to compile HWML to Verilog.
 
 use hwml_circt::CirctBackend;
-use hwml_core::declaration::Module;
+use hwml_core::syn::declaration::CompilationUnit;
 use hwml_core::Database;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::new();
 
     // Create a simple HWML module
-    let module = Module::new();
+    let module = CompilationUnit::new();
 
     println!("Created empty HWML module");
     println!("Declarations: {}", module.declarations.len());

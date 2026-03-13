@@ -26,10 +26,7 @@ use hwml_circt_sys::{
     MlirLocationWrapper, MlirModuleWrapper, MlirRegionWrapper, MlirTypeWrapper, MlirValueWrapper,
     OperationBuilder,
 };
-use hwml_core::{
-    declaration::Module,
-    syn::{RcSyntax, Syntax},
-};
+use hwml_core::syn::{declaration::CompilationUnit, RcSyntax, Syntax};
 
 /// Translation context that tracks state during translation.
 pub struct TranslationContext<'c> {
@@ -71,7 +68,7 @@ impl<'c> TranslationContext<'c> {
 pub fn translate_module<'c, 'db>(
     ctx: &'c CirctContext,
     db: &'db dyn salsa::Database,
-    hwml_module: &Module<'db>,
+    hwml_module: &CompilationUnit<'db>,
 ) -> Result<MlirModuleWrapper> {
     use hwml_core::val::GlobalEnv;
 
@@ -95,7 +92,7 @@ pub fn translate_module<'c, 'db>(
 pub fn translate_checked_module<'c, 'db>(
     ctx: &'c CirctContext,
     db: &'db dyn salsa::Database,
-    hwml_module: &Module<'db>,
+    hwml_module: &CompilationUnit<'db>,
     checked: &hwml_core::check_module::CheckedModule<'db>,
 ) -> Result<MlirModuleWrapper> {
     let location = ctx.unknown_location();
@@ -108,7 +105,7 @@ pub fn translate_checked_module<'c, 'db>(
             .declarations
             .iter()
             .find_map(|decl| {
-                if let hwml_core::declaration::Declaration::Constant(c) = decl {
+                if let hwml_core::syn::declaration::Declaration::ConstantDecl(c) = decl {
                     if c.name == hw_const_name {
                         return Some(c);
                     }

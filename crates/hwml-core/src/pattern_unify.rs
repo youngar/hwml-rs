@@ -4,7 +4,8 @@ use crate::{
     common::{Level, MetaVariableId},
     equal, eval,
     val::{
-        DataConstructorInfo, Environment, GlobalEnv, LocalEnv, TransparentEnv, TypeConstructorInfo,
+        DataConstructorInfo, Environment, GlobalEnv, LocalEnv, RcValue, TransparentEnv,
+        TypeConstructorInfo,
     },
     ConstantId, Value,
 };
@@ -13,13 +14,13 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub struct PatternBinding<'db> {
     pub name: Option<String>,
-    pub ty: Rc<Value<'db>>,
+    pub ty: RcValue<'db>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PatternUnifyResult<'db> {
     pub new_bindings: Vec<PatternBinding<'db>>,
-    pub solutions: Vec<(Level, Rc<Value<'db>>)>,
+    pub solutions: Vec<(Level, RcValue<'db>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +87,7 @@ pub fn unify_pattern<'db>(
     global: &GlobalEnv<'db>,
     transparent: &TransparentEnv<'db>,
     tcon_info: &TypeConstructorInfo<'db>,
-    tcon_args: &[Rc<Value<'db>>],
+    tcon_args: &[RcValue<'db>],
     _dcon_name: ConstantId<'db>,
     dcon_info: &DataConstructorInfo<'db>,
     base_depth: usize,
@@ -151,7 +152,7 @@ pub fn unify_pattern<'db>(
         .collect();
     let index_types = index_types?;
 
-    let equations: Vec<(Rc<Value<'db>>, Rc<Value<'db>>, Rc<Value<'db>>)> = scrutinee_indices
+    let equations: Vec<(RcValue<'db>, RcValue<'db>, RcValue<'db>)> = scrutinee_indices
         .into_iter()
         .zip(constructor_indices.into_iter())
         .zip(index_types.into_iter())
@@ -174,7 +175,7 @@ pub fn unify_pattern<'db>(
 
 #[derive(Debug)]
 enum EquationOutcome<'db> {
-    Success(Vec<(Level, Rc<Value<'db>>)>),
+    Success(Vec<(Level, RcValue<'db>)>),
     Conflict,
     Stuck(MetaVariableId),
 }
@@ -262,17 +263,17 @@ fn unify_equations<'db>(
     global: &GlobalEnv<'db>,
     transparent: &TransparentEnv<'db>,
     depth: usize,
-    equations: &[(Rc<Value<'db>>, Rc<Value<'db>>, Rc<Value<'db>>)],
+    equations: &[(RcValue<'db>, RcValue<'db>, RcValue<'db>)],
 ) -> Result<EquationOutcome<'db>, Error<'db>> {
-    let mut solutions: Vec<(Level, Rc<Value<'db>>)> = Vec::new();
-    let mut work_list: Vec<(Rc<Value<'db>>, Rc<Value<'db>>, Rc<Value<'db>>)> = equations.to_vec();
+    let mut solutions: Vec<(Level, RcValue<'db>)> = Vec::new();
+    let mut work_list: Vec<(RcValue<'db>, RcValue<'db>, RcValue<'db>)> = equations.to_vec();
 
     while let Some((lhs, rhs, ty)) = work_list.pop() {
         if equal::equate(global, transparent, depth, &lhs, &rhs, &ty).is_ok() {
             continue;
         }
 
-        match (lhs.as_ref(), rhs.as_ref(), ty.as_ref()) {
+        match (&*lhs, &*rhs, &*ty) {
             (Value::Flex(flex), _, _) | (_, Value::Flex(flex), _) => {
                 return Ok(EquationOutcome::Stuck(flex.head.id));
             }
@@ -292,7 +293,7 @@ fn unify_equations<'db>(
                     return Ok(EquationOutcome::Conflict);
                 }
 
-                if occurs_check(transparent, level, rhs.as_ref()) {
+                if occurs_check(transparent, level, &*rhs) {
                     return Ok(EquationOutcome::Conflict);
                 }
                 solutions.push((level, rhs.clone()));
@@ -307,7 +308,7 @@ fn unify_equations<'db>(
                     return Ok(EquationOutcome::Conflict);
                 }
 
-                if occurs_check(transparent, level, lhs.as_ref()) {
+                if occurs_check(transparent, level, &*lhs) {
                     return Ok(EquationOutcome::Conflict);
                 }
                 solutions.push((level, lhs.clone()));
@@ -438,7 +439,7 @@ mod tests {
     use super::*;
     use crate::val::GlobalEnv;
     use crate::Database;
-    use hwml_support::{IntoWithDb};
+    use hwml_support::IntoWithDb;
 
     use crate::test_utils::{load_prelude, VEC_PRELUDE};
 

@@ -1,3 +1,4 @@
+use crate::binding::Binding;
 use crate::common::*;
 use crate::eval;
 use crate::quote;
@@ -9,6 +10,7 @@ use crate::val::LocalEnv;
 use crate::val::MetaVariable;
 use crate::val::Variable;
 use crate::val::{self, Value};
+use crate::RcValue;
 use std::collections::HashMap;
 use std::option::Option;
 use std::rc::Rc;
@@ -16,7 +18,7 @@ use std::vec;
 
 pub struct MetaContext<'db> {
     // A map from metavariables to their solutions, if available.
-    table: HashMap<MetaVariableId, Rc<Value<'db>>>,
+    table: HashMap<MetaVariableId, RcValue<'db>>,
 }
 
 impl<'db> MetaContext<'db> {
@@ -34,11 +36,11 @@ impl<'db> MetaContext<'db> {
         id
     }
 
-    pub fn lookup(&self, id: MetaVariableId) -> Option<&Rc<Value<'db>>> {
+    pub fn lookup(&self, id: MetaVariableId) -> Option<&RcValue<'db>> {
         self.table.get(&id)
     }
 
-    pub fn solve(&mut self, id: MetaVariableId, solution: Rc<Value<'db>>) {
+    pub fn solve(&mut self, id: MetaVariableId, solution: RcValue<'db>) {
         self.table.insert(id, solution);
     }
 }
@@ -46,14 +48,14 @@ impl<'db> MetaContext<'db> {
 fn force<'db>(
     global: &val::GlobalEnv<'db>,
     mctx: &MetaContext<'db>,
-    mut value: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, eval::Error> {
+    mut value: RcValue<'db>,
+) -> Result<RcValue<'db>, eval::Error> {
     while let Value::Flex(flex) = &*value {
         match mctx.lookup(flex.head.id) {
             Some(solution) => {
                 let mut result = solution.clone();
                 for arg in flex.head.local.iter() {
-                    result = eval::run_application(global, &result, arg.clone())?;
+                    result = eval::run_application(global, &*result, arg.clone())?;
                 }
                 value = eval::run_spine(global, result, &flex.spine)?;
             }
@@ -67,13 +69,13 @@ fn force<'db>(
 pub enum UnificationError<'db> {
     Eval(eval::Error),
     Quote(quote::Error<'db>),
-    Mismatch(Rc<Value<'db>>, Rc<Value<'db>>),
+    Mismatch(RcValue<'db>, RcValue<'db>),
     MismatchSpine(val::Spine<'db>, val::Spine<'db>),
     MismatchEliminator(val::Eliminator<'db>, val::Eliminator<'db>),
     NonLinearApplication(val::Eliminator<'db>),
     BlockedSolution(val::Eliminator<'db>),
     OccursCheck(MetaVariableId),
-    ScopingError(Rc<Value<'db>>),
+    ScopingError(RcValue<'db>),
 }
 
 type UnificationResult<'db, T> = Result<T, UnificationError<'db>>;
@@ -230,8 +232,8 @@ fn rename<'db>(
     mctx: &MetaContext<'db>,
     meta: &val::MetaVariable<'db>,
     renaming: &mut Renaming,
-    value: &Rc<Value<'db>>,
-) -> UnificationResult<'db, Rc<Value<'db>>> {
+    value: &RcValue<'db>,
+) -> UnificationResult<'db, RcValue<'db>> {
     let value = force(global, mctx, value.clone())?;
     match &*value {
         Value::Flex(flex) => {
@@ -338,8 +340,8 @@ fn solve<'db>(
     depth: usize,
     meta_variable: &val::MetaVariable<'db>,
     spine: &val::Spine<'db>,
-    solution: Rc<Value<'db>>,
-    ty: Rc<Value<'db>>,
+    solution: RcValue<'db>,
+    ty: RcValue<'db>,
 ) -> UnificationResult<'db, ()> {
     // Create an initial renamming from the spine.
     let mut renaming = invert(global, meta_context, depth, spine).unwrap();
@@ -360,7 +362,7 @@ fn solve<'db>(
 
     // Wrap the syntax in binders.
     for _ in 0..depth {
-        rhs_syntax = Syntax::lambda_rc(rhs_syntax);
+        rhs_syntax = Syntax::lambda_rc(Binding::new(rhs_syntax));
     }
 
     println!("Solved metavariable: {:?}", rhs_syntax);
@@ -490,8 +492,8 @@ pub fn unify<'db>(
     global: &val::GlobalEnv<'db>,
     mctx: &mut MetaContext<'db>,
     depth: usize,
-    lhs: Rc<Value<'db>>,
-    rhs: Rc<Value<'db>>,
+    lhs: RcValue<'db>,
+    rhs: RcValue<'db>,
 ) -> UnificationResult<'db, ()> {
     let lhs = force(global, mctx, lhs)?;
     let rhs = force(global, mctx, rhs)?;
@@ -712,7 +714,7 @@ mod tests {
             parse_syntax(self.db, s).expect("parse failed")
         }
 
-        fn eval(&self, stx: &Syntax<'db>) -> Rc<Value<'db>> {
+        fn eval(&self, stx: &Syntax<'db>) -> RcValue<'db> {
             let mut env = Environment {
                 global: &self.global,
                 local: LocalEnv::new(),
@@ -721,7 +723,7 @@ mod tests {
             eval::eval(&mut env, stx).expect("eval failed")
         }
 
-        fn parse_eval(&self, s: &'db str) -> Rc<Value<'db>> {
+        fn parse_eval(&self, s: &'db str) -> RcValue<'db> {
             let stx = self.parse(s);
             self.eval(&stx)
         }
