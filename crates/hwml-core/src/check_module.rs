@@ -5,15 +5,16 @@
 //! declarations to reference earlier ones.
 
 use crate::check::{check_type, type_check, TCEnvironment};
-use crate::declaration::{
-    Constant, Declaration, Metavariable, Module, Primitive, TypeConstructor as DeclTypeConstructor,
-};
 use crate::eval;
+use crate::syn::declaration::{
+    CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, MetavariableDecl,
+    PrimitiveDecl, TypeConstructorDecl,
+};
 use crate::syn::{Syntax, Telescope};
 use crate::val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
-use crate::ConstantId;
+use crate::{ConstantId, RcValue};
 use salsa::Database;
 use std::rc::Rc;
 
@@ -54,7 +55,7 @@ pub struct CheckedModule<'db> {
 /// then validate them. This allows mutual recursion between all global declarations.
 pub fn check_module<'db>(
     db: &'db dyn Database,
-    module: &Module<'db>,
+    module: &CompilationUnit<'db>,
     initial_env: GlobalEnv<'db>,
 ) -> Result<CheckedModule<'db>, Error<'db>> {
     let mut global_env = initial_env;
@@ -62,12 +63,12 @@ pub fn check_module<'db>(
     // Add all declarations to the environment
     for decl in &module.declarations {
         match decl {
-            Declaration::Primitive(prim) => add_primitive_to_env(&mut global_env, prim),
-            Declaration::Constant(constant) => add_constant_to_env(&mut global_env, constant),
-            Declaration::TypeConstructor(tcon) => {
+            Declaration::PrimitiveDecl(prim) => add_primitive_to_env(&mut global_env, prim),
+            Declaration::ConstantDecl(constant) => add_constant_to_env(&mut global_env, constant),
+            Declaration::TypeConstructorDecl(tcon) => {
                 add_type_constructor_to_env(&mut global_env, tcon)?
             }
-            Declaration::Metavariable(meta) => add_metavariable_to_env(&mut global_env, meta),
+            Declaration::MetavariableDecl(meta) => add_metavariable_to_env(&mut global_env, meta),
         }
     }
 
@@ -75,15 +76,17 @@ pub fn check_module<'db>(
     let mut hardware_constants = Vec::new();
     for decl in &module.declarations {
         match decl {
-            Declaration::Primitive(prim) => validate_primitive(db, &global_env, prim)?,
-            Declaration::Constant(constant) => {
+            Declaration::PrimitiveDecl(prim) => validate_primitive(db, &global_env, prim)?,
+            Declaration::ConstantDecl(constant) => {
                 let is_hw = validate_constant(db, &global_env, constant)?;
                 if is_hw {
                     hardware_constants.push(constant.name);
                 }
             }
-            Declaration::TypeConstructor(tcon) => validate_type_constructor(db, &global_env, tcon)?,
-            Declaration::Metavariable(meta) => validate_metavariable(db, &global_env, meta)?,
+            Declaration::TypeConstructorDecl(tcon) => {
+                validate_type_constructor(db, &global_env, tcon)?
+            }
+            Declaration::MetavariableDecl(meta) => validate_metavariable(db, &global_env, meta)?,
         }
     }
 
@@ -93,14 +96,14 @@ pub fn check_module<'db>(
     })
 }
 
-fn add_primitive_to_env<'db>(global: &mut GlobalEnv<'db>, prim: &Primitive<'db>) {
+fn add_primitive_to_env<'db>(global: &mut GlobalEnv<'db>, prim: &PrimitiveDecl<'db>) {
     global.add_primitive(prim.name, PrimitiveInfo::new(prim.ty.clone()));
 }
 
 fn validate_primitive<'db>(
     db: &'db dyn Database,
     global: &GlobalEnv<'db>,
-    prim: &Primitive<'db>,
+    prim: &PrimitiveDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
@@ -111,7 +114,7 @@ fn validate_primitive<'db>(
     Ok(())
 }
 
-fn add_constant_to_env<'db>(global: &mut GlobalEnv<'db>, constant: &Constant<'db>) {
+fn add_constant_to_env<'db>(global: &mut GlobalEnv<'db>, constant: &ConstantDecl<'db>) {
     global.add_constant(
         constant.name,
         ConstantInfo::new(constant.ty.clone(), constant.value.clone()),
@@ -121,7 +124,7 @@ fn add_constant_to_env<'db>(global: &mut GlobalEnv<'db>, constant: &Constant<'db
 fn validate_constant<'db>(
     db: &'db dyn Database,
     global: &GlobalEnv<'db>,
-    constant: &Constant<'db>,
+    constant: &ConstantDecl<'db>,
 ) -> Result<bool, Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
@@ -142,7 +145,7 @@ fn validate_constant<'db>(
 
 fn add_type_constructor_to_env<'db>(
     global: &mut GlobalEnv<'db>,
-    tcon: &DeclTypeConstructor<'db>,
+    tcon: &TypeConstructorDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let level = match tcon.universe.as_ref() {
         Syntax::Universe(u) => u.level,
@@ -173,7 +176,7 @@ fn add_type_constructor_to_env<'db>(
 fn validate_type_constructor<'db>(
     db: &'db dyn Database,
     global: &GlobalEnv<'db>,
-    tcon: &DeclTypeConstructor<'db>,
+    tcon: &TypeConstructorDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
@@ -209,9 +212,9 @@ fn validate_type_constructor<'db>(
 fn validate_data_constructor<'db>(
     db: &'db dyn Database,
     global: &GlobalEnv<'db>,
-    tcon: &DeclTypeConstructor<'db>,
+    tcon: &TypeConstructorDecl<'db>,
     _tcon_universe: &crate::val::Universe<'db>,
-    dcon: &crate::declaration::DataConstructor<'db>,
+    dcon: &DataConstructorDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
@@ -239,14 +242,14 @@ fn validate_data_constructor<'db>(
     Ok(())
 }
 
-fn add_metavariable_to_env<'db>(global: &mut GlobalEnv<'db>, meta: &Metavariable<'db>) {
+fn add_metavariable_to_env<'db>(global: &mut GlobalEnv<'db>, meta: &MetavariableDecl<'db>) {
     global.add_metavariable(meta.id, meta.arguments.clone(), meta.ty.clone());
 }
 
 fn validate_metavariable<'db>(
     db: &'db dyn Database,
     global: &GlobalEnv<'db>,
-    meta: &Metavariable<'db>,
+    meta: &MetavariableDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
@@ -305,7 +308,7 @@ fn is_hardware_type_syntax<'db>(ty: &Rc<Syntax<'db>>) -> bool {
 
 /// Extract the inner hardware type from a Lift type.
 /// Returns None if the type is not a Lift.
-pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a Rc<Value<'db>>> {
+pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a RcValue<'db>> {
     match ty {
         Value::Lift(lift) => Some(&lift.ty),
         _ => None,

@@ -3,52 +3,52 @@ use crate::{common::ConstantId, MetaVariableId};
 
 /// A primitive declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Primitive<'db> {
+pub struct PrimitiveDecl<'db> {
     pub name: ConstantId<'db>,
     pub ty: RcSyntax<'db>,
 }
 
-impl<'db> Primitive<'db> {
+impl<'db> PrimitiveDecl<'db> {
     pub fn new(name: ConstantId<'db>, ty: RcSyntax<'db>) -> Self {
-        Primitive { name, ty }
+        PrimitiveDecl { name, ty }
     }
 }
 
 /// A constant declaration with a value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Constant<'db> {
+pub struct ConstantDecl<'db> {
     pub name: ConstantId<'db>,
     pub ty: RcSyntax<'db>,
     pub value: RcSyntax<'db>,
 }
 
-impl<'db> Constant<'db> {
+impl<'db> ConstantDecl<'db> {
     pub fn new(name: ConstantId<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
-        Constant { name, ty, value }
+        ConstantDecl { name, ty, value }
     }
 }
 
 /// A type constructor declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TypeConstructor<'db> {
+pub struct TypeConstructorDecl<'db> {
     pub name: ConstantId<'db>,
     /// The parameters of the type constructor (telescope of types)
     pub parameters: Telescope<'db>,
     /// The indices of the type constructor (telescope of types)
     pub indices: Telescope<'db>,
-    pub data_constructors: Vec<DataConstructor<'db>>,
+    pub data_constructors: Vec<DataConstructorDecl<'db>>,
     pub universe: RcSyntax<'db>,
 }
 
-impl<'db> TypeConstructor<'db> {
+impl<'db> TypeConstructorDecl<'db> {
     pub fn new(
         name: ConstantId<'db>,
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
-        data_constructors: Vec<DataConstructor<'db>>,
+        data_constructors: Vec<DataConstructorDecl<'db>>,
         universe: RcSyntax<'db>,
     ) -> Self {
-        TypeConstructor {
+        TypeConstructorDecl {
             name,
             parameters,
             indices,
@@ -60,7 +60,7 @@ impl<'db> TypeConstructor<'db> {
 
 /// A data constructor within a type constructor declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DataConstructor<'db> {
+pub struct DataConstructorDecl<'db> {
     pub name: ConstantId<'db>,
     /// The parameters of the data constructor (telescope of types)
     pub parameters: Telescope<'db>,
@@ -68,13 +68,13 @@ pub struct DataConstructor<'db> {
     pub result_type: RcSyntax<'db>,
 }
 
-impl<'db> DataConstructor<'db> {
+impl<'db> DataConstructorDecl<'db> {
     pub fn new(
         name: ConstantId<'db>,
         parameters: Telescope<'db>,
         result_type: RcSyntax<'db>,
     ) -> Self {
-        DataConstructor {
+        DataConstructorDecl {
             name,
             parameters,
             result_type,
@@ -90,7 +90,7 @@ impl<'db> DataConstructor<'db> {
     pub fn full_type(&self) -> RcSyntax<'db> {
         let mut result = self.result_type.clone();
         for ty in self.parameters.iter().rev() {
-            result = Syntax::pi_rc(ty.clone(), result);
+            result = Syntax::pi_rc(ty.clone(), BindingSyntax::new(result));
         }
         result
     }
@@ -98,7 +98,7 @@ impl<'db> DataConstructor<'db> {
 
 /// A metavariable declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Metavariable<'db> {
+pub struct MetavariableDecl<'db> {
     pub id: MetaVariableId,
     /// The telescope of argument types (the substitution context).
     pub arguments: Telescope<'db>,
@@ -106,9 +106,9 @@ pub struct Metavariable<'db> {
     pub ty: RcSyntax<'db>,
 }
 
-impl<'db> Metavariable<'db> {
+impl<'db> MetavariableDecl<'db> {
     pub fn new(id: MetaVariableId, arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
-        Metavariable { id, arguments, ty }
+        MetavariableDecl { id, arguments, ty }
     }
 }
 
@@ -116,32 +116,32 @@ impl<'db> Metavariable<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Declaration<'db> {
     /// A primitive.
-    Primitive(Primitive<'db>),
+    PrimitiveDecl(PrimitiveDecl<'db>),
     /// A regular constant/definition with a value.
-    Constant(Constant<'db>),
+    ConstantDecl(ConstantDecl<'db>),
     /// A type constructor, along with its data constructors.
-    TypeConstructor(TypeConstructor<'db>),
+    TypeConstructorDecl(TypeConstructorDecl<'db>),
     /// A metavariable declaration.
-    Metavariable(Metavariable<'db>),
+    MetavariableDecl(MetavariableDecl<'db>),
 }
 
 impl<'db> Declaration<'db> {
     pub fn primitive(name: ConstantId<'db>, ty: RcSyntax<'db>) -> Self {
-        Declaration::Primitive(Primitive::new(name, ty))
+        Declaration::PrimitiveDecl(PrimitiveDecl::new(name, ty))
     }
 
     pub fn constant(name: ConstantId<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
-        Declaration::Constant(Constant::new(name, ty, value))
+        Declaration::ConstantDecl(ConstantDecl::new(name, ty, value))
     }
 
     pub fn type_constructor(
         name: ConstantId<'db>,
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
-        data_constructors: Vec<DataConstructor<'db>>,
+        data_constructors: Vec<DataConstructorDecl<'db>>,
         universe: RcSyntax<'db>,
     ) -> Self {
-        Declaration::TypeConstructor(TypeConstructor::new(
+        Declaration::TypeConstructorDecl(TypeConstructorDecl::new(
             name,
             parameters,
             indices,
@@ -151,26 +151,25 @@ impl<'db> Declaration<'db> {
     }
 
     pub fn metavariable(id: MetaVariableId, arguments: Telescope<'db>, ty: RcSyntax<'db>) -> Self {
-        Declaration::Metavariable(Metavariable::new(id, arguments, ty))
+        Declaration::MetavariableDecl(MetavariableDecl::new(id, arguments, ty))
     }
 }
 
-/// A module containing a list of declarations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Module<'db> {
+pub struct CompilationUnit<'db> {
     pub declarations: Vec<Declaration<'db>>,
 }
 
-impl<'db> Module<'db> {
+impl<'db> CompilationUnit<'db> {
     /// Create a new empty module.
-    pub fn new() -> Module<'db> {
-        Module {
+    pub fn new() -> CompilationUnit<'db> {
+        CompilationUnit {
             declarations: Vec::new(),
         }
     }
 
-    pub fn from_declarations(declarations: Vec<Declaration<'db>>) -> Module<'db> {
-        Module { declarations }
+    pub fn from_declarations(declarations: Vec<Declaration<'db>>) -> CompilationUnit<'db> {
+        CompilationUnit { declarations }
     }
 
     /// Add a declaration to the module.
@@ -197,7 +196,7 @@ impl<'db> Module<'db> {
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
         ty: RcSyntax<'db>,
-        data_constructors: Vec<DataConstructor<'db>>,
+        data_constructors: Vec<DataConstructorDecl<'db>>,
     ) {
         let declaration =
             Declaration::type_constructor(name, parameters, indices, data_constructors, ty);

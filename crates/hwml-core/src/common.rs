@@ -255,16 +255,6 @@ where
     }
 }
 
-/// Location-derived metavariable identifier for deterministic, thread-safe elaboration.
-///
-/// Instead of using a global atomic counter (which breaks Salsa's determinism),
-/// metavariables are identified by the Location of the AST node that spawned them
-/// plus a local index for multiple metas at the same location.
-///
-/// This ensures:
-/// - Deterministic ID generation (same AST → same IDs)
-/// - Thread-safe elaboration (no global state)
-/// - Salsa-compatible incremental compilation
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MetaVariableId {
     /// Local index for metavariables
