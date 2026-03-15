@@ -10,6 +10,7 @@ use crate::syn::Syntax;
 use crate::val;
 use crate::val::{Environment, LocalEnv, Value};
 use crate::RcValue;
+use crate::*;
 use salsa::Database;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -22,7 +23,19 @@ pub struct TCEnvironment<'db, 'g> {
 }
 
 impl<'db, 'g> TCEnvironment<'db, 'g> {
-    fn type_of(&self, level: Level) -> &RcValue<'db> {
+    fn global_env(&self) -> &'g val::GlobalEnv<'db> {
+        self.values.global
+    }
+
+    fn local_env(&self) -> &val::LocalEnv<'db> {
+        &self.values.local
+    }
+
+    fn context(&self) -> &Vec<RcValue<'db>> {
+        &self.types
+    }
+
+    pub fn type_of(&self, level: Level) -> &RcValue<'db> {
         let index: usize = level.into();
         &self.types[index]
     }
@@ -64,13 +77,24 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.types.pop();
     }
 
-    fn truncate(&mut self, depth: usize) {
+    pub fn truncate(&mut self, depth: usize) {
         self.values.truncate(depth);
         self.types.truncate(depth);
     }
 
-    fn depth(&self) -> usize {
+    pub fn depth(&self) -> usize {
         self.values.depth()
+    }
+
+    pub fn under_binder<F, R>(&mut self, ty: RcValue<'db>, f: F) -> Binding<R>
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let depth = self.depth();
+        self.push_var(ty);
+        let body = f(self);
+        self.truncate(depth);
+        Binding { body }
     }
 
     #[allow(dead_code)]
@@ -82,6 +106,37 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
             self.values.push_var(ty.clone());
             self.types.push(ty);
         }
+    }
+
+    pub fn quote_at_depth(
+        &self,
+        tm: &RcValue<'db>,
+        ty: &RcValue<'db>,
+        depth: usize,
+    ) -> RcSyntax<'db> {
+        quote::quote(self.global_env(), depth, tm, ty).unwrap()
+    }
+
+    pub fn quote(&self, tm: &RcValue<'db>, ty: &RcValue<'db>) -> RcSyntax<'db> {
+        self.quote_at_depth(tm, ty, self.depth())
+    }
+
+    pub fn quote_bound(&self, tm: Binding<&RcValue<'db>>, ty: &RcValue<'db>) -> RcSyntax<'db> {
+        self.quote_at_depth(tm.body, ty, self.depth() + 1)
+    }
+
+    /// Build a syntactic substitution from this local environment.
+    pub fn syn_substitution(&self) -> Vec<RcSyntax<'db>> {
+        let mut substitution: Vec<RcSyntax<'db>> = Vec::new();
+        for i in 0..self.depth() {
+            let tm: &RcValue<'db> = self.local_env().get(Level(i));
+            let ty: &RcValue<'db> = self.context().get(i).unwrap();
+            let syn_tm: RcSyntax<'db> = self.quote(tm, ty);
+        }
+        for (tm, ty) in self.local_env().iter().zip(self.context()) {
+            substitution.push(self.quote(tm, &ty));
+        }
+        substitution
     }
 
     /// Apply substitutions from pattern unification.

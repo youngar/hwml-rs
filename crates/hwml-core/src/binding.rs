@@ -10,6 +10,27 @@ impl<A> Binding<A> {
     pub fn new(body: A) -> Self {
         Binding { body }
     }
+
+    pub fn as_ref(&self) -> Binding<&A> {
+        Binding { body: &self.body }
+    }
+
+    pub fn into_inner(self) -> A {
+        self.body
+    }
+
+    pub fn map<F, B>(self, f: F) -> Binding<B>
+    where
+        F: FnOnce(A) -> B,
+    {
+        Binding { body: f(self.body) }
+    }
+}
+
+impl<A> AsRef<A> for Binding<A> {
+    fn as_ref(&self) -> &A {
+        &self.body
+    }
 }
 
 impl<A> Deref for Binding<A> {

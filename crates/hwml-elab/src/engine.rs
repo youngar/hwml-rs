@@ -506,25 +506,11 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
             spawner,
         }
     }
-}
 
-/// Test-only: Initialize solver environment from declared metavariables in GlobalEnv.
-#[cfg(test)]
-impl<'db, 'g> SolverEnvironment<'db, 'g> {
-    /// Create a new context handle, initializing solver state from declared metavariables.
-    /// This is useful for testing unification/type-checking with metavariables
-    /// declared in a prelude, without going through full elaboration.
-    pub fn new_from_global(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'db>) -> Self {
-        let state = SolverState::from_global_env(tc_env.values.global);
-        SolverEnvironment {
-            state: Rc::new(RefCell::new(state)),
-            tc_env,
-            spawner,
-        }
+    pub fn db(&self) -> &'db dyn salsa::Database {
+        self.tc_env.db
     }
-}
 
-impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// Attempt to read a meta. If solved, return value.
     /// If not, register the current Waker with reason and return None.
     pub fn poll_meta(
@@ -552,6 +538,11 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
             ty,
         ))
     }
+
+    // /// Allocate a fresh syntactic metavariable and return it.
+    // pub fn fresh_syn_meta(&self, ty: RcValue<'db>, loc: Location) -> RcSyntax<'db> {
+    //     self.quote(self.fresh_meta(ty, loc))
+    // }
 
     /// Allocate a fresh poisoned metavariable for error recovery.
     pub fn fresh_poisoned_meta(&self, ty: RcValue<'db>, loc: Location) -> RcValue<'db> {
@@ -644,6 +635,51 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         crate::zonk::zonk(&self.state.borrow(), term)
     }
 
+    /// Extend the environment with an additional variable.
+    pub fn under_binder<F, R>(&mut self, ty: RcValue<'db>, f: F) -> Binding<R>
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let depth = self.tc_env.depth();
+        self.tc_env.push_var(ty);
+        let body = f(self);
+        self.tc_env.truncate(depth);
+        Binding { body }
+    }
+
+    /// Quote a term at a fixed depth.
+    pub fn quote_at_depth(
+        &self,
+        tm: &RcValue<'db>,
+        ty: &RcValue<'db>,
+        depth: usize,
+    ) -> RcSyntax<'db> {
+        self.tc_env.quote_at_depth(tm, ty, depth)
+    }
+
+    /// Quote a term at the current binder depth.
+    pub fn quote(&self, tm: &RcValue<'db>, ty: &RcValue<'db>) -> RcSyntax<'db> {
+        self.tc_env.quote(tm, ty)
+    }
+
+    /// Quote a bound term.
+    pub fn quote_bound(&self, tm: Binding<&RcValue<'db>>, ty: &RcValue<'db>) -> RcSyntax<'db> {
+        self.tc_env.quote_bound(tm, ty)
+    }
+
+    /// Convert a value to a closure, assuming the given term is under one
+    /// additional binder than the current environment.
+    pub fn make_closure(&self, tm: Binding<&RcValue<'db>>, ty: &RcValue<'db>) -> val::Closure<'db> {
+        let syn_tm = self.quote_bound(tm, ty);
+        let substitution = self.tc_env.values.local.clone();
+        val::Closure::new(substitution, syn_tm)
+    }
+
+    pub fn eval(&self, tm: &RcSyntax<'db>) -> RcValue<'db> {
+        let mut eval_env = self.tc_env.values.clone();
+        eval::eval(&mut eval_env, tm).unwrap()
+    }
+
     /// Generate a detailed blame report for unsolved metavariables.
     /// This is called when the solver stalls to provide rich error messages.
     pub fn generate_blame_report(&self) -> String {
@@ -674,6 +710,22 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         }
 
         report
+    }
+}
+
+/// Test-only: Initialize solver environment from declared metavariables in GlobalEnv.
+#[cfg(test)]
+impl<'db, 'g> SolverEnvironment<'db, 'g> {
+    /// Create a new context handle, initializing solver state from declared metavariables.
+    /// This is useful for testing unification/type-checking with metavariables
+    /// declared in a prelude, without going through full elaboration.
+    pub fn new_from_global(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'db>) -> Self {
+        let state = SolverState::from_global_env(tc_env.values.global);
+        SolverEnvironment {
+            state: Rc::new(RefCell::new(state)),
+            tc_env,
+            spawner,
+        }
     }
 }
 
@@ -726,6 +778,9 @@ impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
 struct ReadyQueue {
     queue: RefCell<VecDeque<TaskId>>,
 }
+
+pub type TaskOutput = Result<(), ()>;
+pub type Task = Pin<dyn Future<Output = TaskOutput>>;
 
 /// Shared task storage that can be accessed by both the executor and spawner.
 struct TaskStorage<'db> {

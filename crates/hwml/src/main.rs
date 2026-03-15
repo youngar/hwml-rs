@@ -60,37 +60,38 @@ fn main() {
     let source_file = hwml_support::SourceFile::new(&db, path_str, contents);
 
     // Elaborate the program
-    let results = hwml_elab::elaborate_program(&db, source_file, &program);
+    // let results: Vec<()> = vec![];
+    // // hwml_elab::elaborate_program(&db, source_file, &program);
 
-    // Display results
-    println!(
-        "Elaboration complete. {} statement(s) processed.",
-        results.len()
-    );
-    println!();
+    // // Display results
+    // println!(
+    //     "Elaboration complete. {} statement(s) processed.",
+    //     results.len()
+    // );
+    // println!();
 
-    for (i, result) in results.iter().enumerate() {
-        println!("Statement {}:", i + 1);
+    // for (i, result) in results.iter().enumerate() {
+    //     println!("Statement {}:", i + 1);
 
-        // Show the elaborated term
-        if let Some(term) = &result.term {
-            println!(
-                "  Core term: {}",
-                hwml_core::syn::print::print_syntax_to_string(&db, term)
-            );
-        } else {
-            println!("  Core term: <failed to elaborate>");
-        }
+    //     // Show the elaborated term
+    //     if let Some(term) = &result.term {
+    //         println!(
+    //             "  Core term: {}",
+    //             hwml_core::syn::print::print_syntax_to_string(&db, term)
+    //         );
+    //     } else {
+    //         println!("  Core term: <failed to elaborate>");
+    //     }
 
-        // Show diagnostics
-        if !result.diagnostics.is_empty() {
-            println!("  Diagnostics:");
-            for diag in &result.diagnostics {
-                println!("    {}: {}", diag.location, diag.message);
-            }
-        }
-        println!();
-    }
+    //     // Show diagnostics
+    //     if !result.diagnostics.is_empty() {
+    //         println!("  Diagnostics:");
+    //         for diag in &result.diagnostics {
+    //             println!("    {}: {}", diag.location, diag.message);
+    //         }
+    //     }
+    //     println!();
+    // }
 }
 
 fn run_core(args: Args) {

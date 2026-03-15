@@ -612,7 +612,7 @@ impl<'db> Print for Pi<'db> {
                         p.text(")")?;
                         st = st.inc_depth();
 
-                        match next.target.as_ref() {
+                        match next.target.body.as_ref() {
                             Syntax::Pi(pi) => next = pi,
                             _ => break,
                         }
@@ -644,7 +644,7 @@ impl<'db> Print for Lambda<'db> {
                     loop {
                         print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
-                        match next.body.as_ref() {
+                        match next.body.body.as_ref() {
                             Syntax::Lambda(lam) => next = lam,
                             _ => break,
                         }
@@ -938,7 +938,7 @@ impl<'db> Print for Module<'db> {
                     loop {
                         print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
-                        match next.body.as_ref() {
+                        match next.body.body.as_ref() {
                             Syntax::Module(lam) => next = lam,
                             _ => break,
                         }

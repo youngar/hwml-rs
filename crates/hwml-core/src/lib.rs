@@ -18,6 +18,8 @@ pub mod val;
 pub use binding::*;
 pub use common::*;
 pub use symbol::InternedString;
+pub use typed::Typed;
+
 pub use syn::declaration::{
     CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, PrimitiveDecl,
     TypeConstructorDecl,
