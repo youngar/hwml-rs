@@ -1,6 +1,5 @@
 use crate::*;
 use hwml_core::*;
-use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub struct ElabVar {

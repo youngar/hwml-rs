@@ -694,7 +694,7 @@ pub fn unify<'db>(
 mod tests {
     use super::*;
     use crate::syn::parse::parse_syntax;
-    use crate::Database;
+    use crate::{Database, RcSyntax};
 
     /// Test helper context
     struct Ctx<'db> {
@@ -710,7 +710,7 @@ mod tests {
             }
         }
 
-        fn parse(&self, s: &'db str) -> Rc<Syntax<'db>> {
+        fn parse(&self, s: &'db str) -> RcSyntax<'db> {
             parse_syntax(self.db, s).expect("parse failed")
         }
 

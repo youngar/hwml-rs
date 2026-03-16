@@ -10,13 +10,12 @@ use crate::syn::declaration::{
     CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, MetavariableDecl,
     PrimitiveDecl, TypeConstructorDecl,
 };
-use crate::syn::{Syntax, Telescope};
+use crate::syn::{RcSyntax, Syntax, Telescope};
 use crate::val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
 use crate::{QualifiedName, RcValue};
 use salsa::Database;
-use std::rc::Rc;
 
 /// Errors that can occur during module checking.
 #[derive(Debug, Clone)]
@@ -290,7 +289,7 @@ fn is_hardware_type(ty: &Value) -> bool {
 }
 
 /// Check if syntax represents a hardware type.
-fn is_hardware_type_syntax<'db>(ty: &Rc<Syntax<'db>>) -> bool {
+fn is_hardware_type_syntax<'db>(ty: &RcSyntax<'db>) -> bool {
     match ty.as_ref() {
         // Lift type in syntax
         Syntax::Lift(_) => true,

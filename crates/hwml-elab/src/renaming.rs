@@ -626,13 +626,12 @@ fn rename_lambda<'db>(
         source: sem_source,
         target: sem_target_closure,
     } = sem_pi;
-    let syn_body: Rc<Syntax<'db>> =
-        renaming.under_binder(sem_source.clone(), |renaming, var| {
-            let sem_body_ty: RcValue<'db> =
-                eval::run_closure(global, sem_target_closure, [var.clone()])?;
-            let sem_body: RcValue<'db> = eval::apply_lambda(global, sem_lambda, var)?;
-            rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
-        })?;
+    let syn_body: RcSyntax<'db> = renaming.under_binder(sem_source.clone(), |renaming, var| {
+        let sem_body_ty: RcValue<'db> =
+            eval::run_closure(global, sem_target_closure, [var.clone()])?;
+        let sem_body: RcValue<'db> = eval::apply_lambda(global, sem_lambda, var)?;
+        rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
+    })?;
     Ok(Rc::new(Syntax::lambda(hwml_core::binding::Binding::new(
         syn_body,
     ))))
@@ -650,13 +649,12 @@ fn rename_module<'db>(
         source: sem_source,
         target: sem_target_closure,
     } = sem_harrow;
-    let syn_body: Rc<Syntax<'db>> =
-        renaming.under_binder(sem_source.clone(), |renaming, var| {
-            let sem_body_ty: RcValue<'db> =
-                eval::run_closure(global, sem_target_closure, [var.clone()])?;
-            let sem_body: RcValue<'db> = eval::run_closure(global, &sem_module.body, [var])?;
-            rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
-        })?;
+    let syn_body: RcSyntax<'db> = renaming.under_binder(sem_source.clone(), |renaming, var| {
+        let sem_body_ty: RcValue<'db> =
+            eval::run_closure(global, sem_target_closure, [var.clone()])?;
+        let sem_body: RcValue<'db> = eval::run_closure(global, &sem_module.body, [var])?;
+        rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
+    })?;
     Ok(Syntax::module_rc(hwml_core::binding::Binding::new(
         syn_body,
     )))
@@ -738,9 +736,9 @@ fn rename_spine<'db>(
     global: &GlobalEnv<'db>,
     meta: MetaVariableId,
     renaming: &mut Renaming,
-    mut head: Rc<Syntax<'db>>,
+    mut head: RcSyntax<'db>,
     spine: &val::Spine<'db>,
-) -> Result<Rc<Syntax<'db>>, Error<'db>> {
+) -> Result<RcSyntax<'db>, Error<'db>> {
     for eliminator in spine.iter() {
         head = rename_eliminator(db, global, meta, renaming, head, eliminator)?;
     }

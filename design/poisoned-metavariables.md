@@ -57,7 +57,7 @@ pub struct MetaVariableId {
 ```rust
 struct MetaSlot<'db> {
     ty: RcValue<'db>,
-    solution: Option<Rc<Syntax<'db>>>,
+    solution: Option<RcSyntax<'db>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,  // NEW: Error recovery flag
 }
@@ -91,7 +91,7 @@ pub fn fresh_poisoned_meta(&mut self, loc: Location, ty: RcValue<'db>) -> MetaVa
 
 #### Cycle Detection
 ```rust
-pub fn solve_checked(&self, meta: MetaVariableId, value: Rc<Syntax<'db>>) 
+pub fn solve_checked(&self, meta: MetaVariableId, value: RcSyntax<'db>) 
     -> Result<(), Vec<MetaVariableId>> 
 {
     let deps = self.collect_dependencies(&value);
@@ -115,7 +115,7 @@ pub async fn unify(...) -> UnifyResult<'db> {
 
 #### Zonking
 ```rust
-pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> Rc<Syntax<'db>> {
+pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> RcSyntax<'db> {
     match &term.data {
         SyntaxData::Metavariable(id, args) => {
             match state.solution(*id) {

@@ -39,7 +39,7 @@ Add location tracking to metavariables for better error reporting.
 // Line 117: Add location field to MetaSlot
 struct MetaSlot<'db> {
     ty: RcValue<'db>,
-    solution: Option<Rc<Syntax<'db>>>,
+    solution: Option<RcSyntax<'db>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,
     location: Location,  // ← NEW
@@ -114,18 +114,18 @@ use std::rc::Rc;
 /// Invariant: Γ ⊢ term ⇐ ty
 #[derive(Clone, Debug)]
 pub struct CheckedTerm<'db> {
-    pub(super) term: Rc<Syntax<'db>>,
+    pub(super) term: RcSyntax<'db>,
     pub(super) ty: RcValue<'db>,
 }
 
 impl<'db> CheckedTerm<'db> {
     /// SAFETY: Only callable within the kernel module.
     /// Caller must ensure the typing invariant holds.
-    pub(super) fn new_unchecked(term: Rc<Syntax<'db>>, ty: RcValue<'db>) -> Self {
+    pub(super) fn new_unchecked(term: RcSyntax<'db>, ty: RcValue<'db>) -> Self {
         Self { term, ty }
     }
     
-    pub fn syntax(&self) -> &Rc<Syntax<'db>> {
+    pub fn syntax(&self) -> &RcSyntax<'db> {
         &self.term
     }
     
@@ -133,7 +133,7 @@ impl<'db> CheckedTerm<'db> {
         &self.ty
     }
     
-    pub fn into_parts(self) -> (Rc<Syntax<'db>>, RcValue<'db>) {
+    pub fn into_parts(self) -> (RcSyntax<'db>, RcValue<'db>) {
         (self.term, self.ty)
     }
 }
@@ -142,16 +142,16 @@ impl<'db> CheckedTerm<'db> {
 /// Invariant: Γ ⊢ term ⇒ ty
 #[derive(Clone, Debug)]
 pub struct SynthesizedTerm<'db> {
-    pub(super) term: Rc<Syntax<'db>>,
+    pub(super) term: RcSyntax<'db>,
     pub(super) ty: RcValue<'db>,
 }
 
 impl<'db> SynthesizedTerm<'db> {
-    pub(super) fn new_unchecked(term: Rc<Syntax<'db>>, ty: RcValue<'db>) -> Self {
+    pub(super) fn new_unchecked(term: RcSyntax<'db>, ty: RcValue<'db>) -> Self {
         Self { term, ty }
     }
     
-    pub fn syntax(&self) -> &Rc<Syntax<'db>> {
+    pub fn syntax(&self) -> &RcSyntax<'db> {
         &self.term
     }
     
@@ -159,7 +159,7 @@ impl<'db> SynthesizedTerm<'db> {
         &self.ty
     }
     
-    pub fn into_parts(self) -> (Rc<Syntax<'db>>, RcValue<'db>) {
+    pub fn into_parts(self) -> (RcSyntax<'db>, RcValue<'db>) {
         (self.term, self.ty)
     }
     
@@ -335,11 +335,11 @@ pub mod kernel;
 ```rust
 // Change ALL Syntax constructors from `pub` to `pub(crate)`
 impl<'db> Syntax<'db> {
-    pub(crate) fn lambda_rc(body: Rc<Syntax<'db>>) -> Rc<Syntax<'db>> {
+    pub(crate) fn lambda_rc(body: RcSyntax<'db>) -> RcSyntax<'db> {
         // ...
     }
 
-    pub(crate) fn application_rc(/* ... */) -> Rc<Syntax<'db>> {
+    pub(crate) fn application_rc(/* ... */) -> RcSyntax<'db> {
         // ...
     }
 
@@ -695,7 +695,7 @@ async fn check_fun<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     fun: &surface::Fun,
     expected_ty: RcValue<'db>,
-) -> Rc<Syntax<'db>> {
+) -> RcSyntax<'db> {
     // ... extract Pi type ...
     let body_term = check(ctx, &fun.body, target_ty).await;
     Syntax::lambda_rc(body_term)  // ❌ Direct construction

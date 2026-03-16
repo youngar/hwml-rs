@@ -8,7 +8,7 @@
 //! should not cause the zonking pass to fail.
 
 use hwml_core::common::MetaVariableId;
-use hwml_core::Syntax;
+use hwml_core::{RcSyntax, Syntax};
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -23,7 +23,7 @@ use crate::engine::SolverState;
 /// - Poisoned metavariables are left as-is
 ///
 /// The zonking pass uses a cache to avoid re-zonking the same metavariable multiple times.
-pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> Rc<Syntax<'db>> {
+pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> RcSyntax<'db> {
     let mut cache = HashMap::new();
     zonk_with_cache(state, term, &mut cache)
 }
@@ -32,8 +32,8 @@ pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> Rc<Syntax<'db>
 fn zonk_with_cache<'db>(
     state: &SolverState<'db>,
     term: &Syntax<'db>,
-    cache: &mut HashMap<MetaVariableId, Rc<Syntax<'db>>>,
-) -> Rc<Syntax<'db>> {
+    cache: &mut HashMap<MetaVariableId, RcSyntax<'db>>,
+) -> RcSyntax<'db> {
     match term {
         Syntax::Metavariable(meta) => {
             // Check if we've already zonked this metavariable

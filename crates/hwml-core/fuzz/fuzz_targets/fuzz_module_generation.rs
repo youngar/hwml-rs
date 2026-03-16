@@ -13,7 +13,7 @@ fn generate_random_type<'db>(
     data: &[u8],
     offset: usize,
     depth: u8,
-) -> Rc<Syntax<'db>> {
+) -> RcSyntax<'db> {
     if depth > 3 || data.len() <= offset {
         // Base case: return a simple type
         return Rc::new(Syntax::Universe(Universe::new(UniverseLevel::new(0))));
@@ -67,7 +67,7 @@ fn generate_random_expression<'db>(
     data: &[u8],
     offset: usize,
     depth: u8,
-) -> Rc<Syntax<'db>> {
+) -> RcSyntax<'db> {
     if depth > 3 || data.len() <= offset {
         // Base case: return a simple expression
         let const_name = match data.get(offset).unwrap_or(&0) % 3 {

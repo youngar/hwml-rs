@@ -1,6 +1,3 @@
-use crate::word::Word;
-use hwml_support::{FromWithDb, IntoWithDb};
-use salsa::Database;
 use serde::{Deserialize, Serialize};
 use std::{
     convert::{From, Into},

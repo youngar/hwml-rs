@@ -98,13 +98,13 @@ pub enum Error<'db> {
     
     /// Expected a hardware type (Type)
     NotHWType {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         ty_got: RcValue<'db>,
     },
     
     /// Expected a lifted type (^ht)
     NotLiftedType {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         ty_got: RcValue<'db>,
     },
     
@@ -117,7 +117,7 @@ pub enum Error<'db> {
     
     /// Cannot splice non-quoted value
     BadSplice {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         ty_got: RcValue<'db>,
     },
 }

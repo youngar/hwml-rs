@@ -168,14 +168,14 @@ pub async fn check<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     expr: &surface::Expression,
     expected_ty: RcValue<'db>,
-) -> Rc<Syntax<'db>>
+) -> RcSyntax<'db>
 
 // crates/hwml-elab/src/elaborator.rs (lines 603-607)
 #[async_recursion::async_recursion(?Send)]
 pub async fn synth<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     expr: &surface::Expression,
-) -> (Rc<Syntax<'db>>, RcValue<'db>)
+) -> (RcSyntax<'db>, RcValue<'db>)
 ```
 
 **Note:** `#[async_recursion(?Send)]` is required because `Rc` is not `Send` and we're single-threaded.
@@ -200,7 +200,7 @@ When the elaborator encounters an unsolved metavariable that blocks progress:
 ```rust
 // crates/hwml-elab/src/engine.rs (lines 700-719)
 impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
-    type Output = Rc<Syntax<'db>>;
+    type Output = RcSyntax<'db>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.ctx.poll_meta(self.meta, cx.waker(), self.reason.clone()) {
@@ -227,7 +227,7 @@ impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
 // crates/hwml-elab/src/engine.rs (lines 117-127)
 struct MetaSlot<'db> {
     ty: RcValue<'db>,
-    solution: Option<Rc<Syntax<'db>>>,
+    solution: Option<RcSyntax<'db>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,  // For error recovery
 }

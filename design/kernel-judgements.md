@@ -25,7 +25,7 @@ Every term construction in the kernel returns **both** the term **and** its type
 /// Invariant: The wrapped term has the specified type.
 #[derive(Clone, Debug)]
 pub struct CheckedTerm<'db> {
-    term: Rc<Syntax<'db>>,
+    term: RcSyntax<'db>,
     ty: RcValue<'db>,
 }
 
@@ -33,7 +33,7 @@ pub struct CheckedTerm<'db> {
 /// Invariant: The wrapped term has exactly the synthesized type.
 #[derive(Clone, Debug)]
 pub struct SynthesizedTerm<'db> {
-    term: Rc<Syntax<'db>>,
+    term: RcSyntax<'db>,
     ty: RcValue<'db>,
 }
 
@@ -55,7 +55,7 @@ pub struct WellFormedType<'db> {
 ```rust
 impl<'db> CheckedTerm<'db> {
     /// Extract the underlying syntax (read-only).
-    pub fn syntax(&self) -> &Rc<Syntax<'db>> {
+    pub fn syntax(&self) -> &RcSyntax<'db> {
         &self.term
     }
     
@@ -65,13 +65,13 @@ impl<'db> CheckedTerm<'db> {
     }
     
     /// Consume and extract both (for final elaboration result).
-    pub fn into_parts(self) -> (Rc<Syntax<'db>>, RcValue<'db>) {
+    pub fn into_parts(self) -> (RcSyntax<'db>, RcValue<'db>) {
         (self.term, self.ty)
     }
 }
 
 impl<'db> SynthesizedTerm<'db> {
-    pub fn syntax(&self) -> &Rc<Syntax<'db>> {
+    pub fn syntax(&self) -> &RcSyntax<'db> {
         &self.term
     }
     
@@ -79,7 +79,7 @@ impl<'db> SynthesizedTerm<'db> {
         &self.ty
     }
     
-    pub fn into_parts(self) -> (Rc<Syntax<'db>>, RcValue<'db>) {
+    pub fn into_parts(self) -> (RcSyntax<'db>, RcValue<'db>) {
         (self.term, self.ty)
     }
 }
@@ -302,14 +302,14 @@ All `Syntax` constructors become `pub(crate)` within `hwml-core`, visible only t
 
 impl<'db> Syntax<'db> {
     // All constructors become pub(crate)
-    pub(crate) fn lambda_rc(body: Rc<Syntax<'db>>) -> Rc<Syntax<'db>> {
+    pub(crate) fn lambda_rc(body: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::Lambda(Lambda::new(body)))
     }
 
     pub(crate) fn application_rc(
-        func: Rc<Syntax<'db>>,
-        arg: Rc<Syntax<'db>>,
-    ) -> Rc<Syntax<'db>> {
+        func: RcSyntax<'db>,
+        arg: RcSyntax<'db>,
+    ) -> RcSyntax<'db> {
         Rc::new(Syntax::Application(Application::new(func, arg)))
     }
 
@@ -332,7 +332,7 @@ async fn check_fun<'db, 'g>(
     ctx: &mut ElaborationContext<'db, 'g>,
     fun: &surface::Fun,
     expected_ty: RcValue<'db>,
-) -> Rc<Syntax<'db>> {
+) -> RcSyntax<'db> {
     // ... extract Pi type ...
     let body_term = check(ctx, &fun.body, target_ty).await;
     Syntax::lambda_rc(body_term)  // ❌ Direct construction

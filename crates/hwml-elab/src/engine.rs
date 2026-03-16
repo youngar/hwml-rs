@@ -118,7 +118,7 @@ struct MetaSlot<'db> {
     /// The type of the metavariable.
     ty: RcValue<'db>,
     /// The solution for this metavariable, if solved.
-    solution: Option<Rc<Syntax<'db>>>,
+    solution: Option<RcSyntax<'db>>,
     /// Tasks waiting for this metavariable to be solved.
     waiters: Vec<WaitingTask>,
     /// Whether this metavariable is poisoned (represents an error).
@@ -215,7 +215,7 @@ impl<'db> SolverState<'db> {
         meta: MetaVariableId,
         waker: &Waker,
         reason: BlockReason,
-    ) -> Option<Rc<Syntax<'db>>> {
+    ) -> Option<RcSyntax<'db>> {
         // Meta should already exist if it was allocated through fresh_meta
         let slot = self.metas.get_mut(&meta).expect(&format!(
             "Meta {} not allocated! Use fresh_meta() to allocate metavariables.",
@@ -266,7 +266,7 @@ impl<'db> SolverState<'db> {
     }
 
     /// Get the solution for a specific metavariable, if it has been solved.
-    pub fn solution(&self, id: MetaVariableId) -> Option<Rc<Syntax<'db>>> {
+    pub fn solution(&self, id: MetaVariableId) -> Option<RcSyntax<'db>> {
         self.metas.get(&id).and_then(|slot| slot.solution.clone())
     }
 
@@ -433,7 +433,7 @@ impl<'db> SolverState<'db> {
     /// Test-only: Directly set a metavariable solution without cycle checking.
     /// This is useful for testing zonking and other functionality.
     #[cfg(test)]
-    pub fn set_solution_unchecked(&mut self, meta: MetaVariableId, solution: Rc<Syntax<'db>>) {
+    pub fn set_solution_unchecked(&mut self, meta: MetaVariableId, solution: RcSyntax<'db>) {
         if let Some(slot) = self.metas.get_mut(&meta) {
             slot.solution = Some(solution);
         }
@@ -518,7 +518,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         meta: MetaVariableId,
         waker: &Waker,
         reason: BlockReason,
-    ) -> Option<Rc<Syntax<'db>>> {
+    ) -> Option<RcSyntax<'db>> {
         self.state.borrow_mut().poll_meta(meta, waker, reason)
     }
 
@@ -555,7 +555,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     }
 
     /// Get the solution for a specific metavariable, if it has been solved.
-    pub fn solution(&self, meta: MetaVariableId) -> Option<Rc<Syntax<'db>>> {
+    pub fn solution(&self, meta: MetaVariableId) -> Option<RcSyntax<'db>> {
         self.state.borrow().solution(meta)
     }
 
@@ -573,7 +573,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     pub fn solve_checked(
         &self,
         meta: MetaVariableId,
-        value: Rc<Syntax<'db>>,
+        value: RcSyntax<'db>,
     ) -> Result<(), Vec<MetaVariableId>> {
         // First, check for cycles before committing the solution
         let (deps, cycle_check) = {
@@ -623,7 +623,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// Solve a meta and wake everyone up.
     /// This is the unchecked version that panics on cycles (for backward compatibility).
     /// New code should use `solve_checked` instead.
-    pub fn solve(&self, meta: MetaVariableId, value: Rc<Syntax<'db>>) {
+    pub fn solve(&self, meta: MetaVariableId, value: RcSyntax<'db>) {
         if let Err(cycle) = self.solve_checked(meta, value) {
             panic!("Cycle detected when solving {}: {:?}", meta, cycle);
         }
@@ -631,7 +631,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
     /// Zonk a syntax term, replacing all solved metavariables with their solutions.
     /// This is a total function that never fails.
-    pub fn zonk(&self, term: &Syntax<'db>) -> Rc<Syntax<'db>> {
+    pub fn zonk(&self, term: &Syntax<'db>) -> RcSyntax<'db> {
         crate::zonk::zonk(&self.state.borrow(), term)
     }
 
@@ -751,7 +751,7 @@ impl<'db, 'g> WaitForResolved<'db, 'g> {
 }
 
 impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
-    type Output = Rc<Syntax<'db>>;
+    type Output = RcSyntax<'db>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self

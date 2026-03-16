@@ -612,7 +612,7 @@ impl<'db> Print for Pi<'db> {
                         st = st.inc_depth();
 
                         match next.target.body.as_ref() {
-                            Syntax::Pi(pi) => next = pi,
+                            Syntax::Pi(pi) => next = &pi,
                             _ => break,
                         }
                         p.space()?;
@@ -644,7 +644,7 @@ impl<'db> Print for Lambda<'db> {
                         print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
                         match next.body.body.as_ref() {
-                            Syntax::Lambda(lam) => next = lam,
+                            Syntax::Lambda(lam) => next = &lam,
                             _ => break,
                         }
                         p.space()?;
@@ -673,7 +673,7 @@ impl<'db> Print for Application<'db> {
             let function = loop {
                 args.push(current.argument.clone());
                 match current.function.as_ref() {
-                    Syntax::Application(app) => current = app,
+                    Syntax::Application(app) => current = &app,
                     _ => break &current.function,
                 }
             };
@@ -938,7 +938,7 @@ impl<'db> Print for Module<'db> {
                         print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
                         match next.body.body.as_ref() {
-                            Syntax::Module(lam) => next = lam,
+                            Syntax::Module(lam) => next = &lam,
                             _ => break,
                         }
                         p.space()?;

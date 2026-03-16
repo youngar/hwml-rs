@@ -1,4 +1,4 @@
-use crate::binding::{Binding, DynBinding};
+use crate::binding::Binding;
 use crate::common::{Level, UniverseLevel};
 use crate::equal;
 use crate::eval;
@@ -162,25 +162,25 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
 pub enum Error<'db> {
     /// Cannot synthesize a type.
     BadSynth {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
     },
     /// Bad type.
     BadType {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
     },
     /// Bad elimination.
     BadElim {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         ty_got: RcValue<'db>,
     },
     /// Bad constructor.
     BadCtor {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         ty_exp: RcValue<'db>,
     },
     /// Inferred a type that did not match the expected type.
     BadCheck {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         ty_exp: RcValue<'db>,
         ty_got: RcValue<'db>,
     },
@@ -190,11 +190,11 @@ pub enum Error<'db> {
     QuoteError(quote::Error<'db>),
     PatternUnifyError(pattern_unify::Error<'db>),
     PatternUnifyStuck {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         meta_id: crate::common::MetaVariableId,
     },
     NonExhaustiveMatch {
-        tm: Rc<Syntax<'db>>,
+        tm: RcSyntax<'db>,
         missing: Vec<String>,
     },
 }

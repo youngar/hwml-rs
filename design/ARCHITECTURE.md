@@ -199,7 +199,7 @@ Every metavariable stores its creation location:
 ```rust
 struct MetaSlot<'db> {
     ty: RcValue<'db>,
-    solution: Option<Rc<Syntax<'db>>>,
+    solution: Option<RcSyntax<'db>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,
     location: Location,  // ← Source location

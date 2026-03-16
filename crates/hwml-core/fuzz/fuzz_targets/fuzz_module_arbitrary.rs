@@ -34,7 +34,7 @@ impl FuzzInput {
         QualifiedName::from_str(db, names[name_index as usize])
     }
 
-    fn generate_syntax<'db>(&self, db: &'db Database, index: usize, depth: u8) -> Rc<Syntax<'db>> {
+    fn generate_syntax<'db>(&self, db: &'db Database, index: usize, depth: u8) -> RcSyntax<'db> {
         if depth > 3 || index >= self.data.len() {
             // Base case: return a simple type
             let universe = self

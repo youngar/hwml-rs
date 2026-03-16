@@ -1,13 +1,12 @@
 use crate::*;
 use hwml_core::*;
-use std::rc::Rc;
 
 /// Substitute a flex term with with a metavariable solution. The meta variable's
 /// substitution is used to instantiate the solution for this particular site.
 pub fn substitute<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
     flex: &val::Flex<'db>,
-    solution: &Rc<Syntax<'db>>,
+    solution: &RcSyntax<'db>,
 ) -> RcValue<'db> {
     let global = ctx.tc_env.values.global;
     eval::substitute(global, solution, flex.head.local.clone()).unwrap()
@@ -49,6 +48,7 @@ mod tests {
     use hwml_core::test_utils::{eval_str, load_prelude, parse};
     use hwml_core::val::{Environment, GlobalEnv};
     use hwml_core::Database;
+    use std::rc::Rc;
 
     /// Assert that forcing a term leaves it unchanged (for non-flex values)
     fn assert_force_unchanged(input: &str) {

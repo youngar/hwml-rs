@@ -4,7 +4,6 @@ use crate::syn::declaration::{CompilationUnit, DataConstructorDecl, Declaration}
 use crate::syn::{CaseBranch, RcSyntax, Syntax, Telescope};
 use crate::{MetaVariableId, QualifiedName};
 use core::fmt::Debug;
-use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
 use salsa::Database;
 use std::collections::HashMap;

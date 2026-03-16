@@ -6,7 +6,6 @@
 //! - Comparison operations (EQ, NE, LT, LE, GT, GE)
 //! - Multiplexers and selectors
 
-
 /// Combinational operation types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CombOp {

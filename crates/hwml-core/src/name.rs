@@ -1,6 +1,5 @@
 use crate::Word;
 use hwml_support::{FromWithDb, IntoWithDb};
-use std::fmt;
 
 #[derive(Copy, Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Atom<'db>(pub Word<'db>);

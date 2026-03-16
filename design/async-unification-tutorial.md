@@ -20,7 +20,7 @@ pub struct SolverState<'db> {
 
 struct MetaSlot<'db> {
     ty: RcValue<'db>,              // Type of the metavariable
-    solution: Option<Rc<Syntax<'db>>>, // Solution (if solved)
+    solution: Option<RcSyntax<'db>>, // Solution (if solved)
     waiters: Vec<WaitingTask>,        // Tasks blocked on this meta
 }
 ```

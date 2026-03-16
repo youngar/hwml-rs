@@ -52,9 +52,9 @@ Added `Let` to both syntax and semantic domains:
 ```rust
 // Syntax
 pub struct Let<'db> {
-    pub ty: Rc<Syntax<'db>>,
-    pub value: Rc<Syntax<'db>>,
-    pub body: Rc<Syntax<'db>>,
+    pub ty: RcSyntax<'db>,
+    pub value: RcSyntax<'db>,
+    pub body: RcSyntax<'db>,
 }
 
 // Value (semantic domain)
@@ -115,7 +115,7 @@ fn quote_let<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     let_val: &dom::Let<'db>,
-) -> Result<Rc<Syntax<'db>>, Error> {
+) -> Result<RcSyntax<'db>, Error> {
     let ty = quote(global, depth, &let_val.ty)?;
     let value = quote(global, depth, &let_val.value)?;
     let body = quote(global, depth + 1, &let_val.body)?;
