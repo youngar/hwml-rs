@@ -99,26 +99,26 @@ pub enum Error<'db> {
     /// Expected a hardware type (Type)
     NotHWType {
         tm: Rc<Syntax<'db>>,
-        ty_got: Rc<Value<'db>>,
+        ty_got: RcValue<'db>,
     },
     
     /// Expected a lifted type (^ht)
     NotLiftedType {
         tm: Rc<Syntax<'db>>,
-        ty_got: Rc<Value<'db>>,
+        ty_got: RcValue<'db>,
     },
     
     /// HardwareUniverse term type error
     HWTermTypeError {
         hw_term: Rc<HWTerm<'db>>,
-        hw_ty_exp: Rc<Value<'db>>,
-        hw_ty_got: Rc<Value<'db>>,
+        hw_ty_exp: RcValue<'db>,
+        hw_ty_got: RcValue<'db>,
     },
     
     /// Cannot splice non-quoted value
     BadSplice {
         tm: Rc<Syntax<'db>>,
-        ty_got: Rc<Value<'db>>,
+        ty_got: RcValue<'db>,
     },
 }
 ```
@@ -131,7 +131,7 @@ Update `type_synth` to handle new constructs:
 pub fn type_synth<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     term: &Syntax<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     match term {
         // ... existing cases ...
         Syntax::Variable(variable) => type_synth_variable(env, variable),
@@ -159,7 +159,7 @@ pub fn type_synth<'db, 'g>(
 fn type_synth_quote<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     quote: &syn::Quote<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Type check the hardware term and get its hardware type
     let hw_ty = type_check_hwterm(env, &quote.hw_term)?;
 
@@ -224,7 +224,7 @@ fn check_is_hwtype<'db, 'g>(
 fn type_check_hwterm<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     hw_term: &HWTerm<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     match hw_term {
         // Bit constants
         HWTerm::Zero(_) => Ok(Rc::new(Value::bit())),
@@ -295,7 +295,7 @@ fn type_check_hwterm<'db, 'g>(
 fn type_synth_hwterm_application<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     app: &hwterm::HWApplication<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Synthesize type of function
     let fun_ty = type_check_hwterm(env, &app.function)?;
 
@@ -326,7 +326,7 @@ fn type_synth_hwterm_application<'db, 'g>(
 fn type_synth_hwterm_splice<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     splice: &hwterm::Splice<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Synthesize type of meta term
     let meta_ty = type_synth(env, &splice.term)?;
 
@@ -443,11 +443,11 @@ To properly support hardware variables, we need to extend `TCEnvironment`:
 ```rust
 pub struct TCEnvironment<'db, 'g> {
     pub values: val::Environment<'db, 'g>,
-    pub types: Vec<Rc<Value<'db>>>,
+    pub types: Vec<RcValue<'db>>,
 
     // NEW: Track hardware variables and their types
     pub hw_values: Vec<Rc<HWTerm<'db>>>,  // HardwareUniverse variable values
-    pub hw_types: Vec<Rc<Value<'db>>>,    // HardwareUniverse types (should be HWType values)
+    pub hw_types: Vec<RcValue<'db>>,    // HardwareUniverse types (should be HWType values)
 }
 ```
 
@@ -562,7 +562,7 @@ fn type_check_harrow<'db, 'g>(
 fn type_synth_lift<'db, 'g>(
     env: &mut TCEnvironment<'db, 'g>,
     lift: &syn::Lift<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Check that the inner term is a hardware type
     check_is_hwtype(env, &lift.hw_type)?;
     

@@ -333,7 +333,7 @@ pub fn quote_prim_instances<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
-    _prim: &QualifiedName<'db>,
+    _prim: &val::Prim<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Prim(prim) => quote_prim(global, depth, prim),
@@ -349,7 +349,7 @@ pub fn quote_constant_instances<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
-    _constant: &QualifiedName<'db>,
+    _constant: &val::Constant<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Prim(prim) => quote_prim(global, depth, prim),
@@ -673,18 +673,18 @@ pub fn quote_module<'db>(
 pub fn quote_prim<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    prim: &QualifiedName<'db>,
+    prim: &val::Prim<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    Ok(Syntax::prim_rc(*prim))
+    Ok(Syntax::prim_rc(prim.name))
 }
 
 /// Quote a Constant to syntax.
 pub fn quote_constant<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    constant: &QualifiedName<'db>,
+    constant: &val::Constant<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    Ok(Syntax::constant_rc(*constant))
+    Ok(Syntax::constant_rc(constant.name))
 }
 
 /// Quote a Rigid neutral to syntax.

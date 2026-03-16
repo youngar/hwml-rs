@@ -32,7 +32,7 @@ When checking `refl`:
 - Storing a closure violates the eval/quote separation
 - Quotation would have to evaluate the closure, breaking architectural boundaries
 
-**CORRECTION:** **Body must be `Rc<Value<'db>>`** - fully evaluated.
+**CORRECTION:** **Body must be `RcValue<'db>`** - fully evaluated.
 
 ---
 
@@ -60,9 +60,9 @@ pub struct Let<'db> {
 // Value (CORRECTED)
 pub struct Let<'db> {
     pub name: String,
-    pub ty: Rc<Value<'db>>,
-    pub value: Rc<Value<'db>>,
-    pub body: Rc<Value<'db>>,  // ✅ FULLY EVALUATED (not Closure!)
+    pub ty: RcValue<'db>,
+    pub value: RcValue<'db>,
+    pub body: RcValue<'db>,  // ✅ FULLY EVALUATED (not Closure!)
 }
 ```
 
@@ -72,7 +72,7 @@ pub struct Let<'db> {
 fn eval_let<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     let_expr: &syn::Let<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // 1. Evaluate type annotation
     let ty = eval(env, &let_expr.type_ann)?;
     
@@ -215,18 +215,18 @@ pub struct Environment<'db, 'g> {
 }
 
 pub struct TransparentEnv<'db> {
-    bindings: Vec<(Level, Rc<Value<'db>>)>,  // Map variables to their Let values
+    bindings: Vec<(Level, RcValue<'db>)>,  // Map variables to their Let values
 }
 
 impl<'db, 'g> Environment<'db, 'g> {
-    pub fn push_transparent(&mut self, name: String, value: Rc<Value<'db>>) {
+    pub fn push_transparent(&mut self, name: String, value: RcValue<'db>) {
         let level = Level::new(self.local.len());
         self.transparent.bindings.push((level, value));
         // Also push to local env so variables work normally
         self.local.push(Value::variable(level, /* type */));
     }
     
-    pub fn lookup_transparent(&self, level: Level) -> Option<Rc<Value<'db>>> {
+    pub fn lookup_transparent(&self, level: Level) -> Option<RcValue<'db>> {
         self.transparent.bindings.iter()
             .find(|(l, _)| *l == level)
             .map(|(_, v)| v.clone())
@@ -251,7 +251,7 @@ impl<'db, 'g> Environment<'db, 'g> {
 
 | Aspect | Original Plan | Corrected Plan |
 |--------|---------------|----------------|
-| Value::Let body | `Closure<'db>` | `Rc<Value<'db>>` ✅ |
+| Value::Let body | `Closure<'db>` | `RcValue<'db>` ✅ |
 | Evaluation | Don't bind in env | Push transparent binding ✅ |
 | δ-reduction | "Never (Phase 2)" | **MUST implement now** ✅ |
 | Environment | No changes | Add `TransparentEnv` ✅ |

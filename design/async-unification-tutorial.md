@@ -19,7 +19,7 @@ pub struct SolverState<'db> {
 }
 
 struct MetaSlot<'db> {
-    ty: Rc<Value<'db>>,              // Type of the metavariable
+    ty: RcValue<'db>,              // Type of the metavariable
     solution: Option<Rc<Syntax<'db>>>, // Solution (if solved)
     waiters: Vec<WaitingTask>,        // Tasks blocked on this meta
 }
@@ -78,7 +78,7 @@ async fn unify_pi<'db, 'g>(
     mut ctx: SolverEnvironment<'db, 'g>,
     pi1: &Pi<'db>,
     pi2: &Pi<'db>,
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
 ) -> UnifyResult<'db> {
     // 1. Antiunify the domains (creates a fresh meta)
     let (source_fut, source) = antiunify(
@@ -117,8 +117,8 @@ Before unifying, we "force" values to substitute any solved metavariables:
 ```rust
 pub fn force<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
-    mut value: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, eval::Error> {
+    mut value: RcValue<'db>,
+) -> Result<RcValue<'db>, eval::Error> {
     while let Value::Flex(flex) = &*value {
         match ctx.solution(flex.head.id) {
             Some(syn_solution) => {
@@ -142,8 +142,8 @@ The `whnf` function demonstrates async waiting:
 ```rust
 async fn whnf<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
-    mut value: Rc<Value<'db>>,
-) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
+    mut value: RcValue<'db>,
+) -> Result<RcValue<'db>, UnificationError<'db>> {
     while let Value::Flex(flex) = &*value {
         // Wait for the meta to be solved (async!)
         let syn_solution = WaitForResolved::new(
@@ -193,7 +193,7 @@ This restricts which variables the meta depends on.
 When we have `?u[σ] @ a` (meta applied to arguments), we "lower" it:
 
 ```rust
-async fn lower_flex<'db, 'g>(...) -> Result<Rc<Value<'db>>, UnificationError<'db>> {
+async fn lower_flex<'db, 'g>(...) -> Result<RcValue<'db>, UnificationError<'db>> {
     // For ?u : Pi A B applied to argument a:
     // 1. Create fresh ?v : B
     // 2. Solve ?u := λx. ?v[σ', x]

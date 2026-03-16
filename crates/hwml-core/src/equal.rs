@@ -363,7 +363,7 @@ pub fn equate_constant_instances<'db>(
     depth: usize,
     lhs: &Value<'db>,
     rhs: &Value<'db>,
-    _constant: &QualifiedName<'db>,
+    _constant: &val::Constant<'db>,
 ) -> Result<'db> {
     match (lhs, rhs) {
         (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
@@ -382,7 +382,7 @@ pub fn equate_prim_instances<'db>(
     depth: usize,
     lhs: &Value<'db>,
     rhs: &Value<'db>,
-    _prim: &QualifiedName<'db>,
+    _prim: &val::Prim<'db>,
 ) -> Result<'db> {
     match (lhs, rhs) {
         (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
@@ -745,12 +745,12 @@ pub fn equate_mlifts<'db>(
 pub fn equate_prims<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    lhs: &QualifiedName<'db>,
-    rhs: &QualifiedName<'db>,
+    lhs: &val::Prim<'db>,
+    rhs: &val::Prim<'db>,
 ) -> Result<'db> {
     // For now, just compare by identity. Eventually we may look up info in
     // GlobalEnv.
-    if lhs == rhs {
+    if lhs.name == rhs.name {
         Ok(())
     } else {
         Err(Error::NotConvertible)
@@ -760,12 +760,12 @@ pub fn equate_prims<'db>(
 pub fn equate_constants<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    lhs: &QualifiedName<'db>,
-    rhs: &QualifiedName<'db>,
+    lhs: &val::Constant<'db>,
+    rhs: &val::Constant<'db>,
 ) -> Result<'db> {
     // For now, just compare by identity. Eventually we may look up and unfold
     // definitions.
-    if lhs == rhs {
+    if lhs.name == rhs.name {
         Ok(())
     } else {
         Err(Error::NotConvertible)

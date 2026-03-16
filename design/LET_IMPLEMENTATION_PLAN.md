@@ -52,8 +52,8 @@ pub struct Let<'db> {
 ```rust
 pub struct Let<'db> {
     pub name: String,           // Variable name (for printing)
-    pub ty: Rc<Value<'db>>,     // Evaluated type
-    pub value: Rc<Value<'db>>,  // Evaluated expression
+    pub ty: RcValue<'db>,     // Evaluated type
+    pub value: RcValue<'db>,  // Evaluated expression
     pub body: Closure<'db>,     // Body as closure
 }
 ```
@@ -68,7 +68,7 @@ pub struct Let<'db> {
 fn eval_let<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     let_expr: &syn::Let<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     // 1. Evaluate type annotation
     let ty = eval(env, &let_expr.type_ann)?;
     

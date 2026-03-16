@@ -66,8 +66,8 @@ pub enum Value<'db> {
     Module(Module<'db>),
     HApplication(HApplication<'db>),
 
-    Prim(QualifiedName<'db>),
-    Constant(QualifiedName<'db>),
+    Prim(Prim<'db>),
+    Constant(Constant<'db>),
     /// Neutral headed by a variable.
     Rigid(Rigid<'db>),
     /// Neutral headed by a metavariable.
@@ -166,11 +166,11 @@ impl<'db> Value<'db> {
     }
 
     pub fn prim(name: QualifiedName<'db>) -> Value<'db> {
-        Value::Prim(name)
+        Value::Prim(Prim::new(name))
     }
 
     pub fn constant(name: QualifiedName<'db>) -> Value<'db> {
-        Value::Constant(name)
+        Value::Constant(Constant::new(name))
     }
 
     pub fn rigid(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
@@ -512,9 +512,34 @@ impl<'db> HApplication<'db> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prim<'db> {
+    pub name: QualifiedName<'db>,
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> Prim<'db> {
+    pub fn new(name: QualifiedName<'db>) -> Prim<'db> {
+        Prim {
+            name,
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Constant<'db> {
     pub name: QualifiedName<'db>,
+    _marker: PhantomData<&'db ()>,
+}
+
+impl<'db> Constant<'db> {
+    pub fn new(name: QualifiedName<'db>) -> Constant<'db> {
+        Constant {
+            name,
+            _marker: PhantomData,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

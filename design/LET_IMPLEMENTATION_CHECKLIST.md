@@ -9,7 +9,7 @@
 - [ ] Add `TransparentEnv` struct to track Let bindings
   ```rust
   pub struct TransparentEnv<'db> {
-      bindings: Vec<(Level, Rc<Value<'db>>)>,
+      bindings: Vec<(Level, RcValue<'db>)>,
   }
   ```
 
@@ -61,9 +61,9 @@
   ```rust
   pub struct Let<'db> {
       pub name: String,
-      pub ty: Rc<Value<'db>>,
-      pub value: Rc<Value<'db>>,
-      pub body: Rc<Value<'db>>,  // ✅ FULLY EVALUATED (not Closure!)
+      pub ty: RcValue<'db>,
+      pub value: RcValue<'db>,
+      pub body: RcValue<'db>,  // ✅ FULLY EVALUATED (not Closure!)
   }
   ```
 
@@ -83,7 +83,7 @@
   fn eval_let<'db, 'g>(
       env: &mut Environment<'db, 'g>,
       let_expr: &syn::Let<'db>,
-  ) -> Result<Rc<Value<'db>>, Error> {
+  ) -> Result<RcValue<'db>, Error> {
       let ty = eval(env, &let_expr.type_ann)?;
       let value = eval(env, &let_expr.expr)?;
       
@@ -208,7 +208,7 @@
   fn synth_let<'db>(
       ctx: &mut Context<'db>,
       let_expr: &syn::Let<'db>,
-  ) -> Result<Rc<Value<'db>>, Error> {
+  ) -> Result<RcValue<'db>, Error> {
       // Check type annotation is a type
       check(ctx, &let_expr.type_ann, &Value::universe(...))?;
       let ty = eval(ctx.env, &let_expr.type_ann)?;

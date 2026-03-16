@@ -113,7 +113,7 @@ impl<'db, 'g> ElaboratorContext<'db, 'g> {
         &mut self,
         scrutinees: Vec<RcSyntax<'db>>, // The Core variables we are matching on
         mut matrix: Matrix<'db>,
-        expected_ty: &Rc<Value<'db>>,
+        expected_ty: &RcValue<'db>,
     ) -> Result<RcSyntax<'db>, ElabError> {
         
         // Base Case 1: Matrix is empty (Inexhaustive match!)

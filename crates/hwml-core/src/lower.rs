@@ -389,7 +389,7 @@ mod tests {
         let global = GlobalEnv::new();
 
         // Create an HApplication where the module is a constant
-        let constant = Value::Constant("myModule".into_with_db(&db));
+        let constant = Value::constant("myModule".into_with_db(&db));
         let module_ty = Value::harrow(
             Rc::new(Value::bit()),
             Closure::new(LocalEnv::new(), Syntax::bit_rc()),

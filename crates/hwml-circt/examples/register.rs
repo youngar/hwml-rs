@@ -9,8 +9,8 @@
 
 use hwml_circt::{translate, CirctContext};
 use hwml_core::syn::Syntax;
-use hwml_core::{Database, QualifiedName};
-use hwml_support::salsa::FromWithDb;
+use hwml_core::Database;
+use hwml_support::IntoWithDb;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔════════════════════════════════════════════════════════════╗");

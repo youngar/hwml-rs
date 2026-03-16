@@ -87,11 +87,12 @@ TODO List:
   - Prim to Primitive
 - In Values, Constant and Prim don't have a dedicated inner-structure, they just wrap constant id's
     pub enum Value<'db> {
-        Constant(ConstantId<'db>),
-        Prim(ConstantId<'db>),
+        Constant(QualifiedName<'db>),
+        Prim(QualifiedName<'db>),
 - Syntax&Values - all inner structs should take a 'db lifetime and have phantom data if needed
 - Should splice be in the eliminator spine?
   e.g., g |- splice(a .fst) = splice(b .fst), moved to the spine becomes: a[fst splice] = b[fst splice]
+- In core syntax, we take Vec<RcSyntax>, should replace this with [RcSyntax] or more appropriate data structure
 
 ## Completed
 - case parsing/printing using semicolons

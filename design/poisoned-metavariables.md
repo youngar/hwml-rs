@@ -56,7 +56,7 @@ pub struct MetaVariableId {
 #### MetaSlot
 ```rust
 struct MetaSlot<'db> {
-    ty: Rc<Value<'db>>,
+    ty: RcValue<'db>,
     solution: Option<Rc<Syntax<'db>>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,  // NEW: Error recovery flag
@@ -76,7 +76,7 @@ pub struct SolverState<'db> {
 
 #### Fresh Meta Allocation
 ```rust
-pub fn fresh_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableId {
+pub fn fresh_meta(&mut self, loc: Location, ty: RcValue<'db>) -> MetaVariableId {
     let local_index = self.local_counters.entry(loc).or_insert(0);
     let id = MetaVariableId::new(loc, *local_index);
     *local_index += 1;
@@ -84,7 +84,7 @@ pub fn fresh_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableI
     id
 }
 
-pub fn fresh_poisoned_meta(&mut self, loc: Location, ty: Rc<Value<'db>>) -> MetaVariableId {
+pub fn fresh_poisoned_meta(&mut self, loc: Location, ty: RcValue<'db>) -> MetaVariableId {
     // Same as fresh_meta but creates a poisoned slot
 }
 ```

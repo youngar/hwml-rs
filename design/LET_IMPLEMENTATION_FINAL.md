@@ -31,7 +31,7 @@ Added `TransparentEnv` to track which variables are transparent (Let-bound) vs o
 
 ```rust
 pub struct TransparentEnv<'db> {
-    bindings: Vec<Option<Rc<Value<'db>>>>,
+    bindings: Vec<Option<RcValue<'db>>>,
 }
 ```
 
@@ -59,13 +59,13 @@ pub struct Let<'db> {
 
 // Value (semantic domain)
 pub struct Let<'db> {
-    pub ty: Rc<Value<'db>>,
-    pub value: Rc<Value<'db>>,
-    pub body: Rc<Value<'db>>,  // ← Fully evaluated, NOT a Closure!
+    pub ty: RcValue<'db>,
+    pub value: RcValue<'db>,
+    pub body: RcValue<'db>,  // ← Fully evaluated, NOT a Closure!
 }
 ```
 
-**⚠️ QUESTIONABLE DECISION #1:** The body is `Rc<Value<'db>>` instead of `Closure<'db>`.
+**⚠️ QUESTIONABLE DECISION #1:** The body is `RcValue<'db>` instead of `Closure<'db>`.
 
 **Rationale:** We need the body to be fully evaluated so that quotation can work correctly. A `Closure` would require re-evaluation during quotation, which breaks the NbE invariant.
 
@@ -79,7 +79,7 @@ pub struct Let<'db> {
 fn eval_let<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     let_expr: &syn::Let<'db>,
-) -> Result<Rc<Value<'db>>, Error> {
+) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &let_expr.ty)?;
     let value = eval(env, &let_expr.value)?;
     
@@ -136,7 +136,7 @@ fn quote_let<'db>(
 **The Critical Fix:**
 
 ```rust
-pub fn get(&self, level: Level) -> Rc<Value<'db>> {
+pub fn get(&self, level: Level) -> RcValue<'db> {
     // Check if this variable has a transparent binding
     if let Some(transparent_value) = self.transparent.lookup(level) {
         transparent_value
@@ -146,9 +146,9 @@ pub fn get(&self, level: Level) -> Rc<Value<'db>> {
 }
 ```
 
-**⚠️ QUESTIONABLE DECISION #4:** Changed `Environment::get()` signature from `&Rc<Value<'db>>` to `Rc<Value<'db>>`.
+**⚠️ QUESTIONABLE DECISION #4:** Changed `Environment::get()` signature from `&RcValue<'db>` to `RcValue<'db>`.
 
-**Rationale:** `TransparentEnv::lookup()` returns `Option<Rc<Value<'db>>>` (owned), not a reference. To avoid lifetime issues, we return an owned `Rc` from `get()`.
+**Rationale:** `TransparentEnv::lookup()` returns `Option<RcValue<'db>>` (owned), not a reference. To avoid lifetime issues, we return an owned `Rc` from `get()`.
 
 **Trade-off:** This adds a small performance cost (one extra `Rc::clone()` per variable lookup), but it's necessary for transparency to work.
 
@@ -171,7 +171,7 @@ let y = U0; ... y ...
 fn synth_let<'a, 'db: 'a>(
     env: &mut Env<'a, 'db>,
     let_expr: &stx::Let<'db>,
-) -> Result<Rc<Value<'db>>, Error<'db>> {
+) -> Result<RcValue<'db>, Error<'db>> {
     // Check type annotation is a type
     let ty_ty = type_synth(env, &let_expr.ty)?;
     ensure_is_type(env, &let_expr.ty, &ty_ty)?;
@@ -247,7 +247,7 @@ Syntax::Let(let_expr) => {
 
 ## Questionable Decisions Summary
 
-### 1. Body is `Rc<Value<'db>>` instead of `Closure<'db>`
+### 1. Body is `RcValue<'db>` instead of `Closure<'db>`
 - **Why:** Needed for quotation to work correctly
 - **Trade-off:** Eager evaluation instead of lazy
 - **Risk:** Low - correctness is more important than performance here
@@ -262,7 +262,7 @@ Syntax::Let(let_expr) => {
 - **Trade-off:** Might increment unnecessarily if body doesn't use the variable
 - **Risk:** Low - safe but potentially inefficient
 
-### 4. Changed `Environment::get()` to return `Rc<Value<'db>>` instead of `&Rc<Value<'db>>`
+### 4. Changed `Environment::get()` to return `RcValue<'db>` instead of `&RcValue<'db>`
 - **Why:** Needed to return transparent bindings without lifetime issues
 - **Trade-off:** Extra `Rc::clone()` on every variable lookup
 - **Risk:** **MEDIUM** - Performance impact on variable-heavy code

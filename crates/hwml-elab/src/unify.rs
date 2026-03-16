@@ -192,10 +192,10 @@ pub fn antiunify<'db, 'g>(
 fn unify_constant<'db>(
     lhs: &RcValue<'db>,
     rhs: &RcValue<'db>,
-    c1: &hwml_core::QualifiedName,
-    c2: &hwml_core::QualifiedName,
+    c1: &hwml_core::val::Constant<'db>,
+    c2: &hwml_core::val::Constant<'db>,
 ) -> UnifyResult<'db> {
-    if c1 == c2 {
+    if c1.name == c2.name {
         println!("[Unify] Constants are equal");
         Ok(())
     } else {
@@ -222,10 +222,10 @@ fn unify_universe<'db>(
 fn unify_prim<'db>(
     lhs: &RcValue<'db>,
     rhs: &RcValue<'db>,
-    p1: &hwml_core::QualifiedName<'db>,
-    p2: &hwml_core::QualifiedName<'db>,
+    p1: &hwml_core::val::Prim<'db>,
+    p2: &hwml_core::val::Prim<'db>,
 ) -> UnifyResult<'db> {
-    if p1 == p2 {
+    if p1.name == p2.name {
         println!("[Unify] Prim references are equal");
         Ok(())
     } else {

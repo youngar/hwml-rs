@@ -298,7 +298,7 @@ fn eval_prim<'db, 'g>(
     _env: &mut Environment<'db, 'g>,
     prim: &syn::Prim<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::Prim(prim.name)))
+    Ok(Rc::new(Value::prim(prim.name)))
 }
 
 fn eval_constant<'db, 'g>(

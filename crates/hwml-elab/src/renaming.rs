@@ -662,12 +662,14 @@ fn rename_module<'db>(
     )))
 }
 
-fn rename_prim<'db>(prim: &QualifiedName<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
-    Ok(Syntax::prim_rc(*prim))
+fn rename_prim<'db>(prim: &hwml_core::val::Prim<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
+    Ok(Syntax::prim_rc(prim.name))
 }
 
-fn rename_constant<'db>(constant: &QualifiedName<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
-    Ok(Syntax::constant_rc(*constant))
+fn rename_constant<'db>(
+    constant: &hwml_core::val::Constant<'db>,
+) -> Result<RcSyntax<'db>, Error<'db>> {
+    Ok(Syntax::constant_rc(constant.name))
 }
 
 fn rename_rigid<'db>(

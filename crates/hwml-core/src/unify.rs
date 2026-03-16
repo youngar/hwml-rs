@@ -424,8 +424,8 @@ fn unify_case<'db>(
     let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
 
     if c1.type_constructor != c2.type_constructor {
-        let v1 = Rc::new(Value::Constant(c1.type_constructor));
-        let v2 = Rc::new(Value::Constant(c2.type_constructor));
+        let v1 = Rc::new(Value::constant(c1.type_constructor));
+        let v2 = Rc::new(Value::constant(c2.type_constructor));
         return Err(UnificationError::Mismatch(v1, v2));
     }
 
@@ -448,8 +448,8 @@ fn unify_case<'db>(
 
     for (b1, b2) in c1.branches.iter().zip(c2.branches.iter()) {
         if b1.constructor != b2.constructor {
-            let v1 = Rc::new(Value::Constant(b1.constructor));
-            let v2 = Rc::new(Value::Constant(b2.constructor));
+            let v1 = Rc::new(Value::constant(b1.constructor));
+            let v2 = Rc::new(Value::constant(b2.constructor));
             return Err(UnificationError::Mismatch(v1, v2));
         }
         if b1.arity != b2.arity {
