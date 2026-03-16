@@ -1059,6 +1059,10 @@ impl<'db> GlobalEnv<'db> {
         }
     }
 
+    pub fn contains(&self, name: QualifiedName<'db>) -> bool {
+        self.constants.contains_key(&name)
+    }
+
     /// Lookup a constant by name.
     pub fn constant(
         &self,

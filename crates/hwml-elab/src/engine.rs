@@ -1,3 +1,4 @@
+use crate::*;
 use check::TCEnvironment;
 use hwml_core::*;
 use slab::Slab;
@@ -490,7 +491,11 @@ impl<'db> SolverState<'db> {
 pub struct SolverEnvironment<'db, 'g> {
     /// Shared reference to the solver state
     pub state: Rc<RefCell<SolverState<'db>>>,
-    /// Type-checking environment for evaluation and type checking
+    /// The namespace we are elaborating under.
+    pub package: Option<QualifiedName<'db>>,
+    /// Table associating user names to core terms.
+    pub dubbing_table: DubbingTable<'db>,
+    /// Type-checking environment for evaluation and type checking.
     pub tc_env: TCEnvironment<'db, 'g>,
     /// Task spawner for spawning concurrent unification tasks
     pub spawner: TaskSpawner<'db>,
@@ -499,9 +504,15 @@ pub struct SolverEnvironment<'db, 'g> {
 impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// Create a new context handle with an empty solver state.
     /// Use this for production elaboration where metavariables are created dynamically.
-    pub fn new(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'db>) -> Self {
+    pub fn new(
+        package: Option<QualifiedName<'db>>,
+        tc_env: TCEnvironment<'db, 'g>,
+        spawner: TaskSpawner<'db>,
+    ) -> Self {
         SolverEnvironment {
             state: Rc::new(RefCell::new(SolverState::new())),
+            package,
+            dubbing_table: DubbingTable::new(),
             tc_env,
             spawner,
         }
@@ -628,7 +639,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     }
 
     /// Extend the environment with an additional variable.
-    pub fn under_binder<F, R>(&mut self, ty: RcValue<'db>, f: F) -> Binding<R>
+    pub fn under_binder<F, R>(&mut self, name: Option<Name>, ty: RcValue<'db>, f: F) -> Binding<R>
     where
         F: FnOnce(&mut Self) -> R,
     {
@@ -715,6 +726,8 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         let state = SolverState::from_global_env(tc_env.values.global);
         SolverEnvironment {
             state: Rc::new(RefCell::new(state)),
+            package: None,
+            dubbing_table: DubbingTable::new(),
             tc_env,
             spawner,
         }

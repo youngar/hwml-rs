@@ -37,7 +37,6 @@ pub enum Fixity {
 #[salsa::interned]
 pub struct Name {
     pub fixity: Fixity,
-
     #[return_ref]
     parts: Box<[Atom<'db>]>,
 }

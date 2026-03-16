@@ -3,7 +3,9 @@ use hwml_core::*;
 use std::result::Result;
 
 #[derive(Debug, Clone)]
-pub enum ElabError {}
+pub enum ElabError {
+    Misc,
+}
 
 pub trait Located {
     fn location(&self) -> Location;

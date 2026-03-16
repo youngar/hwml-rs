@@ -183,6 +183,33 @@ impl From<usize> for Index {
     }
 }
 
+/// Trait that allows us to accept either a level or index, as long as we know
+/// the binder depth.
+pub trait Debruijn {
+    fn to_level(self, depth: usize) -> Level;
+    fn to_index(self, depth: usize) -> Index;
+}
+
+impl Debruijn for Level {
+    fn to_level(self, _depth: usize) -> Level {
+        self
+    }
+
+    fn to_index(self, depth: usize) -> Index {
+        self.to_index(depth)
+    }
+}
+
+impl Debruijn for Index {
+    fn to_level(self, depth: usize) -> Level {
+        self.to_level(depth)
+    }
+
+    fn to_index(self, _depth: usize) -> Index {
+        self
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct UniverseLevel(usize);

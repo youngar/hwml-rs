@@ -7,3 +7,4 @@ pub struct Typed<'db, A> {
 }
 
 pub type TypedSyntax<'db> = Typed<'db, RcSyntax<'db>>;
+pub type TypedValue<'db> = Typed<'db, RcValue<'db>>;
