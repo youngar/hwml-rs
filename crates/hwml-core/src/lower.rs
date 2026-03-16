@@ -68,15 +68,15 @@ pub fn saturate_value<'db>(
         // Recursive cases with subvalues
         Value::Lift(lift) => {
             let new_ty = saturate_value(global, &lift.ty)?;
-            Ok(Rc::new(Value::lift(new_ty)))
+            Ok(Value::lift_rc(new_ty))
         }
         Value::SLift(slift) => {
             let new_ty = saturate_value(global, &slift.ty)?;
-            Ok(Rc::new(Value::slift(new_ty)))
+            Ok(Value::slift_rc(new_ty))
         }
         Value::MLift(mlift) => {
             let new_ty = saturate_value(global, &mlift.ty)?;
-            Ok(Rc::new(Value::mlift(new_ty)))
+            Ok(Value::mlift_rc(new_ty))
         }
         Value::TypeConstructor(tc) => {
             let new_args = tc
@@ -84,7 +84,7 @@ pub fn saturate_value<'db>(
                 .iter()
                 .map(|arg| saturate_value(global, arg))
                 .collect::<Result<'db, Vec<_>>>()?;
-            Ok(Rc::new(Value::type_constructor(tc.constructor, new_args)))
+            Ok(Value::type_constructor_rc(tc.constructor, new_args))
         }
         Value::DataConstructor(dc) => {
             let new_args = dc
@@ -92,24 +92,24 @@ pub fn saturate_value<'db>(
                 .iter()
                 .map(|arg| saturate_value(global, arg))
                 .collect::<Result<'db, Vec<_>>>()?;
-            Ok(Rc::new(Value::data_constructor(dc.constructor, new_args)))
+            Ok(Value::data_constructor_rc(dc.constructor, new_args))
         }
         Value::EqType(eq) => {
             let new_ty = saturate_value(global, &eq.ty)?;
             let new_lhs = saturate_value(global, &eq.lhs)?;
             let new_rhs = saturate_value(global, &eq.rhs)?;
-            Ok(Rc::new(Value::eq(new_ty, new_lhs, new_rhs)))
+            Ok(Value::eq_rc(new_ty, new_lhs, new_rhs))
         }
         Value::Transport(transport) => {
             // For transport, we saturate the proof and value, but keep the motive as-is
             // since it's a closure that will be handled during quoting.
             let new_proof = saturate_value(global, &transport.proof)?;
             let new_value = saturate_value(global, &transport.value)?;
-            Ok(Rc::new(Value::transport(
+            Ok(Value::transport_rc(
                 transport.motive.clone(),
                 new_proof,
                 new_value,
-            )))
+            ))
         }
         Value::Rigid(rigid) => saturate_rigid(global, rigid),
         Value::Flex(flex) => saturate_flex(global, flex),
@@ -162,11 +162,11 @@ fn saturate_happlication<'db>(
                 }
                 _ => {
                     let saturated_ty = saturate_value(global, &happ.module_ty)?;
-                    Ok(Rc::new(Value::happlication(
+                    Ok(Value::happlication_rc(
                         saturated_module,
                         saturated_ty,
                         saturated_arg,
-                    )))
+                    ))
                 }
             }
         }
@@ -181,7 +181,7 @@ fn saturate_closure<'db>(
 ) -> Result<'db, Closure<'db>> {
     // Create a fresh variable at the closure's depth
     let depth = closure.local.depth();
-    let var = Rc::new(Value::variable(crate::common::Level::new(depth), var_ty));
+    let var = Value::variable_rc(crate::common::Level::new(depth), var_ty);
 
     // Run the closure with the fresh variable to get the body
     let body = run_closure(global, closure, [var.clone()])?;
@@ -194,7 +194,7 @@ fn saturate_closure<'db>(
         global,
         depth + 1,
         &saturated_body,
-        &Rc::new(Value::universe(crate::common::UniverseLevel::new(0))),
+        &Value::universe_rc(crate::common::UniverseLevel::new(0)),
     )?;
 
     // Create a new closure with the saturated body
@@ -210,15 +210,15 @@ fn saturate_lambda<'db>(
     lam: &val::Lambda<'db>,
 ) -> Result<'db, RcValue<'db>> {
     // Use a placeholder type for the bound variable
-    let placeholder_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+    let placeholder_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
     let new_body = saturate_closure(global, &lam.body, placeholder_ty)?;
-    Ok(Rc::new(Value::lambda(new_body)))
+    Ok(Value::lambda_rc(new_body))
 }
 
 fn saturate_pi<'db>(global: &GlobalEnv<'db>, pi: &val::Pi<'db>) -> Result<'db, RcValue<'db>> {
     let new_source = saturate_value(global, &pi.source)?;
     let new_target = saturate_closure(global, &pi.target, new_source.clone())?;
-    Ok(Rc::new(Value::pi(new_source, new_target)))
+    Ok(Value::pi_rc(new_source, new_target))
 }
 
 fn saturate_module<'db>(
@@ -226,9 +226,9 @@ fn saturate_module<'db>(
     module: &val::Module<'db>,
 ) -> Result<'db, RcValue<'db>> {
     // Use Bit as placeholder type for module argument
-    let placeholder_ty = Rc::new(Value::bit());
+    let placeholder_ty = Value::bit_rc();
     let new_body = saturate_closure(global, &module.body, placeholder_ty)?;
-    Ok(Rc::new(Value::module(new_body)))
+    Ok(Value::module_rc(new_body))
 }
 
 fn saturate_harrow<'db>(
@@ -237,7 +237,7 @@ fn saturate_harrow<'db>(
 ) -> Result<'db, RcValue<'db>> {
     let new_source = saturate_value(global, &harrow.source)?;
     let new_target = saturate_closure(global, &harrow.target, new_source.clone())?;
-    Ok(Rc::new(Value::harrow(new_source, new_target)))
+    Ok(Value::harrow_rc(new_source, new_target))
 }
 
 // ============================================================================
@@ -250,21 +250,13 @@ fn saturate_rigid<'db>(
 ) -> Result<'db, RcValue<'db>> {
     let new_ty = saturate_value(global, &rigid.ty)?;
     let new_spine = saturate_spine(global, &rigid.spine)?;
-    Ok(Rc::new(Value::Rigid(val::Rigid {
-        head: rigid.head.clone(),
-        ty: new_ty,
-        spine: new_spine,
-    })))
+    Ok(Value::rigid_rc(rigid.head.clone(), new_spine, new_ty))
 }
 
 fn saturate_flex<'db>(global: &GlobalEnv<'db>, flex: &val::Flex<'db>) -> Result<'db, RcValue<'db>> {
     let new_ty = saturate_value(global, &flex.ty)?;
     let new_spine = saturate_spine(global, &flex.spine)?;
-    Ok(Rc::new(Value::Flex(val::Flex {
-        head: flex.head.clone(),
-        ty: new_ty,
-        spine: new_spine,
-    })))
+    Ok(Value::flex_rc(flex.head.clone(), new_spine, new_ty))
 }
 
 fn saturate_spine<'db>(
@@ -366,12 +358,12 @@ mod tests {
 
         // The type: Bit → Bit
         let module_ty = Value::harrow(
-            Rc::new(Value::bit()),
+            Value::bit_rc(),
             Closure::new(LocalEnv::new(), Syntax::bit_rc()),
         );
 
         // The argument: One
-        let arg = Rc::new(Value::one());
+        let arg = Value::one_rc();
 
         // The HApplication: module<ty>(arg)
         let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), arg);
@@ -391,10 +383,10 @@ mod tests {
         // Create an HApplication where the module is a constant
         let constant = Value::constant("myModule".into_with_db(&db));
         let module_ty = Value::harrow(
-            Rc::new(Value::bit()),
+            Value::bit_rc(),
             Closure::new(LocalEnv::new(), Syntax::bit_rc()),
         );
-        let arg = Rc::new(Value::one());
+        let arg = Value::one_rc();
 
         let happ = Value::happlication(Rc::new(constant), Rc::new(module_ty), arg);
 
@@ -415,7 +407,7 @@ mod tests {
         let inner_module = Value::module(inner_closure);
 
         let inner_ty = Value::harrow(
-            Rc::new(Value::bit()),
+            Value::bit_rc(),
             Closure::new(LocalEnv::new(), Syntax::bit_rc()),
         );
 
@@ -423,7 +415,7 @@ mod tests {
         let inner_happ = Value::happlication(
             Rc::new(inner_module),
             Rc::new(inner_ty.clone()),
-            Rc::new(Value::one()),
+            Value::one_rc(),
         );
 
         // Outer module: mod %0 (identity - returns argument)
@@ -432,7 +424,7 @@ mod tests {
         let outer_module = Value::module(outer_closure);
 
         let outer_ty = Value::harrow(
-            Rc::new(Value::bit()),
+            Value::bit_rc(),
             Closure::new(LocalEnv::new(), Syntax::bit_rc()),
         );
 
@@ -462,11 +454,11 @@ mod tests {
         let module = Value::module(module_closure);
 
         let module_ty = Value::harrow(
-            Rc::new(Value::bit()),
+            Value::bit_rc(),
             Closure::new(LocalEnv::new(), Syntax::bit_rc()),
         );
 
-        let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), Rc::new(Value::zero()));
+        let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), Value::zero_rc());
 
         // Saturate and quote
         let result = saturate_and_quote(&global, 0, &happ, &Value::bit()).expect("should saturate");

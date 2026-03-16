@@ -13,7 +13,6 @@ use crate::val::{self, Value};
 use crate::RcValue;
 use std::collections::HashMap;
 use std::option::Option;
-use std::rc::Rc;
 use std::vec;
 
 pub struct MetaContext<'db> {
@@ -244,11 +243,7 @@ fn rename<'db>(
             }
             // Replace the metavariable in the spine.
             let spine = rename_spine(global, mctx, meta, renaming, &flex.spine)?;
-            Ok(Rc::new(Value::flex(
-                flex.head.clone(),
-                spine,
-                flex.ty.clone(),
-            )))
+            Ok(Value::flex_rc(flex.head.clone(), spine, flex.ty.clone()))
         }
         Value::Rigid(r) => {
             // Remap the spine variable.
@@ -256,11 +251,11 @@ fn rename<'db>(
                 return Err(UnificationError::ScopingError(value.clone()));
             };
             let spine = rename_spine(global, mctx, meta, renaming, &r.spine)?;
-            Ok(Rc::new(Value::rigid(
+            Ok(Value::rigid_rc(
                 Variable::new(variable),
                 spine,
                 r.ty.clone(),
-            )))
+            ))
         }
         Value::Lambda(lam) => {
             // Rename all free variables in the lambda closure.
@@ -269,7 +264,7 @@ fn rename<'db>(
                 new_env.push(rename(global, mctx, meta, renaming, value)?);
             }
             let clos = Closure::new(new_env, lam.body.term.clone());
-            Ok(Rc::new(Value::lambda(clos)))
+            Ok(Value::lambda_rc(clos))
         }
         Value::Pi(pi) => {
             // Rename the source type.
@@ -281,7 +276,7 @@ fn rename<'db>(
                 new_env.push(rename(global, mctx, meta, &mut lifted_renaming, value)?);
             }
             let clos = Closure::new(new_env, pi.target.term.clone());
-            Ok(Rc::new(Value::pi(source, clos)))
+            Ok(Value::pi_rc(source, clos))
         }
         Value::TypeConstructor(type_constructor) => {
             // Rename all arguments.
@@ -289,10 +284,10 @@ fn rename<'db>(
             for arg in type_constructor.arguments.iter() {
                 new_args.push(rename(global, mctx, meta, renaming, arg)?);
             }
-            Ok(Rc::new(Value::type_constructor(
+            Ok(Value::type_constructor_rc(
                 type_constructor.constructor,
                 new_args,
-            )))
+            ))
         }
         Value::DataConstructor(data_constructor) => {
             // Rename all arguments.
@@ -300,17 +295,17 @@ fn rename<'db>(
             for arg in data_constructor.arguments.iter() {
                 new_args.push(rename(global, mctx, meta, renaming, arg)?);
             }
-            Ok(Rc::new(Value::data_constructor(
+            Ok(Value::data_constructor_rc(
                 data_constructor.constructor,
                 new_args,
-            )))
+            ))
         }
         Value::EqType(eq) => {
             // Rename all components of the equality type
             let ty = rename(global, mctx, meta, renaming, &eq.ty)?;
             let lhs = rename(global, mctx, meta, renaming, &eq.lhs)?;
             let rhs = rename(global, mctx, meta, renaming, &eq.rhs)?;
-            Ok(Rc::new(Value::eq(ty, lhs, rhs)))
+            Ok(Value::eq_rc(ty, lhs, rhs))
         }
         Value::Refl(_) => {
             // Refl has no free variables to rename
@@ -327,7 +322,7 @@ fn rename<'db>(
             // Rename proof and value
             let proof = rename(global, mctx, meta, renaming, &transport.proof)?;
             let value_renamed = rename(global, mctx, meta, renaming, &transport.value)?;
-            Ok(Rc::new(Value::transport(motive, proof, value_renamed)))
+            Ok(Value::transport_rc(motive, proof, value_renamed))
         }
         _ => Ok(value.clone()),
     }
@@ -421,11 +416,11 @@ fn unify_case<'db>(
     c1: &val::Case<'db>,
     c2: &val::Case<'db>,
 ) -> UnificationResult<'db, ()> {
-    let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+    let var_ty = Value::universe_rc(UniverseLevel::new(0));
 
     if c1.type_constructor != c2.type_constructor {
-        let v1 = Rc::new(Value::constant(c1.type_constructor));
-        let v2 = Rc::new(Value::constant(c2.type_constructor));
+        let v1 = Value::constant_rc(c1.type_constructor);
+        let v2 = Value::constant_rc(c2.type_constructor);
         return Err(UnificationError::Mismatch(v1, v2));
     }
 
@@ -448,8 +443,8 @@ fn unify_case<'db>(
 
     for (b1, b2) in c1.branches.iter().zip(c2.branches.iter()) {
         if b1.constructor != b2.constructor {
-            let v1 = Rc::new(Value::constant(b1.constructor));
-            let v2 = Rc::new(Value::constant(b2.constructor));
+            let v1 = Value::constant_rc(b1.constructor);
+            let v2 = Value::constant_rc(b2.constructor);
             return Err(UnificationError::Mismatch(v1, v2));
         }
         if b1.arity != b2.arity {
@@ -460,7 +455,7 @@ fn unify_case<'db>(
         }
 
         let args: Vec<_> = (0..b1.arity)
-            .map(|i| Rc::new(Value::variable(Level(depth + i), var_ty.clone())))
+            .map(|i| Value::variable_rc(Level(depth + i), var_ty.clone()))
             .collect();
         let body1 = eval::run_closure(global, &b1.body, args.clone())?;
         let body2 = eval::run_closure(global, &b2.body, args)?;
@@ -513,34 +508,28 @@ pub fn unify<'db>(
                 p1.source.clone(),
                 p2.source.clone(),
             )?;
-            let var = Rc::new(Value::variable(Level::new(depth), p1.source.clone()));
+            let var = Value::variable_rc(Level::new(depth), p1.source.clone());
             let p1_target = eval::run_closure(global, &p1.target, [var.clone()])?;
             let p2_target = eval::run_closure(global, &p2.target, [var])?;
             unify(db, global, mctx, depth + 1, p1_target, p2_target)
         }
         (Value::Lambda(l1), Value::Lambda(l2)) => {
-            let var = Rc::new(Value::variable(
-                Level::new(depth),
-                Rc::new(Value::universe(UniverseLevel::new(0))),
-            ));
+            let var =
+                Value::variable_rc(Level::new(depth), Value::universe_rc(UniverseLevel::new(0)));
             let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
             let l2_body = eval::run_closure(global, &l2.body, [var])?;
             unify(db, global, mctx, depth + 1, l1_body, l2_body)
         }
         (Value::Lambda(l1), t2) => {
-            let var = Rc::new(Value::variable(
-                Level::new(depth),
-                Rc::new(Value::universe(UniverseLevel::new(0))),
-            ));
+            let var =
+                Value::variable_rc(Level::new(depth), Value::universe_rc(UniverseLevel::new(0)));
             let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
             let l2_body = eval::run_application(global, &t2, var)?;
             unify(db, global, mctx, depth + 1, l1_body, l2_body)
         }
         (t1, Value::Lambda(l2)) => {
-            let var = Rc::new(Value::variable(
-                Level::new(depth),
-                Rc::new(Value::universe(UniverseLevel::new(0))),
-            ));
+            let var =
+                Value::variable_rc(Level::new(depth), Value::universe_rc(UniverseLevel::new(0)));
             let l1_body = eval::run_application(global, &t1, var.clone())?;
             let l2_body = eval::run_closure(global, &l2.body, [var])?;
             unify(db, global, mctx, depth + 1, l1_body, l2_body)
@@ -571,14 +560,14 @@ pub fn unify<'db>(
                 h2.source.clone(),
             )?;
             // Target is a closure - run both under a fresh variable
-            let var = Rc::new(Value::variable(Level::new(depth), h1.source.clone()));
+            let var = Value::variable_rc(Level::new(depth), h1.source.clone());
             let h1_target = eval::run_closure(global, &h1.target, [var.clone()])?;
             let h2_target = eval::run_closure(global, &h2.target, [var])?;
             unify(db, global, mctx, depth + 1, h1_target, h2_target)
         }
         // Module - compare closure bodies under a fresh variable
         (Value::Module(m1), Value::Module(m2)) => {
-            let var = Rc::new(Value::variable(Level::new(depth), Rc::new(Value::bit())));
+            let var = Value::variable_rc(Level::new(depth), Value::bit_rc());
             let m1_body = eval::run_closure(global, &m1.body, [var.clone()])?;
             let m2_body = eval::run_closure(global, &m2.body, [var])?;
             unify(db, global, mctx, depth + 1, m1_body, m2_body)
@@ -626,10 +615,8 @@ pub fn unify<'db>(
         }
         (Value::Refl(_), Value::Refl(_)) => Ok(()),
         (Value::Transport(t1), Value::Transport(t2)) => {
-            let var = Rc::new(Value::variable(
-                Level::new(depth),
-                Rc::new(Value::universe(UniverseLevel::new(0))),
-            ));
+            let var =
+                Value::variable_rc(Level::new(depth), Value::universe_rc(UniverseLevel::new(0)));
             let m1_body = eval::run_closure(global, &t1.motive, [var.clone()])?;
             let m2_body = eval::run_closure(global, &t2.motive, [var])?;
             unify(db, global, mctx, depth + 1, m1_body, m2_body)?;
@@ -695,6 +682,7 @@ mod tests {
     use super::*;
     use crate::syn::parse::parse_syntax;
     use crate::{Database, RcSyntax};
+    use std::rc::Rc;
 
     /// Test helper context
     struct Ctx<'db> {
@@ -929,12 +917,8 @@ mod tests {
         let var = val::Variable {
             level: Level::new(0),
         };
-        let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
-        let rigid_x = Rc::new(Value::Rigid(val::Rigid::new(
-            var.clone(),
-            val::Spine::empty(),
-            var_ty.clone(),
-        )));
+        let var_ty = Value::universe_rc(UniverseLevel::new(0));
+        let rigid_x = Value::rigid_rc(var.clone(), val::Spine::empty(), var_ty.clone());
 
         // Unify x with itself: x = x should succeed via deletion
         // This is the deletion rule: when both sides are the same rigid variable,
@@ -960,17 +944,13 @@ mod tests {
         let var_f = val::Variable {
             level: Level::new(0),
         };
-        let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let var_ty = Value::universe_rc(UniverseLevel::new(0));
 
         // Create an argument (rigid variable x at level 1)
         let var_x = val::Variable {
             level: Level::new(1),
         };
-        let arg_x = Rc::new(Value::Rigid(val::Rigid::new(
-            var_x.clone(),
-            val::Spine::empty(),
-            var_ty.clone(),
-        )));
+        let arg_x = Value::rigid_rc(var_x.clone(), val::Spine::empty(), var_ty.clone());
 
         // Create f(x) - rigid f with x in the spine
         // Application requires a Normal which has both type and value
@@ -978,11 +958,7 @@ mod tests {
         let spine = val::Spine::new(vec![val::Eliminator::Application(val::Application::new(
             arg_normal,
         ))]);
-        let f_applied_x = Rc::new(Value::Rigid(val::Rigid::new(
-            var_f.clone(),
-            spine,
-            var_ty.clone(),
-        )));
+        let f_applied_x = Value::rigid_rc(var_f.clone(), spine, var_ty.clone());
 
         // Unify f(x) with f(x) - should succeed via deletion + spine unification
         let result = unify(
@@ -1009,16 +985,8 @@ mod tests {
         let mut mctx = MetaContext::new();
 
         // Eq Bit 0 1 ~ Eq Bit 0 1
-        let eq1 = Value::eq(
-            Rc::new(Value::bit()),
-            Rc::new(Value::zero()),
-            Rc::new(Value::one()),
-        );
-        let eq2 = Value::eq(
-            Rc::new(Value::bit()),
-            Rc::new(Value::zero()),
-            Rc::new(Value::one()),
-        );
+        let eq1 = Value::eq(Value::bit_rc(), Value::zero_rc(), Value::one_rc());
+        let eq2 = Value::eq(Value::bit_rc(), Value::zero_rc(), Value::one_rc());
 
         let result = unify(&db, &global, &mut mctx, 0, Rc::new(eq1), Rc::new(eq2));
         assert!(result.is_ok(), "Eq types should unify");
@@ -1031,16 +999,8 @@ mod tests {
         let mut mctx = MetaContext::new();
 
         // Eq Bit 0 1 ~ Eq Bit 1 0 should fail
-        let eq1 = Value::eq(
-            Rc::new(Value::bit()),
-            Rc::new(Value::zero()),
-            Rc::new(Value::one()),
-        );
-        let eq2 = Value::eq(
-            Rc::new(Value::bit()),
-            Rc::new(Value::one()),
-            Rc::new(Value::zero()),
-        );
+        let eq1 = Value::eq(Value::bit_rc(), Value::zero_rc(), Value::one_rc());
+        let eq2 = Value::eq(Value::bit_rc(), Value::one_rc(), Value::zero_rc());
 
         let result = unify(&db, &global, &mut mctx, 0, Rc::new(eq1), Rc::new(eq2));
         assert!(result.is_err(), "Different Eq types should not unify");
@@ -1068,12 +1028,8 @@ mod tests {
 
         // transport (λ x → Bit) refl 0 ~ transport (λ x → Bit) refl 0
         let motive = Closure::new(val::LocalEnv::new(), Syntax::bit_rc());
-        let transport1 = Value::transport(
-            motive.clone(),
-            Rc::new(Value::refl()),
-            Rc::new(Value::zero()),
-        );
-        let transport2 = Value::transport(motive, Rc::new(Value::refl()), Rc::new(Value::zero()));
+        let transport1 = Value::transport(motive.clone(), Value::refl_rc(), Value::zero_rc());
+        let transport2 = Value::transport(motive, Value::refl_rc(), Value::zero_rc());
 
         let result = unify(
             &db,

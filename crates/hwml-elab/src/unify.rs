@@ -10,7 +10,6 @@ use hwml_core::val::{Eliminator, Value};
 use itertools::izip;
 use std::fmt;
 use std::future::Future;
-use std::rc::Rc;
 
 use crate::engine::SolverEnvironment;
 use crate::*;
@@ -164,7 +163,7 @@ pub fn fresh_meta<'db, 'g>(
 ) -> RcValue<'db> {
     let id = ctx.fresh_meta_id(ty.clone(), loc);
     let substitution = ctx.tc_env.values.local.clone();
-    Rc::new(Value::metavariable(id, substitution, ty))
+    Value::metavariable_rc(id, substitution, ty)
 }
 
 pub fn antiunify<'db, 'g>(
@@ -415,9 +414,9 @@ async fn unify_harrow<'db, 'g>(
     println!("[Unify] HArrow injectivity");
     let global = ctx.tc_env.values.global;
     // HArrow source is a signal type (Bit, etc.)
-    let signal_ty = Rc::new(Value::signal_universe());
+    let signal_ty = Value::signal_universe_rc();
     // HArrow target is a module type (HArrow, etc.)
-    let module_ty = Rc::new(Value::module_universe());
+    let module_ty = Value::module_universe_rc();
     let (source_fut, source) = antiunify(
         db,
         ctx.clone(),
@@ -478,7 +477,7 @@ async fn unify_eta_module_left<'db, 'g>(
     };
     let var = ctx.tc_env.push_var(ha.source.clone());
     let lhs_body = run_closure(global, &mod1.body, [var.clone()])?;
-    let rhs_applied = Rc::new(Value::happlication(rhs.clone(), (*ty).clone(), var.clone()));
+    let rhs_applied = Value::happlication_rc(rhs.clone(), (*ty).clone(), var.clone());
     let codomain = run_closure(global, &ha.target, [var])?;
     println!("[Unify] Unifying module body with applied term");
     Box::pin(unify(db, ctx, lhs_body, rhs_applied, codomain)).await
@@ -500,7 +499,7 @@ async fn unify_eta_module_right<'db, 'g>(
         ));
     };
     let var = ctx.tc_env.push_var(ha.source.clone());
-    let lhs_applied = Rc::new(Value::happlication(lhs.clone(), (*ty).clone(), var.clone()));
+    let lhs_applied = Value::happlication_rc(lhs.clone(), (*ty).clone(), var.clone());
     let rhs_body = run_closure(global, &mod2.body, [var.clone()])?;
     let codomain = run_closure(global, &ha.target, [var])?;
     println!("[Unify] Unifying applied term with module body");
@@ -536,7 +535,7 @@ async fn unify_case<'db, 'g>(
 
     // 3. Unify parameters pairwise
     // For now, use U0 as the type for parameters (they are type-level arguments)
-    let param_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+    let param_ty = Value::universe_rc(UniverseLevel::new(0));
     for (p1, p2) in case1.parameters.iter().zip(case2.parameters.iter()) {
         Box::pin(unify(
             db,
@@ -580,7 +579,7 @@ async fn unify_case<'db, 'g>(
         for _ in 0..b1.arity {
             let arg_var = ctx
                 .tc_env
-                .push_var(Rc::new(Value::universe(UniverseLevel::new(0))));
+                .push_var(Value::universe_rc(UniverseLevel::new(0)));
             args.push(arg_var);
         }
 
@@ -594,7 +593,7 @@ async fn unify_case<'db, 'g>(
             ctx.clone(),
             body1,
             body2,
-            Rc::new(Value::universe(UniverseLevel::new(0))),
+            Value::universe_rc(UniverseLevel::new(0)),
         ))
         .await?;
     }
@@ -1143,7 +1142,7 @@ async fn lower_flex<'db, 'g>(
 ) -> Result<RcValue<'db>, UnificationError<'db>> {
     if flex.spine.is_empty() {
         // No spine, no lowering needed
-        return Ok(Rc::new(Value::flex(flex.head, flex.spine, flex.ty)));
+        return Ok(Value::flex_rc(flex.head, flex.spine, flex.ty));
     }
 
     // Get the type of the metavariable from the solver state
@@ -1233,7 +1232,7 @@ async fn lower_flex<'db, 'g>(
 
     // Construct the final flex term
     let new_head = hwml_core::val::MetaVariable::new(current_meta_id, current_subst);
-    let result = Rc::new(Value::flex(new_head, remaining_spine, current_meta_ty));
+    let result = Value::flex_rc(new_head, remaining_spine, current_meta_ty);
     Ok(result)
 }
 
@@ -1278,6 +1277,7 @@ mod tests {
     use hwml_core::test_utils::{eval_term, load_prelude, parse};
     use hwml_core::val::{Environment, GlobalEnv};
     use hwml_core::Database;
+    use std::rc::Rc;
 
     /// Test context that holds a reference to database and global environment.
     struct Ctx<'db> {
@@ -2068,9 +2068,9 @@ mod tests {
             // Create a rigid variable (neutral) for each bound variable
             let level = hwml_core::common::Level::new(i);
             let var = hwml_core::val::Variable { level };
-            let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+            let var_ty = Value::universe_rc(UniverseLevel::new(0));
             let rigid = hwml_core::val::Rigid::new(var, hwml_core::val::Spine::empty(), var_ty);
-            local_env.push(Rc::new(Value::Rigid(rigid)));
+            local_env.push(Value::rigid_rc(rigid.head, rigid.spine, rigid.ty));
         }
 
         // Build the flex with spine applications
@@ -2104,7 +2104,7 @@ mod tests {
             current_flex.ty = target_ty;
         }
 
-        let lhs = Rc::new(Value::Flex(current_flex));
+        let lhs = Value::flex_rc(current_flex.head, current_flex.spine, current_flex.ty);
 
         // Spawn the unification task
         let db_ref: &'db dyn salsa::Database = db;
@@ -2250,9 +2250,9 @@ mod tests {
         let var = hwml_core::val::Variable {
             level: hwml_core::common::Level::new(level),
         };
-        let var_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let var_ty = Value::universe_rc(UniverseLevel::new(0));
         let rigid = hwml_core::val::Rigid::new(var, hwml_core::val::Spine::empty(), var_ty);
-        Rc::new(Value::Rigid(rigid))
+        Value::rigid_rc(rigid.head, rigid.spine, rigid.ty)
     }
 
     /// Helper to build a Flex term from a meta id and a list of variables (by level).
@@ -2270,7 +2270,7 @@ mod tests {
             hwml_core::val::Spine::empty(),
             meta_ty,
         );
-        Rc::new(Value::Flex(flex))
+        Value::flex_rc(flex.head, flex.spine, flex.ty)
     }
 
     /// Helper to test same-meta intersection.
@@ -2288,13 +2288,13 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         // Create a metavariable ?M : U0
-        let meta_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let meta_ty = Value::universe_rc(UniverseLevel::new(0));
         let meta_id = ctx.fresh_meta_id(meta_ty.clone(), Location::UNKNOWN);
 
         // Build flex terms with the given substitutions
         let lhs = make_flex(meta_id, lhs_vars, meta_ty.clone());
         let rhs = make_flex(meta_id, rhs_vars, meta_ty.clone());
-        let ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let ty = Value::universe_rc(UniverseLevel::new(0));
 
         let db_ref: &dyn salsa::Database = &db;
         let unify_future = async move {

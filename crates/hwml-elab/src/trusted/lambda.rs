@@ -1,7 +1,6 @@
 use crate::unify::unify;
 use crate::*;
 use hwml_core::*;
-use std::rc::Rc;
 
 pub struct ElabLambda<A> {
     pub location: Location,
@@ -27,7 +26,7 @@ where
     ) -> TrustedSyntax<'db> {
         // TODO: This should be using a level variable, with constraints.
         let mut env = env.clone();
-        let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let universe = Value::universe_rc(UniverseLevel::new(0));
 
         // Build a Pi pattern.
         let source = env.fresh_meta(universe.clone(), self.location());
@@ -37,7 +36,7 @@ where
 
         // Ensure the expected type is `(x : a) -> b(x)`.
         let target_closure = env.make_closure(target.as_ref(), &universe);
-        let pi = Rc::new(Value::pi(source.clone(), target_closure));
+        let pi = Value::pi_rc(source.clone(), target_closure);
         unify(env.db(), env.clone(), ty, pi, universe)
             .await
             .unwrap();

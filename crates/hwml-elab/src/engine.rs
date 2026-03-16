@@ -48,7 +48,7 @@ fn eval_metavariable_type<'db>(
             val::LocalEnv::new(),
             quote_value_simple(global, i, &current_ty),
         );
-        current_ty = Rc::new(Value::pi(arg_ty, closure));
+        current_ty = Value::pi_rc(arg_ty, closure);
     }
 
     Ok(current_ty)
@@ -451,7 +451,7 @@ impl<'db> SolverState<'db> {
         use hwml_core::val::Environment;
 
         let mut metas = HashMap::new();
-        let placeholder_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let placeholder_ty = Value::universe_rc(UniverseLevel::new(0));
 
         // Populate with actual metavariable types
         for (id, info) in global.iter_metavariables() {
@@ -532,11 +532,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// The metavariable captures the current local environment as its substitution.
     pub fn fresh_meta(&self, ty: RcValue<'db>, loc: Location) -> RcValue<'db> {
         let id = self.fresh_meta_id(ty.clone(), loc);
-        Rc::new(Value::metavariable(
-            id,
-            self.tc_env.values.local.clone(),
-            ty,
-        ))
+        Value::metavariable_rc(id, self.tc_env.values.local.clone(), ty)
     }
 
     // /// Allocate a fresh syntactic metavariable and return it.
@@ -547,11 +543,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// Allocate a fresh poisoned metavariable for error recovery.
     pub fn fresh_poisoned_meta(&self, ty: RcValue<'db>, loc: Location) -> RcValue<'db> {
         let id = self.state.borrow_mut().fresh_poisoned_meta(ty.clone(), loc);
-        Rc::new(Value::metavariable(
-            id,
-            self.tc_env.values.local.clone(),
-            ty,
-        ))
+        Value::metavariable_rc(id, self.tc_env.values.local.clone(), ty)
     }
 
     /// Get the solution for a specific metavariable, if it has been solved.
@@ -981,7 +973,7 @@ mod tests {
     fn test_cycle_detection_direct() {
         // Test direct cycle: ?M := ?M
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
         let meta_id = state.fresh_meta(ty, Location::UNKNOWN);
 
         // Try to solve ?M := ?M (direct cycle)
@@ -996,7 +988,7 @@ mod tests {
     fn test_cycle_detection_transitive() {
         // Test transitive cycle: ?M := ?N, ?N := ?M
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
 
         let meta_m = state.fresh_meta(ty.clone(), Location::UNKNOWN);
         let meta_n = state.fresh_meta(ty.clone(), Location::UNKNOWN);
@@ -1018,7 +1010,7 @@ mod tests {
     fn test_no_cycle() {
         // Test valid dependency: ?M := ?N where ?N is independent
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
 
         let meta_m = state.fresh_meta(ty.clone(), Location::UNKNOWN);
         let meta_n = state.fresh_meta(ty.clone(), Location::UNKNOWN);
@@ -1034,7 +1026,7 @@ mod tests {
     #[test]
     fn test_poisoned_meta_creation() {
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
         let meta_id = state.fresh_poisoned_meta(ty, Location::UNKNOWN);
 
         assert!(state.is_poisoned(meta_id), "Meta should be poisoned");
@@ -1047,7 +1039,7 @@ mod tests {
     #[test]
     fn test_location_derived_ids() {
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
 
         // Create multiple metas at the same location
         let meta1 = state.fresh_meta(ty.clone(), Location::UNKNOWN);

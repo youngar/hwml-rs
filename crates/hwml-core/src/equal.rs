@@ -8,7 +8,6 @@ use crate::{
     QualifiedName, UniverseLevel, Value,
 };
 use itertools::izip;
-use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 #[deny(elided_lifetimes_in_paths)]
@@ -575,7 +574,7 @@ pub fn equate_pis<'db>(
     rhs: &Pi<'db>,
 ) -> Result<'db> {
     type_equiv(global, transparent, depth, &lhs.source, &rhs.source)?;
-    let arg = Rc::new(Value::variable(Level::new(depth), lhs.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), lhs.source.clone());
     let self_target = run_closure(global, &lhs.target, [arg.clone()])?;
     let other_target = run_closure(global, &rhs.target, [arg])?;
 
@@ -596,7 +595,7 @@ pub fn equate_lambdas<'db>(
     pi: &Pi<'db>,
 ) -> Result<'db> {
     // Create a fresh variable of the source type
-    let arg = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), pi.source.clone());
 
     // Apply both lambda bodies to the fresh variable
     let lhs_result = run_closure(global, &lhs.body, [arg.clone()])?;
@@ -818,7 +817,7 @@ pub fn equate_harrows<'db>(
     // Check that source hardware types are convertible
     type_equiv(global, transparent, depth, &lhs.source, &rhs.source)?;
     // For target, we need to apply to a fresh variable and compare
-    let arg = Rc::new(Value::variable(Level::new(depth), lhs.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), lhs.source.clone());
     let lhs_target = run_closure(global, &lhs.target, [arg.clone()])?;
     let rhs_target = run_closure(global, &rhs.target, [arg])?;
 
@@ -839,7 +838,7 @@ pub fn equate_modules<'db>(
     harrow: &HArrow<'db>,
 ) -> Result<'db> {
     // Create a fresh variable of the source type
-    let arg = Rc::new(Value::variable(Level::new(depth), harrow.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
 
     // Apply both module bodies to the fresh variable
     let lhs_result = run_closure(global, &lhs.body, [arg.clone()])?;
@@ -975,7 +974,7 @@ pub fn equate_cases<'db>(
         return Err(Error::NotConvertible);
     }
 
-    let branch_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
+    let branch_ty = Value::universe_rc(UniverseLevel::new(0));
 
     for (lbranch, rbranch) in izip!(lhs.branches.iter(), rhs.branches.iter()) {
         // Check that the constructors are the same.
@@ -999,10 +998,7 @@ pub fn equate_cases<'db>(
             eval::eval_telescope(global, lhs.parameters.clone(), &data_info.arguments)?;
         let mut dcon_args = Vec::new();
         for ty in dcon_arg_tys.types {
-            dcon_args.push(Rc::new(Value::variable(
-                Level::new(depth + dcon_args.len()),
-                ty,
-            )));
+            dcon_args.push(Value::variable_rc(Level::new(depth + dcon_args.len()), ty));
         }
 
         // Apply both branch bodies to the same data constructor arguments.
@@ -1087,7 +1083,7 @@ fn equate_transports<'db>(
     eq: &val::EqType<'db>,
 ) -> Result<'db> {
     // Compare proofs at the equality type
-    let eq_ty = Rc::new(Value::eq(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()));
+    let eq_ty = Value::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone());
     equate(global, transparent, depth, &lhs.proof, &rhs.proof, &eq_ty)?;
 
     // Compare values at the motive applied to lhs
@@ -1097,7 +1093,7 @@ fn equate_transports<'db>(
 
     // Compare motives by eta-expansion
     // Create a fresh variable and compare P x for both motives
-    let var = Rc::new(Value::variable(Level::new(depth), eq.ty.clone()));
+    let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
     let lhs_result = run_closure(global, &lhs.motive, vec![var.clone()])?;
     let rhs_result = run_closure(global, &rhs.motive, vec![var])?;
 
@@ -1197,7 +1193,7 @@ mod tests {
         global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let transparent = TransparentEnv::new();
-        let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_ty = Value::universe_rc(UniverseLevel::new(0));
         let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
         let flex1 = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
         let flex2 = val::Flex::new(meta_val, Spine::empty(), u0_ty);
@@ -1214,7 +1210,7 @@ mod tests {
         global.add_metavariable(meta_id2, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let transparent = TransparentEnv::new();
-        let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_ty = Value::universe_rc(UniverseLevel::new(0));
         let flex1 = val::Flex::new(
             val::MetaVariable::new(meta_id1, LocalEnv::new()),
             Spine::empty(),
@@ -1237,7 +1233,7 @@ mod tests {
         global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
 
         let transparent = TransparentEnv::new();
-        let u0_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_ty = Value::universe_rc(UniverseLevel::new(0));
         let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
         let flex_ty = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
 
@@ -1273,9 +1269,9 @@ mod tests {
         let transparent = TransparentEnv::new();
         // Lift types contain hardware types (SLift or MLift)
         // ^$Bit is Lift(SLift(Bit))
-        let slift_bit = Rc::new(Value::slift(Rc::new(Value::bit())));
+        let slift_bit = Value::slift_rc(Value::bit_rc());
         let lift_bit = Value::lift(slift_bit.clone());
-        let lift_bit2 = Value::lift(Rc::new(Value::slift(Rc::new(Value::bit()))));
+        let lift_bit2 = Value::lift(Value::slift_rc(Value::bit_rc()));
 
         // Same lifted types are equivalent
         assert!(type_equiv(&global, &transparent, 0, &lift_bit, &lift_bit2).is_ok());
@@ -1289,9 +1285,9 @@ mod tests {
         let transparent = TransparentEnv::new();
 
         // Create: let x : Bit = zero; x
-        let bit_ty = Rc::new(Value::bit());
-        let zero_val = Rc::new(Value::zero());
-        let var_0 = Rc::new(Value::variable(Level::new(0), bit_ty.clone()));
+        let bit_ty = Value::bit_rc();
+        let zero_val = Value::zero_rc();
+        let var_0 = Value::variable_rc(Level::new(0), bit_ty.clone());
         let let_expr = Value::Let(val::Let::new(bit_ty.clone(), zero_val.clone(), var_0));
 
         // Compare against: zero
@@ -1322,11 +1318,11 @@ mod tests {
         let global = GlobalEnv::new();
 
         // Create the identity function: λx : Bit. x
-        let bit_ty = Rc::new(Value::bit());
-        let identity = Rc::new(Value::lambda(val::Closure::new(
+        let bit_ty = Value::bit_rc();
+        let identity = Value::lambda_rc(val::Closure::new(
             LocalEnv::new(),
             Rc::new(Syntax::variable(Index(0))),
-        )));
+        ));
 
         // Create a transparent environment with f = identity at level 0
         let mut transparent = TransparentEnv::new();
@@ -1334,15 +1330,11 @@ mod tests {
 
         // Create f zero as a Rigid with a spine
         // f is at level 0, applied to zero
-        let zero_val = Rc::new(Value::zero());
+        let zero_val = Value::zero_rc();
         let zero_normal = val::Normal::new(bit_ty.clone(), zero_val.clone());
         let app_eliminator = val::Eliminator::application(zero_normal);
         let spine = val::Spine::new(vec![app_eliminator]);
-        let f_applied = Rc::new(Value::rigid(
-            val::Variable::new(Level::new(0)),
-            spine,
-            bit_ty.clone(),
-        ));
+        let f_applied = Value::rigid_rc(val::Variable::new(Level::new(0)), spine, bit_ty.clone());
 
         // Try to equate f zero =? zero
         // This should succeed: f unfolds to λx.x, then (λx.x) zero reduces to zero

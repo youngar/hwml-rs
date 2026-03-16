@@ -57,7 +57,7 @@ impl Renaming {
         let a = Level::new(self.source_depth());
         let b = Level::new(self.target_depth());
         self.map.insert(a, b);
-        let var = Rc::new(Value::variable(a, ty));
+        let var = Value::variable_rc(a, ty);
         let result = f(self, var);
         self.map.remove(&a);
         result
@@ -228,7 +228,7 @@ fn rename_pi_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::Pi(pi.clone())),
+            ty: Value::pi_rc(Rc::clone(&pi.source), pi.target.clone()),
         }),
     }
 }
@@ -251,7 +251,10 @@ fn rename_type_constructor_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: Rc::new(value.clone()),
-            ty: Rc::new(Value::TypeConstructor(tcon.clone())),
+            ty: Value::type_constructor_rc(
+                tcon.constructor,
+                tcon.arguments.iter().map(|arg| Rc::clone(arg)).collect(),
+            ),
         }),
     }
 }
@@ -269,7 +272,7 @@ fn rename_rigid_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: Rc::new(value.clone()),
-            ty: Rc::new(Value::Rigid(ty.clone())),
+            ty: Rc::clone(&ty.ty),
         }),
     }
 }
@@ -287,7 +290,7 @@ fn rename_flex_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: Rc::new(value.clone()),
-            ty: Rc::new(Value::Flex(ty.clone())),
+            ty: Rc::clone(&ty.ty),
         }),
     }
 }
@@ -329,7 +332,7 @@ fn rename_lift_instance<'db>(
         Value::MLift(mlift) => rename_mlift_instance(db, global, meta, renaming, mlift, value),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::Lift(lift.clone())),
+            ty: Value::lift_rc(lift.ty.clone()),
         }),
     }
 }
@@ -351,7 +354,7 @@ fn rename_hwuniverse_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::HardwareUniverse(val::HardwareUniverse::new())),
+            ty: Value::hardware_universe_rc(),
         }),
     }
 }
@@ -372,7 +375,7 @@ fn rename_signal_universe_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::SignalUniverse(val::SignalUniverse::new())),
+            ty: Value::signal_universe_rc(),
         }),
     }
 }
@@ -393,7 +396,7 @@ fn rename_module_universe_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::ModuleUniverse(val::ModuleUniverse::new())),
+            ty: Value::module_universe_rc(),
         }),
     }
 }
@@ -411,7 +414,7 @@ fn rename_slift_instance<'db>(
         Value::Bit(_) => rename_bit_instance(db, global, meta, renaming, value),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::SLift(slift.clone())),
+            ty: Value::slift_rc(slift.ty.clone()),
         }),
     }
 }
@@ -429,7 +432,7 @@ fn rename_mlift_instance<'db>(
         Value::HArrow(harrow) => rename_harrow_instance(db, global, meta, renaming, harrow, value),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::MLift(mlift.clone())),
+            ty: Value::mlift_rc(mlift.ty.clone()),
         }),
     }
 }
@@ -450,7 +453,7 @@ fn rename_bit_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::Bit(val::Bit::new())),
+            ty: Value::bit_rc(),
         }),
     }
 }
@@ -471,7 +474,7 @@ fn rename_harrow_instance<'db>(
         Value::Flex(flex) => rename_flex(db, global, meta, renaming, flex),
         _ => Err(Error::IllTyped {
             tm: value.clone(),
-            ty: Rc::new(Value::HArrow(harrow.clone())),
+            ty: Value::harrow_rc(harrow.source.clone(), harrow.target.clone()),
         }),
     }
 }
@@ -797,7 +800,7 @@ fn rename_case<'db>(
     // No return_type in case anymore - case is check-only.
     // For renaming branch bodies, we use a placeholder type.
     // TODO: Thread the expected type through when we have check-only renaming.
-    let placeholder_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
+    let placeholder_ty = Value::universe_rc(UniverseLevel::new(0));
     let branch_ty = &placeholder_ty;
 
     let mut branches = Vec::new();
@@ -808,10 +811,10 @@ fn rename_case<'db>(
         let dcon_arg_tys = eval::eval_telescope(global, parameters.clone(), &data_info.arguments)?;
         let mut dcon_args = Vec::new();
         for ty in dcon_arg_tys.types {
-            dcon_args.push(Rc::new(Value::variable(
+            dcon_args.push(Value::variable_rc(
                 Level::new(renaming.source_depth() + dcon_args.len()),
                 ty,
-            )));
+            ));
         }
 
         // Evaluate the branch body closure

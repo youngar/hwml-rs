@@ -62,7 +62,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
     }
 
     pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
-        let var = Rc::new(Value::variable(Level::new(self.depth()), ty.clone()));
+        let var = Value::variable_rc(Level::new(self.depth()), ty.clone());
         self.push(var.clone(), ty);
         var
     }
@@ -329,7 +329,7 @@ pub fn type_synth<'db, 'g>(
         Syntax::Universe(universe) => {
             let current_level: usize = universe.level.into();
             let next_level = crate::common::UniverseLevel::new(current_level + 1);
-            Ok(Rc::new(Value::universe(next_level)))
+            Ok(Value::universe_rc(next_level))
         }
 
         // HardwareUniverse constructs - Lift is the only one that can be synthesized
@@ -719,7 +719,7 @@ fn type_check_lambda<'db, 'g>(
             source,
             target: target_closure,
         }) => {
-            let var = Rc::new(Value::variable(Level::new(env.depth()), source.clone()));
+            let var = Value::variable_rc(Level::new(env.depth()), source.clone());
             let target = run_closure(env, target_closure, [var.clone()])?;
             env.push(var, source.clone());
             let r = type_check(env, &lam.body, &target);
@@ -865,9 +865,7 @@ fn type_synth_lift<'db, 'g>(
     check_hwtype(env, &lift.ty)?;
 
     // ^ht : Type (at universe level 0)
-    Ok(Rc::new(Value::universe(crate::common::UniverseLevel::new(
-        0,
-    ))))
+    Ok(Value::universe_rc(crate::common::UniverseLevel::new(0)))
 }
 
 fn type_check_bit<'db, 'g>(
@@ -1107,7 +1105,7 @@ fn type_synth_eq<'db, 'g>(
     type_check(env, &eq.lhs, &sem_ty)?;
     type_check(env, &eq.rhs, &sem_ty)?;
 
-    Ok(Rc::new(Value::universe(universe.level)))
+    Ok(Value::universe_rc(universe.level))
 }
 
 fn type_check_refl<'db, 'g>(
@@ -1171,7 +1169,7 @@ fn type_synth_transport<'db, 'g>(
     // For simplicity, we use U0 here.
     let universe_syntax = Syntax::universe_rc(UniverseLevel::new(0));
     let constant_closure = val::Closure::new(LocalEnv::new(), universe_syntax);
-    let motive_expected_ty = Rc::new(Value::pi(eq_ty.ty.clone(), constant_closure));
+    let motive_expected_ty = Value::pi_rc(eq_ty.ty.clone(), constant_closure);
 
     // Check the motive against this type
     type_check(env, &transport.motive, &motive_expected_ty)?;
@@ -1609,7 +1607,7 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // Push a variable of type 𝒰0
-        let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_val = Value::universe_rc(UniverseLevel::new(0));
         env.push_var(u0_val.clone());
 
         // Variable %0 should have type 𝒰0
@@ -1699,7 +1697,7 @@ mod tests {
         let lam = parse(&db, "λ %x -> %x");
 
         // Create the Pi type as a Value
-        let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_val = Value::universe_rc(UniverseLevel::new(0));
         let u0_syn = parse(&db, "U0");
         let pi_val = Value::Pi(val::Pi {
             source: u0_val.clone(),
@@ -1747,12 +1745,9 @@ mod tests {
 
         // Set up: we need a variable of Pi type
         // Create a function f : ∀ (%x : 𝒰0) → 𝒰0
-        let u0_val = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0_val = Value::universe_rc(UniverseLevel::new(0));
         let u0_syn = parse(&db, "U0");
-        let pi_val = Rc::new(Value::Pi(val::Pi {
-            source: u0_val.clone(),
-            target: Closure::new(val::LocalEnv::new(), u0_syn),
-        }));
+        let pi_val = Value::pi_rc(u0_val.clone(), Closure::new(val::LocalEnv::new(), u0_syn));
 
         // Push f into the environment
         env.push_var(pi_val);
@@ -1931,7 +1926,7 @@ mod tests {
         ));
 
         // Apply substitution: n ~ @Zero
-        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let zero = Value::data_constructor_rc("Zero".into_with_db(&db), vec![]);
         let solutions = vec![(Level::new(0), zero.clone())];
         env.apply_subst(&solutions)
             .expect("apply_subst should succeed");
@@ -1957,16 +1952,14 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // Push n : Nat at level 0
-        let nat_ty = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let nat_ty = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
         let n = env.push_var(nat_ty);
 
         // Push v : Vec Bit n at level 1
         // Vec Bit n = #[@Vec Bit n]
-        let bit_ty = Rc::new(Value::bit());
-        let vec_bit_n = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![bit_ty.clone(), n.clone()],
-        ));
+        let bit_ty = Value::bit_rc();
+        let vec_bit_n =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![bit_ty.clone(), n.clone()]);
         env.push_var(vec_bit_n);
 
         // Verify initial state: types[1] contains Vec Bit n (with Rigid at index 0)
@@ -1984,7 +1977,7 @@ mod tests {
         }
 
         // Apply substitution: n ~ @Zero
-        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
+        let zero = Value::data_constructor_rc("Zero".into_with_db(&db), vec![]);
         let solutions = vec![(Level::new(0), zero.clone())];
         env.apply_subst(&solutions)
             .expect("apply_subst should succeed");
@@ -2016,35 +2009,28 @@ mod tests {
         let global = make_vec_global(&db);
 
         let mut env = make_env(&db, &global);
-        let bit_ty = Rc::new(Value::bit());
+        let bit_ty = Value::bit_rc();
 
         // Push n : Nat at level 0
-        let nat_ty = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let nat_ty = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
         let n = env.push_var(nat_ty.clone());
 
         // Push m : Nat at level 1
         let m = env.push_var(nat_ty);
 
         // Push v : Vec Bit n at level 2
-        let vec_bit_n = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![bit_ty.clone(), n.clone()],
-        ));
+        let vec_bit_n =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![bit_ty.clone(), n.clone()]);
         env.push_var(vec_bit_n);
 
         // Push w : Vec Bit m at level 3
-        let vec_bit_m = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![bit_ty.clone(), m.clone()],
-        ));
+        let vec_bit_m =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![bit_ty.clone(), m.clone()]);
         env.push_var(vec_bit_m);
 
         // Apply substitutions: n ~ @Zero, m ~ @Succ @Zero
-        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
-        let succ_zero = Rc::new(Value::data_constructor(
-            "Succ".into_with_db(&db),
-            vec![zero.clone()],
-        ));
+        let zero = Value::data_constructor_rc("Zero".into_with_db(&db), vec![]);
+        let succ_zero = Value::data_constructor_rc("Succ".into_with_db(&db), vec![zero.clone()]);
         let solutions = vec![
             (Level::new(0), zero.clone()),
             (Level::new(1), succ_zero.clone()),
@@ -2104,8 +2090,8 @@ mod tests {
         let global = make_vec_global(&db);
 
         let mut env = make_env(&db, &global);
-        let bit_ty = Rc::new(Value::bit());
-        let nat_ty = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let bit_ty = Value::bit_rc();
+        let nat_ty = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
 
         // Push n : Nat at level 0
         let n = env.push_var(nat_ty.clone());
@@ -2115,36 +2101,24 @@ mod tests {
         let p = env.push_var(nat_ty);
 
         // Push v : Vec Bit n at level 3
-        let vec_bit_n = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![bit_ty.clone(), n.clone()],
-        ));
+        let vec_bit_n =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![bit_ty.clone(), n.clone()]);
         env.push_var(vec_bit_n);
 
         // Push w : Vec Bit m at level 4
-        let vec_bit_m = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![bit_ty.clone(), m.clone()],
-        ));
+        let vec_bit_m =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![bit_ty.clone(), m.clone()]);
         env.push_var(vec_bit_m);
 
         // Push x : Vec Bit p at level 5
-        let vec_bit_p = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![bit_ty.clone(), p.clone()],
-        ));
+        let vec_bit_p =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![bit_ty.clone(), p.clone()]);
         env.push_var(vec_bit_p);
 
         // Apply substitutions
-        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
-        let one = Rc::new(Value::data_constructor(
-            "Succ".into_with_db(&db),
-            vec![zero.clone()],
-        ));
-        let two = Rc::new(Value::data_constructor(
-            "Succ".into_with_db(&db),
-            vec![one.clone()],
-        ));
+        let zero = Value::data_constructor_rc("Zero".into_with_db(&db), vec![]);
+        let one = Value::data_constructor_rc("Succ".into_with_db(&db), vec![zero.clone()]);
+        let two = Value::data_constructor_rc("Succ".into_with_db(&db), vec![one.clone()]);
         let solutions = vec![
             (Level::new(0), zero.clone()),
             (Level::new(1), one.clone()),
@@ -2230,7 +2204,7 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // Push n : Nat
-        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let nat = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
         env.push_var(nat.clone());
 
         // Parse case: !0 case { @Zero => [@Zero] | @Succ %m => [@Zero] }
@@ -2258,7 +2232,7 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // Push n : Nat
-        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let nat = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
         env.push_var(nat.clone());
 
         // Parse case: !0 case { @Zero => [@Zero] }  (missing @Succ)
@@ -2297,16 +2271,14 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // Push a : Type at level 0
-        let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let universe = Value::universe_rc(UniverseLevel::new(0));
         env.push_var(universe.clone());
-        let a = Rc::new(Value::variable(Level::new(0), universe.clone()));
+        let a = Value::variable_rc(Level::new(0), universe.clone());
 
         // Push v : Vec a @Zero at level 1
-        let zero = Rc::new(Value::data_constructor("Zero".into_with_db(&db), vec![]));
-        let vec_a_zero = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![a.clone(), zero.clone()],
-        ));
+        let zero = Value::data_constructor_rc("Zero".into_with_db(&db), vec![]);
+        let vec_a_zero =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![a.clone(), zero.clone()]);
         env.push_var(vec_a_zero.clone());
 
         // Parse case: !0 case { @VNil => [@Zero] }
@@ -2318,7 +2290,7 @@ mod tests {
         };
 
         // Check should succeed - @VCons is unreachable, only @VNil is required
-        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let nat = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
         let result = type_check_case(&mut env, case, &nat);
         assert!(
             result.is_ok(),
@@ -2336,20 +2308,18 @@ mod tests {
         let mut env = make_env(&db, &global);
 
         // Push a : Type at level 0
-        let universe = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let universe = Value::universe_rc(UniverseLevel::new(0));
         env.push_var(universe.clone());
-        let a = Rc::new(Value::variable(Level::new(0), universe.clone()));
+        let a = Value::variable_rc(Level::new(0), universe.clone());
 
         // Push n : Nat at level 1
-        let nat = Rc::new(Value::type_constructor("Nat".into_with_db(&db), vec![]));
+        let nat = Value::type_constructor_rc("Nat".into_with_db(&db), vec![]);
         env.push_var(nat.clone());
-        let n = Rc::new(Value::variable(Level::new(1), nat.clone()));
+        let n = Value::variable_rc(Level::new(1), nat.clone());
 
         // Push v : Vec a n at level 2
-        let vec_a_n = Rc::new(Value::type_constructor(
-            "Vec".into_with_db(&db),
-            vec![a.clone(), n.clone()],
-        ));
+        let vec_a_n =
+            Value::type_constructor_rc("Vec".into_with_db(&db), vec![a.clone(), n.clone()]);
         env.push_var(vec_a_n.clone());
 
         // Parse case: !0 case { @VNil => [@Zero] }  (missing @VCons)
@@ -2422,7 +2392,7 @@ mod tests {
         // The motive [%0 -> %0] is the identity function on types
         // This transports a value x : A to a value of type B
 
-        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0 = Value::universe_rc(UniverseLevel::new(0));
 
         // Push A : U0
         let a = env.push_var(u0.clone());
@@ -2431,7 +2401,7 @@ mod tests {
         let b = env.push_var(u0.clone());
 
         // Push h : Eq U0 A B
-        let eq_ty = Rc::new(Value::eq(u0.clone(), a.clone(), b.clone()));
+        let eq_ty = Value::eq_rc(u0.clone(), a.clone(), b.clone());
         env.push_var(eq_ty);
 
         // Push x : A
@@ -2502,8 +2472,8 @@ mod tests {
         );
 
         let mut env = make_env(&db, &global);
-        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
-        let nat_val = Rc::new(Value::type_constructor(nat_id, vec![]));
+        let u0 = Value::universe_rc(UniverseLevel::new(0));
+        let nat_val = Value::type_constructor_rc(nat_id, vec![]);
 
         // Context:
         // A : U0
@@ -2522,11 +2492,11 @@ mod tests {
         let m = env.push_var(nat_val.clone());
 
         // Push eq_proof : Eq Nat n m
-        let eq_ty = Rc::new(Value::eq(nat_val.clone(), n.clone(), m.clone()));
+        let eq_ty = Value::eq_rc(nat_val.clone(), n.clone(), m.clone());
         env.push_var(eq_ty);
 
         // Push v : Vec A n
-        let vec_a_n = Rc::new(Value::type_constructor(vec_id, vec![a.clone(), n.clone()]));
+        let vec_a_n = Value::type_constructor_rc(vec_id, vec![a.clone(), n.clone()]);
         env.push_var(vec_a_n.clone());
 
         // Now we want to construct a term of type Vec A m
@@ -2550,7 +2520,7 @@ mod tests {
         let synth_ty = result.unwrap();
 
         // The synthesized type should be Vec A m
-        let expected_ty = Rc::new(Value::type_constructor(vec_id, vec![a.clone(), m.clone()]));
+        let expected_ty = Value::type_constructor_rc(vec_id, vec![a.clone(), m.clone()]);
 
         assert!(
             equal::type_equiv(
@@ -2710,12 +2680,12 @@ mod tests {
         // λ %A → let %B : U0 = %A; %B
         // Let can appear in lambda bodies, and we check against a Pi type
         let lam_expr = parse(&db, "λ %A → let %B : U0 = %A; %B");
-        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0 = Value::universe_rc(UniverseLevel::new(0));
         let u0_closure = val::Closure::new(
             val::LocalEnv::new(),
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
-        let pi_ty = Rc::new(Value::pi(u0, u0_closure));
+        let pi_ty = Value::pi_rc(u0, u0_closure);
         let result = type_check(&mut env, &lam_expr, &pi_ty);
         assert!(result.is_ok(), "type_check failed: {:?}", result.err());
     }
@@ -2729,12 +2699,12 @@ mod tests {
         // λ %x → let %y : U0 = %x; %y
         // Let can appear in lambda bodies
         let lam_expr = parse(&db, "λ %x → let %y : U0 = %x; %y");
-        let u0 = Rc::new(Value::universe(UniverseLevel::new(0)));
+        let u0 = Value::universe_rc(UniverseLevel::new(0));
         let u0_closure = val::Closure::new(
             val::LocalEnv::new(),
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
-        let pi_ty = Rc::new(Value::pi(u0.clone(), u0_closure));
+        let pi_ty = Value::pi_rc(u0.clone(), u0_closure);
         let result = type_check(&mut env, &lam_expr, &pi_ty);
         assert!(result.is_ok(), "type_check failed: {:?}", result.err());
     }
@@ -2752,7 +2722,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
             Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
-        let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
+        let u1 = Value::universe_rc(UniverseLevel::new(1));
         let result = type_check(&mut env, &pi_expr, &u1);
         assert!(result.is_ok(), "Pi (U0 -> U0) should be in U1");
 
@@ -2761,7 +2731,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
             Binding::new(Syntax::universe_rc(UniverseLevel::new(1))),
         );
-        let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
+        let u2 = Value::universe_rc(UniverseLevel::new(2));
         let result = type_check(&mut env, &pi_expr, &u2);
         assert!(result.is_ok(), "Pi (U0 -> U1) should be in U2");
 
@@ -2770,7 +2740,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(1)),
             Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
-        let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
+        let u2 = Value::universe_rc(UniverseLevel::new(2));
         let result = type_check(&mut env, &pi_expr, &u2);
         assert!(result.is_ok(), "Pi (U1 -> U0) should be in U2");
     }
@@ -2786,7 +2756,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
             Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
         );
-        let u2 = Rc::new(Value::universe(UniverseLevel::new(2)));
+        let u2 = Value::universe_rc(UniverseLevel::new(2));
         let result = type_check(&mut env, &pi_expr, &u2);
         assert!(
             result.is_ok(),
@@ -2806,7 +2776,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
             Binding::new(Syntax::universe_rc(UniverseLevel::new(1))),
         );
-        let u1 = Rc::new(Value::universe(UniverseLevel::new(1)));
+        let u1 = Value::universe_rc(UniverseLevel::new(1));
         let result = type_check(&mut env, &pi_expr, &u1);
         assert!(
             result.is_err(),

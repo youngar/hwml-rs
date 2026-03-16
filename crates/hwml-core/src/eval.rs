@@ -128,7 +128,7 @@ fn eval_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     universe: &syn::Universe<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::universe(universe.level)))
+    Ok(Value::universe_rc(universe.level))
 }
 
 fn eval_lift<'db, 'g>(
@@ -136,7 +136,7 @@ fn eval_lift<'db, 'g>(
     lift: &syn::Lift<'db>,
 ) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &lift.ty)?;
-    Ok(Rc::new(Value::lift(ty)))
+    Ok(Value::lift_rc(ty))
 }
 
 fn eval_pi<'db, 'g>(
@@ -145,16 +145,17 @@ fn eval_pi<'db, 'g>(
 ) -> Result<RcValue<'db>, Error> {
     let source = eval(env, &pi.source)?;
     let target = Closure::new(env.local.clone(), pi.target.body.clone());
-    Ok(Rc::new(Value::pi(source, target)))
+    Ok(Value::pi_rc(source, target))
 }
 
 fn eval_lambda<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     lambda: &syn::Lambda<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::Lambda(dom::Lambda {
-        body: Closure::new(env.local.clone(), lambda.body.body.clone()),
-    })))
+    Ok(Value::lambda_rc(Closure::new(
+        env.local.clone(),
+        lambda.body.body.clone(),
+    )))
 }
 
 fn eval_let<'db, 'g>(
@@ -171,7 +172,7 @@ fn eval_let<'db, 'g>(
     env.pop();
 
     // Return Let value with fully evaluated body
-    Ok(Rc::new(Value::Let(dom::Let::new(ty, value, body))))
+    Ok(Value::let_expr_rc(ty, value, body))
 }
 
 fn eval_type_constructor<'db, 'g>(
@@ -211,7 +212,7 @@ fn eval_hardware_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::HardwareUniverse<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::hardware_universe()))
+    Ok(Value::hardware_universe_rc())
 }
 
 fn eval_slift<'db, 'g>(
@@ -219,7 +220,7 @@ fn eval_slift<'db, 'g>(
     slift: &syn::SLift<'db>,
 ) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &slift.ty)?;
-    Ok(Rc::new(Value::slift(ty)))
+    Ok(Value::slift_rc(ty))
 }
 
 fn eval_mlift<'db, 'g>(
@@ -227,42 +228,42 @@ fn eval_mlift<'db, 'g>(
     mlift: &syn::MLift<'db>,
 ) -> Result<RcValue<'db>, Error> {
     let ty = eval(env, &mlift.ty)?;
-    Ok(Rc::new(Value::mlift(ty)))
+    Ok(Value::mlift_rc(ty))
 }
 
 fn eval_signal_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::SignalUniverse<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::signal_universe()))
+    Ok(Value::signal_universe_rc())
 }
 
 fn eval_bit<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::Bit<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::bit()))
+    Ok(Value::bit_rc())
 }
 
 fn eval_zero<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::Zero<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::zero()))
+    Ok(Value::zero_rc())
 }
 
 fn eval_one<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::One<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::one()))
+    Ok(Value::one_rc())
 }
 
 fn eval_module_universe<'db, 'g>(
     _: &mut Environment<'db, 'g>,
     _: &syn::ModuleUniverse<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::module_universe()))
+    Ok(Value::module_universe_rc())
 }
 
 fn eval_harrow<'db, 'g>(
@@ -271,17 +272,17 @@ fn eval_harrow<'db, 'g>(
 ) -> Result<RcValue<'db>, Error> {
     let source = eval(env, &harrow.source)?;
     let target = Closure::new(env.local.clone(), harrow.target.clone());
-    Ok(Rc::new(Value::harrow(source, target)))
+    Ok(Value::harrow_rc(source, target))
 }
 
 fn eval_module<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     module: &syn::Module<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::module(Closure::new(
+    Ok(Value::module_rc(Closure::new(
         env.local.clone(),
         module.body.body.clone(),
-    ))))
+    )))
 }
 
 fn eval_happlication<'db, 'g>(
@@ -291,14 +292,14 @@ fn eval_happlication<'db, 'g>(
     let module = eval(env, &happ.module)?;
     let module_ty = eval(env, &happ.module_ty)?;
     let arg = eval(env, &happ.argument)?;
-    Ok(Rc::new(Value::happlication(module, module_ty, arg)))
+    Ok(Value::happlication_rc(module, module_ty, arg))
 }
 
 fn eval_prim<'db, 'g>(
     _env: &mut Environment<'db, 'g>,
     prim: &syn::Prim<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::prim(prim.name)))
+    Ok(Value::prim_rc(prim.name))
 }
 
 fn eval_constant<'db, 'g>(
@@ -354,7 +355,7 @@ fn eval_metavariable<'db, 'g>(
     // Create a Flex neutral with an empty spine.
     let flex = val::Flex::new(meta_value, val::Spine::empty(), meta_ty);
 
-    Ok(Rc::new(Value::Flex(flex)))
+    Ok(Value::flex_rc(flex.head, flex.spine, flex.ty))
 }
 
 fn eval_check<'db, 'g>(
@@ -389,7 +390,11 @@ fn apply_rigid<'db>(
 
     // Create the new rigid neutral.
     let new_rigid = Rigid::new(rigid.head.clone(), spine, target_ty);
-    Ok(Rc::new(Value::Rigid(new_rigid)))
+    Ok(Value::rigid_rc(
+        new_rigid.head,
+        new_rigid.spine,
+        new_rigid.ty,
+    ))
 }
 
 /// Perform the application of a flexible neutral to an argument.
@@ -417,7 +422,7 @@ fn apply_flex<'db>(
 
     // Create the new flex neutral.
     let new_flex = Flex::new(flex.head.clone(), spine, target_ty);
-    Ok(Rc::new(Value::Flex(new_flex)))
+    Ok(Value::flex_rc(new_flex.head, new_flex.spine, new_flex.ty))
 }
 
 fn eval_application<'db, 'g>(
@@ -541,7 +546,11 @@ fn run_case_on_rigid<'db>(
 
     // Create the new rigid neutral with the placeholder type.
     let new_rigid = Rigid::new(rigid.head.clone(), spine, placeholder_ty);
-    Ok(Rc::new(Value::Rigid(new_rigid)))
+    Ok(Value::rigid_rc(
+        new_rigid.head,
+        new_rigid.spine,
+        new_rigid.ty,
+    ))
 }
 
 fn run_case_on_flex<'db>(
@@ -580,7 +589,7 @@ fn run_case_on_flex<'db>(
 
     // Create the new flex neutral with the placeholder type.
     let new_flex = Flex::new(flex.head.clone(), spine, placeholder_ty);
-    Ok(Rc::new(Value::Flex(new_flex)))
+    Ok(Value::flex_rc(new_flex.head, new_flex.spine, new_flex.ty))
 }
 
 fn eval_eq<'db, 'g>(
@@ -590,14 +599,14 @@ fn eval_eq<'db, 'g>(
     let ty = eval(env, &eq.ty)?;
     let lhs = eval(env, &eq.lhs)?;
     let rhs = eval(env, &eq.rhs)?;
-    Ok(Rc::new(Value::eq(ty, lhs, rhs)))
+    Ok(Value::eq_rc(ty, lhs, rhs))
 }
 
 fn eval_refl<'db, 'g>(
     _env: &mut Environment<'db, 'g>,
     _refl: &syn::Refl<'db>,
 ) -> Result<RcValue<'db>, Error> {
-    Ok(Rc::new(Value::refl()))
+    Ok(Value::refl_rc())
 }
 
 fn eval_transport<'db, 'g>(
@@ -619,7 +628,7 @@ fn eval_transport<'db, 'g>(
         Value::Refl(_) => Ok(value),
         _ => {
             // Proof is stuck (neutral), so transport remains.
-            Ok(Rc::new(Value::transport(motive, proof, value)))
+            Ok(Value::transport_rc(motive, proof, value))
         }
     }
 }

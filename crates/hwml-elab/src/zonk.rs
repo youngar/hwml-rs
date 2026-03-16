@@ -219,13 +219,12 @@ mod tests {
     use hwml_core::common::Location;
     use hwml_core::syn::Syntax;
     use hwml_core::val::Value;
-    use std::rc::Rc;
 
     #[test]
     fn test_zonk_unsolved_meta() {
         // Create a solver state with an unsolved metavariable
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
         let meta_id = state.fresh_meta(ty, hwml_support::Location::UNKNOWN);
 
         // Create a term with the unsolved metavariable
@@ -242,7 +241,7 @@ mod tests {
     fn test_zonk_solved_meta() {
         // Create a solver state with a solved metavariable
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
         let meta_id = state.fresh_meta(ty, hwml_support::Location::UNKNOWN);
 
         // Solve the metavariable to a universe
@@ -266,7 +265,7 @@ mod tests {
     fn test_zonk_poisoned_meta() {
         // Create a solver state with a poisoned metavariable
         let mut state = SolverState::new();
-        let ty = Rc::new(Value::universe(hwml_core::common::UniverseLevel::new(0)));
+        let ty = Value::universe_rc(hwml_core::common::UniverseLevel::new(0));
         let meta_id = state.fresh_poisoned_meta(ty, hwml_support::Location::UNKNOWN);
 
         // Create a term with the poisoned metavariable

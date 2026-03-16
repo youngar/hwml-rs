@@ -9,7 +9,6 @@ use crate::{
     },
     QualifiedName, Value,
 };
-use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct PatternBinding<'db> {
@@ -109,7 +108,7 @@ pub fn unify_pattern<'db>(
             transparent: TransparentEnv::new(),
         };
         let ty = eval::eval(&mut env, ty_syntax)?;
-        let rigid_var = Rc::new(Value::variable(Level::new(current_depth), ty.clone()));
+        let rigid_var = Value::variable_rc(Level::new(current_depth), ty.clone());
         new_bindings.push(PatternBinding { name: None, ty });
         local.push(rigid_var);
         current_depth += 1;
@@ -315,7 +314,7 @@ fn unify_equations<'db>(
             }
 
             (Value::Lambda(l1), Value::Lambda(l2), Value::Pi(pi)) => {
-                let var = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+                let var = Value::variable_rc(Level::new(depth), pi.source.clone());
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
                 let result_ty = eval::run_closure(global, &pi.target, [var])?;
@@ -323,7 +322,7 @@ fn unify_equations<'db>(
             }
 
             (Value::Lambda(l1), _, Value::Pi(pi)) => {
-                let var = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+                let var = Value::variable_rc(Level::new(depth), pi.source.clone());
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let rhs_applied = eval::run_application(global, &rhs, var.clone())?;
                 let result_ty = eval::run_closure(global, &pi.target, [var])?;
@@ -331,7 +330,7 @@ fn unify_equations<'db>(
             }
 
             (_, Value::Lambda(l2), Value::Pi(pi)) => {
-                let var = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+                let var = Value::variable_rc(Level::new(depth), pi.source.clone());
                 let lhs_applied = eval::run_application(global, &lhs, var.clone())?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
                 let result_ty = eval::run_closure(global, &pi.target, [var])?;
@@ -390,7 +389,7 @@ fn unify_equations<'db>(
                 // Eq A x y ~ Eq B u v  becomes  A ~ B, x ~ u, y ~ v
                 // We need to get the type of A (which should be a universe)
                 // For simplicity, use U0 as the type for the type argument
-                let type_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+                let type_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
                 work_list.push((eq1.ty.clone(), eq2.ty.clone(), type_ty.clone()));
                 // x and y have type A (use eq1.ty as the type)
                 work_list.push((eq1.lhs.clone(), eq2.lhs.clone(), eq1.ty.clone()));
@@ -408,19 +407,19 @@ fn unify_equations<'db>(
                 // transport P1 h1 v1 ~ transport P2 h2 v2
                 // We need to unify the motives, proofs, and values
                 // For motives, we need to eta-expand them
-                let var = Rc::new(Value::variable(
+                let var = Value::variable_rc(
                     Level::new(depth),
-                    Rc::new(Value::universe(crate::common::UniverseLevel::new(0))),
-                ));
+                    Value::universe_rc(crate::common::UniverseLevel::new(0)),
+                );
                 let m1_body = eval::run_closure(global, &t1.motive, [var.clone()])?;
                 let m2_body = eval::run_closure(global, &t2.motive, [var.clone()])?;
-                let motive_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+                let motive_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
                 work_list.push((m1_body, m2_body, motive_ty));
 
-                let proof_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+                let proof_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
                 work_list.push((t1.proof.clone(), t2.proof.clone(), proof_ty));
 
-                let value_ty = Rc::new(Value::universe(crate::common::UniverseLevel::new(0)));
+                let value_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
                 work_list.push((t1.value.clone(), t2.value.clone(), value_ty));
             }
 
@@ -524,10 +523,7 @@ mod tests {
             &global,
             &transparent,
             global.type_constructor("Vec".into_with_db(&db)).unwrap(),
-            &vec![
-                Rc::new(Value::bit()),
-                eval_str_at_depth(&db, &global, "%0", 1),
-            ],
+            &vec![Value::bit_rc(), eval_str_at_depth(&db, &global, "%0", 1)],
             "VCons".into_with_db(&db),
             global.data_constructor("VCons".into_with_db(&db)).unwrap(),
             1,
@@ -759,7 +755,7 @@ mod tests {
         // Create the equation: Rigid(Level(0)) =? @Zero
         // Rigid(Level(0)) represents the variable y
         let nat_ty = eval_str(&db, &global, "#[@Nat]");
-        let y_var = Rc::new(Value::variable(Level::new(0), nat_ty.clone()));
+        let y_var = Value::variable_rc(Level::new(0), nat_ty.clone());
 
         // Try to unify y =? @Zero
         match unify_equations(
@@ -803,7 +799,7 @@ mod tests {
 
         // Create a transparent environment where y (level 1) = z (level 0)
         let nat_ty = eval_str(&db, &global, "#[@Nat]");
-        let z_var = Rc::new(Value::variable(Level::new(0), nat_ty.clone()));
+        let z_var = Value::variable_rc(Level::new(0), nat_ty.clone());
 
         let mut transparent = TransparentEnv::new();
         transparent.push_rigid(); // z at level 0
@@ -812,14 +808,11 @@ mod tests {
         // Create the equation: z =? @Succ y
         // This is a pattern unification problem: we're trying to solve for z
         // Build @Succ y manually
-        let y_var = Rc::new(Value::variable(Level::new(1), nat_ty.clone()));
+        let y_var = Value::variable_rc(Level::new(1), nat_ty.clone());
         let succ_const = eval_str(&db, &global, "[@Succ]");
         let succ_y_applied = match succ_const.as_ref() {
             Value::DataConstructor(dcon) => {
-                Rc::new(Value::DataConstructor(crate::val::DataConstructor {
-                    constructor: dcon.constructor,
-                    arguments: vec![y_var],
-                }))
+                Value::data_constructor_rc(dcon.constructor, vec![y_var])
             }
             _ => panic!("Expected @Succ to be a data constructor"),
         };
@@ -869,7 +862,7 @@ mod tests {
         transparent.push_transparent(zero_val.clone()); // x at level 0, bound to @Zero
 
         // Create the equation: x =? @Succ @Zero
-        let x_var = Rc::new(Value::variable(Level::new(0), nat_ty.clone()));
+        let x_var = Value::variable_rc(Level::new(0), nat_ty.clone());
         let succ_zero = eval_str(&db, &global, "[@Succ [@Zero]]");
 
         // Try to unify x =? @Succ @Zero

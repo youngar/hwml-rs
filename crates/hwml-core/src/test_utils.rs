@@ -3,8 +3,6 @@
 //! This module provides shared helper functions for parsing, evaluating,
 //! and setting up test environments.
 
-use std::rc::Rc;
-
 use crate::check_module::check_module;
 use crate::common::{Level, UniverseLevel};
 use crate::eval;
@@ -100,9 +98,9 @@ pub fn eval_str_at_depth<'db>(
 
     // Add dummy variables to the environment
     // Variables are added as rigid variables with type U0 for simplicity
-    let dummy_ty = Rc::new(Value::universe(UniverseLevel::new(0)));
+    let dummy_ty = Value::universe_rc(UniverseLevel::new(0));
     let dummy_vars: Vec<_> = (0..depth)
-        .map(|i| Rc::new(Value::variable(Level::new(i), dummy_ty.clone())))
+        .map(|i| Value::variable_rc(Level::new(i), dummy_ty.clone()))
         .collect();
     env.extend(dummy_vars);
 
@@ -243,7 +241,7 @@ pub fn eval_with_context<'db>(
 
         // Add variable to environment
         let level = Level::new(env.depth());
-        let var_val = Rc::new(Value::variable(level, ty_val));
+        let var_val = Value::variable_rc(level, ty_val);
         env.push(var_val);
         env.transparent.push_rigid();
     }

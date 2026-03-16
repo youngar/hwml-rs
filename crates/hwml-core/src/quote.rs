@@ -156,7 +156,7 @@ fn eta_expand_pi<'db>(
     pi: &Pi<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Create a fresh variable of the source type
-    let arg = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), pi.source.clone());
 
     // Apply the value to the fresh variable
     let applied = eval::run_application(global, value, arg.clone())?;
@@ -454,7 +454,7 @@ pub fn quote_pi<'db>(
     let syn_source = type_quote(global, depth, &pi.source)?;
 
     // Create a fresh variable for the binder
-    let arg = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), pi.source.clone());
     let sem_target = run_closure(global, &pi.target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
@@ -469,7 +469,7 @@ pub fn quote_lambda<'db>(
     pi: &Pi<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Create a fresh variable for the binder
-    let arg = Rc::new(Value::variable(Level::new(depth), pi.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), pi.source.clone());
 
     // Get the result type and body value
     let result_ty = run_closure(global, &pi.target, [arg.clone()])?;
@@ -639,7 +639,7 @@ pub fn quote_harrow<'db>(
     let syn_source = type_quote(global, depth, &harrow.source)?;
 
     // Create a fresh variable for the binder
-    let arg = Rc::new(Value::variable(Level::new(depth), harrow.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
     let sem_target = run_closure(global, &harrow.target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
@@ -654,7 +654,7 @@ pub fn quote_module<'db>(
     harrow: &HArrow<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Create a fresh variable for the binder
-    let arg = Rc::new(Value::variable(Level::new(depth), harrow.source.clone()));
+    let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
 
     // Get the result type and body value
     let result_ty = run_closure(global, &harrow.target, [arg.clone()])?;
@@ -808,7 +808,7 @@ fn quote_case_eliminator<'db>(
     // No return_type in case anymore - case is check-only.
     // For quoting branch bodies, we use a placeholder type.
     // TODO: Thread the expected type through when we have check-only quoting.
-    let placeholder_ty = Rc::new(Value::Universe(val::Universe::new(UniverseLevel::new(0))));
+    let placeholder_ty = Value::universe_rc(UniverseLevel::new(0));
 
     let mut branches = Vec::new();
     for branch in &sem_case.branches {
@@ -818,10 +818,7 @@ fn quote_case_eliminator<'db>(
         let dcon_arg_tys = eval_telescope(global, parameters.clone(), &data_info.arguments)?;
         let mut dcon_args = Vec::new();
         for ty in dcon_arg_tys.types {
-            dcon_args.push(Rc::new(Value::variable(
-                Level::new(depth + dcon_args.len()),
-                ty,
-            )));
+            dcon_args.push(Value::variable_rc(Level::new(depth + dcon_args.len()), ty));
         }
 
         // Evaluate the branch body closure
@@ -881,13 +878,13 @@ fn quote_transport<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     // Quote the motive by eta-expansion
     // The motive is a closure with arity 1, so we quote it as a lambda
-    let var = Rc::new(Value::variable(Level::new(depth), eq.ty.clone()));
+    let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
     let motive_body = type_quote(global, depth + 1, &motive_result)?;
     let motive = Syntax::lambda_rc(Binding::new(motive_body));
 
     // Quote the proof at the equality type
-    let eq_ty = Rc::new(Value::eq(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone()));
+    let eq_ty = Value::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone());
     let proof = quote(global, depth, &transport.proof, &eq_ty)?;
 
     // Quote the value at the motive applied to lhs
@@ -982,10 +979,10 @@ mod tests {
 
         // Common type constructors
         fn u0(&self) -> RcValue<'db> {
-            Rc::new(Value::universe(UniverseLevel::new(0)))
+            Value::universe_rc(UniverseLevel::new(0))
         }
         fn bit(&self) -> RcValue<'db> {
-            Rc::new(Value::bit())
+            Value::bit_rc()
         }
 
         /// Create Bit → Bit HArrow type
@@ -1224,7 +1221,7 @@ mod tests {
                 UniverseLevel::new(0),
             ),
         );
-        let vec_bit = Value::type_constructor(vec_id, vec![Rc::new(Value::bit())]);
+        let vec_bit = Value::type_constructor(vec_id, vec![Value::bit_rc()]);
         let syntax = quote(&global, 0, &vec_bit, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "#[@Vec Bit]");
     }
@@ -1292,7 +1289,7 @@ mod tests {
             Syntax::universe_rc(UniverseLevel::new(0)),
         );
         let mut local = LocalEnv::new();
-        local.push(Rc::new(Value::bit()));
+        local.push(Value::bit_rc());
         let meta2 = Value::metavariable(meta_id2, local, u0_rc);
         let syntax = quote(&global, 0, &meta2, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[1 Bit]");
@@ -1322,7 +1319,7 @@ mod tests {
         let c = Ctx::new(&db);
 
         // ^s(x) where x is a variable
-        let var = Value::variable(Level::new(0), Rc::new(Value::signal_universe()));
+        let var = Value::variable(Level::new(0), Value::signal_universe_rc());
         let slift = Value::slift(Rc::new(var));
         assert_eq!(c.tq_depth(1, &slift), "^s!0");
     }
@@ -1345,7 +1342,7 @@ mod tests {
         let happ = Value::happlication(
             Rc::new(id_mod),
             Rc::new(harrow_ty.clone()),
-            Rc::new(Value::zero()),
+            Value::zero_rc(),
         );
         // The result type is Bit (codomain of harrow applied to zero)
         // Note: printer doesn't parenthesize the module

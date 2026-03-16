@@ -79,16 +79,40 @@ impl<'db> Value<'db> {
         Value::Universe(Universe::new(level))
     }
 
+    pub fn universe_rc(level: UniverseLevel) -> RcValue<'db> {
+        Rc::new(Value::universe(level))
+    }
+
     pub fn lift(ty: RcValue<'db>) -> Value<'db> {
         Value::Lift(Lift::new(ty))
+    }
+
+    pub fn lift_rc(ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::lift(ty))
     }
 
     pub fn pi(source: RcValue<'db>, target: Closure<'db>) -> Value<'db> {
         Value::Pi(Pi::new(source, target))
     }
 
+    pub fn pi_rc(source: RcValue<'db>, target: Closure<'db>) -> RcValue<'db> {
+        Rc::new(Value::pi(source, target))
+    }
+
     pub fn lambda(body: Closure<'db>) -> Value<'db> {
         Value::Lambda(Lambda::new(body))
+    }
+
+    pub fn lambda_rc(body: Closure<'db>) -> RcValue<'db> {
+        Rc::new(Value::lambda(body))
+    }
+
+    pub fn let_expr(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> Value<'db> {
+        Value::Let(Let::new(ty, value, body))
+    }
+
+    pub fn let_expr_rc(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::let_expr(ty, value, body))
     }
 
     pub fn type_constructor(
@@ -98,6 +122,13 @@ impl<'db> Value<'db> {
         Value::TypeConstructor(TypeConstructor::new(constructor, arguments))
     }
 
+    pub fn type_constructor_rc(
+        constructor: QualifiedName<'db>,
+        arguments: Vec<RcValue<'db>>,
+    ) -> RcValue<'db> {
+        Rc::new(Value::type_constructor(constructor, arguments))
+    }
+
     pub fn data_constructor(
         constructor: QualifiedName<'db>,
         arguments: Vec<RcValue<'db>>,
@@ -105,56 +136,119 @@ impl<'db> Value<'db> {
         Value::DataConstructor(DataConstructor::new(constructor, arguments))
     }
 
+    pub fn data_constructor_rc(
+        constructor: QualifiedName<'db>,
+        arguments: Vec<RcValue<'db>>,
+    ) -> RcValue<'db> {
+        Rc::new(Value::data_constructor(constructor, arguments))
+    }
+
     pub fn eq(ty: RcValue<'db>, lhs: RcValue<'db>, rhs: RcValue<'db>) -> Value<'db> {
         Value::EqType(EqType::new(ty, lhs, rhs))
+    }
+
+    pub fn eq_rc(ty: RcValue<'db>, lhs: RcValue<'db>, rhs: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::eq(ty, lhs, rhs))
     }
 
     pub fn refl() -> Value<'db> {
         Value::Refl(Refl::new())
     }
 
+    pub fn refl_rc() -> RcValue<'db> {
+        Rc::new(Value::refl())
+    }
+
     pub fn transport(motive: Closure<'db>, proof: RcValue<'db>, value: RcValue<'db>) -> Value<'db> {
         Value::Transport(Transport::new(motive, proof, value))
+    }
+
+    pub fn transport_rc(
+        motive: Closure<'db>,
+        proof: RcValue<'db>,
+        value: RcValue<'db>,
+    ) -> RcValue<'db> {
+        Rc::new(Value::transport(motive, proof, value))
     }
 
     pub fn hardware_universe() -> Value<'db> {
         Value::HardwareUniverse(HardwareUniverse::new())
     }
 
+    pub fn hardware_universe_rc() -> RcValue<'db> {
+        Rc::new(Value::hardware_universe())
+    }
+
     pub fn slift(ty: RcValue<'db>) -> Value<'db> {
         Value::SLift(SLift::new(ty))
+    }
+
+    pub fn slift_rc(ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::slift(ty))
     }
 
     pub fn mlift(ty: RcValue<'db>) -> Value<'db> {
         Value::MLift(MLift::new(ty))
     }
 
+    pub fn mlift_rc(ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::mlift(ty))
+    }
+
     pub fn signal_universe() -> Value<'db> {
         Value::SignalUniverse(SignalUniverse::new())
+    }
+
+    pub fn signal_universe_rc() -> RcValue<'db> {
+        Rc::new(Value::signal_universe())
     }
 
     pub fn bit() -> Value<'db> {
         Value::Bit(Bit::new())
     }
 
+    pub fn bit_rc() -> RcValue<'db> {
+        Rc::new(Value::bit())
+    }
+
     pub fn zero() -> Value<'db> {
         Value::Zero(Zero::new())
+    }
+
+    pub fn zero_rc() -> RcValue<'db> {
+        Rc::new(Value::zero())
     }
 
     pub fn one() -> Value<'db> {
         Value::One(One::new())
     }
 
+    pub fn one_rc() -> RcValue<'db> {
+        Rc::new(Value::one())
+    }
+
     pub fn module_universe() -> Value<'db> {
         Value::ModuleUniverse(ModuleUniverse::new())
+    }
+
+    pub fn module_universe_rc() -> RcValue<'db> {
+        Rc::new(Value::module_universe())
     }
 
     pub fn harrow(source: RcValue<'db>, target: Closure<'db>) -> Value<'db> {
         Value::HArrow(HArrow::new(source, target))
     }
 
+    pub fn harrow_rc(source: RcValue<'db>, target: Closure<'db>) -> RcValue<'db> {
+        Rc::new(Value::harrow(source, target))
+    }
+
     pub fn module(body: Closure<'db>) -> Value<'db> {
         Value::Module(Module::new(body))
+    }
+
+    pub fn module_rc(body: Closure<'db>) -> RcValue<'db> {
+        Rc::new(Value::module(body))
     }
 
     pub fn happlication(
@@ -165,32 +259,72 @@ impl<'db> Value<'db> {
         Value::HApplication(HApplication::new(module, module_ty, argument))
     }
 
+    pub fn happlication_rc(
+        module: RcValue<'db>,
+        module_ty: RcValue<'db>,
+        argument: RcValue<'db>,
+    ) -> RcValue<'db> {
+        Rc::new(Value::happlication(module, module_ty, argument))
+    }
+
     pub fn prim(name: QualifiedName<'db>) -> Value<'db> {
         Value::Prim(Prim::new(name))
+    }
+
+    pub fn prim_rc(name: QualifiedName<'db>) -> RcValue<'db> {
+        Rc::new(Value::prim(name))
     }
 
     pub fn constant(name: QualifiedName<'db>) -> Value<'db> {
         Value::Constant(Constant::new(name))
     }
 
+    pub fn constant_rc(name: QualifiedName<'db>) -> RcValue<'db> {
+        Rc::new(Value::constant(name))
+    }
+
     pub fn rigid(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
         Value::Rigid(Rigid { head, spine, ty })
+    }
+
+    pub fn rigid_rc(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::rigid(head, spine, ty))
     }
 
     pub fn variable(level: Level, ty: RcValue<'db>) -> Value<'db> {
         Value::rigid(Variable::new(level), Spine::empty(), ty)
     }
 
+    pub fn variable_rc(level: Level, ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::variable(level, ty))
+    }
+
     pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
         Value::Flex(Flex { head, spine, ty })
+    }
+
+    pub fn flex_rc(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::flex(head, spine, ty))
     }
 
     pub fn metavariable(id: MetaVariableId, local: LocalEnv<'db>, ty: RcValue<'db>) -> Value<'db> {
         Value::flex(MetaVariable::new(id, local), Spine::empty(), ty)
     }
 
+    pub fn metavariable_rc(
+        id: MetaVariableId,
+        local: LocalEnv<'db>,
+        ty: RcValue<'db>,
+    ) -> RcValue<'db> {
+        Rc::new(Value::metavariable(id, local, ty))
+    }
+
     pub fn identity_closure(id: MetaVariableId, ty: RcValue<'db>) -> Value<'db> {
         Value::flex(MetaVariable::new(id, LocalEnv::new()), Spine::empty(), ty)
+    }
+
+    pub fn identity_closure_rc(id: MetaVariableId, ty: RcValue<'db>) -> RcValue<'db> {
+        Rc::new(Value::identity_closure(id, ty))
     }
 }
 
@@ -1201,7 +1335,7 @@ impl<'db> LocalEnv<'db> {
     /// Extend the environment by pushing a variable onto the end.
     pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
         let depth = self.depth();
-        let value = Rc::new(Value::variable(Level::new(depth), ty));
+        let value = Value::variable_rc(Level::new(depth), ty);
         self.push(value.clone());
         value
     }
