@@ -66,8 +66,8 @@ pub enum Value<'db> {
     Module(Module<'db>),
     HApplication(HApplication<'db>),
 
-    Prim(ConstantId<'db>),
-    Constant(ConstantId<'db>),
+    Prim(QualifiedName<'db>),
+    Constant(QualifiedName<'db>),
     /// Neutral headed by a variable.
     Rigid(Rigid<'db>),
     /// Neutral headed by a metavariable.
@@ -92,14 +92,14 @@ impl<'db> Value<'db> {
     }
 
     pub fn type_constructor(
-        constructor: ConstantId<'db>,
+        constructor: QualifiedName<'db>,
         arguments: Vec<RcValue<'db>>,
     ) -> Value<'db> {
         Value::TypeConstructor(TypeConstructor::new(constructor, arguments))
     }
 
     pub fn data_constructor(
-        constructor: ConstantId<'db>,
+        constructor: QualifiedName<'db>,
         arguments: Vec<RcValue<'db>>,
     ) -> Value<'db> {
         Value::DataConstructor(DataConstructor::new(constructor, arguments))
@@ -165,11 +165,11 @@ impl<'db> Value<'db> {
         Value::HApplication(HApplication::new(module, module_ty, argument))
     }
 
-    pub fn prim(name: ConstantId<'db>) -> Value<'db> {
+    pub fn prim(name: QualifiedName<'db>) -> Value<'db> {
         Value::Prim(name)
     }
 
-    pub fn constant(name: ConstantId<'db>) -> Value<'db> {
+    pub fn constant(name: QualifiedName<'db>) -> Value<'db> {
         Value::Constant(name)
     }
 
@@ -259,13 +259,16 @@ impl<'db> Let<'db> {
 #[derive(Clone, Debug)]
 pub struct TypeConstructor<'db> {
     /// The constructor constant id.
-    pub constructor: ConstantId<'db>,
+    pub constructor: QualifiedName<'db>,
     /// The argument values for this constructor instance
     pub arguments: Vec<RcValue<'db>>,
 }
 
 impl<'db> TypeConstructor<'db> {
-    pub fn new(constructor: ConstantId<'db>, arguments: Vec<RcValue<'db>>) -> TypeConstructor<'db> {
+    pub fn new(
+        constructor: QualifiedName<'db>,
+        arguments: Vec<RcValue<'db>>,
+    ) -> TypeConstructor<'db> {
         TypeConstructor {
             constructor,
             arguments,
@@ -291,13 +294,16 @@ impl<'a, 'db> IntoIterator for &'a TypeConstructor<'db> {
 #[derive(Clone, Debug)]
 pub struct DataConstructor<'db> {
     /// The constructor constant id
-    pub constructor: ConstantId<'db>,
+    pub constructor: QualifiedName<'db>,
     /// The argument values for this constructor instance
     pub arguments: Vec<RcValue<'db>>,
 }
 
 impl<'db> DataConstructor<'db> {
-    pub fn new(constructor: ConstantId<'db>, arguments: Vec<RcValue<'db>>) -> DataConstructor<'db> {
+    pub fn new(
+        constructor: QualifiedName<'db>,
+        arguments: Vec<RcValue<'db>>,
+    ) -> DataConstructor<'db> {
         DataConstructor {
             constructor,
             arguments,
@@ -508,7 +514,7 @@ impl<'db> HApplication<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Constant<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
 }
 
 #[derive(Clone, Debug)]
@@ -609,7 +615,7 @@ impl<'db> Eliminator<'db> {
     }
 
     pub fn case(
-        type_constructor: ConstantId<'db>,
+        type_constructor: QualifiedName<'db>,
         parameters: Vec<RcValue<'db>>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Eliminator<'db> {
@@ -630,14 +636,14 @@ impl<'db> Application<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Case<'db> {
-    pub type_constructor: ConstantId<'db>,
+    pub type_constructor: QualifiedName<'db>,
     pub parameters: Vec<RcValue<'db>>,
     pub branches: Vec<CaseBranch<'db>>,
 }
 
 impl<'db> Case<'db> {
     pub fn new(
-        type_constructor: ConstantId<'db>,
+        type_constructor: QualifiedName<'db>,
         parameters: Vec<RcValue<'db>>,
         branches: Vec<CaseBranch<'db>>,
     ) -> Case<'db> {
@@ -651,13 +657,17 @@ impl<'db> Case<'db> {
 
 #[derive(Clone, Debug)]
 pub struct CaseBranch<'db> {
-    pub constructor: ConstantId<'db>,
+    pub constructor: QualifiedName<'db>,
     pub arity: usize,
     pub body: Closure<'db>,
 }
 
 impl<'db> CaseBranch<'db> {
-    pub fn new(constructor: ConstantId<'db>, arity: usize, body: Closure<'db>) -> CaseBranch<'db> {
+    pub fn new(
+        constructor: QualifiedName<'db>,
+        arity: usize,
+        body: Closure<'db>,
+    ) -> CaseBranch<'db> {
         CaseBranch {
             constructor,
             arity,
@@ -726,7 +736,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     /// Lookup a type constructor by name.
     pub fn type_constructor(
         &self,
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
     ) -> Result<&TypeConstructorInfo<'db>, LookupError<'_>> {
         self.global.type_constructor(name)
     }
@@ -734,7 +744,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     /// Lookup a data constructor by name.
     pub fn data_constructor(
         &self,
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
     ) -> Result<&DataConstructorInfo<'db>, LookupError<'_>> {
         self.global.data_constructor(name)
     }
@@ -835,7 +845,7 @@ impl<'db> fmt::Display for LookupErrorKind {
 #[derive(Debug, Clone)]
 pub struct LookupError<'db> {
     pub kind: LookupErrorKind,
-    pub id: ConstantId<'db>,
+    pub id: QualifiedName<'db>,
 }
 
 impl<'db> fmt::Display for LookupError<'db> {
@@ -876,8 +886,8 @@ pub enum Global<'db> {
 
 #[derive(Clone, Debug)]
 pub struct GlobalEnv<'db> {
-    /// Constant environment mapping ConstantId to values.
-    constants: HashMap<ConstantId<'db>, Global<'db>>,
+    /// Constant environment mapping QualifiedName to values.
+    constants: HashMap<QualifiedName<'db>, Global<'db>>,
     /// Metavariable context mapping MetaVariableId to metavariable info.
     metavariables: HashMap<MetaVariableId, MetavariableInfo<'db>>,
 }
@@ -891,7 +901,10 @@ impl<'db> GlobalEnv<'db> {
     }
 
     /// Lookup a constant by name.
-    pub fn constant(&self, name: ConstantId<'db>) -> Result<&ConstantInfo<'db>, LookupError<'db>> {
+    pub fn constant(
+        &self,
+        name: QualifiedName<'db>,
+    ) -> Result<&ConstantInfo<'db>, LookupError<'db>> {
         match self.constants.get(&name) {
             Some(Global::Constant(info)) => Ok(info),
             Some(_) => Err(LookupError {
@@ -906,14 +919,14 @@ impl<'db> GlobalEnv<'db> {
     }
 
     /// Add a constant to the global environment.
-    pub fn add_constant(&mut self, name: ConstantId<'db>, info: ConstantInfo<'db>) {
+    pub fn add_constant(&mut self, name: QualifiedName<'db>, info: ConstantInfo<'db>) {
         self.constants.insert(name, Global::Constant(info));
     }
 
     /// Lookup a primitive by name.
     pub fn primitive(
         &self,
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
     ) -> Result<&PrimitiveInfo<'db>, LookupError<'db>> {
         match self.constants.get(&name) {
             Some(Global::Primitive(info)) => Ok(info),
@@ -929,14 +942,14 @@ impl<'db> GlobalEnv<'db> {
     }
 
     /// Add a primitive to the global environment.
-    pub fn add_primitive(&mut self, name: ConstantId<'db>, info: PrimitiveInfo<'db>) {
+    pub fn add_primitive(&mut self, name: QualifiedName<'db>, info: PrimitiveInfo<'db>) {
         self.constants.insert(name, Global::Primitive(info));
     }
 
     /// Lookup a type constructor by name.
     pub fn type_constructor(
         &self,
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
     ) -> Result<&TypeConstructorInfo<'db>, LookupError<'db>> {
         match self.constants.get(&name) {
             Some(Global::TypeConstructor(info)) => Ok(info),
@@ -952,14 +965,18 @@ impl<'db> GlobalEnv<'db> {
     }
 
     /// Add a type constructor to the global environment.
-    pub fn add_type_constructor(&mut self, name: ConstantId<'db>, info: TypeConstructorInfo<'db>) {
+    pub fn add_type_constructor(
+        &mut self,
+        name: QualifiedName<'db>,
+        info: TypeConstructorInfo<'db>,
+    ) {
         self.constants.insert(name, Global::TypeConstructor(info));
     }
 
     /// Lookup a data constructor by name.
     pub fn data_constructor(
         &self,
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
     ) -> Result<&DataConstructorInfo<'db>, LookupError<'db>> {
         match self.constants.get(&name) {
             Some(Global::DataConstructor(info)) => Ok(info),
@@ -975,7 +992,11 @@ impl<'db> GlobalEnv<'db> {
     }
 
     /// Add a data constructor to the global environment.
-    pub fn add_data_constructor(&mut self, name: ConstantId<'db>, info: DataConstructorInfo<'db>) {
+    pub fn add_data_constructor(
+        &mut self,
+        name: QualifiedName<'db>,
+        info: DataConstructorInfo<'db>,
+    ) {
         self.constants.insert(name, Global::DataConstructor(info));
     }
 
@@ -1040,7 +1061,7 @@ pub struct TypeConstructorInfo<'db> {
     pub num_parameters: usize,
     pub level: UniverseLevel,
     /// The data constructors belonging to this type constructor.
-    pub constructors: Vec<ConstantId<'db>>,
+    pub constructors: Vec<QualifiedName<'db>>,
 }
 
 impl<'db> TypeConstructorInfo<'db> {
@@ -1072,7 +1093,7 @@ impl<'db> TypeConstructorInfo<'db> {
         &self.arguments.bindings[self.num_parameters..]
     }
 
-    pub fn constructors(&self) -> &[ConstantId<'db>] {
+    pub fn constructors(&self) -> &[QualifiedName<'db>] {
         &self.constructors
     }
 }

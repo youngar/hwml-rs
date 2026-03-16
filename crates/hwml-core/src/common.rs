@@ -1,4 +1,4 @@
-use crate::symbol::InternedString;
+use crate::word::Word;
 use hwml_support::{FromWithDb, IntoWithDb};
 use salsa::Database;
 use serde::{Deserialize, Serialize};
@@ -223,38 +223,6 @@ impl From<usize> for UniverseLevel {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct ConstantId<'db>(pub InternedString<'db>);
-
-impl<'db> ConstantId<'db> {
-    /// Create a new ConstantId from an interned string.
-    pub fn new(interned: InternedString<'db>) -> Self {
-        ConstantId(interned)
-    }
-
-    /// Get the interned string for this constant.
-    pub fn interned(&self) -> InternedString<'db> {
-        self.0
-    }
-
-    /// Get the string name for this constant.
-    pub fn name(&self, db: &'db dyn Database) -> &str {
-        self.0.text(db)
-    }
-}
-
-impl<'db, T> FromWithDb<'db, T> for ConstantId<'db>
-where
-    T: IntoWithDb<'db, InternedString<'db>>,
-{
-    fn from_with_db<Db>(db: &'db Db, value: T) -> Self
-    where
-        Db: salsa::Database + ?Sized,
-    {
-        ConstantId::new(value.into_with_db(db))
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MetaVariableId {
     /// Local index for metavariables
@@ -275,13 +243,4 @@ impl std::fmt::Display for MetaVariableId {
     }
 }
 
-/// MLIR-style location tracking using Salsa interning.
-///
-/// The Core IR treats locations as opaque identifiers and never inspects them.
-/// Evaluation and type checking ignore locations (pattern match on `.data` only).
-/// The elaborator queries Salsa for source snippets via `location.snippet(db)`.
-///
-/// Use `Location::physical(db, file, start, end)` during parsing,
-/// `Location::UNKNOWN` for synthetic syntax, and `location.snippet(db)` for
-/// error reporting.
 pub use hwml_support::Location;

@@ -115,7 +115,7 @@ pub fn translate_checked_module<'c, 'db>(
             .ok_or_else(|| {
                 Error::UnsupportedConstruct(format!(
                     "HardwareUniverse constant {} not found in declarations",
-                    hw_const_name.name(db)
+                    hw_const_name.to_string(db)
                 ))
             })?;
 
@@ -298,7 +298,7 @@ fn translate_constant_to_module<'c, 'db>(
     db: &'db dyn salsa::Database,
     mlir_module: &MlirModuleWrapper,
     location: MlirLocationWrapper,
-    name: &hwml_core::ConstantId<'db>,
+    name: &hwml_core::QualifiedName<'db>,
     input_types: &[hwml_core::syn::RcSyntax<'db>],
     body: &RcSyntax<'db>,
 ) -> Result<()> {
@@ -408,7 +408,7 @@ fn translate_constant_to_module<'c, 'db>(
             create_named_attribute(
                 ctx.context(),
                 "sym_name",
-                MlirAttributeWrapper::string(ctx.context(), module_name),
+                MlirAttributeWrapper::string(ctx.context(), &module_name.to_string(db)),
             ),
             create_named_attribute(
                 ctx.context(),
@@ -558,9 +558,10 @@ fn translate_hsyntax_expr<'c, 'db>(
                 // Check if the inner function is a primitive
                 if let Syntax::Prim(prim) = inner_app.module.as_ref() {
                     let prim_name = prim.name.name(db);
+                    let prim_name_str = prim_name.to_string(db);
 
                     // Handle $reg specially - it generates seq.compreg
-                    if prim_name == "reg" {
+                    if prim_name_str == "reg" {
                         // $reg clk input -> seq.compreg input, clk
                         // First argument (inner_app.argument) is the clock
                         // Second argument (app.argument) is the data input
@@ -600,14 +601,14 @@ fn translate_hsyntax_expr<'c, 'db>(
                     }
 
                     // Handle combinational binary operations
-                    let op_name = match prim_name {
+                    let op_name = match prim_name_str.as_str() {
                         "and" => "comb.and",
                         "or" => "comb.or",
                         "xor" => "comb.xor",
                         _ => {
                             return Err(Error::UnsupportedConstruct(format!(
                                 "Unsupported binary primitive: {}",
-                                prim_name
+                                prim_name_str
                             )))
                         }
                     };
@@ -633,7 +634,8 @@ fn translate_hsyntax_expr<'c, 'db>(
                 )));
             } else if let Syntax::Prim(prim) = app.module.as_ref() {
                 let prim_name = prim.name.name(db);
-                if prim_name == "not" {
+                let prim_name_str = prim_name.to_string(db);
+                if prim_name_str == "not" {
                     // Unary NOT operation
                     let arg = translate_hsyntax_expr(ctx, db, location, block, &app.argument)?;
 
@@ -663,7 +665,7 @@ fn translate_hsyntax_expr<'c, 'db>(
 
                 return Err(Error::UnsupportedConstruct(format!(
                     "Unsupported unary primitive: {}",
-                    prim_name
+                    prim_name_str
                 )));
             } else {
                 Err(Error::UnsupportedConstruct(format!(

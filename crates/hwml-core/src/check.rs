@@ -1,5 +1,5 @@
 use crate::binding::{Binding, DynBinding};
-use crate::common::{ConstantId, Level, UniverseLevel};
+use crate::common::{Level, UniverseLevel};
 use crate::equal;
 use crate::eval;
 use crate::pattern_unify;
@@ -522,11 +522,11 @@ pub fn type_check_case<'db, 'g>(
 
     let tcon_args: Vec<_> = type_constructor.arguments.iter().cloned().collect();
     let all_constructors = tcon_info.constructors().to_vec();
-    let user_provided: HashSet<ConstantId<'db>> =
+    let user_provided: HashSet<QualifiedName<'db>> =
         case.branches.iter().map(|b| b.constructor).collect();
 
     let base_depth = env.depth();
-    let mut required_constructors: Vec<ConstantId<'db>> = Vec::new();
+    let mut required_constructors: Vec<QualifiedName<'db>> = Vec::new();
 
     for &dcon_id in &all_constructors {
         let dcon_info = env
@@ -562,7 +562,7 @@ pub fn type_check_case<'db, 'g>(
     let missing: Vec<String> = required_constructors
         .iter()
         .filter(|c| !user_provided.contains(c))
-        .map(|c| c.name(env.db).to_string())
+        .map(|c| c.to_string(env.db))
         .collect();
 
     if !missing.is_empty() {
@@ -1420,8 +1420,8 @@ mod tests {
     use crate::syn::RcSyntax;
 
     use crate::val::Closure;
-    use crate::ConstantId;
     use crate::Database;
+    use crate::QualifiedName;
     use hwml_support::{FromWithDb, IntoWithDb};
 
     // ========== Prelude definitions ==========
@@ -1629,7 +1629,7 @@ mod tests {
         let db = Database::new();
         let mut global = val::GlobalEnv::new();
 
-        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let cid = |s: &str| QualifiedName::from_with_db(&db, s);
 
         // Add constant @myConst : 𝒰0 = 𝒰0
         global.add_constant(
@@ -1655,7 +1655,7 @@ mod tests {
         let db = Database::new();
         let mut global = val::GlobalEnv::new();
 
-        let cid = |s: &str| ConstantId::from_with_db(&db, s);
+        let cid = |s: &str| QualifiedName::from_with_db(&db, s);
 
         // Add primitive $Nat : 𝒰0
         global.add_primitive(cid("Nat"), val::PrimitiveInfo::new(parse(&db, "U0")));
@@ -1939,7 +1939,7 @@ mod tests {
         // Now values.local[0] should be @Zero (transparent let-binding)
         match env.values.get(Level::new(0)).as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Zero");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Zero");
             }
             other => panic!("Expected DataConstructor(@Zero), got {:?}", other),
         }
@@ -1972,7 +1972,7 @@ mod tests {
         // Verify initial state: types[1] contains Vec Bit n (with Rigid at index 0)
         match env.types[1].as_ref() {
             Value::TypeConstructor(tcon) => {
-                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.constructor.name(&db).to_string(&db), "Vec");
                 assert_eq!(tcon.arguments.len(), 2);
                 // Second argument should be a Rigid (variable n at level 0)
                 match tcon.arguments[1].as_ref() {
@@ -1992,12 +1992,12 @@ mod tests {
         // Now types[1] should be Vec Bit @Zero
         match env.types[1].as_ref() {
             Value::TypeConstructor(tcon) => {
-                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.constructor.name(&db).to_string(&db), "Vec");
                 assert_eq!(tcon.arguments.len(), 2);
                 // Second argument should now be @Zero
                 match tcon.arguments[1].as_ref() {
                     Value::DataConstructor(dcon) => {
-                        assert_eq!(dcon.constructor.name(&db), "Zero");
+                        assert_eq!(dcon.constructor.name(&db).to_string(&db), "Zero");
                     }
                     other => panic!("Expected DataConstructor(@Zero), got {:?}", other),
                 }
@@ -2056,7 +2056,7 @@ mod tests {
         match env.types[2].as_ref() {
             Value::TypeConstructor(tcon) => match tcon.arguments[1].as_ref() {
                 Value::DataConstructor(dcon) => {
-                    assert_eq!(dcon.constructor.name(&db), "Zero");
+                    assert_eq!(dcon.constructor.name(&db).to_string(&db), "Zero");
                 }
                 other => panic!("Expected @Zero, got {:?}", other),
             },
@@ -2067,11 +2067,11 @@ mod tests {
         match env.types[3].as_ref() {
             Value::TypeConstructor(tcon) => match tcon.arguments[1].as_ref() {
                 Value::DataConstructor(dcon) => {
-                    assert_eq!(dcon.constructor.name(&db), "Succ");
+                    assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                     assert_eq!(dcon.arguments.len(), 1);
                     match dcon.arguments[0].as_ref() {
                         Value::DataConstructor(inner) => {
-                            assert_eq!(inner.constructor.name(&db), "Zero");
+                            assert_eq!(inner.constructor.name(&db).to_string(&db), "Zero");
                         }
                         other => panic!("Expected @Zero, got {:?}", other),
                     }
@@ -2156,10 +2156,10 @@ mod tests {
         // Verify types[3]: Vec Bit @Zero
         match env.types[3].as_ref() {
             Value::TypeConstructor(tcon) => {
-                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.constructor.name(&db).to_string(&db), "Vec");
                 match tcon.arguments[1].as_ref() {
                     Value::DataConstructor(dcon) => {
-                        assert_eq!(dcon.constructor.name(&db), "Zero");
+                        assert_eq!(dcon.constructor.name(&db).to_string(&db), "Zero");
                     }
                     other => panic!("types[3] index: Expected @Zero, got {:?}", other),
                 }
@@ -2170,13 +2170,13 @@ mod tests {
         // Verify types[4]: Vec Bit (@Succ @Zero)
         match env.types[4].as_ref() {
             Value::TypeConstructor(tcon) => {
-                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.constructor.name(&db).to_string(&db), "Vec");
                 match tcon.arguments[1].as_ref() {
                     Value::DataConstructor(dcon) => {
-                        assert_eq!(dcon.constructor.name(&db), "Succ");
+                        assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                         match dcon.arguments[0].as_ref() {
                             Value::DataConstructor(inner) => {
-                                assert_eq!(inner.constructor.name(&db), "Zero");
+                                assert_eq!(inner.constructor.name(&db).to_string(&db), "Zero");
                             }
                             other => panic!("types[4] inner: Expected @Zero, got {:?}", other),
                         }
@@ -2190,16 +2190,19 @@ mod tests {
         // Verify types[5]: Vec Bit (@Succ (@Succ @Zero))
         match env.types[5].as_ref() {
             Value::TypeConstructor(tcon) => {
-                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.constructor.name(&db).to_string(&db), "Vec");
                 match tcon.arguments[1].as_ref() {
                     Value::DataConstructor(outer) => {
-                        assert_eq!(outer.constructor.name(&db), "Succ");
+                        assert_eq!(outer.constructor.name(&db).to_string(&db), "Succ");
                         match outer.arguments[0].as_ref() {
                             Value::DataConstructor(middle) => {
-                                assert_eq!(middle.constructor.name(&db), "Succ");
+                                assert_eq!(middle.constructor.name(&db).to_string(&db), "Succ");
                                 match middle.arguments[0].as_ref() {
                                     Value::DataConstructor(inner) => {
-                                        assert_eq!(inner.constructor.name(&db), "Zero");
+                                        assert_eq!(
+                                            inner.constructor.name(&db).to_string(&db),
+                                            "Zero"
+                                        );
                                     }
                                     other => {
                                         panic!("types[5] inner: Expected @Zero, got {:?}", other)

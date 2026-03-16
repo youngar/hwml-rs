@@ -7,7 +7,7 @@ use crate::{
         DataConstructorInfo, Environment, GlobalEnv, LocalEnv, RcValue, TransparentEnv,
         TypeConstructorInfo,
     },
-    ConstantId, Value,
+    QualifiedName, Value,
 };
 use std::rc::Rc;
 
@@ -88,7 +88,7 @@ pub fn unify_pattern<'db>(
     transparent: &TransparentEnv<'db>,
     tcon_info: &TypeConstructorInfo<'db>,
     tcon_args: &[RcValue<'db>],
-    _dcon_name: ConstantId<'db>,
+    _dcon_name: QualifiedName<'db>,
     dcon_info: &DataConstructorInfo<'db>,
     base_depth: usize,
 ) -> Result<PatternUnifyOutcome<'db>, Error<'db>> {
@@ -538,7 +538,7 @@ mod tests {
                 assert_eq!(res.solutions[0].0, Level::new(0)); // n is at level 0
                 match res.solutions[0].1.as_ref() {
                     Value::DataConstructor(dcon) => {
-                        assert_eq!(dcon.constructor.name(&db), "Succ");
+                        assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                         assert_eq!(dcon.arguments.len(), 1);
                     }
                     other => panic!("Expected @Succ, got {:?}", other),

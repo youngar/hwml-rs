@@ -2,7 +2,7 @@
 
 use hwml_core::common::{Index, UniverseLevel};
 use hwml_core::declaration::{Declaration, Module};
-use hwml_core::syn::{ConstantId, Syntax, Universe};
+use hwml_core::syn::{QualifiedName, Syntax, Universe};
 use hwml_core::Database;
 use libfuzzer_sys::fuzz_target;
 use std::rc::Rc;
@@ -126,7 +126,7 @@ fn generate_test_module<'db>(db: &'db Database, data: &[u8]) -> Module<'db> {
 
     // Create different types of declarations based on input data
     for i in 0..size {
-        let name = ConstantId::from_str(db, &format!("decl_{}", i));
+        let name = QualifiedName::from_str(db, &format!("decl_{}", i));
 
         // Generate random type for this declaration
         let base_offset = (i as usize * 7) % data.len().max(1);

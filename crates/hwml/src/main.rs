@@ -117,15 +117,20 @@ fn run_core(args: Args) {
         for decl in &module.declarations {
             match decl {
                 hwml_core::syn::declaration::Declaration::PrimitiveDecl(p) => {
-                    println!("  - prim {}: {:?}", p.name.name(&db), p.ty);
+                    println!("  - prim {}: {:?}", p.name.name(&db).to_string(&db), p.ty);
                 }
                 hwml_core::syn::declaration::Declaration::ConstantDecl(c) => {
-                    println!("  - const {}: {:?} = {:?}", c.name.name(&db), c.ty, c.value);
+                    println!(
+                        "  - const {}: {:?} = {:?}",
+                        c.name.name(&db).to_string(&db),
+                        c.ty,
+                        c.value
+                    );
                 }
                 hwml_core::syn::declaration::Declaration::TypeConstructorDecl(tc) => {
                     println!(
                         "  - tcon {} with {} data constructors",
-                        tc.name.name(&db),
+                        tc.name.name(&db).to_string(&db),
                         tc.data_constructors.len()
                     );
                 }
@@ -141,20 +146,20 @@ fn run_core(args: Args) {
     for decl in &module.declarations {
         match decl {
             hwml_core::syn::declaration::Declaration::PrimitiveDecl(p) => {
-                print!("  prim ${} : ", p.name.name(&db));
+                print!("  prim ${} : ", p.name.name(&db).to_string(&db));
                 hwml_core::syn::dump_syntax(&db, &p.ty);
             }
             hwml_core::syn::declaration::Declaration::ConstantDecl(c) => {
-                print!("  const @{} : ", c.name.name(&db));
+                print!("  const @{} : ", c.name.name(&db).to_string(&db));
                 hwml_core::syn::dump_syntax(&db, &c.ty);
             }
             hwml_core::syn::declaration::Declaration::TypeConstructorDecl(tc) => {
-                print!("  tcon @{} : ", tc.name.name(&db));
+                print!("  tcon @{} : ", tc.name.name(&db).to_string(&db));
                 hwml_core::syn::dump_syntax(&db, &tc.universe);
 
                 // Print data constructors
                 for dcon in &tc.data_constructors {
-                    print!("    dcon @{} : ", dcon.name.name(&db));
+                    print!("    dcon @{} : ", dcon.name.name(&db).to_string(&db));
                     hwml_core::syn::dump_syntax(&db, &dcon.full_type());
                 }
             }

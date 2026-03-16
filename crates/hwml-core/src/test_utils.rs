@@ -338,7 +338,7 @@ mod tests {
         // Should be a data constructor application
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                 assert_eq!(dcon.arguments.len(), 1);
                 // The argument should be a rigid variable at level 0
                 match dcon.arguments[0].as_ref() {
@@ -429,7 +429,7 @@ mod tests {
         // Should be [@Succ %0] where %0 is a rigid variable
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                 assert_eq!(dcon.arguments.len(), 1);
                 // The argument should be a rigid variable at level 0
                 match dcon.arguments[0].as_ref() {
@@ -457,7 +457,7 @@ mod tests {
         // Should be [@Succ %0] where %0 is a rigid variable at level 1 (m)
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                 assert_eq!(dcon.arguments.len(), 1);
                 match dcon.arguments[0].as_ref() {
                     Value::Rigid(rigid) => {
@@ -484,7 +484,7 @@ mod tests {
         // Should be [@Succ %1] where %1 is a rigid variable at level 0 (n)
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
                 assert_eq!(dcon.arguments.len(), 1);
                 match dcon.arguments[0].as_ref() {
                     Value::Rigid(rigid) => {
@@ -524,7 +524,7 @@ mod tests {
         // Should be [@Succ %0]
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Succ");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Succ");
             }
             other => panic!("Expected data constructor, got {:?}", other),
         }
@@ -540,7 +540,7 @@ mod tests {
         // Should be [@Zero]
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Zero");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Zero");
             }
             other => panic!("Expected data constructor, got {:?}", other),
         }
@@ -556,7 +556,7 @@ mod tests {
 
         match val.as_ref() {
             Value::DataConstructor(dcon) => {
-                assert_eq!(dcon.constructor.name(&db), "Zero");
+                assert_eq!(dcon.constructor.name(&db).to_string(&db), "Zero");
             }
             other => panic!("Expected data constructor, got {:?}", other),
         }
@@ -574,7 +574,7 @@ mod tests {
         // Should be a type constructor application
         match val.as_ref() {
             Value::TypeConstructor(tcon) => {
-                assert_eq!(tcon.constructor.name(&db), "Vec");
+                assert_eq!(tcon.constructor.name(&db).to_string(&db), "Vec");
                 assert_eq!(tcon.arguments.len(), 2);
             }
             other => panic!("Expected type constructor, got {:?}", other),

@@ -9,7 +9,7 @@
 
 use hwml_circt::{translate, CirctContext};
 use hwml_core::syn::Syntax;
-use hwml_core::{ConstantId, Database};
+use hwml_core::{Database, QualifiedName};
 use hwml_support::salsa::FromWithDb;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = Syntax::zero_rc();
 
     // Create the $reg primitive
-    let reg_name = ConstantId::from_with_db(&db, "reg");
+    let reg_name = "reg".into_with_db(&db);
     let reg = Syntax::prim_rc(reg_name);
 
     // Create a placeholder type for the module type annotation

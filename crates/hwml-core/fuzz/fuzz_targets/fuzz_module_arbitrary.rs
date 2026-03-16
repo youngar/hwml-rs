@@ -3,14 +3,14 @@
 use arbitrary::Arbitrary;
 use hwml_core::common::{Index, UniverseLevel};
 use hwml_core::declaration::{Declaration, Module};
-use hwml_core::syn::{Application, ConstantId, Lambda, Pi, Syntax, Universe, Variable};
+use hwml_core::syn::{Application, Lambda, Pi, QualifiedName, Syntax, Universe, Variable};
 use hwml_core::Database;
 use libfuzzer_sys::fuzz_target;
 use std::rc::Rc;
 
 /// Generate a module using automatic Arbitrary derivation for the components that support it.
 /// This approach uses Arbitrary for the basic building blocks and manually constructs
-/// the types that contain ConstantId.
+/// the types that contain QualifiedName.
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     // Use arbitrary generation for types that support it
@@ -24,14 +24,14 @@ struct FuzzInput {
 }
 
 impl FuzzInput {
-    fn generate_constant_id<'db>(&self, db: &'db Database, index: usize) -> ConstantId<'db> {
+    fn generate_constant_id<'db>(&self, db: &'db Database, index: usize) -> QualifiedName<'db> {
         let names = [
             "Bool", "Nat", "Type", "Unit", "List", "Vec", "Option", "Result", "zero", "succ",
             "true", "false", "nil", "cons", "some", "none", "left", "right", "pair", "fst", "snd",
             "id", "const", "comp", "x", "y", "z", "f", "g", "h", "a", "b", "c", "n", "m", "k",
         ];
         let name_index = self.data.get(index).unwrap_or(&0) % names.len() as u8;
-        ConstantId::from_str(db, names[name_index as usize])
+        QualifiedName::from_str(db, names[name_index as usize])
     }
 
     fn generate_syntax<'db>(&self, db: &'db Database, index: usize, depth: u8) -> Rc<Syntax<'db>> {

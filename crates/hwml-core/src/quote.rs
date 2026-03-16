@@ -17,7 +17,7 @@ use crate::{
         self, Closure, Eliminator, Environment, Flex, GlobalEnv, HArrow, LocalEnv, Module, Normal,
         Pi, Rigid, TransparentEnv, TypeConstructor,
     },
-    ConstantId, UniverseLevel, Value,
+    QualifiedName, UniverseLevel, Value,
 };
 use std::rc::Rc;
 
@@ -333,7 +333,7 @@ pub fn quote_prim_instances<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
-    _prim: &ConstantId<'db>,
+    _prim: &QualifiedName<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Prim(prim) => quote_prim(global, depth, prim),
@@ -349,7 +349,7 @@ pub fn quote_constant_instances<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
-    _constant: &ConstantId<'db>,
+    _constant: &QualifiedName<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Prim(prim) => quote_prim(global, depth, prim),
@@ -673,7 +673,7 @@ pub fn quote_module<'db>(
 pub fn quote_prim<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    prim: &ConstantId<'db>,
+    prim: &QualifiedName<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     Ok(Syntax::prim_rc(*prim))
 }
@@ -682,7 +682,7 @@ pub fn quote_prim<'db>(
 pub fn quote_constant<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    constant: &ConstantId<'db>,
+    constant: &QualifiedName<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     Ok(Syntax::constant_rc(*constant))
 }

@@ -14,7 +14,7 @@ use crate::syn::{Syntax, Telescope};
 use crate::val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
-use crate::{ConstantId, RcValue};
+use crate::{QualifiedName, RcValue};
 use salsa::Database;
 use std::rc::Rc;
 
@@ -26,9 +26,9 @@ pub enum Error<'db> {
     /// Evaluation error.
     Eval(crate::eval::Error),
     /// A declaration with this name already exists.
-    AlreadyDefined(ConstantId<'db>),
+    AlreadyDefined(QualifiedName<'db>),
     /// Invalid type constructor universe.
-    InvalidTypeConstructorUniverse(ConstantId<'db>),
+    InvalidTypeConstructorUniverse(QualifiedName<'db>),
 }
 
 impl<'db> From<crate::check::Error<'db>> for Error<'db> {
@@ -48,7 +48,7 @@ pub struct CheckedModule<'db> {
     /// The global environment with all checked declarations.
     pub global_env: GlobalEnv<'db>,
     /// Names of constants that have hardware (Lift) types.
-    pub hardware_constants: Vec<ConstantId<'db>>,
+    pub hardware_constants: Vec<QualifiedName<'db>>,
 }
 
 /// Check a module in two passes: first add all declarations to the environment,

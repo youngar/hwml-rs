@@ -1,15 +1,15 @@
 use crate::syn::*;
-use crate::{common::ConstantId, MetaVariableId};
+use crate::{MetaVariableId, QualifiedName};
 
 /// A primitive declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PrimitiveDecl<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
     pub ty: RcSyntax<'db>,
 }
 
 impl<'db> PrimitiveDecl<'db> {
-    pub fn new(name: ConstantId<'db>, ty: RcSyntax<'db>) -> Self {
+    pub fn new(name: QualifiedName<'db>, ty: RcSyntax<'db>) -> Self {
         PrimitiveDecl { name, ty }
     }
 }
@@ -17,13 +17,13 @@ impl<'db> PrimitiveDecl<'db> {
 /// A constant declaration with a value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstantDecl<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
     pub ty: RcSyntax<'db>,
     pub value: RcSyntax<'db>,
 }
 
 impl<'db> ConstantDecl<'db> {
-    pub fn new(name: ConstantId<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
+    pub fn new(name: QualifiedName<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
         ConstantDecl { name, ty, value }
     }
 }
@@ -31,7 +31,7 @@ impl<'db> ConstantDecl<'db> {
 /// A type constructor declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeConstructorDecl<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
     /// The parameters of the type constructor (telescope of types)
     pub parameters: Telescope<'db>,
     /// The indices of the type constructor (telescope of types)
@@ -42,7 +42,7 @@ pub struct TypeConstructorDecl<'db> {
 
 impl<'db> TypeConstructorDecl<'db> {
     pub fn new(
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
         data_constructors: Vec<DataConstructorDecl<'db>>,
@@ -61,7 +61,7 @@ impl<'db> TypeConstructorDecl<'db> {
 /// A data constructor within a type constructor declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DataConstructorDecl<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
     /// The parameters of the data constructor (telescope of types)
     pub parameters: Telescope<'db>,
     /// The result type (the type constructor applied to indices)
@@ -70,7 +70,7 @@ pub struct DataConstructorDecl<'db> {
 
 impl<'db> DataConstructorDecl<'db> {
     pub fn new(
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
         parameters: Telescope<'db>,
         result_type: RcSyntax<'db>,
     ) -> Self {
@@ -82,7 +82,7 @@ impl<'db> DataConstructorDecl<'db> {
     }
 
     /// Get the name of the data constructor.
-    pub fn name(&self) -> ConstantId<'db> {
+    pub fn name(&self) -> QualifiedName<'db> {
         self.name
     }
 
@@ -126,16 +126,16 @@ pub enum Declaration<'db> {
 }
 
 impl<'db> Declaration<'db> {
-    pub fn primitive(name: ConstantId<'db>, ty: RcSyntax<'db>) -> Self {
+    pub fn primitive(name: QualifiedName<'db>, ty: RcSyntax<'db>) -> Self {
         Declaration::PrimitiveDecl(PrimitiveDecl::new(name, ty))
     }
 
-    pub fn constant(name: ConstantId<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
+    pub fn constant(name: QualifiedName<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
         Declaration::ConstantDecl(ConstantDecl::new(name, ty, value))
     }
 
     pub fn type_constructor(
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
         data_constructors: Vec<DataConstructorDecl<'db>>,
@@ -178,13 +178,18 @@ impl<'db> CompilationUnit<'db> {
     }
 
     /// Add a constant declaration to the module.
-    pub fn add_constant(&mut self, name: ConstantId<'db>, ty: RcSyntax<'db>, value: RcSyntax<'db>) {
+    pub fn add_constant(
+        &mut self,
+        name: QualifiedName<'db>,
+        ty: RcSyntax<'db>,
+        value: RcSyntax<'db>,
+    ) {
         let declaration = Declaration::constant(name, ty, value);
         self.add_declaration(declaration)
     }
 
     /// Add a primitive declaration to the module.
-    pub fn add_primitive(&mut self, name: ConstantId<'db>, ty: RcSyntax<'db>) {
+    pub fn add_primitive(&mut self, name: QualifiedName<'db>, ty: RcSyntax<'db>) {
         let declaration = Declaration::primitive(name, ty);
         self.add_declaration(declaration)
     }
@@ -192,7 +197,7 @@ impl<'db> CompilationUnit<'db> {
     /// Add a type constructor declaration to the module.
     pub fn add_type_constructor(
         &mut self,
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
         ty: RcSyntax<'db>,

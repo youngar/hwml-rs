@@ -76,7 +76,7 @@ pub fn print_primitive_decl<'db, R: Render>(
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("prim $")?;
-    p.text_owned(prim.name.name(db))?;
+    p.text_owned(prim.name.to_string(db))?;
     p.text(" : ")?;
     let st = State::new();
     prim.ty.print(db, st, p)?;
@@ -90,7 +90,7 @@ pub fn print_constant_decl<'db, R: Render>(
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("const @")?;
-    p.text_owned(c.name.name(db))?;
+    p.text_owned(c.name.to_string(db))?;
     p.text(" : ")?;
     let st = State::new();
     c.ty.print(db, st, p)?;
@@ -106,7 +106,7 @@ pub fn print_type_constructor_decl<'db, R: Render>(
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("tcon @")?;
-    p.text_owned(tc.name.name(db))?;
+    p.text_owned(tc.name.to_string(db))?;
 
     // Print parameters as telescope
     let mut st = State::new();
@@ -141,7 +141,7 @@ pub fn print_type_constructor_decl<'db, R: Render>(
         p.hard_break()?;
         for dcon in &tc.data_constructors {
             p.text("    dcon @")?;
-            p.text_owned(dcon.name.name(db))?;
+            p.text_owned(dcon.name.to_string(db))?;
             // Print dcon parameters as telescope, then result type
             let mut dcon_st = dcon_base_st;
             for param_ty in dcon.parameters.iter() {
@@ -409,15 +409,14 @@ where
     Ok(())
 }
 
-impl<'db> Print for ConstantId<'db> {
+impl<'db> Print for QualifiedName<'db> {
     fn print<R: Render>(
         &self,
         db: &dyn salsa::Database,
         _st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        let name = self.name(db);
-        p.text_owned(&format!("@{}", name))
+        p.text_owned(&format!("@{}", self.to_string(db)))
     }
 }
 
@@ -729,7 +728,7 @@ fn print_constructor<'db, R: Render>(
     st: State,
     p: &mut Printer<R>,
     sigil: &'static str,
-    constructor: ConstantId<'db>,
+    constructor: QualifiedName<'db>,
     arguments: &[RcSyntax<'db>],
 ) -> Result<(), R::Error> {
     p.cgroup(0, |p| {
@@ -983,8 +982,7 @@ impl<'db> Print for Prim<'db> {
         _st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        let name = self.name.name(db);
-        p.text_owned(&format!("${}", name))
+        p.text_owned(&format!("${}", self.name.to_string(db)))
     }
 }
 
@@ -1321,5 +1319,65 @@ mod tests {
     fn print_check() {
         let db = Database::new();
         assert_snapshot!(p(&db, &Syntax::check(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
+    }
+
+    // =========================================================================
+    // Hierarchical Qualified Names in Declarations
+    // =========================================================================
+
+    #[test]
+    fn print_constant_hierarchical_two_components() {
+        let db = Database::new();
+        let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
+        let foo_bar = foo.extend(&db, "bar");
+        assert_snapshot!(p(&db, &Syntax::constant_rc(foo_bar)), @"@foo/bar");
+    }
+
+    #[test]
+    fn print_constant_hierarchical_three_components() {
+        let db = Database::new();
+        let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
+        let foo_bar = foo.extend(&db, "bar");
+        let foo_bar_baz = foo_bar.extend(&db, "baz");
+        assert_snapshot!(p(&db, &Syntax::constant_rc(foo_bar_baz)), @"@foo/bar/baz");
+    }
+
+    #[test]
+    fn print_primitive_hierarchical_two_components() {
+        let db = Database::new();
+        let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
+        let path_to = path.extend(&db, "to");
+        assert_snapshot!(p(&db, &Syntax::prim_rc(path_to)), @"$path/to");
+    }
+
+    #[test]
+    fn print_primitive_hierarchical_three_components() {
+        let db = Database::new();
+        let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
+        let path_to = path.extend(&db, "to");
+        let path_to_prim = path_to.extend(&db, "prim");
+        assert_snapshot!(p(&db, &Syntax::prim_rc(path_to_prim)), @"$path/to/prim");
+    }
+
+    #[test]
+    fn print_type_constructor_hierarchical() {
+        let db = Database::new();
+        let std: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "std");
+        let std_vec = std.extend(&db, "Vec");
+        assert_snapshot!(
+            p(&db, &Syntax::type_constructor(std_vec, vec![Syntax::constant_rc("A".into_with_db(&db))])),
+            @"#[@std/Vec @A]"
+        );
+    }
+
+    #[test]
+    fn print_data_constructor_hierarchical() {
+        let db = Database::new();
+        let std: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "std");
+        let std_some = std.extend(&db, "Some");
+        assert_snapshot!(
+            p(&db, &Syntax::data_constructor(std_some, vec![Syntax::constant_rc("x".into_with_db(&db))])),
+            @"[@std/Some @x]"
+        );
     }
 }

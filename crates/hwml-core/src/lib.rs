@@ -6,19 +6,21 @@ pub mod environment;
 pub mod equal;
 pub mod eval;
 pub mod lower;
+pub mod name;
 pub mod pattern_unify;
 pub mod quote;
-pub mod symbol;
 pub mod syn;
 pub mod test_utils;
 pub mod typed;
 pub mod unify;
 pub mod val;
+pub mod word;
 
 pub use binding::*;
 pub use common::*;
-pub use symbol::InternedString;
+pub use name::*;
 pub use typed::Typed;
+pub use word::Word;
 
 pub use syn::declaration::{
     CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, PrimitiveDecl,

@@ -662,11 +662,11 @@ fn rename_module<'db>(
     )))
 }
 
-fn rename_prim<'db>(prim: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
+fn rename_prim<'db>(prim: &QualifiedName<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
     Ok(Syntax::prim_rc(*prim))
 }
 
-fn rename_constant<'db>(constant: &ConstantId<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
+fn rename_constant<'db>(constant: &QualifiedName<'db>) -> Result<RcSyntax<'db>, Error<'db>> {
     Ok(Syntax::constant_rc(*constant))
 }
 

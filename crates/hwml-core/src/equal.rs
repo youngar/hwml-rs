@@ -5,7 +5,7 @@ use crate::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
         LocalEnv, Module, Normal, Pi, Rigid, Spine, TransparentEnv, TypeConstructor,
     },
-    ConstantId, UniverseLevel, Value,
+    QualifiedName, UniverseLevel, Value,
 };
 use itertools::izip;
 use std::rc::Rc;
@@ -363,7 +363,7 @@ pub fn equate_constant_instances<'db>(
     depth: usize,
     lhs: &Value<'db>,
     rhs: &Value<'db>,
-    _constant: &ConstantId<'db>,
+    _constant: &QualifiedName<'db>,
 ) -> Result<'db> {
     match (lhs, rhs) {
         (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
@@ -382,7 +382,7 @@ pub fn equate_prim_instances<'db>(
     depth: usize,
     lhs: &Value<'db>,
     rhs: &Value<'db>,
-    _prim: &ConstantId<'db>,
+    _prim: &QualifiedName<'db>,
 ) -> Result<'db> {
     match (lhs, rhs) {
         (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
@@ -745,8 +745,8 @@ pub fn equate_mlifts<'db>(
 pub fn equate_prims<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    lhs: &ConstantId<'db>,
-    rhs: &ConstantId<'db>,
+    lhs: &QualifiedName<'db>,
+    rhs: &QualifiedName<'db>,
 ) -> Result<'db> {
     // For now, just compare by identity. Eventually we may look up info in
     // GlobalEnv.
@@ -760,8 +760,8 @@ pub fn equate_prims<'db>(
 pub fn equate_constants<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    lhs: &ConstantId<'db>,
-    rhs: &ConstantId<'db>,
+    lhs: &QualifiedName<'db>,
+    rhs: &QualifiedName<'db>,
 ) -> Result<'db> {
     // For now, just compare by identity. Eventually we may look up and unfold
     // definitions.
@@ -1127,8 +1127,8 @@ pub fn equate_universe_levels<'db>(
 pub fn equate_constant_ids<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
-    lhs: ConstantId<'db>,
-    rhs: ConstantId<'db>,
+    lhs: QualifiedName<'db>,
+    rhs: QualifiedName<'db>,
 ) -> Result<'db> {
     if lhs == rhs {
         Ok(())

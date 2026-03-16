@@ -119,26 +119,29 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::application(fun, arg))
     }
 
-    pub fn type_constructor(name: ConstantId<'db>, arguments: Vec<RcSyntax<'db>>) -> Syntax<'db> {
+    pub fn type_constructor(
+        name: QualifiedName<'db>,
+        arguments: Vec<RcSyntax<'db>>,
+    ) -> Syntax<'db> {
         Syntax::TypeConstructor(TypeConstructor::new(name, arguments))
     }
 
     pub fn type_constructor_rc(
-        name: ConstantId<'db>,
+        name: QualifiedName<'db>,
         arguments: Vec<RcSyntax<'db>>,
     ) -> RcSyntax<'db> {
         Rc::new(Syntax::type_constructor(name, arguments))
     }
 
     pub fn data_constructor(
-        constructor: ConstantId<'db>,
+        constructor: QualifiedName<'db>,
         arguments: Vec<RcSyntax<'db>>,
     ) -> Syntax<'db> {
         Syntax::DataConstructor(DataConstructor::new(constructor, arguments))
     }
 
     pub fn data_constructor_rc(
-        constructor: ConstantId<'db>,
+        constructor: QualifiedName<'db>,
         arguments: Vec<RcSyntax<'db>>,
     ) -> RcSyntax<'db> {
         Rc::new(Syntax::data_constructor(constructor, arguments))
@@ -248,17 +251,17 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::happlication(module, module_ty, argument))
     }
 
-    pub fn prim(name: ConstantId<'db>) -> Syntax<'db> {
+    pub fn prim(name: QualifiedName<'db>) -> Syntax<'db> {
         Syntax::Prim(Prim::new(name))
     }
 
-    pub fn prim_rc(name: ConstantId<'db>) -> RcSyntax<'db> {
+    pub fn prim_rc(name: QualifiedName<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::prim(name))
     }
 
     pub fn prim_from<T, Db>(db: &'db Db, name: T) -> Syntax<'db>
     where
-        T: IntoWithDb<'db, ConstantId<'db>>,
+        T: IntoWithDb<'db, QualifiedName<'db>>,
         Db: ::salsa::Database + ?Sized,
     {
         Syntax::prim(name.into_with_db(db))
@@ -266,23 +269,23 @@ impl<'db> Syntax<'db> {
 
     pub fn prim_rc_from<T, Db>(db: &'db Db, name: T) -> RcSyntax<'db>
     where
-        T: IntoWithDb<'db, ConstantId<'db>>,
+        T: IntoWithDb<'db, QualifiedName<'db>>,
         Db: ::salsa::Database + ?Sized,
     {
         Syntax::prim_rc(name.into_with_db(db))
     }
 
-    pub fn constant(name: ConstantId<'db>) -> Syntax<'db> {
+    pub fn constant(name: QualifiedName<'db>) -> Syntax<'db> {
         Syntax::Constant(Constant::new(name))
     }
 
-    pub fn constant_rc(name: ConstantId<'db>) -> RcSyntax<'db> {
+    pub fn constant_rc(name: QualifiedName<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::constant(name))
     }
 
     pub fn constant_from<T, Db>(db: &'db Db, name: T) -> Syntax<'db>
     where
-        T: IntoWithDb<'db, ConstantId<'db>>,
+        T: IntoWithDb<'db, QualifiedName<'db>>,
         Db: ::salsa::Database + ?Sized,
     {
         Syntax::constant(name.into_with_db(db))
@@ -290,7 +293,7 @@ impl<'db> Syntax<'db> {
 
     pub fn constant_rc_from<T, Db>(db: &'db Db, name: T) -> RcSyntax<'db>
     where
-        T: IntoWithDb<'db, ConstantId<'db>>,
+        T: IntoWithDb<'db, QualifiedName<'db>>,
         Db: ::salsa::Database + ?Sized,
     {
         Syntax::constant_rc(name.into_with_db(db))
@@ -454,13 +457,13 @@ impl<'db> Application<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct TypeConstructor<'db> {
-    pub constructor: ConstantId<'db>,
+    pub constructor: QualifiedName<'db>,
     pub arguments: Vec<RcSyntax<'db>>,
 }
 
 impl<'db> TypeConstructor<'db> {
     pub fn new(
-        constructor: ConstantId<'db>,
+        constructor: QualifiedName<'db>,
         arguments: Vec<RcSyntax<'db>>,
     ) -> TypeConstructor<'db> {
         TypeConstructor {
@@ -472,13 +475,13 @@ impl<'db> TypeConstructor<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct DataConstructor<'db> {
-    pub constructor: ConstantId<'db>,
+    pub constructor: QualifiedName<'db>,
     pub arguments: Vec<RcSyntax<'db>>,
 }
 
 impl<'db> DataConstructor<'db> {
     pub fn new(
-        constructor: ConstantId<'db>,
+        constructor: QualifiedName<'db>,
         arguments: Vec<RcSyntax<'db>>,
     ) -> DataConstructor<'db> {
         DataConstructor {
@@ -505,12 +508,12 @@ impl<'db> Case<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct CaseBranch<'db> {
-    pub constructor: ConstantId<'db>,
+    pub constructor: QualifiedName<'db>,
     pub body: DynBindingSyntax<'db>,
 }
 
 impl<'db> CaseBranch<'db> {
-    pub fn new(constructor: ConstantId<'db>, body: DynBindingSyntax<'db>) -> CaseBranch<'db> {
+    pub fn new(constructor: QualifiedName<'db>, body: DynBindingSyntax<'db>) -> CaseBranch<'db> {
         CaseBranch { constructor, body }
     }
 }
@@ -661,22 +664,22 @@ impl<'db> HApplication<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Prim<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
 }
 
 impl<'db> Prim<'db> {
-    pub fn new(name: ConstantId<'db>) -> Prim<'db> {
+    pub fn new(name: QualifiedName<'db>) -> Prim<'db> {
         Prim { name }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Constant<'db> {
-    pub name: ConstantId<'db>,
+    pub name: QualifiedName<'db>,
 }
 
 impl<'db> Constant<'db> {
-    pub fn new(name: ConstantId<'db>) -> Constant<'db> {
+    pub fn new(name: QualifiedName<'db>) -> Constant<'db> {
         Constant { name }
     }
 }

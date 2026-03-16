@@ -2,7 +2,7 @@ use crate::binding::{Binding, DynBinding};
 use crate::common::{DBParseError, Index, NegativeLevel};
 use crate::syn::declaration::{CompilationUnit, DataConstructorDecl, Declaration};
 use crate::syn::{CaseBranch, RcSyntax, Syntax, Telescope};
-use crate::{ConstantId, MetaVariableId};
+use crate::{MetaVariableId, QualifiedName};
 use core::fmt::Debug;
 use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
@@ -123,7 +123,7 @@ pub enum Token {
     SignalUniverse,
     #[token("ModuleUniverse", priority = 5)]
     ModuleUniverse,
-    #[regex(r"@(?&id)+", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
+    #[regex(r"@(?&id)+(/(?&id)+)*", priority = 4, callback = |lex| lex.slice()["@".len()..].to_owned())]
     Constant(String),
     #[regex(r"%(?&id)+", priority = 4, callback = |lex| lex.slice()["%".len()..].to_owned())]
     Variable(String),
@@ -131,7 +131,7 @@ pub enum Token {
     UnboundVariable(NegativeLevel),
     #[regex(r"[0-9]+", priority = 3, callback = |lex| lex.slice().parse())]
     Number(usize),
-    #[regex(r"\$(?&id)+", priority = 4, callback = |lex| lex.slice()["$".len()..].to_owned())]
+    #[regex(r"\$(?&id)+(/(?&id)+)*", priority = 4, callback = |lex| lex.slice()["$".len()..].to_owned())]
     Primitive(String),
     #[token("Bit", priority = 6)]
     Bit,
@@ -434,18 +434,31 @@ fn p_fat_arrow(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::FatArrow, Error::Other)
 }
 
-fn p_constant_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<ConstantId<'db>>> {
+fn p_qname<'db>(db: &'db dyn salsa::Database, name_str: &str) -> QualifiedName<'db> {
+    let components: Vec<&str> = name_str.split('/').collect();
+    let mut qname = None;
+    for component in components {
+        let name = hwml_support::FromWithDb::from_with_db(db, component);
+        qname = Some(QualifiedName::new(db, qname, name));
+    }
+    qname.unwrap()
+}
+
+fn p_constant_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<QualifiedName<'db>>> {
     match state.peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(Token::Constant(name))) => {
             state.advance_token();
-            Ok(Some(ConstantId::from_with_db(state.db(), &name)))
+            if name.is_empty() {
+                return Err(Error::MissingConstant);
+            }
+            Ok(Some(p_qname(state.db(), &name)))
         }
         _ => Ok(None),
     }
 }
 
-fn p_constant<'db>(state: &mut State<'db>) -> ParseResult<ConstantId<'db>> {
+fn p_constant<'db>(state: &mut State<'db>) -> ParseResult<QualifiedName<'db>> {
     match p_constant_opt(state) {
         Err(e) => Err(e),
         Ok(Some(n)) => Ok(n),
@@ -453,18 +466,21 @@ fn p_constant<'db>(state: &mut State<'db>) -> ParseResult<ConstantId<'db>> {
     }
 }
 
-fn p_primitive_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<ConstantId<'db>>> {
+fn p_primitive_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<QualifiedName<'db>>> {
     match state.peek_token() {
         Some(Err(err)) => Err(err),
         Some(Ok(Token::Primitive(name))) => {
             state.advance_token();
-            Ok(Some(ConstantId::from_with_db(state.db(), &name)))
+            if name.is_empty() {
+                return Err(Error::MissingPrimitive);
+            }
+            Ok(Some(p_qname(state.db(), &name)))
         }
         _ => Ok(None),
     }
 }
 
-fn p_primitive<'db>(state: &mut State<'db>) -> ParseResult<ConstantId<'db>> {
+fn p_primitive<'db>(state: &mut State<'db>) -> ParseResult<QualifiedName<'db>> {
     match p_primitive_opt(state) {
         Err(e) => Err(e),
         Ok(Some(n)) => Ok(n),
@@ -719,9 +735,12 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.advance_token();
                 Ok(Some(Syntax::hardware_rc()))
             }
-            Token::Constant(name) => {
-                state.advance_token();
-                Ok(Some(Syntax::constant_rc_from(state.db(), &name)))
+            Token::Constant(_) => {
+                // Use p_constant_opt to properly parse hierarchical names
+                match p_constant_opt(state)? {
+                    Some(qname) => Ok(Some(Syntax::constant_rc(qname))),
+                    None => Err(Error::MissingConstant),
+                }
             }
             Token::LQuestionBracket => {
                 state.advance_token();
@@ -793,9 +812,12 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 let proof = p_term(state)?;
                 Ok(Some(Syntax::transport_rc(motive, proof, value)))
             }
-            Token::Primitive(name) => {
-                state.advance_token();
-                Ok(Some(Syntax::prim_rc_from(state.db(), &name)))
+            Token::Primitive(_) => {
+                // Use p_primitive_opt to properly parse hierarchical names
+                match p_primitive_opt(state)? {
+                    Some(qname) => Ok(Some(Syntax::prim_rc(qname))),
+                    None => Err(Error::MissingPrimitive),
+                }
             }
             _ => Ok(None),
         },
@@ -814,7 +836,7 @@ fn p_atom<'db>(state: &mut State<'db>) -> ParseResult<RcSyntax<'db>> {
 /// @Foo %0 %1
 fn p_case_pattern_opt<'db>(
     state: &mut State<'db>,
-) -> ParseResult<Option<(ConstantId<'db>, usize)>> {
+) -> ParseResult<Option<(QualifiedName<'db>, usize)>> {
     let Some(constructor) = p_constant_opt(state)? else {
         return Ok(None);
     };
@@ -1126,7 +1148,7 @@ fn p_const_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
 /// Returns (name, parameters telescope, result type)
 fn p_dcon<'db>(
     state: &mut State<'db>,
-) -> ParseResult<(ConstantId<'db>, Telescope<'db>, RcSyntax<'db>)> {
+) -> ParseResult<(QualifiedName<'db>, Telescope<'db>, RcSyntax<'db>)> {
     // Expect 'dcon' token
     p_token(state, Token::DCon, Error::Other)?;
 
@@ -1361,8 +1383,8 @@ mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::syn::print::print_syntax_to_string;
-    use crate::ConstantId;
     use crate::Database;
+    use hwml_support::IntoWithDb;
 
     /// Parse helper that panics with a message on failure.
     fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
@@ -1632,7 +1654,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@42"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+            &Syntax::constant_rc("42".into_with_db(&db)),
         );
     }
 
@@ -1642,7 +1664,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@0"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
+            &Syntax::constant_rc("0".into_with_db(&db)),
         );
     }
 
@@ -1652,7 +1674,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@123456789"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "123456789")),
+            &Syntax::constant_rc("123456789".into_with_db(&db)),
         );
     }
 
@@ -1663,8 +1685,8 @@ mod tests {
             &db,
             &parse(&db, "@42 @99"),
             &Syntax::application_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
+                Syntax::constant_rc("42".into_with_db(&db)),
+                Syntax::constant_rc("99".into_with_db(&db)),
             ),
         );
     }
@@ -1677,7 +1699,7 @@ mod tests {
             &parse(&db, "@42 : 𝒰0"),
             &Syntax::check_rc(
                 Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                Syntax::constant_rc("42".into_with_db(&db)),
             ),
         );
     }
@@ -1689,7 +1711,7 @@ mod tests {
             &db,
             &parse(&db, "λ %x → @42 %x"),
             &Syntax::lambda_rc(Binding::new(Syntax::application_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                Syntax::constant_rc("42".into_with_db(&db)),
                 Syntax::variable_rc(Index(0)),
             ))),
         );
@@ -1702,7 +1724,7 @@ mod tests {
             &db,
             &parse(&db, "∀(%x : @42) → 𝒰0"),
             &Syntax::pi_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                Syntax::constant_rc("42".into_with_db(&db)),
                 Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
             ),
         );
@@ -1842,7 +1864,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@42"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+            &Syntax::constant_rc("42".into_with_db(&db)),
         );
     }
 
@@ -1852,7 +1874,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@0"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "0")),
+            &Syntax::constant_rc("0".into_with_db(&db)),
         );
     }
 
@@ -1862,7 +1884,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@123456789"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "123456789")),
+            &Syntax::constant_rc("123456789".into_with_db(&db)),
         );
     }
 
@@ -1933,9 +1955,9 @@ mod tests {
             &db,
             &parse(&db, "@f<Bit>(@x)"),
             &Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "f")),
+                Syntax::constant_rc("f".into_with_db(&db)),
                 Syntax::bit_rc(),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc("x".into_with_db(&db)),
             ),
         );
     }
@@ -1949,12 +1971,12 @@ mod tests {
             &parse(&db, "@f<Bit>(@x)<Bit>(@y)"),
             &Syntax::happlication_rc(
                 Syntax::happlication_rc(
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "f")),
+                    Syntax::constant_rc("f".into_with_db(&db)),
                     Syntax::bit_rc(),
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                    Syntax::constant_rc("x".into_with_db(&db)),
                 ),
                 Syntax::bit_rc(),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "y")),
+                Syntax::constant_rc("y".into_with_db(&db)),
             ),
         );
     }
@@ -1966,9 +1988,9 @@ mod tests {
             &db,
             &parse(&db, "@f<Bit → Bit>(@x)"),
             &Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "f")),
+                Syntax::constant_rc("f".into_with_db(&db)),
                 Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc("x".into_with_db(&db)),
             ),
         );
     }
@@ -1997,9 +2019,9 @@ mod tests {
             &Syntax::check_rc(
                 Syntax::bit_rc(),
                 Syntax::happlication_rc(
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                    Syntax::constant_rc("42".into_with_db(&db)),
                     Syntax::bit_rc(),
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
+                    Syntax::constant_rc("99".into_with_db(&db)),
                 ),
             ),
         );
@@ -2013,7 +2035,7 @@ mod tests {
             &db,
             &parse(&db, "mod %f → @x<Bit>(%f)"),
             &Syntax::module_rc(Binding::new(Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc("x".into_with_db(&db)),
                 Syntax::bit_rc(),
                 Syntax::variable_rc(Index(0)),
             ))),
@@ -2028,12 +2050,12 @@ mod tests {
             &db,
             &parse(&db, "@f<Bit → Bit → Bit>(@x)"),
             &Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "f")),
+                Syntax::constant_rc("f".into_with_db(&db)),
                 Syntax::harrow_rc(
                     Syntax::bit_rc(),
                     Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
                 ),
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "x")),
+                Syntax::constant_rc("x".into_with_db(&db)),
             ),
         );
     }
@@ -2061,12 +2083,12 @@ mod tests {
             &db,
             &parse(&db, "@42<Bit>(@99<Bit>(@100))"),
             &Syntax::happlication_rc(
-                Syntax::constant_rc(ConstantId::from_with_db(&db, "42")),
+                Syntax::constant_rc("42".into_with_db(&db)),
                 Syntax::bit_rc(),
                 Syntax::happlication_rc(
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "99")),
+                    Syntax::constant_rc("99".into_with_db(&db)),
                     Syntax::bit_rc(),
-                    Syntax::constant_rc(ConstantId::from_with_db(&db, "100")),
+                    Syntax::constant_rc("100".into_with_db(&db)),
                 ),
             ),
         );
@@ -2125,7 +2147,7 @@ mod tests {
             assert_eq!(printed, test_cases[i]);
         }
 
-        // Check string interning: first and last @hello should have same ConstantId
+        // Check string interning: first and last @hello should have same QualifiedName
         if let (Syntax::Constant(c1), Syntax::Constant(c5)) =
             (parsed_terms[0].as_ref(), parsed_terms[4].as_ref())
         {
@@ -2162,32 +2184,32 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$xor"),
-            &Syntax::prim_rc(ConstantId::from_with_db(&db, "xor")),
+            &Syntax::prim_rc("xor".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$and"),
-            &Syntax::prim_rc(ConstantId::from_with_db(&db, "and")),
+            &Syntax::prim_rc("and".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$or"),
-            &Syntax::prim_rc(ConstantId::from_with_db(&db, "or")),
+            &Syntax::prim_rc("or".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$not"),
-            &Syntax::prim_rc(ConstantId::from_with_db(&db, "not")),
+            &Syntax::prim_rc("not".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$custom"),
-            &Syntax::prim_rc(ConstantId::from_with_db(&db, "custom")),
+            &Syntax::prim_rc("custom".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$Add"),
-            &Syntax::prim_rc(ConstantId::from_with_db(&db, "Add")),
+            &Syntax::prim_rc("Add".into_with_db(&db)),
         );
     }
 
@@ -2197,17 +2219,78 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@Add"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "Add")),
+            &Syntax::constant_rc("Add".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@Multiply"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "Multiply")),
+            &Syntax::constant_rc("Multiply".into_with_db(&db)),
         );
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@MyCircuit"),
-            &Syntax::constant_rc(ConstantId::from_with_db(&db, "MyCircuit")),
+            &Syntax::constant_rc("MyCircuit".into_with_db(&db)),
+        );
+    }
+
+    // =========================================================================
+    // Hierarchical Qualified Names
+    // =========================================================================
+
+    #[test]
+    fn test_parse_constant_hierarchical_two_components() {
+        let db = Database::new();
+        let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
+        let foo_bar = foo.extend(&db, "bar");
+        assert_syntax_eq_data(&db, &parse(&db, "@foo/bar"), &Syntax::constant_rc(foo_bar));
+    }
+
+    #[test]
+    fn test_parse_constant_hierarchical_three_components() {
+        let db = Database::new();
+        let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
+        let foo_bar = foo.extend(&db, "bar");
+        let foo_bar_baz = foo_bar.extend(&db, "baz");
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@foo/bar/baz"),
+            &Syntax::constant_rc(foo_bar_baz),
+        );
+    }
+
+    #[test]
+    fn test_parse_primitive_hierarchical_two_components() {
+        let db = Database::new();
+        let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
+        let path_to = path.extend(&db, "to");
+        assert_syntax_eq_data(&db, &parse(&db, "$path/to"), &Syntax::prim_rc(path_to));
+    }
+
+    #[test]
+    fn test_parse_primitive_hierarchical_three_components() {
+        let db = Database::new();
+        let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
+        let path_to = path.extend(&db, "to");
+        let path_to_prim = path_to.extend(&db, "prim");
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "$path/to/prim"),
+            &Syntax::prim_rc(path_to_prim),
+        );
+    }
+
+    #[test]
+    fn test_parse_constant_hierarchical_in_application() {
+        let db = Database::new();
+        let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
+        let foo_bar = foo.extend(&db, "bar");
+        let foo_bar_baz = foo_bar.extend(&db, "baz");
+        let x: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "x");
+        let x_y = x.extend(&db, "y");
+        assert_syntax_eq_data(
+            &db,
+            &parse(&db, "@foo/bar/baz @x/y"),
+            &Syntax::application_rc(Syntax::constant_rc(foo_bar_baz), Syntax::constant_rc(x_y)),
         );
     }
 
@@ -2217,7 +2300,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "[@Nil]"),
-            &Syntax::data_constructor_rc(ConstantId::from_with_db(&db, "Nil"), vec![]),
+            &Syntax::data_constructor_rc("Nil".into_with_db(&db), vec![]),
         );
     }
 
@@ -2228,8 +2311,8 @@ mod tests {
             &db,
             &parse(&db, "[@Some @42]"),
             &Syntax::data_constructor_rc(
-                ConstantId::from_with_db(&db, "Some"),
-                vec![Syntax::constant_rc(ConstantId::from_with_db(&db, "42"))],
+                "Some".into_with_db(&db),
+                vec![Syntax::constant_rc("42".into_with_db(&db))],
             ),
         );
     }
@@ -2242,7 +2325,7 @@ mod tests {
             &db,
             &parse(&db, "[@Some λ %0 → λ %0 → %0]"),
             &Syntax::data_constructor_rc(
-                ConstantId::from_with_db(&db, "Some"),
+                "Some".into_with_db(&db),
                 vec![Syntax::lambda_rc(Binding::new(Syntax::lambda_rc(
                     Binding::new(Syntax::variable_rc(Index(0))),
                 )))],
@@ -2258,7 +2341,7 @@ mod tests {
             &db,
             &parse(&db, "[@Pair (λ %0 → %0) λ %0 → %0]"),
             &Syntax::data_constructor_rc(
-                ConstantId::from_with_db(&db, "Pair"),
+                "Pair".into_with_db(&db),
                 vec![
                     Syntax::lambda_rc(Binding::new(Syntax::variable_rc(Index(0)))),
                     Syntax::lambda_rc(Binding::new(Syntax::variable_rc(Index(0)))),
@@ -2278,12 +2361,12 @@ mod tests {
                 Index(0),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_with_db(&db, "true"),
-                        DynBinding::new(0, Syntax::constant_rc(ConstantId::from_with_db(&db, "1"))),
+                        "true".into_with_db(&db),
+                        DynBinding::new(0, Syntax::constant_rc("1".into_with_db(&db))),
                     ),
                     CaseBranch::new(
-                        ConstantId::from_with_db(&db, "false"),
-                        DynBinding::new(0, Syntax::constant_rc(ConstantId::from_with_db(&db, "0"))),
+                        "false".into_with_db(&db),
+                        DynBinding::new(0, Syntax::constant_rc("0".into_with_db(&db))),
                     ),
                 ],
             ))),
@@ -2301,12 +2384,12 @@ mod tests {
                 Index(0),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_with_db(&db, "true"),
-                        DynBinding::new(0, Syntax::constant_rc(ConstantId::from_with_db(&db, "1"))),
+                        "true".into_with_db(&db),
+                        DynBinding::new(0, Syntax::constant_rc("1".into_with_db(&db))),
                     ),
                     CaseBranch::new(
-                        ConstantId::from_with_db(&db, "false"),
-                        DynBinding::new(0, Syntax::constant_rc(ConstantId::from_with_db(&db, "0"))),
+                        "false".into_with_db(&db),
+                        DynBinding::new(0, Syntax::constant_rc("0".into_with_db(&db))),
                     ),
                 ],
             ))),
@@ -2319,7 +2402,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "#[@Bool]"),
-            &Syntax::type_constructor_rc(ConstantId::from_with_db(&db, "Bool"), vec![]),
+            &Syntax::type_constructor_rc("Bool".into_with_db(&db), vec![]),
         );
     }
 
@@ -2330,7 +2413,7 @@ mod tests {
             &db,
             &parse(&db, "#[@List 𝒰0]"),
             &Syntax::type_constructor_rc(
-                ConstantId::from_with_db(&db, "List"),
+                "List".into_with_db(&db),
                 vec![Syntax::universe_rc(UniverseLevel::new(0))],
             ),
         );
@@ -2348,12 +2431,12 @@ mod tests {
                 Index(0),
                 vec![
                     CaseBranch::new(
-                        ConstantId::from_with_db(&db, "true"),
-                        DynBinding::new(0, Syntax::constant_rc(ConstantId::from_with_db(&db, "1"))),
+                        "true".into_with_db(&db),
+                        DynBinding::new(0, Syntax::constant_rc("1".into_with_db(&db))),
                     ),
                     CaseBranch::new(
-                        ConstantId::from_with_db(&db, "false"),
-                        DynBinding::new(0, Syntax::constant_rc(ConstantId::from_with_db(&db, "0"))),
+                        "false".into_with_db(&db),
+                        DynBinding::new(0, Syntax::constant_rc("0".into_with_db(&db))),
                     ),
                 ],
             ))),
@@ -2372,7 +2455,7 @@ mod tests {
             &Syntax::lambda_rc(Binding::new(Syntax::case_rc(
                 Index(0),
                 vec![CaseBranch::new(
-                    ConstantId::from_with_db(&db, "Succ"),
+                    "Succ".into_with_db(&db),
                     DynBinding::new(1, Syntax::variable_rc(Index(0))),
                 )],
             ))),
@@ -2387,7 +2470,7 @@ mod tests {
         let module = parse_module(&db, "prim $Nat : U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         assert!(
-            matches!(&module.declarations[0], Declaration::PrimitiveDecl(p) if p.name.name(&db) == "Nat")
+            matches!(&module.declarations[0], Declaration::PrimitiveDecl(p) if p.name.name(&db).to_string(&db) == "Nat")
         );
     }
 
@@ -2397,7 +2480,7 @@ mod tests {
         let module = parse_module(&db, "const @zero : @Nat;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         assert!(
-            matches!(&module.declarations[0], Declaration::ConstantDecl(c) if c.name.name(&db) == "zero")
+            matches!(&module.declarations[0], Declaration::ConstantDecl(c) if c.name.name(&db).to_string(&db) == "zero")
         );
     }
 
@@ -2407,7 +2490,7 @@ mod tests {
         let module = parse_module(&db, "tcon @List (%a : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         assert!(
-            matches!(&module.declarations[0], Declaration::TypeConstructorDecl(tc) if tc.name.name(&db) == "List")
+            matches!(&module.declarations[0], Declaration::TypeConstructorDecl(tc) if tc.name.name(&db).to_string(&db) == "List")
         );
     }
 
@@ -2418,10 +2501,16 @@ mod tests {
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "Option");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Option");
             assert_eq!(tc.data_constructors.len(), 2);
-            assert_eq!(tc.data_constructors[0].name.name(&db), "None");
-            assert_eq!(tc.data_constructors[1].name.name(&db), "Some");
+            assert_eq!(
+                tc.data_constructors[0].name.name(&db).to_string(&db),
+                "None"
+            );
+            assert_eq!(
+                tc.data_constructors[1].name.name(&db).to_string(&db),
+                "Some"
+            );
         } else {
             panic!("Expected TypeConstructorDecl");
         }
@@ -2438,13 +2527,13 @@ mod tests {
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 3);
         assert!(
-            matches!(&module.declarations[0], Declaration::PrimitiveDecl(p) if p.name.name(&db) == "Nat")
+            matches!(&module.declarations[0], Declaration::PrimitiveDecl(p) if p.name.name(&db).to_string(&db) == "Nat")
         );
         assert!(
-            matches!(&module.declarations[1], Declaration::ConstantDecl(c) if c.name.name(&db) == "zero")
+            matches!(&module.declarations[1], Declaration::ConstantDecl(c) if c.name.name(&db).to_string(&db) == "zero")
         );
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[2] {
-            assert_eq!(tc.name.name(&db), "Bool");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Bool");
             assert_eq!(tc.data_constructors.len(), 2);
         } else {
             panic!("Expected TypeConstructorDecl");
@@ -2464,7 +2553,7 @@ mod tests {
         let module = parse_module(&db, "tcon @Option (%a : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "Option");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Option");
             assert_syntax_eq_data(
                 &db,
                 &tc.universe,
@@ -2486,10 +2575,16 @@ mod tests {
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "Option");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Option");
             assert_eq!(tc.data_constructors.len(), 2);
-            assert_eq!(tc.data_constructors[0].name.name(&db), "None");
-            assert_eq!(tc.data_constructors[1].name.name(&db), "Some");
+            assert_eq!(
+                tc.data_constructors[0].name.name(&db).to_string(&db),
+                "None"
+            );
+            assert_eq!(
+                tc.data_constructors[1].name.name(&db).to_string(&db),
+                "Some"
+            );
         } else {
             panic!("Expected TypeConstructorDecl");
         }
@@ -2502,7 +2597,7 @@ mod tests {
             parse_module(&db, "tcon @Pair (%a : U0) (%b : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "Pair");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Pair");
             assert_syntax_eq_data(
                 &db,
                 &tc.universe,
@@ -2519,7 +2614,7 @@ mod tests {
         let module = parse_module(&db, "tcon @Bool : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "Bool");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Bool");
             assert_syntax_eq_data(
                 &db,
                 &tc.universe,
@@ -2541,10 +2636,13 @@ mod tests {
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "List");
+            assert_eq!(tc.name.name(&db).to_string(&db), "List");
             assert_eq!(tc.data_constructors.len(), 2);
-            assert_eq!(tc.data_constructors[0].name.name(&db), "Nil");
-            assert_eq!(tc.data_constructors[1].name.name(&db), "Cons");
+            assert_eq!(tc.data_constructors[0].name.name(&db).to_string(&db), "Nil");
+            assert_eq!(
+                tc.data_constructors[1].name.name(&db).to_string(&db),
+                "Cons"
+            );
             // Cons type should be a Pi type
             let cons_ty_str = print_syntax_to_string(&db, &tc.data_constructors[1].full_type());
             assert!(cons_ty_str.contains("∀"), "Cons should have Pi type");
@@ -2560,7 +2658,7 @@ mod tests {
             parse_module(&db, "tcon @Vec (%a : U0) : (%n : #[@Nat]) -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
-            assert_eq!(tc.name.name(&db), "Vec");
+            assert_eq!(tc.name.name(&db).to_string(&db), "Vec");
             assert_syntax_eq_data(
                 &db,
                 &tc.universe,
