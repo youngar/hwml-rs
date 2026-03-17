@@ -1,4 +1,4 @@
-# Salsa-Based Location Architecture
+# Salsa-Based SourceRange Architecture
 
 HWML uses a Salsa-interned location system that provides MLIR-style provenance
 tracking with rich diagnostic capabilities. The Core IR treats locations as
@@ -18,13 +18,13 @@ on it.
 `LocationData` is an enum with two variants: `Physical { file, start, end }`
 for real source code spans, and `Unknown` for synthetic or generated code.
 
-`Location` is a Salsa-interned ID that wraps LocationData. It's Copy-able and
+`SourceRange` is a Salsa-interned ID that wraps LocationData. It's Copy-able and
 lightweight (just a u32 internally), but can be queried through Salsa to get
 the full data.
 
-## Location::UNKNOWN
+## None
 
-The special constant `Location::UNKNOWN` is a sentinel value (ID 0) that
+The special constant `None` is a sentinel value (ID 0) that
 doesn't require a database. It's used for quotation (semantic to syntax
 conversion), elaboration (fresh metavariables), renaming (unification
 inversion), and tests (programmatic AST construction). Salsa guarantees
@@ -33,20 +33,20 @@ this safe.
 
 ## Usage
 
-In the parser, create a SourceFile and use `Location::physical()` to create
+In the parser, create a SourceFile and use `SourceRange::physical()` to create
 locations for parsed syntax:
 
 ```rust
 let file = SourceFile::new(db, path, text);
-let loc = Location::physical(db, file, start_offset, end_offset);
+let loc = SourceRange::physical(db, file, start_offset, end_offset);
 let syntax = Syntax::lambda_rc(loc, body);
 ```
 
-In the Core IR (tests, quotation, etc.), use `Location::UNKNOWN` directly. No
+In the Core IR (tests, quotation, etc.), use `None` directly. No
 database needed:
 
 ```rust
-let loc = Location::UNKNOWN;
+let loc = None;
 let syntax = Syntax::universe_rc(loc, level);
 ```
 
@@ -59,48 +59,48 @@ match core_error {
         if let Some(snippet) = loc.snippet(db) {
             eprintln!("Error in code: `{}`", snippet);
         }
-        eprintln!("Location: {}", loc.display(db));
+        eprintln!("SourceRange: {}", loc.display(db));
     }
 }
 ```
 
 ## Benefits
 
-Location metadata changes don't invalidate Core IR caches, keeping Salsa happy.
+SourceRange metadata changes don't invalidate Core IR caches, keeping Salsa happy.
 Core IR pattern matching ignores locations, keeping the semantics mathematically
 pure. The elaborator can extract exact source snippets for errors, giving rich
-diagnostics. Location changes don't trigger full recompilation. And
-`Location::UNKNOWN` works without a database, making tests easy to write.
+diagnostics. SourceRange changes don't trigger full recompilation. And
+`None` works without a database, making tests easy to write.
 
 ## Implementation Details
 
 The core location types are defined in `hwml-support/src/location.rs`.
-`hwml-core/src/common.rs` re-exports `Location`, and `hwml-elab/src/lib.rs`
+`hwml-core/src/common.rs` re-exports `SourceRange`, and `hwml-elab/src/lib.rs`
 also re-exports the location types for convenience.
 
-The `Location` type is automatically integrated into any Salsa database that
+The `SourceRange` type is automatically integrated into any Salsa database that
 includes the `hwml-support` jar. No manual setup required.
 
-Tests can use `Location::UNKNOWN` without creating a database:
+Tests can use `None` without creating a database:
 
 ```rust
 #[test]
 fn test_type_checking() {
-    let loc = Location::UNKNOWN;
+    let loc = None;
     let term = Syntax::lambda_rc(loc, body);
     // ... test logic
 }
 ```
 
 For tests that need real locations, create a database and use
-`Location::physical()`:
+`SourceRange::physical()`:
 
 ```rust
 #[test]
 fn test_error_messages() {
     let db = Database::new();
     let file = SourceFile::new(&db, "test.hwml".into(), "λx. x".into());
-    let loc = Location::physical(&db, file, 0, 6);
+    let loc = SourceRange::physical(&db, file, 0, 6);
     // ... test logic
 }
 ```

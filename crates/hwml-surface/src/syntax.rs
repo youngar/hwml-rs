@@ -55,34 +55,34 @@ pub enum Expression {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Universe {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub level: Option<u32>, // None means Type, Some(n) means Type n
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Pi {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub bindings: TypedBindings,
     pub target: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Arrow {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub source: Box<Expression>,
     pub target: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct FatArrow {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub source: Box<Expression>,
     pub target: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct LetIn {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub id: Id,
     pub bindings: Bindings,
     pub ty: Option<Box<Expression>>,
@@ -92,14 +92,14 @@ pub struct LetIn {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Fun {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub bindings: Bindings,
     pub expr: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Underscore {
-    pub loc: Location,
+    pub loc: Range<usize>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -136,19 +136,19 @@ pub struct UntypedBindingGroup {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct App {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub elements: Vec<Box<Expression>>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Id {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub value: Box<[u8]>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Num {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub value: Box<[u8]>,
 }
 
@@ -171,7 +171,7 @@ pub struct MatchClause {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Inductive {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub name: Id,
     pub parameters: TypedBindings,
     pub indices: TypedBindings,
@@ -181,9 +181,9 @@ pub struct Inductive {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Constructor {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub name: Id,
     pub ty: Box<Expression>,
 }
 
-type Location = Range<usize>;
+type SourceRange = Range<usize>;

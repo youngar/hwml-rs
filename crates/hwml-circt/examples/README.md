@@ -171,7 +171,7 @@ All examples have been updated to use the new raw MLIR C API instead of the `mel
 - **API changes**:
   - `mlir_module.as_operation().verify()` → `mlir_module.verify()`
   - `println!("{}", mlir_module.as_operation())` → `println!("{}", mlir_module.to_string())`
-  - `Location::unknown(ctx)` → `ctx.unknown_location()`
+  - `SourceRange::unknown(ctx)` → `ctx.unknown_location()`
 
 All examples now compile successfully! ✅
 

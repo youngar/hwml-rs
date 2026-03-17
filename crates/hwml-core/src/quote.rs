@@ -8,9 +8,10 @@
 
 #![allow(unused_imports)]
 
+use crate::*;
 use crate::{
     binding::{Binding, DynBinding},
-    common::{Index, Level, Location},
+    common::{Index, Level},
     eval::{self, eval_telescope, run_closure},
     syn::{CaseBranch, RcSyntax, Syntax},
     val::{
@@ -27,12 +28,12 @@ pub enum Error<'db> {
     /// Something about the input was ill-typed, preventing quotation.
     IllTyped,
     /// Quotation can force evaluation, which may itself error.
-    EvalError(eval::Error),
+    EvalError(eval::Error<'db>),
     LookupError(val::LookupError<'db>),
 }
 
-impl<'db> From<eval::Error> for Error<'db> {
-    fn from(error: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(error: eval::Error<'db>) -> Self {
         Error::EvalError(error)
     }
 }

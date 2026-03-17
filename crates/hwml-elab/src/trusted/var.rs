@@ -2,27 +2,25 @@ use crate::*;
 use hwml_core::*;
 
 #[derive(Clone, Debug)]
-pub struct ElabVar {
-    location: Location,
-    index: Index,
+pub struct ElabName<'db> {
+    pub source_range: Option<SourceRange<'db>>,
+    pub name: Name<'db>,
 }
 
-impl Located for ElabVar {
-    fn location(&self) -> Location {
-        self.location
+impl<'db> HasSourceRange<'db> for ElabName<'db> {
+    fn source_range(&self) -> Option<SourceRange<'db>> {
+        self.source_range.clone()
     }
 }
 
-impl<'db, 'g> ElabTypedSyntax<'db, 'g> for ElabVar {
+impl<'db, 'g> ElabTypedSyntax<'db, 'g> for ElabName<'db> {
     fn elab_typed_syntax(
         self,
         env: &SolverEnvironment<'db, 'g>,
     ) -> Result<TrustedTypedSyntax<'db>, ElabError> {
-        let level = self.index.to_level(env.tc_env.values.local.depth());
-        let ty = env.tc_env.type_of(level).clone();
-        Ok(Trusted(Typed {
-            subject: Syntax::variable_rc(self.index),
-            ty,
-        }))
+        match env.resolve(self.name) {
+            Some(term) => Ok(Trusted(term)),
+            None => Err(ElabError::Misc),
+        }
     }
 }

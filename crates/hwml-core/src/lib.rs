@@ -4,6 +4,7 @@ pub mod check_module;
 pub mod common;
 pub mod equal;
 pub mod eval;
+pub mod location;
 pub mod lower;
 pub mod name;
 pub mod pattern_unify;
@@ -17,6 +18,7 @@ pub mod word;
 
 pub use binding::*;
 pub use common::*;
+pub use location::*;
 pub use name::*;
 pub use typed::Typed;
 pub use word::Word;

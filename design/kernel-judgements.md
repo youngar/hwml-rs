@@ -195,8 +195,8 @@ pub struct KernelContext<'db, 'g> {
     /// The value environment (for evaluation)
     values: LocalEnv<'db>,
 
-    /// Location tracking for error reporting
-    location: Location,
+    /// SourceRange tracking for error reporting
+    location: SourceRange,
 }
 
 impl<'db, 'g> KernelContext<'db, 'g> {
@@ -274,7 +274,7 @@ pub enum KernelError {
     TypeMismatch {
         expected: RcValue<'db>,
         got: RcValue<'db>,
-        location: Location,
+        location: SourceRange,
     },
 
     /// Unification failed
@@ -381,7 +381,7 @@ async fn check_fun<'db, 'g>(
 
 ### Error Localization
 - Kernel errors are precise and localized to specific judgement failures
-- Location tracking flows through the kernel context
+- SourceRange tracking flows through the kernel context
 
 ---
 

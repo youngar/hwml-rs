@@ -192,7 +192,7 @@ pub async fn synth_app<'db, 'g>(
 
 ## Error Reporting
 
-### Location Tracking
+### SourceRange Tracking
 
 Every metavariable stores its creation location:
 
@@ -202,7 +202,7 @@ struct MetaSlot<'db> {
     solution: Option<RcSyntax<'db>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,
-    location: Location,  // ← Source location
+    location: SourceRange,  // ← Source location
 }
 ```
 
@@ -230,7 +230,7 @@ pub enum KernelError {
 
 ## Migration Path
 
-### Phase 1: Location Tracking (~50 lines)
+### Phase 1: SourceRange Tracking (~50 lines)
 Add location to `MetaSlot`, thread through elaborator.
 
 ### Phase 2: Kernel Foundation (~1200 lines)
@@ -260,7 +260,7 @@ Update elaborator to use kernel API instead of direct `Syntax` construction.
 - **Modular**: Elaborator can be refactored without breaking soundness
 
 ### Debugging
-- **Better error messages**: Location tracking on metavariables
+- **Better error messages**: SourceRange tracking on metavariables
 - **Easier to reason about**: Bidirectional rules are explicit
 
 ### Future-Proofing

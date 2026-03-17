@@ -201,7 +201,7 @@ async fn lower_flex<'db, 'g>(...) -> Result<RcValue<'db>, UnificationError<'db>>
     
     let new_meta_id = ctx.fresh_meta_id(codomain_ty);
     let lambda_term = Syntax::lambda_rc(
-        Location::UNKNOWN,
+        None,
         Syntax::metavariable_rc(new_meta_id, extended_subst)
     );
     ctx.solve(current_meta_id, lambda_term);

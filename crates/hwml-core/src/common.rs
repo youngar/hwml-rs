@@ -266,5 +266,3 @@ impl std::fmt::Display for MetaVariableId {
         write!(f, "{}", self.local_index)
     }
 }
-
-pub use hwml_support::Location;

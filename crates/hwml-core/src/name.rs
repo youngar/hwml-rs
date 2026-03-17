@@ -106,7 +106,7 @@ impl<'db> QualifiedName<'db> {
         let mut first = true;
         for name in names {
             if !first {
-                s.push('/');
+                s.push('/')
             }
             s.push_str(&name.to_string(db));
             first = false;

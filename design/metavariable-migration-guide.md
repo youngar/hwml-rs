@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide helps you migrate code from the old `MetaVariableId(usize)` to the new composite `MetaVariableId { loc: Location, local_index: u16 }` structure.
+This guide helps you migrate code from the old `MetaVariableId(usize)` to the new composite `MetaVariableId { loc: SourceRange, local_index: u16 }` structure.
 
 ## Breaking Changes
 
@@ -16,10 +16,10 @@ let id = MetaVariableId(42);
 
 **New:**
 ```rust
-use hwml_core::common::Location;
+use hwml_core::common::SourceRange;
 
-let id = MetaVariableId::new(Location::UNKNOWN, 0);
-let id = MetaVariableId::new(Location::UNKNOWN, 42);
+let id = MetaVariableId::new(None, 0);
+let id = MetaVariableId::new(None, 42);
 ```
 
 ### 2. MetaVariableId Pattern Matching
@@ -55,7 +55,7 @@ let id = state.fresh_meta(ty);
 
 **New:**
 ```rust
-let id = state.fresh_meta(Location::UNKNOWN, ty);  // For now
+let id = state.fresh_meta(None, ty);  // For now
 // Future: let id = state.fresh_meta(current_location, ty);
 ```
 
@@ -120,9 +120,9 @@ let zonked_term = ctx.zonk(&term);
 
 ## Migration Checklist
 
-- [ ] Replace all `MetaVariableId(n)` with `MetaVariableId::new(Location::UNKNOWN, n)`
+- [ ] Replace all `MetaVariableId(n)` with `MetaVariableId::new(None, n)`
 - [ ] Update pattern matches to not destructure MetaVariableId
-- [ ] Update `fresh_meta` calls to include Location parameter
+- [ ] Update `fresh_meta` calls to include SourceRange parameter
 - [ ] Change Vec indexing to HashMap lookups
 - [ ] Consider using `solve_checked` for better error reporting
 - [ ] Add zonking pass at the end of elaboration
@@ -135,8 +135,8 @@ let zonked_term = ctx.zonk(&term);
 #[cfg(test)]
 fn test_something() {
     let mut state = SolverState::new();
-    let ty = Syntax::universe_rc(Location::UNKNOWN, UniverseLevel::new(0));
-    let meta = state.fresh_meta(Location::UNKNOWN, ty);
+    let ty = Syntax::universe_rc(None, UniverseLevel::new(0));
+    let meta = state.fresh_meta(None, ty);
     // ...
 }
 ```
@@ -181,19 +181,19 @@ Most test code was migrated using sed:
 ```bash
 # In hwml-core
 cd crates/hwml-core/src
-sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId::new(Location::UNKNOWN, \1)/g' \
+sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId::new(None, \1)/g' \
     syn/parse.rs syn/print.rs check.rs eval.rs equal.rs quote.rs pattern_unify.rs
 
 # In hwml-elab
 cd crates/hwml-elab/src
-sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId::new(Location::UNKNOWN, \1)/g' \
+sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId::new(None, \1)/g' \
     engine.rs force.rs renaming.rs unify.rs
 ```
 
 ## FAQ
 
-**Q: Why Location::UNKNOWN everywhere?**
-A: For now, we use `Location::UNKNOWN` as a placeholder. Once we add location tracking to the elaboration context, we'll pass the actual source location.
+**Q: Why None everywhere?**
+A: For now, we use `None` as a placeholder. Once we add location tracking to the elaboration context, we'll pass the actual source location.
 
 **Q: What happens to unsolved metavariables?**
 A: Unsolved non-poisoned metas are reported as errors by the typechecker. Poisoned metas are silently ignored (they represent errors that were already reported).
@@ -202,5 +202,5 @@ A: Unsolved non-poisoned metas are reported as errors by the typechecker. Poison
 A: Use the `Display` impl for MetaVariableId, which shows both the location and local index. Enable debug logging to see solver activity.
 
 **Q: Can I still use numeric IDs in tests?**
-A: Yes! The parser supports `?[N]` syntax which maps to `MetaVariableId::new(Location::UNKNOWN, N)`.
+A: Yes! The parser supports `?[N]` syntax which maps to `MetaVariableId::new(None, N)`.
 

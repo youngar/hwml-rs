@@ -21,14 +21,14 @@ impl<'db> Resolver<'db> {
         QualifiedName::new(db, self.package, name)
     }
 
-    pub fn resolve<'a, E, Db>(
+    pub fn resolve<Db>(
         &self,
-        db: &'db Database,
+        db: &'db Db,
         name: Name<'db>,
         global_env: &GlobalEnv<'db>,
     ) -> Option<QualifiedName<'db>>
     where
-        Db: salsa::Database,
+        Db: salsa::Database + ?Sized,
     {
         let mut package = self.package;
         while let Some(pkg) = package {

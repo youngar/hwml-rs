@@ -25,7 +25,7 @@ This plan implements a **trusted kernel** that encodes bidirectional typing rule
 
 ## Implementation Phases
 
-### **Phase 1: Location Tracking** (Foundation)
+### **Phase 1: SourceRange Tracking** (Foundation)
 **Priority:** HIGH  
 **Estimated:** ~50 lines  
 **Dependencies:** None
@@ -42,11 +42,11 @@ struct MetaSlot<'db> {
     solution: Option<RcSyntax<'db>>,
     waiters: Vec<WaitingTask>,
     poisoned: bool,
-    location: Location,  // ← NEW
+    location: SourceRange,  // ← NEW
 }
 
 // Line 130: Update constructor
-fn new(ty: RcValue<'db>, location: Location) -> Self {
+fn new(ty: RcValue<'db>, location: SourceRange) -> Self {
     Self {
         ty,
         solution: None,
@@ -57,7 +57,7 @@ fn new(ty: RcValue<'db>, location: Location) -> Self {
 }
 
 // Line 185: Update fresh_meta signature
-pub fn fresh_meta(&mut self, ty: RcValue<'db>, loc: Location) -> MetaVariableId {
+pub fn fresh_meta(&mut self, ty: RcValue<'db>, loc: SourceRange) -> MetaVariableId {
     let local_index = self.next_meta_index;
     let id = MetaVariableId::new(local_index);
     self.next_meta_index += 1;
@@ -67,7 +67,7 @@ pub fn fresh_meta(&mut self, ty: RcValue<'db>, loc: Location) -> MetaVariableId 
 ```
 
 **File: `crates/hwml-elab/src/elaborator.rs`**
-- Thread `Location` through all `ctx.fresh_meta()` calls (~15 call sites)
+- Thread `SourceRange` through all `ctx.fresh_meta()` calls (~15 call sites)
 - Use `ctx.expr_location(expr)` to get location from surface AST
 
 **Testing:**
@@ -194,7 +194,7 @@ impl<'db> WellFormedType<'db> {
 
 **File: `crates/hwml-core/src/kernel/errors.rs`**
 ```rust
-use crate::{Value, QualifiedName, UniverseLevel, Location, Index};
+use crate::{Value, QualifiedName, UniverseLevel, SourceRange, Index};
 use crate::eval;
 use crate::unify;
 use std::rc::Rc;
@@ -207,7 +207,7 @@ pub enum KernelError {
     TypeMismatch {
         expected: RcValue<'db>,
         got: RcValue<'db>,
-        location: Location,
+        location: SourceRange,
     },
     UnificationFailed(String),  // Simplified for now
     EvaluationFailed(String),
@@ -227,7 +227,7 @@ impl From<eval::Error> for KernelError {
 **File: `crates/hwml-core/src/kernel/context.rs`**
 ```rust
 use crate::kernel::{KernelError, CheckedTerm, SynthesizedTerm};
-use crate::{Syntax, Value, Index, Level, Location, eval, TransparentEnv};
+use crate::{Syntax, Value, Index, Level, SourceRange, eval, TransparentEnv};
 use crate::val::{Environment, LocalEnv};
 use hwml_elab::engine::SolverEnvironment;
 use hwml_elab::force::force;
@@ -245,11 +245,11 @@ pub struct KernelContext<'db, 'g> {
     pub(super) values: LocalEnv<'db>,
 
     /// Current location for error reporting
-    pub(super) location: Location,
+    pub(super) location: SourceRange,
 }
 
 impl<'db, 'g> KernelContext<'db, 'g> {
-    pub fn new(solver: SolverEnvironment<'db, 'g>, location: Location) -> Self {
+    pub fn new(solver: SolverEnvironment<'db, 'g>, location: SourceRange) -> Self {
         Self {
             solver,
             types: Vec::new(),
@@ -735,7 +735,7 @@ async fn check_fun<'db, 'g>(
 
 | Phase | Lines | Priority | Dependencies |
 |-------|-------|----------|--------------|
-| Phase 1: Location Tracking | ~50 | HIGH | None |
+| Phase 1: SourceRange Tracking | ~50 | HIGH | None |
 | Phase 2a: Kernel Foundation | ~300 | HIGH | Phase 1 |
 | Phase 2b: Core Judgements | ~500 | HIGH | Phase 2a |
 | Phase 2c: Advanced Judgements | ~400 | MEDIUM | Phase 2b |

@@ -1,3 +1,5 @@
+use crate::engine::SolverEnvironment;
+use crate::*;
 use futures::future::join_all;
 use futures::join;
 use hwml_core::common::{MetaVariableId, UniverseLevel};
@@ -7,18 +9,16 @@ use hwml_core::val::LocalEnv;
 use hwml_core::val::RcValue;
 use hwml_core::val::TransparentEnv;
 use hwml_core::val::{Eliminator, Value};
+use hwml_core::*;
 use itertools::izip;
 use std::fmt;
 use std::future::Future;
-
-use crate::engine::SolverEnvironment;
-use crate::*;
 
 /// Unification error type for the async unifier.
 #[derive(Debug, Clone)]
 pub enum UnificationError<'db> {
     /// Evaluation error during unification
-    Eval(eval::Error),
+    Eval(eval::Error<'db>),
     /// Type mismatch between two values
     Mismatch(RcValue<'db>, RcValue<'db>),
     /// Eliminator mismatch
@@ -121,8 +121,8 @@ impl<'db> fmt::Display for UnificationError<'db> {
     }
 }
 
-impl<'db> From<eval::Error> for UnificationError<'db> {
-    fn from(e: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for UnificationError<'db> {
+    fn from(e: eval::Error<'db>) -> Self {
         UnificationError::Eval(e)
     }
 }
@@ -159,9 +159,9 @@ type UnifyResult<'db> = Result<(), UnificationError<'db>>;
 pub fn fresh_meta<'db, 'g>(
     ctx: SolverEnvironment<'db, 'g>,
     ty: RcValue<'db>,
-    loc: Location,
+    source_range: Option<SourceRange<'db>>,
 ) -> RcValue<'db> {
-    let id = ctx.fresh_meta_id(ty.clone(), loc);
+    let id = ctx.fresh_meta_id(ty.clone(), source_range);
     let substitution = ctx.tc_env.values.local.clone();
     Value::metavariable_rc(id, substitution, ty)
 }
@@ -173,7 +173,7 @@ pub fn antiunify<'db, 'g>(
     rhs: RcValue<'db>,
     ty: RcValue<'db>,
 ) -> (impl Future<Output = UnifyResult<'db>> + 'g, RcValue<'db>) {
-    let anti_meta = fresh_meta(ctx.clone(), ty.clone(), Location::UNKNOWN);
+    let anti_meta = fresh_meta(ctx.clone(), ty.clone(), None);
     let anti_meta_clone = anti_meta.clone();
     let future = async move {
         Box::pin(unify(db, ctx.clone(), lhs.clone(), rhs, ty.clone())).await?;
@@ -866,7 +866,7 @@ async fn unify_flex_same<'db, 'g>(
 
     // Create new metavariable with restricted context
     // The new meta has the same type but lives in a smaller context
-    let new_meta_id = ctx.fresh_meta_id(meta_ty, Location::UNKNOWN);
+    let new_meta_id = ctx.fresh_meta_id(meta_ty, None);
 
     // Build the solution: ?u := ?v[projection]
     // The substitution for ?v selects only the intersecting positions
@@ -1177,7 +1177,7 @@ async fn lower_flex<'db, 'g>(
 
                         // Create a new metavariable with the codomain type
                         // The new meta lives in the same context as the old one, extended by one variable
-                        let new_meta_id = ctx.fresh_meta_id(codomain_ty.clone(), Location::UNKNOWN);
+                        let new_meta_id = ctx.fresh_meta_id(codomain_ty.clone(), None);
 
                         // Build the solution for the old meta: λ. ?v[var(n), var(n-1), ..., var(0)]
                         // where n is the size of the original substitution
@@ -1361,7 +1361,7 @@ mod tests {
             let tc_env = self.tc_env();
             // Use new_from_global to pick up any declared metavariables from prelude
             let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
-            let lhs = ctx.fresh_meta(ty.clone(), Location::UNKNOWN);
+            let lhs = ctx.fresh_meta(ty.clone(), None);
 
             let db_ref: &'db dyn salsa::Database = self.db;
             let unify_future = async move {
@@ -2059,7 +2059,7 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         // Create a fresh metavariable with the given type
-        let meta_id = ctx.fresh_meta_id(meta_ty.clone(), Location::UNKNOWN);
+        let meta_id = ctx.fresh_meta_id(meta_ty.clone(), None);
 
         // Build the local environment with bound variables
         // Each variable is represented as a Rigid neutral
@@ -2289,7 +2289,7 @@ mod tests {
 
         // Create a metavariable ?M : U0
         let meta_ty = Value::universe_rc(UniverseLevel::new(0));
-        let meta_id = ctx.fresh_meta_id(meta_ty.clone(), Location::UNKNOWN);
+        let meta_id = ctx.fresh_meta_id(meta_ty.clone(), None);
 
         // Build flex terms with the given substitutions
         let lhs = make_flex(meta_id, lhs_vars, meta_ty.clone());

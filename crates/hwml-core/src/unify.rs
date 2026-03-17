@@ -48,7 +48,7 @@ fn force<'db>(
     global: &val::GlobalEnv<'db>,
     mctx: &MetaContext<'db>,
     mut value: RcValue<'db>,
-) -> Result<RcValue<'db>, eval::Error> {
+) -> Result<RcValue<'db>, eval::Error<'db>> {
     while let Value::Flex(flex) = &*value {
         match mctx.lookup(flex.head.id) {
             Some(solution) => {
@@ -66,7 +66,7 @@ fn force<'db>(
 
 #[derive(Debug)]
 pub enum UnificationError<'db> {
-    Eval(eval::Error),
+    Eval(eval::Error<'db>),
     Quote(quote::Error<'db>),
     Mismatch(RcValue<'db>, RcValue<'db>),
     MismatchSpine(val::Spine<'db>, val::Spine<'db>),
@@ -79,8 +79,8 @@ pub enum UnificationError<'db> {
 
 type UnificationResult<'db, T> = Result<T, UnificationError<'db>>;
 
-impl<'db> From<eval::Error> for UnificationError<'db> {
-    fn from(e: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for UnificationError<'db> {
+    fn from(e: eval::Error<'db>) -> Self {
         UnificationError::Eval(e)
     }
 }

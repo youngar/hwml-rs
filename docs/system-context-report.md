@@ -26,7 +26,7 @@ pub struct DatabaseImpl {
 
 - **`'db` lifetime**: Tied to the Salsa database lifetime, pervasive throughout `Syntax<'db>` and `Value<'db>`
 - **Memory model**: `Syntax` and `Value` nodes use **standard `Rc<T>` pointers** (not Salsa-interned, not arena-allocated)
-- **Interning**: Only `Location` and `QualifiedName` are Salsa-interned; AST nodes themselves are heap-allocated via `Rc`
+- **Interning**: Only `SourceRange` and `QualifiedName` are Salsa-interned; AST nodes themselves are heap-allocated via `Rc`
 
 ### Key Implication
 The `'db` lifetime is a **phantom lifetime** that ensures AST nodes don't outlive the database, but actual memory management is via reference counting.
@@ -368,7 +368,7 @@ pub enum Expression {
 
 ## 7. Recommended Next Steps
 
-1. **Location tracking** (~50 lines): Add `location: Location` to `MetaSlot`, thread through `fresh_meta()` calls
+1. **SourceRange tracking** (~50 lines): Add `location: SourceRange` to `MetaSlot`, thread through `fresh_meta()` calls
 2. **Universe level inference** (~100 lines): Replace hardcoded levels with proper inference
 3. **Motive synthesis** (~150 lines): Implement dependency-aware motive generation for pattern matching
 4. **(Optional) LCF kernel** (~2000 lines): Architectural improvement, not strictly necessary

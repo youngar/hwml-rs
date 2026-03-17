@@ -7,10 +7,6 @@ pub enum ElabError {
     Misc,
 }
 
-pub trait Located {
-    fn location(&self) -> Location;
-}
-
 pub trait ElabSyntax<'db, 'g> {
     fn elab_syntax(
         self,
@@ -36,14 +32,14 @@ pub trait ElabSyntaxTask<'db, 'g> {
 
 impl<'db, 'g: 'db, T> ElabSyntax<'db, 'g> for T
 where
-    T: ElabSyntaxTask<'db, 'g> + Located + 'db + 'g,
+    T: ElabSyntaxTask<'db, 'g> + HasSourceRange<'db> + 'db + 'g,
 {
     fn elab_syntax(
         self,
         env: &SolverEnvironment<'db, 'g>,
         ty: RcValue<'db>,
     ) -> Result<TrustedSyntax<'db>, ElabError> {
-        let sem_meta = env.fresh_meta(ty.clone(), self.location());
+        let sem_meta = env.fresh_meta(ty.clone(), self.source_range());
         let syn_meta = env.quote(&sem_meta, &ty);
 
         let env_clone = env.clone();

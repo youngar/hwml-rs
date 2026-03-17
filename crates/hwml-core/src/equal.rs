@@ -16,12 +16,12 @@ pub enum Error<'db> {
     NotConvertible,
     /// Indicates that the terms are not well-typed, so convertibility cannot be checked.
     IllTyped,
-    EvalError(eval::Error),
+    EvalError(eval::Error<'db>),
     LookupError(val::LookupError<'db>),
 }
 
-impl<'db> From<eval::Error> for Error<'db> {
-    fn from(err: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(err: eval::Error<'db>) -> Self {
         Error::EvalError(err)
     }
 }

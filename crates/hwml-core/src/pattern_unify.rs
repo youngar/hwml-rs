@@ -31,14 +31,14 @@ pub enum PatternUnifyOutcome<'db> {
 
 #[derive(Debug, Clone)]
 pub enum Error<'db> {
-    EvalError(eval::Error),
+    EvalError(eval::Error<'db>),
     EqualError(equal::Error<'db>),
     LookupError(crate::val::LookupError<'db>),
     Internal(String),
 }
 
-impl<'db> From<eval::Error> for Error<'db> {
-    fn from(err: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(err: eval::Error<'db>) -> Self {
         Error::EvalError(err)
     }
 }

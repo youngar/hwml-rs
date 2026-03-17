@@ -1,4 +1,5 @@
-use crate::loc::*;
+use crate::*;
+use hwml_core::*;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum Severity {
@@ -27,20 +28,15 @@ impl std::fmt::Display for Severity {
     }
 }
 
-pub struct Located<T>(pub T, pub Option<SourceRange>);
-
 pub type Message = String;
 
 /// A stack (backwards list) of noted positions in user code.
-pub type Trace = Vec<Located<Message>>;
+pub type Trace<'db> = Vec<WithSourceRange<'db, Message>>;
 
-pub struct Diagnostic<T> {
+pub struct Diagnostic<'db, T> {
     pub message: T,
     pub severity: Severity,
-    pub explanation: Located<Message>,
-    pub trace: Trace,
-    pub remarks: Vec<Located<Message>>,
+    pub explanation: WithSourceRange<'db, Message>,
+    pub trace: Trace<'db>,
+    pub remarks: Vec<WithSourceRange<'db, Message>>,
 }
-
-pub mod markup;
-pub mod reporter;

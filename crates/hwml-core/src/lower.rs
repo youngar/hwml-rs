@@ -12,25 +12,22 @@
 //! `eval` - the input is assumed to be fully evaluated. The pass only performs
 //! beta-reduction for hardware-level applications.
 
-use crate::{
-    eval::run_closure,
-    quote,
-    syn::RcSyntax,
-    val::{self, Closure, GlobalEnv, RcValue, Value},
-};
+use crate::*;
+use eval::run_closure;
 use std::rc::Rc;
+use val::Closure;
 
 /// Errors that can occur during lowering.
 #[derive(Debug, Clone)]
 pub enum Error<'db> {
     /// Closure evaluation failed during beta-reduction.
-    ClosureError(crate::eval::Error),
+    ClosureError(eval::Error<'db>),
     /// Quotation failed during lowering.
     QuoteError(quote::Error<'db>),
 }
 
-impl<'db> From<crate::eval::Error> for Error<'db> {
-    fn from(e: crate::eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(e: eval::Error<'db>) -> Self {
         Error::ClosureError(e)
     }
 }

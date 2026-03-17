@@ -44,7 +44,7 @@ fn main() {
 
     // Surface mode (default)
     let path = args.file.canonicalize().unwrap();
-    let path_str = path.to_string_lossy().to_string();
+    let path_str: Box<str> = path.to_string_lossy().into();
     let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
     let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
 
@@ -57,7 +57,9 @@ fn main() {
     let db = hwml_core::Database::new();
 
     // Create source file for location tracking
-    let source_file = hwml_support::SourceFile::new(&db, path_str, contents);
+    let title = hwml_core::Word::new(&db, path_str);
+    let info = hwml_core::SourceInfo::File(title);
+    let source_file = hwml_core::Source::new(&db, info);
 
     // Elaborate the program
     // let results: Vec<()> = vec![];

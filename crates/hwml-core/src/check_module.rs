@@ -14,6 +14,7 @@ use crate::syn::{RcSyntax, Syntax, Telescope};
 use crate::val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
+use crate::*;
 use crate::{QualifiedName, RcValue};
 use salsa::Database;
 
@@ -23,21 +24,21 @@ pub enum Error<'db> {
     /// Type checking error for a term.
     TypeCheck(crate::check::Error<'db>),
     /// Evaluation error.
-    Eval(crate::eval::Error),
+    Eval(crate::eval::Error<'db>),
     /// A declaration with this name already exists.
     AlreadyDefined(QualifiedName<'db>),
     /// Invalid type constructor universe.
     InvalidTypeConstructorUniverse(QualifiedName<'db>),
 }
 
-impl<'db> From<crate::check::Error<'db>> for Error<'db> {
-    fn from(e: crate::check::Error<'db>) -> Self {
+impl<'db> From<check::Error<'db>> for Error<'db> {
+    fn from(e: check::Error<'db>) -> Self {
         Error::TypeCheck(e)
     }
 }
 
-impl<'db> From<crate::eval::Error> for Error<'db> {
-    fn from(e: crate::eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(e: eval::Error<'db>) -> Self {
         Error::Eval(e)
     }
 }

@@ -67,7 +67,7 @@ impl Renaming {
 #[derive(Debug, Clone)]
 pub enum InversionError<'db> {
     /// Internal evaluation error.
-    EvalError(eval::Error),
+    EvalError(eval::Error<'db>),
     /// One of the values of the substitution is not a plain variable, which prevents us from inverting the
     /// substitution. All values in the substitution must be a plain variable.
     NonInvertibleValue(usize, RcValue<'db>),
@@ -75,8 +75,8 @@ pub enum InversionError<'db> {
     NonLinearVariable(usize, usize, RcValue<'db>),
 }
 
-impl<'db> From<eval::Error> for InversionError<'db> {
-    fn from(eval_error: eval::Error) -> InversionError<'db> {
+impl<'db> From<eval::Error<'db>> for InversionError<'db> {
+    fn from(eval_error: eval::Error<'db>) -> InversionError<'db> {
         InversionError::EvalError(eval_error)
     }
 }
@@ -135,7 +135,7 @@ pub enum Error<'db> {
         ty: RcValue<'db>,
     },
     /// Quotation can force evaluation, which may itself prevent an error.
-    EvalError(eval::Error),
+    EvalError(eval::Error<'db>),
     LookupError(val::LookupError<'db>),
     /// A variable occurred in the solution which was not renamed.
     ScopeError(Level),
@@ -145,8 +145,8 @@ pub enum Error<'db> {
     CaseScrutineeMustBeVariable,
 }
 
-impl<'db> From<eval::Error> for Error<'db> {
-    fn from(error: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(error: eval::Error<'db>) -> Self {
         Error::EvalError(error)
     }
 }

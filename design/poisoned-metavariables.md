@@ -1,8 +1,8 @@
-# Poisoned Metavariables and Location-Derived IDs
+# Poisoned Metavariables and SourceRange-Derived IDs
 
 ## Overview
 
-This document describes the implementation of the **Poisoned Metavariable** error recovery strategy and **Location-Derived MetaVariableId** architecture in the HWML elaborator.
+This document describes the implementation of the **Poisoned Metavariable** error recovery strategy and **SourceRange-Derived MetaVariableId** architecture in the HWML elaborator.
 
 ## Motivation
 
@@ -27,19 +27,19 @@ Instead of adding `SyntaxData::Error` to the Core IR, we use **poisoned metavari
 - **Out-of-band diagnostics**: Errors stored separately in `SolverState`
 - **Graceful degradation**: Elaboration continues after errors
 
-## Solution: Location-Derived IDs
+## Solution: SourceRange-Derived IDs
 
 Instead of using a global counter, `MetaVariableId` is now a composite struct:
 
 ```rust
 pub struct MetaVariableId {
-    pub loc: Location,        // Salsa-interned location
+    pub loc: SourceRange,        // Salsa-interned location
     pub local_index: u16,     // Local counter at this location
 }
 ```
 
 ### ID Generation
-- Each `Location` has its own counter stored in `SolverState::local_counters`
+- Each `SourceRange` has its own counter stored in `SolverState::local_counters`
 - When creating a fresh meta at location `L`, increment `local_counters[L]`
 - The ID is `{ loc: L, local_index: counter }`
 
@@ -68,7 +68,7 @@ struct MetaSlot<'db> {
 pub struct SolverState<'db> {
     metas: HashMap<MetaVariableId, MetaSlot<'db>>,  // Changed from Vec
     dependencies: HashMap<MetaVariableId, HashSet<MetaVariableId>>,  // NEW: DAG
-    local_counters: HashMap<Location, u16>,  // NEW: Per-location counters
+    local_counters: HashMap<SourceRange, u16>,  // NEW: Per-location counters
 }
 ```
 
@@ -76,7 +76,7 @@ pub struct SolverState<'db> {
 
 #### Fresh Meta Allocation
 ```rust
-pub fn fresh_meta(&mut self, loc: Location, ty: RcValue<'db>) -> MetaVariableId {
+pub fn fresh_meta(&mut self, loc: SourceRange, ty: RcValue<'db>) -> MetaVariableId {
     let local_index = self.local_counters.entry(loc).or_insert(0);
     let id = MetaVariableId::new(loc, *local_index);
     *local_index += 1;
@@ -84,7 +84,7 @@ pub fn fresh_meta(&mut self, loc: Location, ty: RcValue<'db>) -> MetaVariableId 
     id
 }
 
-pub fn fresh_poisoned_meta(&mut self, loc: Location, ty: RcValue<'db>) -> MetaVariableId {
+pub fn fresh_poisoned_meta(&mut self, loc: SourceRange, ty: RcValue<'db>) -> MetaVariableId {
     // Same as fresh_meta but creates a poisoned slot
 }
 ```
@@ -135,14 +135,14 @@ pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> RcSyntax<'db> 
 - ✅ Transitive cycle detection (`?M := ?N`, `?N := ?M`)
 - ✅ Valid dependencies (no false positives)
 - ✅ Poisoned meta creation and detection
-- ✅ Location-derived ID uniqueness
+- ✅ SourceRange-derived ID uniqueness
 - ✅ Zonking unsolved metas
 - ✅ Zonking solved metas
 - ✅ Zonking poisoned metas
 
 ## Future Work
 
-1. **Location Tracking**: Add current location to elaboration context
+1. **SourceRange Tracking**: Add current location to elaboration context
 2. **Error Reporting**: Collect and report poisoned metas with source locations
 3. **Dependency Visualization**: Debug tool to visualize the meta dependency DAG
 4. **Incremental Zonking**: Cache zonked terms to avoid redundant work
@@ -153,5 +153,5 @@ pub fn zonk<'db>(state: &SolverState<'db>, term: &Syntax<'db>) -> RcSyntax<'db> 
 - `crates/hwml-elab/src/unify.rs` - Poisoned meta short-circuit
 - `crates/hwml-elab/src/zonk.rs` - Zonking implementation
 - `crates/hwml-core/src/common.rs` - MetaVariableId definition
-- `docs/salsa-location-architecture.md` - Location system design
+- `docs/salsa-location-architecture.md` - SourceRange system design
 

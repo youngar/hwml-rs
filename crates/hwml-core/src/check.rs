@@ -184,7 +184,7 @@ pub enum Error<'db> {
         ty_exp: RcValue<'db>,
         ty_got: RcValue<'db>,
     },
-    EvaluationFailure(eval::Error),
+    EvaluationFailure(eval::Error<'db>),
     LookupError(val::LookupError<'db>),
     MatchOnNonDatatype(RcValue<'db>),
     QuoteError(quote::Error<'db>),
@@ -199,8 +199,8 @@ pub enum Error<'db> {
     },
 }
 
-impl<'db> From<eval::Error> for Error<'db> {
-    fn from(e: eval::Error) -> Self {
+impl<'db> From<eval::Error<'db>> for Error<'db> {
+    fn from(e: eval::Error<'db>) -> Self {
         Error::EvaluationFailure(e)
     }
 }

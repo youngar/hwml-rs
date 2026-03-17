@@ -1,14 +1,14 @@
 use crate::*;
 use hwml_core::*;
 
-struct Application<A, B> {
-    location: Location,
+struct Application<'db, A, B> {
+    source_range: SourceRange<'db>,
     fun: A,
     arg: B,
 }
 
-impl<A, B> Located for Application<A, B> {
-    fn location(&self) -> Location {
-        self.location
+impl<'db, A, B> HasSourceRange<'db> for Application<'db, A, B> {
+    fn source_range(&self) -> Option<SourceRange<'db>> {
+        self.source_range.clone().into()
     }
 }

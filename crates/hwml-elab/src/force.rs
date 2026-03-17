@@ -24,7 +24,7 @@ pub fn substitute<'db, 'g>(
 pub fn force<'db, 'g>(
     ctx: &SolverEnvironment<'db, 'g>,
     mut value: RcValue<'db>,
-) -> Result<RcValue<'db>, eval::Error> {
+) -> Result<RcValue<'db>, eval::Error<'db>> {
     let global = ctx.tc_env.values.global;
     while let Value::Flex(flex) = &*value {
         match ctx.solution(flex.head.id) {
@@ -88,7 +88,7 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         let ty = eval_str(db, global, meta_ty);
-        let meta_val = ctx.fresh_meta(ty, Location::UNKNOWN);
+        let meta_val = ctx.fresh_meta(ty, None);
         let meta_id = match &*meta_val {
             Value::Flex(flex) => flex.head.id,
             _ => panic!("Expected Flex"),
@@ -137,7 +137,7 @@ mod tests {
         let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
         let ty = eval_str(&db, &global, "U0");
-        let meta_val = ctx.fresh_meta(ty, Location::UNKNOWN);
+        let meta_val = ctx.fresh_meta(ty, None);
         let result = force(&ctx, meta_val.clone()).expect("force failed");
         assert!(Rc::ptr_eq(&meta_val, &result));
     }
