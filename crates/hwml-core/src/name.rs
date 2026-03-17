@@ -100,6 +100,15 @@ pub struct QualifiedName {
 }
 
 impl<'db> QualifiedName<'db> {
+    pub fn path(db: &'db Db, namespace: Option<QualifiedName<'db>>, path: &[Name<'db>]) -> Self {
+        let mut package = Vec::new();
+        let mut name = Name<'db>;
+        let mut names = namespace.names();
+        names.extend(path);
+        
+        QualifiedName::new(db)
+    }
+
     pub fn to_string(&self, db: &'db dyn salsa::Database) -> String {
         let mut s = String::new();
         let names = self.names(db);
