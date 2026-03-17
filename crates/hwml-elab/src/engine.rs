@@ -562,9 +562,9 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
             }
         }
 
-        // try to resolve in current namespace, and up.
-        let resolver = Resolver::new(self.package);
-        resolver.resolve(self.db(), target, self.tc_env.values.global);
+        // // try to resolve in current namespace, and up.
+        // let resolver = Resolver::in_package(self.package);
+        // resolver.resolve(self.db(), target, self.tc_env.values.global);
 
         // fail.
         None

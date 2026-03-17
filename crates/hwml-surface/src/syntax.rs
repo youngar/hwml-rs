@@ -18,21 +18,21 @@ pub enum Statement {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Namespace {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub name: Id,
     pub statements: Vec<Statement>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub enum OpenModifier {
-    Only(Location, Vec<Id>),
-    Hiding(Location, Vec<Id>),
-    Renaming(Location, Id, Id),
+    Only(Range<usize>, Vec<Id>),
+    Hiding(Range<usize>, Vec<Id>),
+    Renaming(Range<usize>, Id, Id),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Open {
-    pub loc: Location,
+    pub loc: Range<usize>,
     pub namespace: Id,
     pub modifiers: Vec<OpenModifier>,
     pub as_alias: Option<Id>,
@@ -218,5 +218,3 @@ pub struct Constructor {
     pub name: Id,
     pub ty: Box<Expression>,
 }
-
-type SourceRange = Range<usize>;

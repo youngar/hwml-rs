@@ -3,39 +3,21 @@ use crate::stub_table::StubTable;
 use hwml_core::*;
 use std::rc::Rc;
 
-/// Compositional modifiers for open statements.
-/// These allow fine-grained control over what names are imported.
-/// Paths in modifiers are relative to the opened namespace.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OpenModifier<'db> {
-    /// Import only the specified paths: `open Math (add, Algebra.multiply)`
-    /// Paths are relative to the opened namespace (e.g., `Algebra.multiply` refers to `Math/Algebra/multiply`)
-    /// The Location tracks the source location of the entire only clause for error reporting.
-    Only(Vec<Vec<Name<'db>>>, Location),
-    /// Import everything except the specified paths: `open Math hiding (Internal.Debug)`
-    /// Paths are relative to the opened namespace
-    /// The Location tracks the source location of the entire hiding clause for error reporting.
-    Hiding(Vec<Vec<Name<'db>>>, Location),
-    /// Rename a path during import: `open Math renaming (Algebra.add to Alg.plus)`
-    /// The first path is relative to the opened namespace, the second is the new name in the current scope
-    /// The Location tracks the source location of the entire renaming clause for error reporting.
-    Renaming(Vec<Name<'db>>, Vec<Name<'db>>, Location),
+    Only(Vec<Vec<Name<'db>>>, Option<SourceRange<'db>>),
+    Hiding(Vec<Vec<Name<'db>>>, Option<SourceRange<'db>>),
+    Renaming(Vec<Name<'db>>, Vec<Name<'db>>, Option<SourceRange<'db>>),
 }
 
-/// An open directive that brings names from a namespace into scope.
-/// Supports compositional modifiers for filtering and renaming.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct OpenDirective<'db> {
-    /// The namespace being opened
     pub namespace: QualifiedName<'db>,
-    /// Modifiers that filter or transform the imported names
     pub modifiers: Vec<OpenModifier<'db>>,
-    /// Optional alias for the namespace: `open Math as M`
     pub as_alias: Option<Name<'db>>,
 }
 
 impl<'db> OpenDirective<'db> {
-    /// Create a new open directive with no modifiers
     pub fn new(namespace: QualifiedName<'db>) -> Self {
         OpenDirective {
             namespace,
@@ -44,7 +26,6 @@ impl<'db> OpenDirective<'db> {
         }
     }
 
-    /// Create a new open directive with modifiers
     pub fn with_modifiers(
         namespace: QualifiedName<'db>,
         modifiers: Vec<OpenModifier<'db>>,
@@ -56,7 +37,6 @@ impl<'db> OpenDirective<'db> {
         }
     }
 
-    /// Create a new open directive with an alias
     pub fn with_alias(namespace: QualifiedName<'db>, alias: Name<'db>) -> Self {
         OpenDirective {
             namespace,
@@ -137,37 +117,6 @@ impl<'db> OpenDirective<'db> {
     }
 }
 
-/// Result of a successful name resolution.
-#[derive(Debug, Clone)]
-pub enum ResolvedName<'db> {
-    /// A local variable from the DubbingTable.
-    /// The `Vec<Name>` contains any remaining path segments (projections).
-    /// E.g., if path was `["x", "y"]` and `x` is local, tail is `["y"]`.
-    Local(Level, Vec<Name<'db>>),
-    /// A bound value (from a `let` binding) with known type and value.
-    /// The `Vec<Name>` contains any remaining path segments (projections).
-    Value(TypedValue<'db>, Vec<Name<'db>>),
-    /// A fully qualified global definition or namespace.
-    Global(QualifiedName<'db>),
-}
-
-// Manual PartialEq implementation since TypedValue doesn't implement Eq
-impl<'db> PartialEq for ResolvedName<'db> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ResolvedName::Local(l1, t1), ResolvedName::Local(l2, t2)) => l1 == l2 && t1 == t2,
-            (ResolvedName::Global(g1), ResolvedName::Global(g2)) => g1 == g2,
-            // Values are compared by pointer equality (Rc equality)
-            (ResolvedName::Value(v1, t1), ResolvedName::Value(v2, t2)) => {
-                Rc::ptr_eq(&v1.subject, &v2.subject) && Rc::ptr_eq(&v1.ty, &v2.ty) && t1 == t2
-            }
-            _ => false,
-        }
-    }
-}
-
-impl<'db> Eq for ResolvedName<'db> {}
-
 /// Errors that can occur during name resolution.
 #[derive(Debug, Clone)]
 pub enum ResolutionError<'db> {
@@ -219,60 +168,45 @@ where
     base.expect("extend_path called with empty path")
 }
 
-/// Resolver manages namespace resolution state during elaboration.
-///
-/// It tracks:
-/// - The current namespace stack (as a linked QualifiedName)
-/// - Opened namespaces with their modifiers (for `open` statements)
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Resolver<'db> {
-    /// Current namespace, represented as a linked QualifiedName.
-    /// None = root namespace
-    /// Some(qn) = inside namespace(s), where qn is the full path
-    current_namespace: Option<QualifiedName<'db>>,
-
-    /// Namespaces brought into scope via `open` statements.
-    /// Each directive includes the namespace and optional modifiers/aliases.
-    opened_directives: Vec<OpenDirective<'db>>,
+    namespace: Option<QualifiedName<'db>>,
+    open_directives: Vec<OpenDirective<'db>>,
 }
 
 impl<'db> Resolver<'db> {
     pub fn new() -> Self {
-        Resolver {
-            current_namespace: None,
-            opened_directives: Vec::new(),
+        Self {
+            namespace: None,
+            open_directives: Vec::new(),
         }
     }
 
-    pub fn current_namespace(&self) -> Option<QualifiedName<'db>> {
-        self.current_namespace
+    pub fn namespace(&self) -> Option<QualifiedName<'db>> {
+        self.namespace
     }
 
-    pub fn push_namespace<Db>(&self, db: &'db Db, segment: Name<'db>) -> Self
+    pub fn extend<Db>(&self, db: &'db Db, path: &[Name<'db>]) -> Self
     where
         Db: salsa::Database + ?Sized,
     {
-        let new_namespace = QualifiedName::new(db, self.current_namespace, segment);
-        Resolver {
-            current_namespace: Some(new_namespace),
-            opened_directives: self.opened_directives.clone(),
+        let namespace = QualifiedName::from_path(self.namespace, path);
+        Self {
+            namespace: Some(namespace),
+            open_directives: self.open_directives.clone(),
         }
     }
 
     pub fn add_open_directive(mut self, directive: OpenDirective<'db>) -> Self {
-        self.opened_directives.push(directive);
+        self.open_directives.push(directive);
         self
     }
 
-    /// Qualify a simple name with the current namespace.
-    ///
-    /// Example: If current namespace is `Math/Algebra` and name is `foo`,
-    /// returns `Math/Algebra/foo`
     pub fn qualify<Db>(&self, db: &'db Db, name: Name<'db>) -> QualifiedName<'db>
     where
         Db: salsa::Database + ?Sized,
     {
-        QualifiedName::new(db, self.current_namespace, name)
+        QualifiedName::new(db, self.namespace, name)
     }
 
     pub fn resolve<Db>(
@@ -285,7 +219,7 @@ impl<'db> Resolver<'db> {
         Db: salsa::Database + ?Sized,
     {
         // Step 1: Check current namespace and walk up the hierarchy
-        let mut namespace = self.current_namespace;
+        let mut namespace = self.namespace;
         while let Some(ns) = namespace {
             let qualified = QualifiedName::new(db, Some(ns), name);
             if global_env.contains(qualified) {
@@ -304,33 +238,13 @@ impl<'db> Resolver<'db> {
     }
 }
 
-/// Unified path resolution function that handles both simple names and compound paths.
-///
-/// This is the workhorse of the elaborator - it resolves a path by checking:
-/// 1. Aliases (prefix rewriting for `open Math as M`)
-/// 2. Locals (DubbingTable) - these always shadow globals, returns tail for projections
-/// 3. Current namespace (Resolver + StubTable) - walks up the hierarchy
-/// 4. Opened namespaces (with compositional modifiers)
-/// 5. Root namespace (StubTable)
-///
-/// # Arguments
-/// * `path` - Slice of name segments (e.g., `["Math", "add"]` for `Math.add`)
-///
-/// # Returns
-/// * `ResolvedName::Local(level, tail)` - Local variable with remaining path segments
-/// * `ResolvedName::Global(fqn)` - Fully qualified global definition
-///
-/// # Examples
-/// * `["x"]` where `x` is local → `Local(Level(0), [])`
-/// * `["x", "field"]` where `x` is local → `Local(Level(0), ["field"])`
-/// * `["Math", "add"]` → `Global(Math/add)`
 pub fn resolve_path<'db, Db>(
     db: &'db Db,
     path: &[Name<'db>],
     dubbing_table: &DubbingTable<'db>,
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
-) -> Result<ResolvedName<'db>, ResolutionError<'db>>
+) -> Result<QualifiedName<'db>, ResolutionError<'db>>
 where
     Db: salsa::Database + ?Sized,
 {
@@ -343,7 +257,7 @@ where
     // STEP 1: Aliases (Prefix Rewriting)
     // If `base_name` matches an alias like "M" from "open Math as M",
     // rewrite to the full namespace path and do a direct lookup.
-    for directive in &resolver.opened_directives {
+    for directive in &resolver.open_directives {
         if directive.as_alias == Some(base_name) {
             // Rewrite: M.add → Math/add
             let fully_qualified = extend_path(db, Some(directive.namespace), tail);
@@ -444,7 +358,7 @@ pub fn resolve_name<'db, Db>(
     dubbing_table: &DubbingTable<'db>,
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
-) -> Result<ResolvedName<'db>, ResolutionError<'db>>
+) -> Result<QualifiedName<'db>, ResolutionError<'db>>
 where
     Db: salsa::Database + ?Sized,
 {

@@ -224,10 +224,7 @@ impl<'db> StubTable<'db> {
         let prim_name = prim_name[0];
 
         // Extend the resolver with namespace segments
-        let mut extended_resolver = resolver.clone();
-        for &segment in namespace_segments {
-            extended_resolver = extended_resolver.push_namespace(db, segment);
-        }
+        let extended_resolver = resolver.extend(db, namespace_segments);
 
         let qualified_name = extended_resolver.qualify(db, prim_name);
 
