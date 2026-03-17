@@ -44,6 +44,8 @@ pub enum LexicalError {
 // 3000 IDEOGRAPHIC SPACE
 #[logos(subpattern horizontal_whitespace = "\u{0009}|\u{0020}|\u{00A0}|\u{1680}|\u{2000}|\u{2001}|\u{2002}|\u{2003}|\u{2004}|\u{2005}|\u{2006}|\u{2007}|\u{2008}|\u{2009}|\u{200A}|\u{202F}|\u{205F}|\u{3000}")]
 pub enum Token {
+    #[token("namespace", priority = 4)]
+    Namespace,
     #[token("def", priority = 4)]
     Def,
     #[token("meta", priority = 4)]
@@ -72,6 +74,16 @@ pub enum Token {
     Where,
     #[token("Type", priority = 4)]
     Type,
+    #[token("open", priority = 4)]
+    Open,
+    #[token("hiding", priority = 4)]
+    Hiding,
+    #[token("renaming", priority = 4)]
+    Renaming,
+    #[token("as", priority = 4)]
+    As,
+    #[token("to", priority = 4)]
+    To,
     #[token("(", priority = 10)]
     LParen,
     #[token(")", priority = 10)]
@@ -114,9 +126,10 @@ pub enum Token {
     BlockComment,
     #[regex(r"[0-9]+", priority = 3)]
     Number,
-    // Brackets, semicolons, commas, and periods should break up identifiers.
-    #[regex(r"[^\p{gc=Separator}\p{gc=Control}{}()\[\];,\.]+", priority = 2)]
-    Ident,
+    // Identifiers can contain dots for qualified names like Foo.Bar.Baz
+    // Brackets, semicolons, and commas should break up identifiers.
+    #[regex(r"[^\p{gc=Separator}\p{gc=Control}{}()\[\];,]+", priority = 2)]
+    Identifier,
     // Any valid UTF-8 character is treated as some unknown kind of whitespace.
     // Equivalent to [\u{0}-\u{10FFFF}].
     #[regex(r".", priority = 1)]

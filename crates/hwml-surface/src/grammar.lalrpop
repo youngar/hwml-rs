@@ -5,15 +5,46 @@ use lalrpop_util::ErrorRecovery;
 
 grammar<'input>(input: &'input [u8]);
 
+// Helper macro for comma-separated lists: (A, B, C)
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
 pub Program: Program = {
   <stmts:Stmt*> => Program::new(stmts)
 };
 
 Stmt: Statement = {
+    <n:Namespace> => Statement::Namespace(n),
+    <o:Open> => Statement::Open(o),
     <d:Def> => Statement::Def(d),
     <m:Meta> => Statement::Meta(m),
     <p:Prim> => Statement::Prim(p),
     <i:Inductive> => Statement::Inductive(i),
+};
+
+Namespace: Namespace = {
+    <l:@L> "namespace" <name:Id> "{" <stmts:Stmt*> "}" <r:@R> => {
+        Namespace::new(l..r, name, stmts)
+    }
+};
+
+Open: Open = {
+    <l:@L> "open" <namespace:Id> <modifiers:OpenModifier*> <as_alias:("as" <Id>)?> <r:@R> => {
+        Open::new(l..r, namespace, modifiers, as_alias)
+    }
+};
+
+OpenModifier: OpenModifier = {
+    <l:@L> "(" <names:Comma<Id>> ")" <r:@R> => OpenModifier::Only(l..r, names),
+    <l:@L> "hiding" "(" <names:Comma<Id>> ")" <r:@R> => OpenModifier::Hiding(l..r, names),
+    <l:@L> "renaming" "(" <from:Id> "to" <to:Id> ")" <r:@R> => OpenModifier::Renaming(l..r, from, to),
 };
 
 Meta: Meta = {
@@ -256,6 +287,7 @@ extern {
   type Location = usize;
 
   enum Token {
+    "namespace" => Token::Namespace,
     "def" => Token::Def,
     "meta" => Token::Meta,
     "prim" => Token::Prim,
@@ -270,6 +302,11 @@ extern {
     "inductive" => Token::Inductive,
     "where" => Token::Where,
     "Type" => Token::Type,
+    "open" => Token::Open,
+    "hiding" => Token::Hiding,
+    "renaming" => Token::Renaming,
+    "as" => Token::As,
+    "to" => Token::To,
     "|" => Token::Pipe,
     "(" => Token::LParen,
     ")" => Token::RParen,
@@ -287,7 +324,7 @@ extern {
     ";" => Token::Semicolon,
     "_" => Token::Underscore,
     "num" => Token::Number,
-    "id" => Token::Ident,
+    "id" => Token::Identifier,
     "error" => Token::Error,
   }
 }

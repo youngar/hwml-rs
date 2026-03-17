@@ -8,10 +8,34 @@ pub struct Program {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub enum Statement {
+    Namespace(Namespace),
     Def(Def),
     Meta(Meta),
     Prim(Prim),
     Inductive(Inductive),
+    Open(Open),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Namespace {
+    pub loc: Location,
+    pub name: Id,
+    pub statements: Vec<Statement>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub enum OpenModifier {
+    Only(Location, Vec<Id>),
+    Hiding(Location, Vec<Id>),
+    Renaming(Location, Id, Id),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Open {
+    pub loc: Location,
+    pub namespace: Id,
+    pub modifiers: Vec<OpenModifier>,
+    pub as_alias: Option<Id>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -144,6 +168,15 @@ pub struct App {
 pub struct Id {
     pub loc: Range<usize>,
     pub value: Box<[u8]>,
+}
+
+impl Id {
+    /// Iterator over the segments of a qualified identifier.
+    /// For example, "Foo.Bar.Baz" yields ["Foo", "Bar", "Baz"]
+    /// A simple identifier like "Foo" yields ["Foo"]
+    pub fn segments(&self) -> impl Iterator<Item = &[u8]> {
+        self.value.split(|&b| b == b'.')
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]

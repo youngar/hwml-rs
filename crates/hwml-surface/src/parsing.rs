@@ -106,4 +106,71 @@ mod tests {
             _ => panic!("Expected Inductive statement"),
         }
     }
+
+    #[test]
+    fn test_parse_simple_namespace() {
+        let input = b"namespace Foo { def x := 1 }";
+        let program = parse(input).expect("parse failed");
+        assert_eq!(program.statements.len(), 1);
+
+        match &program.statements[0] {
+            Statement::Namespace(ns) => {
+                assert_eq!(std::str::from_utf8(&ns.name.value).unwrap(), "Foo");
+                let segments: Vec<_> = ns.name.segments().collect();
+                assert_eq!(segments.len(), 1);
+                assert_eq!(segments[0], b"Foo");
+                assert_eq!(ns.statements.len(), 1);
+            }
+            _ => panic!("Expected Namespace statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_qualified_namespace() {
+        let input = b"namespace Foo.Bar.Baz { prim Bit : Signal }";
+        let program = parse(input).expect("parse failed");
+        assert_eq!(program.statements.len(), 1);
+
+        match &program.statements[0] {
+            Statement::Namespace(ns) => {
+                assert_eq!(std::str::from_utf8(&ns.name.value).unwrap(), "Foo.Bar.Baz");
+                let segments: Vec<_> = ns.name.segments().collect();
+                assert_eq!(segments.len(), 3);
+                assert_eq!(segments[0], b"Foo");
+                assert_eq!(segments[1], b"Bar");
+                assert_eq!(segments[2], b"Baz");
+                assert_eq!(ns.statements.len(), 1);
+            }
+            _ => panic!("Expected Namespace statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_namespace() {
+        let input = b"namespace Outer { namespace Inner { def x := 1 } }";
+        let program = parse(input).expect("parse failed");
+        assert_eq!(program.statements.len(), 1);
+
+        match &program.statements[0] {
+            Statement::Namespace(outer) => {
+                assert_eq!(std::str::from_utf8(&outer.name.value).unwrap(), "Outer");
+                let segments: Vec<_> = outer.name.segments().collect();
+                assert_eq!(segments.len(), 1);
+                assert_eq!(segments[0], b"Outer");
+                assert_eq!(outer.statements.len(), 1);
+
+                match &outer.statements[0] {
+                    Statement::Namespace(inner) => {
+                        assert_eq!(std::str::from_utf8(&inner.name.value).unwrap(), "Inner");
+                        let segments: Vec<_> = inner.name.segments().collect();
+                        assert_eq!(segments.len(), 1);
+                        assert_eq!(segments[0], b"Inner");
+                        assert_eq!(inner.statements.len(), 1);
+                    }
+                    _ => panic!("Expected nested Namespace statement"),
+                }
+            }
+            _ => panic!("Expected Namespace statement"),
+        }
+    }
 }
