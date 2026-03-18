@@ -8,12 +8,12 @@ pub struct Word {
 
 impl<'db, T> FromWithDb<'db, T> for Word<'db>
 where
-    T: Into<String>,
+    T: Into<Box<str>>,
 {
     fn from_with_db<Db>(db: &'db Db, value: T) -> Word<'db>
     where
         Db: salsa::Database + ?Sized,
     {
-        Word::new(db, value.into().into_boxed_str())
+        Word::new(db, value.into())
     }
 }
