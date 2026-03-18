@@ -95,23 +95,14 @@ where
 
 #[salsa::interned]
 pub struct QualifiedName {
-    pub package: Option<QualifiedName<'db>>,
+    pub namespace: Option<QualifiedName<'db>>,
     pub name: Name<'db>,
 }
 
 impl<'db> QualifiedName<'db> {
-    pub fn path(db: &'db Db, namespace: Option<QualifiedName<'db>>, path: &[Name<'db>]) -> Self {
-        let mut package = Vec::new();
-        let mut name = Name<'db>;
-        let mut names = namespace.names();
-        names.extend(path);
-        
-        QualifiedName::new(db)
-    }
-
     pub fn to_string(&self, db: &'db dyn salsa::Database) -> String {
         let mut s = String::new();
-        let names = self.names(db);
+        let names = self.segments(db);
         let mut first = true;
         for name in names {
             if !first {
@@ -123,7 +114,7 @@ impl<'db> QualifiedName<'db> {
         s
     }
 
-    pub fn names<Db>(self, db: &'db Db) -> Vec<Name<'db>>
+    pub fn segments<Db>(self, db: &'db Db) -> Vec<Name<'db>>
     where
         Db: salsa::Database + ?Sized,
     {
@@ -131,18 +122,33 @@ impl<'db> QualifiedName<'db> {
         let mut current = Some(self);
         while let Some(qn) = current {
             names.push(qn.name(db));
-            current = qn.package(db);
+            current = qn.namespace(db);
         }
         names.reverse();
         names
     }
 
-    pub fn extend<Db, T>(self, db: &'db Db, name: T) -> QualifiedName<'db>
+    pub fn qualify_name<Db, T>(self, db: &'db Db, name: T) -> QualifiedName<'db>
     where
         Db: ?Sized + salsa::Database,
         T: IntoWithDb<'db, Name<'db>>,
     {
         QualifiedName::new(db, Some(self), name.into_with_db(db))
+    }
+
+    pub fn qualify_path<Db>(
+        db: &'db Db,
+        namespace: Option<QualifiedName<'db>>,
+        path: &[Name<'db>],
+    ) -> Option<Self>
+    where
+        Db: salsa::Database + ?Sized,
+    {
+        let mut qualified_name = namespace;
+        for segment in path {
+            qualified_name = Some(QualifiedName::new(db, qualified_name, *segment));
+        }
+        qualified_name
     }
 }
 
