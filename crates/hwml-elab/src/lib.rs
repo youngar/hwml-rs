@@ -10,6 +10,7 @@ pub mod resolver;
 pub mod stub_table;
 pub mod trusted;
 pub mod unify;
+pub mod util;
 pub mod zonk;
 
 pub use binder::*;
@@ -25,4 +26,5 @@ pub use stub_table::*;
 pub use trusted::*;
 pub use unify::UnificationError;
 pub use unify::*;
+pub use util::*;
 pub use zonk::*;
