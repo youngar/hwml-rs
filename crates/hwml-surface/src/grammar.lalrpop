@@ -48,20 +48,20 @@ OpenModifier: OpenModifier = {
 };
 
 Meta: Meta = {
-    "meta" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> => {
-        Meta::new(id, bs, ty.map(|(_,expr)| expr), value)
+    <l:@L> "meta" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> <r:@R> => {
+        Meta::new(l..r, id, bs, ty.map(|(_,expr)| expr), value)
     }
 };
 
 Def: Def = {
-    "def" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> => {
-        Def::new(id, bs, ty.map(|(_, expr)| expr), value)
+    <l:@L> "def" <id:Id> <bs:OptionalBindings> <ty:(":" Expr0)?> ":=" <value:Expr0> <r:@R> => {
+        Def::new(l..r, id, bs, ty.map(|(_, expr)| expr), value)
     }
 };
 
 Prim: Prim = {
-    "prim" <id:Id> ":" <ty:Expr0> => {
-        Prim::new(id, ty)
+    <l:@L> "prim" <id:Id> ":" <ty:Expr0> <r:@R> => {
+        Prim::new(l..r, id, ty)
     }
 };
 

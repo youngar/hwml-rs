@@ -40,6 +40,7 @@ pub struct Open {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Meta {
+    pub loc: Range<usize>,
     pub id: Id,
     pub bindings: Bindings,
     pub ty: Option<Box<Expression>>,
@@ -48,6 +49,7 @@ pub struct Meta {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Def {
+    pub loc: Range<usize>,
     pub id: Id,
     pub bindings: Bindings,
     pub ty: Option<Box<Expression>>,
@@ -56,6 +58,7 @@ pub struct Def {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Prim {
+    pub loc: Range<usize>,
     pub id: Id,
     pub ty: Box<Expression>,
 }
