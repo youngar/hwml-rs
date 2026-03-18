@@ -2240,7 +2240,7 @@ mod tests {
     fn test_parse_constant_hierarchical_two_components() {
         let db = Database::new();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
-        let foo_bar = foo.extend(&db, "bar");
+        let foo_bar = foo.qualify_name(&db, "bar");
         assert_syntax_eq_data(&db, &parse(&db, "@foo/bar"), &Syntax::constant_rc(foo_bar));
     }
 
@@ -2248,8 +2248,8 @@ mod tests {
     fn test_parse_constant_hierarchical_three_components() {
         let db = Database::new();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
-        let foo_bar = foo.extend(&db, "bar");
-        let foo_bar_baz = foo_bar.extend(&db, "baz");
+        let foo_bar = foo.qualify_name(&db, "bar");
+        let foo_bar_baz = foo_bar.qualify_name(&db, "baz");
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@foo/bar/baz"),
@@ -2261,7 +2261,7 @@ mod tests {
     fn test_parse_primitive_hierarchical_two_components() {
         let db = Database::new();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
-        let path_to = path.extend(&db, "to");
+        let path_to = path.qualify_name(&db, "to");
         assert_syntax_eq_data(&db, &parse(&db, "$path/to"), &Syntax::prim_rc(path_to));
     }
 
@@ -2269,8 +2269,8 @@ mod tests {
     fn test_parse_primitive_hierarchical_three_components() {
         let db = Database::new();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
-        let path_to = path.extend(&db, "to");
-        let path_to_prim = path_to.extend(&db, "prim");
+        let path_to = path.qualify_name(&db, "to");
+        let path_to_prim = path_to.qualify_name(&db, "prim");
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$path/to/prim"),
@@ -2282,10 +2282,10 @@ mod tests {
     fn test_parse_constant_hierarchical_in_application() {
         let db = Database::new();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
-        let foo_bar = foo.extend(&db, "bar");
-        let foo_bar_baz = foo_bar.extend(&db, "baz");
+        let foo_bar = foo.qualify_name(&db, "bar");
+        let foo_bar_baz = foo_bar.qualify_name(&db, "baz");
         let x: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "x");
-        let x_y = x.extend(&db, "y");
+        let x_y = x.qualify_name(&db, "y");
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@foo/bar/baz @x/y"),

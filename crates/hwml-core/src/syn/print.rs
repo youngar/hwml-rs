@@ -1329,7 +1329,7 @@ mod tests {
     fn print_constant_hierarchical_two_components() {
         let db = Database::new();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
-        let foo_bar = foo.extend(&db, "bar");
+        let foo_bar = foo.qualify_name(&db, "bar");
         assert_snapshot!(p(&db, &Syntax::constant_rc(foo_bar)), @"@foo/bar");
     }
 
@@ -1337,8 +1337,8 @@ mod tests {
     fn print_constant_hierarchical_three_components() {
         let db = Database::new();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
-        let foo_bar = foo.extend(&db, "bar");
-        let foo_bar_baz = foo_bar.extend(&db, "baz");
+        let foo_bar = foo.qualify_name(&db, "bar");
+        let foo_bar_baz = foo_bar.qualify_name(&db, "baz");
         assert_snapshot!(p(&db, &Syntax::constant_rc(foo_bar_baz)), @"@foo/bar/baz");
     }
 
@@ -1346,7 +1346,7 @@ mod tests {
     fn print_primitive_hierarchical_two_components() {
         let db = Database::new();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
-        let path_to = path.extend(&db, "to");
+        let path_to = path.qualify_name(&db, "to");
         assert_snapshot!(p(&db, &Syntax::prim_rc(path_to)), @"$path/to");
     }
 
@@ -1354,8 +1354,8 @@ mod tests {
     fn print_primitive_hierarchical_three_components() {
         let db = Database::new();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
-        let path_to = path.extend(&db, "to");
-        let path_to_prim = path_to.extend(&db, "prim");
+        let path_to = path.qualify_name(&db, "to");
+        let path_to_prim = path_to.qualify_name(&db, "prim");
         assert_snapshot!(p(&db, &Syntax::prim_rc(path_to_prim)), @"$path/to/prim");
     }
 
@@ -1363,7 +1363,7 @@ mod tests {
     fn print_type_constructor_hierarchical() {
         let db = Database::new();
         let std: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "std");
-        let std_vec = std.extend(&db, "Vec");
+        let std_vec = std.qualify_name(&db, "Vec");
         assert_snapshot!(
             p(&db, &Syntax::type_constructor(std_vec, vec![Syntax::constant_rc("A".into_with_db(&db))])),
             @"#[@std/Vec @A]"
@@ -1374,7 +1374,7 @@ mod tests {
     fn print_data_constructor_hierarchical() {
         let db = Database::new();
         let std: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "std");
-        let std_some = std.extend(&db, "Some");
+        let std_some = std.qualify_name(&db, "Some");
         assert_snapshot!(
             p(&db, &Syntax::data_constructor(std_some, vec![Syntax::constant_rc("x".into_with_db(&db))])),
             @"[@std/Some @x]"
