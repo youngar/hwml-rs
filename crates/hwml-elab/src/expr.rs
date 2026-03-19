@@ -22,19 +22,18 @@ pub fn clone<'db, 'g>(env: &SolverEnvironment<'db, 'g>) -> SolverEnvironment<'db
 pub fn switch<'db, 'g>(
     env: SolverEnvironment<'db, 'g>,
     expr: Expression,
-    ty1: RcValue<'db>,
+    lhs_ty: RcValue<'db>,
 ) -> TrustedSyntax<'db> {
-    let meta = env.fresh_syn_meta(ty1.clone(), None);
-    let tm1 = meta.clone();
-    let Trusted(Typed(tm2, ty2)) = synth_expr(env.clone(), expr);
-    let env_clone = clone(&env);
-    env.spawn(async move {
-        unify_ty(env_clone.clone(), ty1.clone(), ty2).await.unwrap();
-        // let sem_tm1 = env.eval(&tm1.clone());
-        // let sem_tm2 = env.eval(&tm2);
-        // unify(env.db(), env, sem_tm1, sem_tm2, ty1).await.unwrap();
+    let Trusted(Typed(syn_rhs, rhs_ty)) = synth_expr(env.clone(), expr);
+    let sem_lhs = env.fresh_meta(lhs_ty.clone(), None);
+    let sem_rhs = env.eval(&syn_rhs);
+    let syn_lhs = env.quote(&sem_lhs, &lhs_ty);
+    let bg = env.clone();
+    env.constrain(async move {
+        unify_ty(bg.clone(), lhs_ty.clone(), rhs_ty).await.unwrap();
+        unify(bg.db(), bg, sem_lhs, sem_rhs, lhs_ty).await.unwrap();
     });
-    Trusted(meta)
+    Trusted(syn_lhs)
 }
 
 pub fn check_fun<'db, 'g>(

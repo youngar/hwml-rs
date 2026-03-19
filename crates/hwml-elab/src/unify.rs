@@ -166,6 +166,21 @@ pub fn fresh_meta<'db, 'g>(
     Value::metavariable_rc(id, substitution, ty)
 }
 
+pub fn constrain_equal_ty<'db, 'g>(
+    env: SolverEnvironment<'db, 'g>,
+    lhs: RcValue<'db>,
+    rhs: RcValue<'db>,
+) -> RcValue<'db> {
+    let universe = Value::universe_rc(UniverseLevel::new(0));
+    let meta = env.fresh_meta(universe, None);
+    let bg_env = env.clone();
+    let bg_meta = meta.clone();
+    env.constrain(async move {
+        antiunify_ty(bg_env, lhs, rhs, bg_meta).await;
+    });
+    meta
+}
+
 pub async fn antiunify_ty<'db, 'g>(
     env: SolverEnvironment<'db, 'g>,
     lhs: RcValue<'db>,

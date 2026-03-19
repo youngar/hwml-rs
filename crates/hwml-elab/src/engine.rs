@@ -546,6 +546,13 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         self.spawner.spawn(future)
     }
 
+    pub fn constrain<C>(&self, constraint: C)
+    where
+        C: Future<Output = ()> + 'g,
+    {
+        self.spawn(constraint)
+    }
+
     pub fn resolve(&self, target: Name<'db>) -> Option<TypedSyntax<'db>> {
         // Try to resolve as local.
         if let Some(subject) = self.dubbing_table.resolve(target) {
