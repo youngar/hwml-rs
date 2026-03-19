@@ -2,54 +2,63 @@ use crate::unify::unify;
 use crate::*;
 use hwml_core::*;
 
-pub struct ElabLambda<'db, A> {
-    pub source_range: Option<SourceRange<'db>>,
-    pub binder: Binder<'db>,
-    pub body: A,
-}
-
-impl<'db, A> HasSourceRange<'db> for ElabLambda<'db, A> {
-    fn source_range(&self) -> Option<SourceRange<'db>> {
-        self.source_range.clone().into()
-    }
-}
-
-impl<'db, 'g, A> ElabSyntaxTask<'db, 'g> for ElabLambda<'db, A>
-where
-    A: ElabSyntax<'db, 'g> + HasSourceRange<'db>,
+async fn lambda_task<'db, 'g, F>(
+    mut env: SolverEnvironment<'db, 'g>,
+    loc: Option<SourceRange<'db>>,
+    tm: RcValue<'db>,
+    ty: RcValue<'db>,
+    binder: Binder<'db>,
+    body: F,
+) where
+    F: Fn(SolverEnvironment<'db, 'g>, RcValue<'db>) -> TrustedSyntax<'db> + 'db,
 {
-    /// Check that the expected type is a pi, before elaborating the body.
-    /// Return the elaborated lambda.
-    async fn elab_syntax_task(
-        self,
-        env: &SolverEnvironment<'db, 'g>,
-        ty: RcValue<'db>,
-    ) -> TrustedSyntax<'db> {
-        // TODO: This should be using a level variable, with constraints.
-        let mut env = env.clone();
-        let universe = Value::universe_rc(UniverseLevel::new(0));
+    // TODO: This should be using a level variable, with constraints.
+    let universe = Value::universe_rc(UniverseLevel::new(0));
 
-        // Build a Pi pattern.
-        let source = env.fresh_meta(universe.clone(), self.source_range());
-        let target = env.under_binder(self.binder.name, source.clone(), |env| {
-            env.fresh_meta(universe.clone(), self.source_range())
-        });
+    // Build a Pi pattern.
+    let source = env.fresh_meta(universe.clone(), loc.clone());
+    let target = env.under_binder(binder.name, source.clone(), |env| {
+        env.fresh_meta(universe.clone(), loc.clone())
+    });
 
-        // Ensure the expected type is `(x : a) -> b(x)`.
-        let target_closure = env.make_closure(target.as_ref(), &universe);
-        let pi = Value::pi_rc(source.clone(), target_closure);
-        unify(env.db(), env.clone(), ty, pi, universe)
-            .await
-            .unwrap();
+    // Ensure the expected type is `(x : a) -> b(x)`.
+    let target_closure = env.make_closure(target.as_ref(), &universe);
+    let pi = Value::pi_rc(source.clone(), target_closure);
+    unify(env.db(), env.clone(), ty.clone(), pi, universe)
+        .await
+        .unwrap();
 
-        // Elaborate the body: `env, x : source |- body : target`.
-        let body = env
-            .under_binder(self.binder.name, source.clone(), |env| {
-                self.body.elab_syntax(env, target.body).unwrap()
-            })
-            .into_inner()
-            .0;
+    // Elaborate the body: `env, x : source |- body : target`.
+    let body = env
+        .under_binder(binder.name, source.clone(), |env| {
+            body(env.clone(), target.body)
+        })
+        .into_inner()
+        .0;
 
-        Trusted(Syntax::lambda_rc(Binding { body }))
-    }
+    let syn_solution = Syntax::lambda_rc(Binding { body });
+    let sem_solution = env.eval(&syn_solution);
+    unify(env.db(), env, tm, sem_solution, ty).await.unwrap();
+}
+
+pub fn lambda<'db, 'g: 'db, F>(
+    env: SolverEnvironment<'db, 'g>,
+    loc: Option<SourceRange<'db>>,
+    ty: RcValue<'db>,
+    binder: Binder<'db>,
+    body: F,
+) -> TrustedSyntax<'db>
+where
+    F: Fn(SolverEnvironment<'db, 'g>, RcValue<'db>) -> TrustedSyntax<'db> + 'db,
+{
+    let meta = env.fresh_meta(ty.clone(), loc.clone());
+    env.spawner.spawn(lambda_task(
+        env.clone(),
+        loc,
+        meta.clone(),
+        ty.clone(),
+        binder,
+        body,
+    ));
+    Trusted(env.quote(&meta, &ty))
 }

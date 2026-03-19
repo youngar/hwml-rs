@@ -511,7 +511,7 @@ pub struct SolverEnvironment<'db, 'g> {
     /// Type-checking environment for evaluation and type checking.
     pub tc_env: TCEnvironment<'db, 'g>,
     /// Task spawner for spawning concurrent unification tasks
-    pub spawner: TaskSpawner<'db>,
+    pub spawner: TaskSpawner<'g>,
 }
 
 impl<'db, 'g> SolverEnvironment<'db, 'g> {
@@ -520,7 +520,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     pub fn new(
         package: Option<QualifiedName<'db>>,
         tc_env: TCEnvironment<'db, 'g>,
-        spawner: TaskSpawner<'db>,
+        spawner: TaskSpawner<'g>,
     ) -> Self {
         SolverEnvironment {
             state: Rc::new(RefCell::new(SolverState::new())),
@@ -539,6 +539,13 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         self.clone()
     }
 
+    pub fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = ()> + 'g,
+    {
+        self.spawner.spawn(future)
+    }
+
     pub fn resolve(&self, target: Name<'db>) -> Option<TypedSyntax<'db>> {
         // Try to resolve as local.
         if let Some(subject) = self.dubbing_table.resolve(target) {
@@ -547,17 +554,16 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
                     let index = level.to_index(self.tc_env.depth());
                     let subject = Syntax::variable_rc(index);
                     let ty = self.tc_env.type_of(level).clone();
-                    return Some(TypedSyntax { subject, ty });
+                    return Some(Typed(subject, ty));
                 }
                 Dubbed::Value(typed) => {
-                    let value = typed.subject;
-                    let ty = typed.ty;
+                    let Typed(value, ty) = typed;
                     let global_env = self.tc_env.values.global;
                     let depth = self.tc_env.depth();
-                    return Some(TypedSyntax {
-                        subject: quote::quote(global_env, depth, &*value, &*ty).unwrap(),
-                        ty,
-                    });
+                    return Some(Typed(
+                        quote::quote(global_env, depth, &*value, &*ty).unwrap(),
+                        ty.clone(),
+                    ));
                 }
             }
         }
@@ -602,10 +608,15 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         Value::metavariable_rc(id, self.tc_env.values.local.clone(), ty)
     }
 
-    // /// Allocate a fresh syntactic metavariable and return it.
-    // pub fn fresh_syn_meta(&self, ty: RcValue<'db>, source_range: Option<SourceRange<'db>>) -> RcSyntax<'db> {
-    //     self.quote(self.fresh_meta(ty, loc))
-    // }
+    /// Allocate a fresh syntactic metavariable and return it.
+    pub fn fresh_syn_meta(
+        &self,
+        ty: RcValue<'db>,
+        source_range: Option<SourceRange<'db>>,
+    ) -> RcSyntax<'db> {
+        let id = self.fresh_meta_id(ty.clone(), source_range);
+        Syntax::metavariable_rc(id, self.syn_substitution())
+    }
 
     /// Allocate a fresh poisoned metavariable for error recovery.
     pub fn fresh_poisoned_meta(
@@ -731,6 +742,10 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         self.tc_env.quote(tm, ty)
     }
 
+    pub fn syn_substitution(&self) -> Vec<RcSyntax<'db>> {
+        self.tc_env.syn_substitution()
+    }
+
     /// Quote a bound term.
     pub fn quote_bound(&self, tm: Binding<&RcValue<'db>>, ty: &RcValue<'db>) -> RcSyntax<'db> {
         self.tc_env.quote_bound(tm, ty)
@@ -788,7 +803,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
     /// Create a new context handle, initializing solver state from declared metavariables.
     /// This is useful for testing unification/type-checking with metavariables
     /// declared in a prelude, without going through full elaboration.
-    pub fn new_from_global(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'db>) -> Self {
+    pub fn new_from_global(tc_env: TCEnvironment<'db, 'g>, spawner: TaskSpawner<'g>) -> Self {
         let state = SolverState::from_global_env(tc_env.values.global);
         SolverEnvironment {
             state: Rc::new(RefCell::new(state)),
@@ -850,13 +865,10 @@ struct ReadyQueue {
     queue: RefCell<VecDeque<TaskId>>,
 }
 
-pub type TaskOutput = Result<(), ()>;
-pub type Task = Pin<dyn Future<Output = TaskOutput>>;
-
 /// Shared task storage that can be accessed by both the executor and spawner.
-struct TaskStorage<'db> {
+struct TaskStorage<'g> {
     /// All spawned tasks, indexed by TaskId using a Slab allocator
-    tasks: RefCell<Slab<Pin<Box<dyn Future<Output = Result<(), String>> + 'db>>>>,
+    tasks: RefCell<Slab<Pin<Box<dyn Future<Output = ()> + 'g>>>>,
     /// Queue of task IDs that are ready to run
     ready_queue: Rc<ReadyQueue>,
 }
@@ -864,31 +876,32 @@ struct TaskStorage<'db> {
 /// A handle that allows spawning new tasks from within async functions.
 /// This is cloned and passed through the SolverEnvironment.
 #[derive(Clone)]
-pub struct TaskSpawner<'db> {
-    storage: Rc<TaskStorage<'db>>,
+pub struct TaskSpawner<'g> {
+    storage: Rc<TaskStorage<'g>>,
 }
 
-impl<'db> TaskSpawner<'db> {
+impl<'a> TaskSpawner<'a> {
     /// Spawn a new task that will be executed by the executor.
     pub fn spawn<F>(&self, future: F)
     where
-        F: Future<Output = Result<(), String>> + 'db,
+        F: Future<Output = ()> + 'a,
     {
         let mut tasks = self.storage.tasks.borrow_mut();
-        let id = tasks.insert(Box::pin(future));
+        let fut = Box::pin(future);
+        let id = tasks.insert(fut);
         self.storage.ready_queue.queue.borrow_mut().push_back(id);
         println!("[Spawner] Spawned task {}", id);
     }
 }
 
 /// A lightweight, single-threaded executor for constraint solving.
-pub struct SingleThreadedExecutor<'db> {
+pub struct SingleThreadedExecutor<'g> {
     /// Shared storage for tasks
-    storage: Rc<TaskStorage<'db>>,
+    storage: Rc<TaskStorage<'g>>,
 }
 
 #[allow(unsafe_code)]
-impl<'db> SingleThreadedExecutor<'db> {
+impl<'g> SingleThreadedExecutor<'g> {
     pub fn new() -> Self {
         let ready_queue = Rc::new(ReadyQueue {
             queue: RefCell::new(VecDeque::new()),
@@ -902,7 +915,7 @@ impl<'db> SingleThreadedExecutor<'db> {
     }
 
     /// Get a spawner handle that can be used to spawn tasks from within async functions.
-    pub fn spawner(&self) -> TaskSpawner<'db> {
+    pub fn spawner(&self) -> TaskSpawner<'g> {
         TaskSpawner {
             storage: self.storage.clone(),
         }
@@ -911,7 +924,7 @@ impl<'db> SingleThreadedExecutor<'db> {
     /// Spawn a new constraint task
     pub fn spawn<F>(&mut self, future: F)
     where
-        F: Future<Output = Result<(), String>> + 'db,
+        F: Future<Output = ()> + 'g,
     {
         // Slab automatically allocates the next available slot
         let mut tasks = self.storage.tasks.borrow_mut();
@@ -923,7 +936,7 @@ impl<'db> SingleThreadedExecutor<'db> {
     /// The main loop. Runs until all tasks are done or stalled.
     /// Returns Ok if all tasks completed successfully.
     /// Returns Err if any task failed or if there's a deadlock.
-    pub fn run<'g>(&mut self, ctx: &SolverEnvironment<'db, 'g>) -> Result<(), String> {
+    pub fn run<'db>(&mut self, ctx: &SolverEnvironment<'db, 'g>) -> Result<(), String> {
         println!("[Executor] Starting execution");
 
         loop {
@@ -941,16 +954,16 @@ impl<'db> SingleThreadedExecutor<'db> {
             let mut tasks = self.storage.tasks.borrow_mut();
             if let Some(task) = tasks.get_mut(task_id) {
                 match task.as_mut().poll(&mut context) {
-                    Poll::Ready(Ok(())) => {
+                    Poll::Ready(()) => {
                         println!("[Executor] Task {} finished successfully", task_id);
                         // Only remove when done - this frees the slot for reuse
                         let _ = tasks.remove(task_id);
                     }
-                    Poll::Ready(Err(e)) => {
-                        println!("[Executor] Task {} failed: {}", task_id, e);
-                        let _ = tasks.remove(task_id);
-                        return Err(format!("Task {} failed: {}", task_id, e));
-                    }
+                    // Poll::Ready(Err(e)) => {
+                    //     println!("[Executor] Task {} failed: {}", task_id, e);
+                    //     let _ = tasks.remove(task_id);
+                    //     return Err(format!("Task {} failed: {}", task_id, e));
+                    // }
                     Poll::Pending => {
                         println!("[Executor] Task {} is pending", task_id);
                         // Task stays in the slab - no remove/insert needed!

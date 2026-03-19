@@ -166,6 +166,19 @@ pub fn fresh_meta<'db, 'g>(
     Value::metavariable_rc(id, substitution, ty)
 }
 
+pub async fn antiunify_ty<'db, 'g>(
+    env: SolverEnvironment<'db, 'g>,
+    lhs: RcValue<'db>,
+    rhs: RcValue<'db>,
+    out: RcValue<'db>,
+) {
+    let bg_env = env.clone();
+    env.spawn(async move {
+        unify_ty(bg_env.clone(), lhs.clone(), rhs).await.unwrap();
+        unify_ty(bg_env.clone(), lhs, out).await.unwrap();
+    });
+}
+
 pub fn antiunify<'db, 'g>(
     db: &'db dyn salsa::Database,
     ctx: SolverEnvironment<'db, 'g>,
@@ -915,6 +928,16 @@ async fn unify_rigid<'db, 'g>(
     Box::pin(unify_spine(db, ctx, &r1.spine, &r2.spine)).await
 }
 
+pub async fn unify_ty<'db, 'g>(
+    env: SolverEnvironment<'db, 'g>,
+    lhs: RcValue<'db>,
+    rhs: RcValue<'db>,
+) -> UnifyResult<'db> {
+    // TODO: Need to use a sort of any level here.
+    let ty = Value::universe_rc(UniverseLevel::new(0));
+    unify(env.db(), env, lhs, rhs, ty).await
+}
+
 pub async fn unify<'db, 'g>(
     db: &'db dyn salsa::Database,
     ctx: SolverEnvironment<'db, 'g>,
@@ -1327,11 +1350,8 @@ mod tests {
             let ctx = SolverEnvironment::new_from_global(tc_env, executor.spawner());
 
             let db_ref: &'db dyn salsa::Database = self.db;
-            let unify_future = async move {
-                unify(db_ref, ctx.clone(), lhs, rhs, ty)
-                    .await
-                    .map_err(|e| format!("{:?}", e))
-            };
+            let unify_future =
+                async move { unify(db_ref, ctx.clone(), lhs, rhs, ty).await.unwrap() };
             executor.spawn(unify_future);
 
             let tc_env2 = self.tc_env();
@@ -1364,11 +1384,8 @@ mod tests {
             let lhs = ctx.fresh_meta(ty.clone(), None);
 
             let db_ref: &'db dyn salsa::Database = self.db;
-            let unify_future = async move {
-                unify(db_ref, ctx.clone(), lhs, rhs, ty)
-                    .await
-                    .map_err(|e| format!("{:?}", e))
-            };
+            let unify_future =
+                async move { unify(db_ref, ctx.clone(), lhs, rhs, ty).await.unwrap() };
             executor.spawn(unify_future);
 
             let tc_env2 = self.tc_env();
@@ -2111,7 +2128,7 @@ mod tests {
         let unify_future = async move {
             unify(db_ref, ctx.clone(), lhs, rhs, final_ty)
                 .await
-                .map_err(|e| format!("{:?}", e))
+                .unwrap()
         };
         executor.spawn(unify_future);
 
@@ -2297,11 +2314,7 @@ mod tests {
         let ty = Value::universe_rc(UniverseLevel::new(0));
 
         let db_ref: &dyn salsa::Database = &db;
-        let unify_future = async move {
-            unify(db_ref, ctx.clone(), lhs, rhs, ty)
-                .await
-                .map_err(|e| format!("{:?}", e))
-        };
+        let unify_future = async move { unify(db_ref, ctx.clone(), lhs, rhs, ty).await.unwrap() };
         executor.spawn(unify_future);
 
         let tc_env2 = TCEnvironment {
