@@ -2,34 +2,32 @@ use std::ops::Deref;
 
 /// A simple binding that binds a single variable.
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Copy)]
-pub struct Binding<A> {
-    pub body: A,
-}
+pub struct Binding<A>(pub A);
 
 impl<A> Binding<A> {
-    pub fn new(body: A) -> Self {
-        Binding { body }
+    pub fn term(&self) -> &A {
+        &self.0
     }
 
     pub fn as_ref(&self) -> Binding<&A> {
-        Binding { body: &self.body }
+        Binding(&self.0)
     }
 
     pub fn into_inner(self) -> A {
-        self.body
+        self.0
     }
 
     pub fn map<F, B>(self, f: F) -> Binding<B>
     where
         F: FnOnce(A) -> B,
     {
-        Binding { body: f(self.body) }
+        Binding(f(self.0))
     }
 }
 
 impl<A> AsRef<A> for Binding<A> {
     fn as_ref(&self) -> &A {
-        &self.body
+        &self.0
     }
 }
 
@@ -37,7 +35,7 @@ impl<A> Deref for Binding<A> {
     type Target = A;
 
     fn deref(&self) -> &A {
-        &self.body
+        &self.0
     }
 }
 

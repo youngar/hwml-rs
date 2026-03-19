@@ -731,7 +731,7 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
         let body = f(self);
         self.tc_env.truncate(depth);
-        Binding { body }
+        Binding(body)
     }
 
     /// Quote a term at a fixed depth.
@@ -742,6 +742,11 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         depth: usize,
     ) -> RcSyntax<'db> {
         self.tc_env.quote_at_depth(tm, ty, depth)
+    }
+
+    pub fn quote_ty(&self, ty: &RcValue<'db>) -> RcSyntax<'db> {
+        let universe = Value::universe_rc(UniverseLevel::new(0));
+        self.quote(ty, &universe)
     }
 
     /// Quote a term at the current binder depth.

@@ -98,13 +98,13 @@ fn zonk_with_cache<'db>(
 
         Syntax::Pi(pi) => {
             let source = zonk_with_cache(state, &pi.source, cache);
-            let target_body = zonk_with_cache(state, &pi.target.body, cache);
-            Syntax::pi_rc(source, hwml_core::binding::Binding::new(target_body))
+            let target_body = zonk_with_cache(state, pi.target.term(), cache);
+            Syntax::pi_rc(source, hwml_core::binding::Binding(target_body))
         }
 
         Syntax::Lambda(lam) => {
-            let body_term = zonk_with_cache(state, &lam.body.body, cache);
-            Syntax::lambda_rc(hwml_core::binding::Binding::new(body_term))
+            let body_term = zonk_with_cache(state, lam.body.term(), cache);
+            Syntax::lambda_rc(hwml_core::binding::Binding(body_term))
         }
 
         Syntax::Application(app) => {
@@ -166,8 +166,8 @@ fn zonk_with_cache<'db>(
         Syntax::Let(let_expr) => {
             let ty = zonk_with_cache(state, &let_expr.ty, cache);
             let value = zonk_with_cache(state, &let_expr.value, cache);
-            let body_term = zonk_with_cache(state, &let_expr.body.body, cache);
-            Syntax::let_rc(ty, value, hwml_core::binding::Binding::new(body_term))
+            let body_term = zonk_with_cache(state, &let_expr.body.term(), cache);
+            Syntax::let_rc(ty, value, hwml_core::binding::Binding(body_term))
         }
 
         Syntax::Eq(eq) => {
@@ -193,8 +193,8 @@ fn zonk_with_cache<'db>(
         }
 
         Syntax::Module(module) => {
-            let body_term = zonk_with_cache(state, &module.body.body, cache);
-            Syntax::module_rc(hwml_core::binding::Binding::new(body_term))
+            let body_term = zonk_with_cache(state, &module.body.term(), cache);
+            Syntax::module_rc(hwml_core::binding::Binding(body_term))
         }
 
         Syntax::HApplication(happ) => {

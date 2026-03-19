@@ -1,5 +1,5 @@
 use crate::syn::*;
-use crate::{MetaVariableId, QualifiedName};
+use crate::*;
 
 /// A primitive declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -90,7 +90,7 @@ impl<'db> DataConstructorDecl<'db> {
     pub fn full_type(&self) -> RcSyntax<'db> {
         let mut result = self.result_type.clone();
         for ty in self.parameters.iter().rev() {
-            result = Syntax::pi_rc(ty.clone(), BindingSyntax::new(result));
+            result = Syntax::pi_rc(ty.clone(), Binding(result));
         }
         result
     }

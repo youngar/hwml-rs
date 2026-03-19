@@ -536,7 +536,7 @@ fn rename_pi<'db>(
     })?;
     Ok(Rc::new(Syntax::pi(
         syn_source,
-        hwml_core::binding::Binding::new(syn_target),
+        hwml_core::binding::Binding(syn_target),
     )))
 }
 
@@ -635,7 +635,7 @@ fn rename_lambda<'db>(
         let sem_body: RcValue<'db> = eval::apply_lambda(global, sem_lambda, var)?;
         rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
     })?;
-    Ok(Rc::new(Syntax::lambda(hwml_core::binding::Binding::new(
+    Ok(Rc::new(Syntax::lambda(hwml_core::binding::Binding(
         syn_body,
     ))))
 }
@@ -658,9 +658,7 @@ fn rename_module<'db>(
         let sem_body: RcValue<'db> = eval::run_closure(global, &sem_module.body, [var])?;
         rename(db, global, meta, renaming, &sem_body_ty, &sem_body)
     })?;
-    Ok(Syntax::module_rc(hwml_core::binding::Binding::new(
-        syn_body,
-    )))
+    Ok(Syntax::module_rc(hwml_core::binding::Binding(syn_body)))
 }
 
 fn rename_prim<'db>(prim: &hwml_core::val::Prim<'db>) -> Result<RcSyntax<'db>, Error<'db>> {

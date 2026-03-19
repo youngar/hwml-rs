@@ -94,7 +94,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.push_var(ty);
         let body = f(self);
         self.truncate(depth);
-        Binding { body }
+        Binding(body)
     }
 
     #[allow(dead_code)]
@@ -121,8 +121,8 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.quote_at_depth(tm, ty, self.depth())
     }
 
-    pub fn quote_bound(&self, tm: Binding<&RcValue<'db>>, ty: &RcValue<'db>) -> RcSyntax<'db> {
-        self.quote_at_depth(tm.body, ty, self.depth() + 1)
+    pub fn quote_bound(&self, bound: Binding<&RcValue<'db>>, ty: &RcValue<'db>) -> RcSyntax<'db> {
+        self.quote_at_depth(bound.term(), ty, self.depth() + 1)
     }
 
     /// Build a syntactic substitution from this local environment.
@@ -409,7 +409,7 @@ pub fn type_synth_let<'db, 'g>(
     let sem_value = eval(env, &let_expr.value)?;
 
     env.push_transparent(sem_ty, sem_value);
-    let body_ty = type_synth(env, &let_expr.body.body)?;
+    let body_ty = type_synth(env, &let_expr.body.term())?;
     env.pop();
 
     Ok(body_ty)
@@ -2720,7 +2720,7 @@ mod tests {
         // ∀ (%x : U0) → U0 should have type U1 (max(0, 0) = 0, so Pi : U1)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
+            Binding(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         let u1 = Value::universe_rc(UniverseLevel::new(1));
         let result = type_check(&mut env, &pi_expr, &u1);
@@ -2729,7 +2729,7 @@ mod tests {
         // ∀ (%x : U0) → U1 should have type U2 (max(0, 1) = 1, so Pi : U2)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Binding::new(Syntax::universe_rc(UniverseLevel::new(1))),
+            Binding(Syntax::universe_rc(UniverseLevel::new(1))),
         );
         let u2 = Value::universe_rc(UniverseLevel::new(2));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2738,7 +2738,7 @@ mod tests {
         // ∀ (%x : U1) → U0 should have type U2 (max(1, 0) = 1, so Pi : U2)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(1)),
-            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
+            Binding(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         let u2 = Value::universe_rc(UniverseLevel::new(2));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2754,7 +2754,7 @@ mod tests {
         // ∀ (%x : U0) → U0 can be checked against U2 (cumulativity: U1 <= U2)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
+            Binding(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         let u2 = Value::universe_rc(UniverseLevel::new(2));
         let result = type_check(&mut env, &pi_expr, &u2);
@@ -2774,7 +2774,7 @@ mod tests {
         // (max(0, 1) = 1, so Pi : U2, but we're checking against U1)
         let pi_expr = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Binding::new(Syntax::universe_rc(UniverseLevel::new(1))),
+            Binding(Syntax::universe_rc(UniverseLevel::new(1))),
         );
         let u1 = Value::universe_rc(UniverseLevel::new(1));
         let result = type_check(&mut env, &pi_expr, &u1);

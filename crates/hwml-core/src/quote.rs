@@ -168,7 +168,7 @@ fn eta_expand_pi<'db>(
     // Quote the result at the target type
     let syn_body = quote(global, depth + 1, &applied, &result_ty)?;
 
-    Ok(Syntax::lambda_rc(Binding::new(syn_body)))
+    Ok(Syntax::lambda_rc(Binding(syn_body)))
 }
 
 /// Quote an instance of a TypeConstructor.
@@ -459,7 +459,7 @@ pub fn quote_pi<'db>(
     let sem_target = run_closure(global, &pi.target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
-    Ok(Syntax::pi_rc(syn_source, Binding::new(syn_target)))
+    Ok(Syntax::pi_rc(syn_source, Binding(syn_target)))
 }
 
 /// Quote a Lambda to syntax, using its Pi type.
@@ -479,7 +479,7 @@ pub fn quote_lambda<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    Ok(Syntax::lambda_rc(Binding::new(syn_body)))
+    Ok(Syntax::lambda_rc(Binding(syn_body)))
 }
 
 pub fn quote_let<'db>(
@@ -491,7 +491,7 @@ pub fn quote_let<'db>(
     let syn_ty = quote_at_unknown_type(global, depth, &let_val.ty)?;
     let syn_value = quote(global, depth, &let_val.value, &let_val.ty)?;
     let syn_body = quote(global, depth + 1, &let_val.body, _expected_ty)?;
-    Ok(Syntax::let_rc(syn_ty, syn_value, Binding::new(syn_body)))
+    Ok(Syntax::let_rc(syn_ty, syn_value, Binding(syn_body)))
 }
 
 fn quote_at_unknown_type<'db>(
@@ -664,7 +664,7 @@ pub fn quote_module<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    Ok(Syntax::module_rc(Binding::new(syn_body)))
+    Ok(Syntax::module_rc(Binding(syn_body)))
 }
 // ============================================================================
 // Neutral Quotation Functions
@@ -882,7 +882,7 @@ fn quote_transport<'db>(
     let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
     let motive_body = type_quote(global, depth + 1, &motive_result)?;
-    let motive = Syntax::lambda_rc(Binding::new(motive_body));
+    let motive = Syntax::lambda_rc(Binding(motive_body));
 
     // Quote the proof at the equality type
     let eq_ty = Value::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone());
@@ -1308,7 +1308,7 @@ mod tests {
         // ∀ (A : U0) → ∀ (x : A) → A
         let inner = Syntax::pi_rc(
             Syntax::variable_rc(Index(0)),               // domain is A
-            Binding::new(Syntax::variable_rc(Index(1))), // codomain is A
+            Binding(Syntax::variable_rc(Index(1))), // codomain is A
         );
         let outer = Value::pi(c.u0(), Closure::new(LocalEnv::new(), inner));
         assert_eq!(c.tq(&outer), "∀ (%0 : 𝒰0) (%1 : %0) → %0");

@@ -1233,7 +1233,7 @@ async fn lower_flex<'db, 'g>(
                         let new_meta_term =
                             hwml_core::syn::Syntax::metavariable_rc(new_meta_id, subst_vars);
                         let lambda_term = hwml_core::syn::Syntax::lambda_rc(
-                            hwml_core::binding::Binding::new(new_meta_term),
+                            hwml_core::binding::Binding(new_meta_term),
                         );
 
                         // Solve the old metavariable

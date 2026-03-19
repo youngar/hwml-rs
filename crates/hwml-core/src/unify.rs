@@ -357,7 +357,7 @@ fn solve<'db>(
 
     // Wrap the syntax in binders.
     for _ in 0..depth {
-        rhs_syntax = Syntax::lambda_rc(Binding::new(rhs_syntax));
+        rhs_syntax = Syntax::lambda_rc(Binding(rhs_syntax));
     }
 
     println!("Solved metavariable: {:?}", rhs_syntax);

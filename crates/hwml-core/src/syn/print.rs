@@ -442,7 +442,7 @@ where
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         let st = st.inc_depth();
-        self.body.print(db, st, p)
+        self.term().print(db, st, p)
     }
 }
 
@@ -611,7 +611,7 @@ impl<'db> Print for Pi<'db> {
                         p.text(")")?;
                         st = st.inc_depth();
 
-                        match next.target.body.as_ref() {
+                        match next.target.term().as_ref() {
                             Syntax::Pi(pi) => next = &pi,
                             _ => break,
                         }
@@ -643,7 +643,7 @@ impl<'db> Print for Lambda<'db> {
                     loop {
                         print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
-                        match next.body.body.as_ref() {
+                        match next.body.term().as_ref() {
                             Syntax::Lambda(lam) => next = &lam,
                             _ => break,
                         }
@@ -937,7 +937,7 @@ impl<'db> Print for Module<'db> {
                     loop {
                         print_binder(st, p, &next.body)?;
                         st = st.inc_depth();
-                        match next.body.body.as_ref() {
+                        match next.body.term().as_ref() {
                             Syntax::Module(lam) => next = &lam,
                             _ => break,
                         }
@@ -1103,15 +1103,15 @@ mod tests {
     #[test]
     fn print_pi() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding::new(Syntax::universe_rc(UniverseLevel::new(1))))), @"∀ (%0 : 𝒰0) → 𝒰1");
-        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding::new(Syntax::pi_rc(Syntax::variable_rc(Index(0)), Binding::new(Syntax::variable_rc(Index(0))))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding(Syntax::universe_rc(UniverseLevel::new(1))))), @"∀ (%0 : 𝒰0) → 𝒰1");
+        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding(Syntax::pi_rc(Syntax::variable_rc(Index(0)), Binding(Syntax::variable_rc(Index(0))))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
     }
 
     #[test]
     fn print_lambda() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lambda(Binding::new(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::lambda(Binding::new(Syntax::lambda_rc(Binding::new(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::lambda_rc(Binding(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
     }
 
     #[test]
@@ -1144,7 +1144,7 @@ mod tests {
         let db = Database::new();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
-        assert_snapshot!(p(&db, &Syntax::lambda_rc(Binding::new(Syntax::case_rc(
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Binding(Syntax::case_rc(
                         Index(0),
             vec![
                 CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(0, Syntax::constant_rc("a".into_with_db(&db)))),
@@ -1236,7 +1236,7 @@ mod tests {
         assert_snapshot!(p(&db, &transport), @"transport !2 to !0 by refl");
 
         // Test with lambda motive - keywords eliminate need for parentheses
-        let lambda_motive = Syntax::lambda_rc(Binding::new(Syntax::bit_rc()));
+        let lambda_motive = Syntax::lambda_rc(Binding(Syntax::bit_rc()));
         let transport2 = Syntax::transport_rc(lambda_motive, Syntax::refl_rc(), Syntax::zero_rc());
         assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %0 → Bit by refl");
     }
@@ -1261,8 +1261,8 @@ mod tests {
     #[test]
     fn print_module() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::module(Binding::new(Syntax::variable_rc(Index(0))))), @"mod %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::module(Binding::new(Syntax::module_rc(Binding::new(Syntax::variable_rc(Index(1))))))), @"mod %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Binding(Syntax::variable_rc(Index(0))))), @"mod %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Binding(Syntax::module_rc(Binding(Syntax::variable_rc(Index(1))))))), @"mod %0 %1 → %0");
     }
 
     #[test]
@@ -1294,7 +1294,7 @@ mod tests {
     #[test]
     fn print_variable_bound() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lambda(Binding::new(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
     }
 
     #[test]

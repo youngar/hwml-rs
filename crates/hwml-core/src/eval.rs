@@ -144,7 +144,7 @@ fn eval_pi<'db, 'g>(
     pi: &syn::Pi<'db>,
 ) -> Result<RcValue<'db>, Error<'db>> {
     let source = eval(env, &pi.source)?;
-    let target = Closure::new(env.local.clone(), pi.target.body.clone());
+    let target = Closure::new(env.local.clone(), pi.target.term().clone());
     Ok(Value::pi_rc(source, target))
 }
 
@@ -154,7 +154,7 @@ fn eval_lambda<'db, 'g>(
 ) -> Result<RcValue<'db>, Error<'db>> {
     Ok(Value::lambda_rc(Closure::new(
         env.local.clone(),
-        lambda.body.body.clone(),
+        lambda.body.term().clone(),
     )))
 }
 
@@ -281,7 +281,7 @@ fn eval_module<'db, 'g>(
 ) -> Result<RcValue<'db>, Error<'db>> {
     Ok(Value::module_rc(Closure::new(
         env.local.clone(),
-        module.body.body.clone(),
+        module.body.term().clone(),
     )))
 }
 
@@ -1044,7 +1044,7 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         let pi_ty = Syntax::pi_rc(
             Syntax::universe_rc(UniverseLevel::new(0)),
-            Binding::new(Syntax::universe_rc(UniverseLevel::new(0))),
+            Binding(Syntax::universe_rc(UniverseLevel::new(0))),
         );
         global.add_metavariable(meta_id, vec![], pi_ty);
 
