@@ -23,3 +23,7 @@ impl<A> Deref for Trusted<A> {
 
 pub type TrustedSyntax<'db> = Trusted<RcSyntax<'db>>;
 pub type TrustedTypedSyntax<'db> = Trusted<TypedSyntax<'db>>;
+pub type TrustedValue<'db> = Trusted<RcValue<'db>>;
+
+pub type TrustedType<'db> = Trusted<SynType<'db>>;
+pub type TrustedSemType<'db> = Trusted<SemType<'db>>;

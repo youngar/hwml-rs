@@ -1,21 +1,18 @@
 use crate::*;
 use hwml_core::*;
 
-// struct ElabPi<A, B> {
-//     source: A,
-//     target: B,
-// }
-
-// impl<'db, 'g, A, B> ElabSyntaxTask<'db, 'g> for ElabPi<A, B>
-// where
-//     A: ElabSyntax<'db, 'g>,
-//     B: ElabSyntax<'db, 'g>,
-// {
-//     async fn elab_syntax_task(
-//         self,
-//         _env: &SolverEnvironment<'db, 'g>,
-//         _ty: RcValue<'db>,
-//     ) -> TrustedSyntax<'db> {
-//         todo!("pi elaboration not yet implemented");
-//     }
-// }
+pub fn pi<'db, 'g, T>(
+    mut env: SolverEnvironment<'db, 'g>,
+    source: TypeTactic<'db>,
+    target: T,
+) -> TrustedValue<'db>
+where
+    T: FnOnce(SolverEnvironment<'db, 'g>) -> TrustedValue<'db>,
+{
+    let universe = Value::universe_rc(UniverseLevel::new(0));
+    let Trusted(source) = source;
+    let Binding(Trusted(target)) =
+        env.under_binder(None, source.clone(), |env| target(env.clone()));
+    let target_closure = env.make_closure(Binding(&target), &universe);
+    Trusted(Value::pi_rc(source, target_closure))
+}

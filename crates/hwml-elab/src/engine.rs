@@ -719,10 +719,14 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         crate::zonk::zonk(&self.state.borrow(), term)
     }
 
-    pub fn bind(&mut self, name: Option<Name>, ty: RcValue<'db>) {}
+    pub fn bind(&self, _name: Option<Name>, ty: RcValue<'db>) -> Self {
+        let mut extended_env = self.clone();
+        extended_env.tc_env.push_var(ty);
+        extended_env
+    }
 
     /// Extend the environment with an additional variable.
-    pub fn under_binder<F, R>(&mut self, name: Option<Name>, ty: RcValue<'db>, f: F) -> Binding<R>
+    pub fn under_binder<F, R>(&mut self, _name: Option<Name>, ty: RcValue<'db>, f: F) -> Binding<R>
     where
         F: FnOnce(&mut Self) -> R,
     {

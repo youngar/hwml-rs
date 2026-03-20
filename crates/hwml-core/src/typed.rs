@@ -1,5 +1,14 @@
 pub use crate::*;
 
+pub struct Term<A>(pub A);
+pub struct Type<A>(pub A);
+
+pub type SynTerm<'db> = Term<RcSyntax<'db>>;
+pub type SemTerm<'db> = Term<RcValue<'db>>;
+
+pub type SynType<'db> = Type<RcSyntax<'db>>;
+pub type SemType<'db> = Type<RcValue<'db>>;
+
 pub type TypedSyntax<'db> = Typed<'db, RcSyntax<'db>>;
 pub type TypedValue<'db> = Typed<'db, RcValue<'db>>;
 
