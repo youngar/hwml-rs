@@ -773,7 +773,7 @@ struct ReadyQueue {
 }
 
 impl ReadyQueue {
-    pub fn new() -> ReadyQueue {
+    fn new() -> ReadyQueue {
         ReadyQueue {
             queue: RefCell::new(VecDeque::new()),
         }
