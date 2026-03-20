@@ -72,7 +72,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.types.push(ty);
     }
 
-    fn pop(&mut self) {
+    pub fn pop(&mut self) {
         self.values.pop();
         self.types.pop();
     }

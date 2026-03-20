@@ -1,6 +1,7 @@
 use crate::*;
 use hwml_core::*;
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Binder<'db> {
     pub source_range: Option<SourceRange<'db>>,
     pub name: Option<Name<'db>>,

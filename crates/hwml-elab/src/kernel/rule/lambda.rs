@@ -10,7 +10,7 @@ pub fn lambda<'db, 'g, F>(
     body: F,
 ) -> TrustedSyntax<'db>
 where
-    F: Fn(SolverEnvironment<'db, 'g>, RcValue<'db>) -> TrustedSyntax<'db>,
+    F: FnOnce(SolverEnvironment<'db, 'g>, RcValue<'db>) -> TrustedSyntax<'db>,
 {
     let sem_lhs = env.fresh_meta(lhs_ty.clone(), loc.clone());
     let syn_lhs = env.quote(&sem_lhs, &lhs_ty);

@@ -20,7 +20,7 @@ fn switch<'db, 'g>(
     expr: Expression,
     lhs_ty: RcValue<'db>,
 ) -> TrustedSyntax<'db> {
-    trusted::switch(env, None, lhs_ty, move |env| synth_expr(env, expr))
+    kernel::rule::switch(env, None, lhs_ty, move |env| synth_expr(env, expr))
 }
 
 pub fn check_fun<'db, 'g>(
@@ -28,60 +28,62 @@ pub fn check_fun<'db, 'g>(
     fun: surface::Fun,
     lhs_ty: RcValue<'db>,
 ) -> TrustedSyntax<'db> {
-    let mut binders = Vec::new();
-    for group in fun.bindings.group {
+    let mut env = env;
+    let mut binders: Vec<TypedBinder<'db>> = Vec::new();
+
+    let depth = env.tc_env.depth();
+    for group in fun.bindings.groups {
         match group {
             surface::BindingGroup::Typed(group) => {
-                for binder in group.binders {
-                    binders.push(binder);
+                let syn_ty = synth_expr(env.clone(), *group.ty);
+                let sem_ty = env.eval(syn_ty.subject());
+                for _binder in group.binders {
+                    binders.push(Typed(
+                        Binder {
+                            source_range: None,
+                            name: None,
+                        },
+                        sem_ty.clone(),
+                    ));
+                    env.tc_env.push_var(sem_ty.clone());
                 }
             }
+            _ => todo!("handle untyped binders"),
         }
     }
 
-    
-    // Convert each function into 
-    // If there are any typed binders, form an outer type annotation.
-    let mut typed = false;
-    for group in fun.bindings.groups {
-        if let surface::BindingGroup::TypedBindingGroup(group) {
+    let universe = Value::universe_rc(UniverseLevel::new(0));
+    let mut ty = env.fresh_meta(universe.clone(), None);
+    let mut tm = check_expr(env.clone(), *fun.expr, ty.clone());
 
-        }
-    };
-    if typed {
+    for binder in binders.iter().rev() {
+        env.tc_env.pop();
+        let target_ty = env.make_closure(Binding(&ty), &universe);
+        let source_ty = binder.ty().clone();
+        ty = Value::pi_rc(source_ty, target_ty);
 
+        tm = kernel::rule::lambda(
+            env.clone(),
+            None,
+            ty.clone(),
+            binder.subject().clone(),
+            move |_, _| tm,
+        );
     }
 
-    let mut tactic = |env, ty| {
-        check_expr(env, *fun.expr, ty)
-    };
+    assert!(env.tc_env.depth() == depth);
 
-    for group in fun.bindings.groups.iter().rev() {
-        match group {
-            surface::BindingGroup::Typed(typed) => todo!("support typed binding groups"),
-            surface::BindingGroup::Untyped(untyped) => {
-                for binder in untyped.binders {
-                    match binder {
-                        Expression::Id(id) => {
-                            tactic = |env| {
-                                trusted::
-                        }
-                        _ => todo!("support richer binder names"),
-                    }
-                }
-            }
-        };
-        for binding in binders {
+    let sem_tm = env.eval(&tm);
+    let meta = env.fresh_meta(lhs_ty.clone(), None);
+    let result = env.quote(&meta, &lhs_ty);
+    let bg = env.clone();
 
-        }
-    }
-    //     let bg = env.clone();
-    //     trusted::lambda(env, None, {})
-    //     env.constrain(async move {
-    //         let
-    //     })
-    // }
-    todo!();
+    env.constrain(async move {
+        unify_ty(bg.clone(), lhs_ty.clone(), ty).await.unwrap();
+        unify(bg.db(), bg, meta, sem_tm, lhs_ty).await.unwrap();
+    });
+
+    Trusted(result)
 }
 
 pub fn synth_expr<'db, 'g>(
@@ -103,7 +105,7 @@ pub fn synth_id<'db, 'g>(
         Err(e) => panic!("failed to convert from utf8"),
     };
     let name = Name::from_with_db(env.db(), text);
-    trusted::name(env, None, name)
+    kernel::rule::name(env, None, name)
 }
 
 pub fn annotate<'db, 'g>(
@@ -112,5 +114,5 @@ pub fn annotate<'db, 'g>(
 ) -> TrustedTypedSyntax<'db> {
     let universe = Value::universe_rc(UniverseLevel::new(0));
     let ty = env.fresh_meta(universe.clone(), None);
-    trusted::annotate(env, ty, move |env, ty| check_expr(env, expr, ty))
+    kernel::rule::annotate(env, ty, move |env, ty| check_expr(env, expr, ty))
 }

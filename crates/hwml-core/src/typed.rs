@@ -33,3 +33,13 @@ where
         self.subject().source_range()
     }
 }
+
+impl<'db, A, B> AsRef<B> for Typed<'db, A>
+where
+    A: AsRef<B>,
+    B: ?Sized,
+{
+    fn as_ref(&self) -> &B {
+        self.subject().as_ref()
+    }
+}

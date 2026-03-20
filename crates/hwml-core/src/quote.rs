@@ -26,7 +26,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub enum Error<'db> {
     /// Something about the input was ill-typed, preventing quotation.
-    IllTyped,
+    IllTyped(RcValue<'db>),
     /// Quotation can force evaluation, which may itself error.
     EvalError(eval::Error<'db>),
     LookupError(val::LookupError<'db>),
@@ -99,7 +99,7 @@ pub fn quote<'db>(
         Value::Flex(flex) => quote_flex_instances(global, depth, value, flex),
         // Equality types
         Value::EqType(eq) => quote_eq_instances(global, depth, value, eq),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(ty.clone()))),
     }
 }
 // ============================================================================
@@ -126,7 +126,7 @@ pub fn quote_lift_instances<'db>(
     match lift.ty.as_ref() {
         Value::SLift(slift) => quote_slift_instances(global, depth, value, slift),
         Value::MLift(mlift) => quote_mlift_instances(global, depth, value, mlift),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(lift.ty.clone())),
     }
 }
 
@@ -144,7 +144,7 @@ pub fn quote_pi_instances<'db>(
         Value::Prim(_) | Value::Constant(_) | Value::Rigid(_) | Value::Flex(_) => {
             eta_expand_pi(global, depth, value, pi)
         }
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -184,7 +184,7 @@ pub fn quote_type_constructor_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -203,7 +203,7 @@ pub fn quote_hwuniverse_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -217,7 +217,7 @@ pub fn quote_slift_instances<'db>(
     // SLift's ty should be a signal type (like Bit)
     match slift.ty.as_ref() {
         Value::Bit(bit) => quote_bit_instances(global, depth, value, bit),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -231,7 +231,7 @@ pub fn quote_mlift_instances<'db>(
     // MLift's ty should be a module type (like HArrow)
     match mlift.ty.as_ref() {
         Value::HArrow(harrow) => quote_harrow_instances(global, depth, value, harrow),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -248,7 +248,7 @@ pub fn quote_harrow_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -267,7 +267,7 @@ pub fn quote_bit_instances<'db>(
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
         Value::HApplication(happ) => quote_happlication(global, depth, happ),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -281,7 +281,7 @@ pub fn quote_happlication<'db>(
     let module = quote(global, depth, &happ.module, &happ.module_ty)?;
     let domain_ty = match happ.module_ty.as_ref() {
         Value::HArrow(harrow) => type_quote(global, depth, &harrow.source)?,
-        _ => return Err(Error::IllTyped),
+        _ => return Err(Error::IllTyped(happ.module_ty.clone())),
     };
     let argument = quote(
         global,
@@ -289,7 +289,7 @@ pub fn quote_happlication<'db>(
         &happ.argument,
         match happ.module_ty.as_ref() {
             Value::HArrow(harrow) => harrow.source.as_ref(),
-            _ => return Err(Error::IllTyped),
+            _ => return Err(Error::IllTyped(happ.module_ty.clone())),
         },
     )?;
     Ok(Syntax::happlication_rc(module, domain_ty, argument))
@@ -308,7 +308,7 @@ pub fn quote_signal_universe_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -325,7 +325,7 @@ pub fn quote_module_universe_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -341,7 +341,7 @@ pub fn quote_prim_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -357,7 +357,7 @@ pub fn quote_constant_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -373,7 +373,7 @@ pub fn quote_rigid_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -389,7 +389,7 @@ pub fn quote_flex_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 // ============================================================================
@@ -423,7 +423,7 @@ pub fn type_quote<'db>(
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
         Value::EqType(eq) => quote_eq_type(global, depth, eq),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 /// Quote a Universe to syntax.
@@ -744,7 +744,7 @@ fn quote_metavariable<'db>(
     meta: &val::MetaVariable<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Look up metavariable info for argument types
-    let meta_info = global.metavariable(meta.id).map_err(|_| Error::IllTyped)?;
+    let meta_info = global.metavariable(meta.id).unwrap();
 
     // Create environment for evaluating argument types
     let mut env = Environment {
@@ -799,7 +799,7 @@ fn quote_case_eliminator<'db>(
     // always be a Variable. Extract the Variable struct for the Case syntax.
     let scrutinee_var = match syn_scrutinee.as_ref() {
         Syntax::Variable(var) => var.clone(),
-        _ => return Err(Error::IllTyped), // Case scrutinee must be a variable
+        _ => panic!("?????"), // Case scrutinee must be a variable
     };
 
     let _type_info = global.type_constructor(sem_case.type_constructor)?;
@@ -854,7 +854,7 @@ pub fn quote_eq_instances<'db>(
         Value::Constant(constant) => quote_constant(global, depth, constant),
         Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
         Value::Flex(flex) => quote_flex(global, depth, flex),
-        _ => Err(Error::IllTyped),
+        _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
@@ -1307,7 +1307,7 @@ mod tests {
 
         // ∀ (A : U0) → ∀ (x : A) → A
         let inner = Syntax::pi_rc(
-            Syntax::variable_rc(Index(0)),               // domain is A
+            Syntax::variable_rc(Index(0)),          // domain is A
             Binding(Syntax::variable_rc(Index(1))), // codomain is A
         );
         let outer = Value::pi(c.u0(), Closure::new(LocalEnv::new(), inner));

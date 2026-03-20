@@ -1,10 +1,8 @@
 use hwml_core::*;
+use std::borrow::Borrow;
 use std::ops::Deref;
 
-// #[derive(Clone, Debug)]
-// pub struct Trusted<A>(pub(in crate::trusted) A);
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Trusted<A>(pub(crate) A);
 
 impl<A> Trusted<A> {
@@ -18,6 +16,22 @@ impl<A> Deref for Trusted<A> {
 
     fn deref(&self) -> &A {
         &self.0
+    }
+}
+
+impl<A, B> AsRef<B> for Trusted<A>
+where
+    A: AsRef<B>,
+    B: ?Sized,
+{
+    fn as_ref(&self) -> &B {
+        self.deref().as_ref()
+    }
+}
+
+impl<A> Borrow<A> for Trusted<A> {
+    fn borrow(&self) -> &A {
+        self.deref()
     }
 }
 

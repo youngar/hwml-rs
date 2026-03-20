@@ -881,12 +881,29 @@ struct ReadyQueue {
     queue: RefCell<VecDeque<TaskId>>,
 }
 
+impl ReadyQueue {
+    pub fn new() -> ReadyQueue {
+        ReadyQueue {
+            queue: RefCell::new(VecDeque::new()),
+        }
+    }
+}
+
 /// Shared task storage that can be accessed by both the executor and spawner.
-struct TaskStorage<'g> {
+pub struct TaskStorage<'g> {
     /// All spawned tasks, indexed by TaskId using a Slab allocator
     tasks: RefCell<Slab<Pin<Box<dyn Future<Output = ()> + 'g>>>>,
     /// Queue of task IDs that are ready to run
     ready_queue: Rc<ReadyQueue>,
+}
+
+impl<'g> TaskStorage<'g> {
+    pub fn new() -> TaskStorage<'g> {
+        TaskStorage {
+            tasks: RefCell::new(Slab::new()),
+            ready_queue: Rc::new(ReadyQueue::new()),
+        }
+    }
 }
 
 /// A handle that allows spawning new tasks from within async functions.
@@ -896,11 +913,17 @@ pub struct TaskSpawner<'g> {
     storage: Rc<TaskStorage<'g>>,
 }
 
-impl<'a> TaskSpawner<'a> {
+impl<'g> TaskSpawner<'g> {
+    pub fn new() -> TaskSpawner<'g> {
+        TaskSpawner {
+            storage: Rc::new(TaskStorage::new()),
+        }
+    }
+
     /// Spawn a new task that will be executed by the executor.
     pub fn spawn<F>(&self, future: F)
     where
-        F: Future<Output = ()> + 'a,
+        F: Future<Output = ()> + 'g,
     {
         let mut tasks = self.storage.tasks.borrow_mut();
         let fut = Box::pin(future);
