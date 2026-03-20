@@ -214,7 +214,7 @@ impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
 **Flow:**
 1. Task calls `.await` on `WaitForResolved`
 2. `poll_meta` checks if metavariable is solved
-3. If not solved, registers `Waker` with `BlockReason` and returns `Poll::Pending`
+3. If not solved, registers `Waker` and returns `Poll::Pending`
 4. Executor suspends task until another task solves the meta and calls `waker.wake()`
 
 ---

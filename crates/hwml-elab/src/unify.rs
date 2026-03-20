@@ -145,8 +145,7 @@ async fn whnf<'db, 'g>(
     let global = ctx.tc_env.values.global;
     while let Value::Flex(flex) = &*value {
         println!("[WHNF] Substituting meta {} with solution", flex.head.id);
-        let syn_solution =
-            WaitForResolved::new(ctx.clone(), flex.head.id, BlockReason::generic("whnf")).await;
+        let syn_solution = WaitForResolved::new(ctx.clone(), flex.head.id).await;
         let sem_solution =
             eval::substitute(global, &syn_solution, flex.head.local.clone()).unwrap();
         value = run_spine(global, sem_solution, &flex.spine)?;

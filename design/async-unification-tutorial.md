@@ -58,7 +58,6 @@ It maintains a queue of runnable tasks and polls them in a loop. When a task ret
 pub struct WaitForResolved<'db, 'g> {
     ctx: SolverEnvironment<'db, 'g>,
     meta: MetaVariableId,
-    reason: BlockReason,  // Why we're waiting (for error reporting)
 }
 ```
 
@@ -149,7 +148,6 @@ async fn whnf<'db, 'g>(
         let syn_solution = WaitForResolved::new(
             ctx.clone(),
             flex.head.id,
-            BlockReason::generic("whnf")
         ).await;
         
         let sem_solution = eval::substitute(global, &syn_solution, flex.head.local)?;
@@ -209,20 +207,6 @@ async fn lower_flex<'db, 'g>(...) -> Result<RcValue<'db>, UnificationError<'db>>
 ```
 
 This transforms the problem into one where the meta has an empty spine.
-
-## Rich Error Reporting
-
-The `BlockReason` enum tracks **why** each task is waiting:
-
-```rust
-pub enum BlockReason {
-    Generic(String),
-    ExpectedShape(String),
-    Unifying(String, String),
-}
-```
-
-When the solver stalls (deadlock), it generates a blame report showing which metas are unsolved and why tasks are waiting on them.
 
 ## Summary
 

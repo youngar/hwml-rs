@@ -73,42 +73,9 @@ fn quote_value_simple<'db>(
     }
 }
 
-// ============================================================================
-// RICH DEPENDENCY TRACKING
-// ============================================================================
-
-/// Describes why a task is blocked on a metavariable.
-/// This enables rich error reporting by capturing the context of each dependency.
-#[derive(Debug, Clone)]
-pub enum BlockReason {
-    /// A simple textual description of why we're blocked
-    Generic(String),
-    /// We expect the metavariable to have a specific shape (e.g., "Function", "Pi type")
-    ExpectedShape(String),
-    /// We're blocked because we're trying to unify two terms
-    Unifying(String, String), // Store debug strings instead of values to avoid lifetime issues
-}
-
-impl BlockReason {
-    /// Create a generic blocking reason with a description
-    pub fn generic(description: impl Into<String>) -> Self {
-        BlockReason::Generic(description.into())
-    }
-
-    /// Create a blocking reason indicating we expect a specific shape
-    pub fn expected_shape(shape: impl Into<String>) -> Self {
-        BlockReason::ExpectedShape(shape.into())
-    }
-}
-
-/// Information about a task waiting on a metavariable.
-/// Contains the waker to resume the task and the reason for waiting.
 #[derive(Clone)]
 struct WaitingTask {
-    /// The waker to resume this task when the metavariable is solved
     waker: Waker,
-    /// Why this task is waiting on this metavariable
-    reason: BlockReason,
 }
 
 type TaskId = usize;
@@ -224,12 +191,7 @@ impl<'db> SolverState<'db> {
 
     /// Attempt to read a meta. If solved, return the value. If not solved,
     /// register the waker with the reason and return None.
-    fn poll_meta(
-        &mut self,
-        meta: MetaVariableId,
-        waker: &Waker,
-        reason: BlockReason,
-    ) -> Option<RcSyntax<'db>> {
+    fn poll_meta(&mut self, meta: MetaVariableId, waker: &Waker) -> Option<RcSyntax<'db>> {
         // Meta should already exist if it was allocated through fresh_meta
         let slot = self.metas.get_mut(&meta).expect(&format!(
             "Meta {} not allocated! Use fresh_meta() to allocate metavariables.",
@@ -242,31 +204,10 @@ impl<'db> SolverState<'db> {
                 // Register this task to be woken when the meta is solved
                 slot.waiters.push(WaitingTask {
                     waker: waker.clone(),
-                    reason,
                 });
                 None
             }
         }
-    }
-
-    /// Get all unsolved metavariables with their waiting tasks.
-    /// Used for generating detailed error reports when the solver stalls.
-    pub fn get_unsolved_with_waiters(&self) -> Vec<(MetaVariableId, Vec<BlockReason>)> {
-        self.metas
-            .iter()
-            .filter_map(|(id, slot)| {
-                if slot.solution.is_none() && !slot.waiters.is_empty() {
-                    let reasons = slot
-                        .waiters
-                        .iter()
-                        .map(|w| w.reason.clone())
-                        .collect::<Vec<_>>();
-                    Some((*id, reasons))
-                } else {
-                    None
-                }
-            })
-            .collect()
     }
 
     pub fn is_solved(&self, id: MetaVariableId) -> bool {
@@ -585,13 +526,8 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 
     /// Attempt to read a meta. If solved, return value.
     /// If not, register the current Waker with reason and return None.
-    pub fn poll_meta(
-        &self,
-        meta: MetaVariableId,
-        waker: &Waker,
-        reason: BlockReason,
-    ) -> Option<RcSyntax<'db>> {
-        self.state.borrow_mut().poll_meta(meta, waker, reason)
+    pub fn poll_meta(&self, meta: MetaVariableId, waker: &Waker) -> Option<RcSyntax<'db>> {
+        self.state.borrow_mut().poll_meta(meta, waker)
     }
 
     /// Allocate a fresh metavariable and return its ID.
@@ -779,38 +715,6 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
         let mut eval_env = self.tc_env.values.clone();
         eval::eval(&mut eval_env, tm).unwrap()
     }
-
-    /// Generate a detailed blame report for unsolved metavariables.
-    /// This is called when the solver stalls to provide rich error messages.
-    pub fn generate_blame_report(&self) -> String {
-        let unsolved = self.state.borrow().get_unsolved_with_waiters();
-
-        if unsolved.is_empty() {
-            return String::from("No unsolved metavariables with waiting tasks.");
-        }
-
-        let mut report = String::from("=== UNSOLVED CONSTRAINTS ===\n");
-
-        for (meta_id, waiters) in unsolved {
-            report.push_str(&format!("\n{} is unsolved.\n", meta_id));
-            report.push_str("   Blocked for the following reasons:\n");
-
-            for reason in waiters {
-                let reason_str = match reason {
-                    BlockReason::Generic(desc) => desc,
-                    BlockReason::ExpectedShape(shape) => {
-                        format!("Expected shape: {}", shape)
-                    }
-                    BlockReason::Unifying(lhs, rhs) => {
-                        format!("Unifying {:?} with {:?}", lhs, rhs)
-                    }
-                };
-                report.push_str(&format!("   - {}\n", reason_str));
-            }
-        }
-
-        report
-    }
 }
 
 /// Test-only: Initialize solver environment from declared metavariables in GlobalEnv.
@@ -837,18 +741,11 @@ impl<'db, 'g> SolverEnvironment<'db, 'g> {
 pub struct WaitForResolved<'db, 'g> {
     ctx: SolverEnvironment<'db, 'g>,
     meta: MetaVariableId,
-    reason: BlockReason,
 }
 
 impl<'db, 'g> WaitForResolved<'db, 'g> {
-    /// Create a new future that waits for a metavariable to be resolved.
-    ///
-    /// # Arguments
-    /// * `ctx` - The solver context
-    /// * `meta` - The metavariable to wait for
-    /// * `reason` - Why we're waiting (for error reporting)
-    pub fn new(ctx: SolverEnvironment<'db, 'g>, meta: MetaVariableId, reason: BlockReason) -> Self {
-        WaitForResolved { ctx, meta, reason }
+    pub fn new(ctx: SolverEnvironment<'db, 'g>, meta: MetaVariableId) -> Self {
+        WaitForResolved { ctx, meta }
     }
 }
 
@@ -856,19 +753,13 @@ impl<'db, 'g> Future for WaitForResolved<'db, 'g> {
     type Output = RcSyntax<'db>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self
-            .ctx
-            .poll_meta(self.meta, cx.waker(), self.reason.clone())
-        {
+        match self.ctx.poll_meta(self.meta, cx.waker()) {
             Some(term) => {
                 println!("[WaitForResolved] Meta {} is resolved", self.meta);
                 Poll::Ready(term)
             }
             None => {
-                println!(
-                    "[WaitForResolved] Blocked waiting on {} (reason: {:?})",
-                    self.meta, self.reason
-                );
+                println!("[WaitForResolved] Blocked waiting on {}", self.meta,);
                 Poll::Pending
             }
         }
@@ -1016,12 +907,10 @@ impl<'g> SingleThreadedExecutor<'g> {
         let tasks = self.storage.tasks.borrow();
         if !tasks.is_empty() {
             let pending_tasks: Vec<_> = tasks.iter().map(|(id, _)| id).collect();
-            let blame_report = ctx.generate_blame_report();
             return Err(format!(
-                "Deadlock detected: {} tasks still pending but no progress can be made.\nPending tasks: {:?}\n\n{}",
+                "Deadlock detected: {} tasks still pending but no progress can be made.\nPending tasks: {:?}\n",
                 tasks.len(),
                 pending_tasks,
-                blame_report
             ));
         }
 
