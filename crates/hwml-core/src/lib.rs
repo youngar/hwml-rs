@@ -4,6 +4,7 @@ pub mod check_module;
 pub mod common;
 pub mod equal;
 pub mod eval;
+pub mod global_env;
 pub mod lower;
 pub mod name;
 pub mod pattern_unify;
@@ -18,18 +19,18 @@ pub mod word;
 
 pub use binding::*;
 pub use common::*;
+pub use global_env::*;
 pub use name::*;
 pub use source_range::*;
-pub use typed::Typed;
-pub use word::Word;
-
 pub use syn::declaration::{
     CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, PrimitiveDecl,
     TypeConstructorDecl,
 };
 pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
+pub use typed::Typed;
 pub use typed::*;
-pub use val::{GlobalEnv, RcValue, Value};
+pub use val::{RcValue, Value};
+pub use word::Word;
 
 #[salsa::db]
 #[derive(Default, Clone)]

@@ -59,7 +59,7 @@ fn new(ty: RcValue<'db>, location: SourceRange) -> Self {
 // Line 185: Update fresh_meta signature
 pub fn fresh_meta(&mut self, ty: RcValue<'db>, loc: SourceRange) -> MetaVariableId {
     let local_index = self.next_meta_index;
-    let id = MetaVariableId::new(local_index);
+    let id = MetaVariableId(local_index);
     self.next_meta_index += 1;
     self.metas.insert(id, MetaSlot::new(ty, loc));  // ← UPDATED
     id

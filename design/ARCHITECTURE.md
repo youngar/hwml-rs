@@ -44,7 +44,7 @@ The kernel is **async** and integrates with the existing `SolverState` for metav
 
 - Kernel functions can `.await` on unsolved metavariables
 - Unification is part of the kernel context
-- Cooperative scheduling via `SingleThreadedExecutor`
+- Cooperative scheduling via `LocalExecutor`
 
 ### 3. **Separation of Surface and Core**
 
@@ -87,7 +87,7 @@ hwml-rust/
 │   ├── hwml-elab/           # Elaborator (untrusted)
 │   │   ├── src/
 │   │   │   ├── elaborator.rs  (Uses kernel API, no direct Syntax construction)
-│   │   │   ├── engine.rs      (SolverState, SingleThreadedExecutor)
+│   │   │   ├── engine.rs      (SolverState, LocalExecutor)
 │   │   │   ├── unify.rs       (Async unification)
 │   │   │   └── force.rs       (Metavariable forcing)
 │   │   └── ...

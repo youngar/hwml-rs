@@ -78,7 +78,7 @@ pub struct SolverState<'db> {
 ```rust
 pub fn fresh_meta(&mut self, loc: SourceRange, ty: RcValue<'db>) -> MetaVariableId {
     let local_index = self.local_counters.entry(loc).or_insert(0);
-    let id = MetaVariableId::new(loc, *local_index);
+    let id = MetaVariableId(loc, *local_index);
     *local_index += 1;
     self.metas.insert(id, MetaSlot::new(ty));
     id

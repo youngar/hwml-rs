@@ -23,7 +23,7 @@ pub struct TCEnvironment<'db, 'g> {
 }
 
 impl<'db, 'g> TCEnvironment<'db, 'g> {
-    fn global_env(&self) -> &'g val::GlobalEnv<'db> {
+    fn global_env(&self) -> &'g GlobalEnv<'db> {
         self.values.global
     }
 
@@ -129,12 +129,10 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
     pub fn syn_substitution(&self) -> Vec<RcSyntax<'db>> {
         let mut substitution: Vec<RcSyntax<'db>> = Vec::new();
         for i in 0..self.depth() {
-            let tm: &RcValue<'db> = self.local_env().get(Level(i));
-            let ty: &RcValue<'db> = self.context().get(i).unwrap();
-            let syn_tm: RcSyntax<'db> = self.quote(tm, ty);
-        }
-        for (tm, ty) in self.local_env().iter().zip(self.context()) {
-            substitution.push(self.quote(tm, &ty));
+            let tm = &self.local_env()[Level(i)];
+            let ty = &self.context()[i];
+            let syn_tm = self.quote(tm, ty);
+            substitution.push(syn_tm);
         }
         substitution
     }
@@ -185,7 +183,7 @@ pub enum Error<'db> {
         ty_got: RcValue<'db>,
     },
     EvaluationFailure(eval::Error<'db>),
-    LookupError(val::LookupError<'db>),
+    LookupError(LookupError<'db>),
     MatchOnNonDatatype(RcValue<'db>),
     QuoteError(quote::Error<'db>),
     PatternUnifyError(pattern_unify::Error<'db>),
@@ -264,7 +262,7 @@ impl<'db> std::fmt::Display for Error<'db> {
                     f,
                     "pattern match blocked on unsolved metavariable ?{}\n\
                      help: add a type annotation to resolve the ambiguity",
-                    meta_id.local_index
+                    meta_id.0
                 )
             }
             Error::NonExhaustiveMatch { tm, missing } => {
@@ -1380,19 +1378,19 @@ mod tests {
     use crate::test_utils::{eval_str, load_prelude, NAT_PRELUDE, VEC_PRELUDE};
 
     /// Create a GlobalEnv with Nat type defined.
-    fn make_nat_global<'db>(db: &'db Database) -> val::GlobalEnv<'db> {
+    fn make_nat_global<'db>(db: &'db Database) -> GlobalEnv<'db> {
         load_prelude(db, NAT_PRELUDE)
     }
 
     /// Create a GlobalEnv with Nat and Vec types defined.
-    fn make_vec_global<'db>(db: &'db Database) -> val::GlobalEnv<'db> {
+    fn make_vec_global<'db>(db: &'db Database) -> GlobalEnv<'db> {
         load_prelude(db, VEC_PRELUDE)
     }
 
     /// Helper to create a TCEnvironment with a GlobalEnv
     fn make_env<'db, 'g>(
         db: &'db dyn salsa::Database,
-        global: &'g val::GlobalEnv<'db>,
+        global: &'g GlobalEnv<'db>,
     ) -> TCEnvironment<'db, 'g> {
         TCEnvironment {
             db,
@@ -1412,7 +1410,7 @@ mod tests {
     #[test]
     fn test_hwtype_is_not_valid_meta_type() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // Bit - a hardware type
@@ -1424,7 +1422,7 @@ mod tests {
     #[test]
     fn test_universe_is_valid_meta_type() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // 𝒰0 should be accepted
@@ -1436,7 +1434,7 @@ mod tests {
     #[test]
     fn test_pi_is_valid_meta_type() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ∀ (%x : 𝒰0) → 𝒰0
@@ -1450,7 +1448,7 @@ mod tests {
     #[test]
     fn test_check_type_accepts_universe() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         let u0 = parse(&db, "U0");
@@ -1461,7 +1459,7 @@ mod tests {
     #[test]
     fn test_check_type_accepts_pi() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         let pi = parse(&db, "forall (%x : U0) -> U0");
@@ -1472,7 +1470,7 @@ mod tests {
     #[test]
     fn test_check_type_accepts_bit() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // Bit is a signal type (SType), so it's a valid type
@@ -1484,7 +1482,7 @@ mod tests {
     #[test]
     fn test_check_type_accepts_harrow() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ^s Bit -> ^s Bit : MType (module type with hardware type components)
@@ -1498,7 +1496,7 @@ mod tests {
     #[test]
     fn test_synth_universe() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         let u0 = parse(&db, "U0");
@@ -1515,7 +1513,7 @@ mod tests {
     #[test]
     fn test_synth_variable() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // NEW: Push a variable of type 𝒰0 using UniverseCode
@@ -1538,14 +1536,14 @@ mod tests {
     #[test]
     fn test_synth_constant() {
         let db = Database::new();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         let cid = |s: &str| QualifiedName::from_with_db(&db, s);
 
         // Add constant @myConst : 𝒰0 = 𝒰0
         global.add_constant(
             cid("myConst"),
-            val::ConstantInfo::new(parse(&db, "U0"), parse(&db, "U0")),
+            ConstantInfo::new(parse(&db, "U0"), parse(&db, "U0")),
         );
 
         let mut env = make_env(&db, &global);
@@ -1565,12 +1563,12 @@ mod tests {
     #[test]
     fn test_synth_primitive() {
         let db = Database::new();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         let cid = |s: &str| QualifiedName::from_with_db(&db, s);
 
         // Add primitive $Nat : 𝒰0
-        global.add_primitive(cid("Nat"), val::PrimitiveInfo::new(parse(&db, "U0")));
+        global.add_primitive(cid("Nat"), PrimitiveInfo::new(parse(&db, "U0")));
 
         let mut env = make_env(&db, &global);
 
@@ -1591,7 +1589,7 @@ mod tests {
     #[test]
     fn test_check_pi_against_universe() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ∀ (%x : 𝒰0) → 𝒰0 has type 𝒰1 (not 𝒰0)
@@ -1606,7 +1604,7 @@ mod tests {
     #[test]
     fn test_check_lambda_against_pi() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // λ %x → %x : ∀ (%x : 𝒰0) → 𝒰0
@@ -1627,7 +1625,7 @@ mod tests {
     #[test]
     fn test_check_bit_against_signal_universe() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         let bit = parse(&db, "Bit");
@@ -1640,7 +1638,7 @@ mod tests {
     #[test]
     fn test_check_harrow_against_module_universe() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ^s Bit -> ^s Bit : MType (HArrow with hardware type components)
@@ -1656,7 +1654,7 @@ mod tests {
     #[test]
     fn test_synth_application() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // NEW: Set up: we need a variable of Pi type
@@ -1693,10 +1691,10 @@ mod tests {
         use crate::common::MetaVariableId;
 
         let db = Database::default();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         // NEW: Declare ?[0] : U0 using UniverseCode
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(meta_id, vec![], Rc::new(Syntax::UniverseCode(0)));
 
         let mut env = make_env(&db, &global);
@@ -1718,10 +1716,10 @@ mod tests {
         use crate::common::MetaVariableId;
 
         let db = Database::default();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         // NEW: Declare ?[0] (%x : U0) : U0 using UniverseCode
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(
             meta_id,
             vec![Rc::new(Syntax::UniverseCode(0))],
@@ -1748,10 +1746,10 @@ mod tests {
         use crate::common::MetaVariableId;
 
         let db = Database::default();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         // NEW: Declare ?[0] (%x : U0) : U0 (expects 1 argument) using UniverseCode
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(
             meta_id,
             vec![Rc::new(Syntax::UniverseCode(0))],
@@ -1771,10 +1769,10 @@ mod tests {
         use crate::common::MetaVariableId;
 
         let db = Database::default();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         // NEW: Declare ?[0] (%x : $Bit) : U0 (expects Bit type) using BitCode
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(
             meta_id,
             vec![Rc::new(Syntax::BitCode)],
@@ -2232,7 +2230,7 @@ mod tests {
     #[test]
     fn test_check_eq_type() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // Eq U0 U0 U0 : U1
@@ -2245,7 +2243,7 @@ mod tests {
     #[test]
     fn test_check_refl() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // refl : Eq U0 U0 U0
@@ -2258,7 +2256,7 @@ mod tests {
     #[test]
     fn test_check_refl_fails_on_different_endpoints() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // refl : Eq U0 U0 U1 should fail (endpoints don't match)
@@ -2270,7 +2268,7 @@ mod tests {
     #[test]
     fn test_check_transport() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // Test: transport along an equality of types
@@ -2332,7 +2330,7 @@ mod tests {
         // to Vec A m given a proof that (n + n) = m.
 
         let db = Database::default();
-        let mut global = val::GlobalEnv::new();
+        let mut global = GlobalEnv::new();
 
         // First, set up the type environment with Nat and Vec
         // For this test, we'll use primitives to represent these types
@@ -2341,7 +2339,7 @@ mod tests {
         let nat_id = "Nat".into_with_db(&db);
         global.add_type_constructor(
             nat_id,
-            val::TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
+            TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
         );
 
         // Register Vec : (A : U0) -> Nat -> U0
@@ -2351,7 +2349,7 @@ mod tests {
         let nat_syn = Syntax::type_constructor_rc(nat_id, vec![]);
         global.add_type_constructor(
             vec_id,
-            val::TypeConstructorInfo::new(
+            TypeConstructorInfo::new(
                 vec![u0_syn.clone(), nat_syn.clone()],
                 1, // One parameter (A), one index (n)
                 UniverseLevel::new(0),
@@ -2431,7 +2429,7 @@ mod tests {
     #[test]
     fn test_let_simple_synth() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %x : U0 = U0; %x
@@ -2450,7 +2448,7 @@ mod tests {
     #[test]
     fn test_let_simple_check() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %x : U0 = U0; %x : U1
@@ -2463,7 +2461,7 @@ mod tests {
     #[test]
     fn test_let_body_uses_binding() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %A : U1 = U0; %A
@@ -2482,7 +2480,7 @@ mod tests {
     #[test]
     fn test_let_nested() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %A : U1 = U0; let %B : U1 = %A; %B
@@ -2503,7 +2501,7 @@ mod tests {
         // let y = U0; let h : Eq U1 U0 y = refl;
         // This tests that δ-reduction works correctly in conversion checking
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %y : U1 = U0; let %h : Eq U1 U0 %y = refl; %h
@@ -2529,7 +2527,7 @@ mod tests {
     #[test]
     fn test_let_with_universe_values() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %T : U1 = U0; let %x : U1 = %T; %x
@@ -2548,7 +2546,7 @@ mod tests {
     #[test]
     fn test_let_type_annotation_checked() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // let %x : Bit = U0; %x
@@ -2561,7 +2559,7 @@ mod tests {
     #[test]
     fn test_let_in_lambda_with_pi_type() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // λ %A → let %B : U0 = %A; %B
@@ -2577,7 +2575,7 @@ mod tests {
     #[test]
     fn test_let_in_lambda_body() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // λ %x → let %y : U0 = %x; %y
@@ -2595,7 +2593,7 @@ mod tests {
     #[test]
     fn test_pi_universe_max_rule() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ∀ (%x : U0) → U0 should have type U1 (max(0, 0) = 0, so Pi : U1)
@@ -2632,7 +2630,7 @@ mod tests {
     #[test]
     fn test_pi_universe_cumulativity() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ∀ (%x : U0) → U0 can be checked against U2 (cumulativity: U1 <= U2)
@@ -2652,7 +2650,7 @@ mod tests {
     #[test]
     fn test_pi_universe_level_too_low_fails() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // ∀ (%x : U0) → U1 should NOT be checkable against U1
@@ -2673,7 +2671,7 @@ mod tests {
     #[test]
     fn test_universe_synthesis_increments() {
         let db = Database::default();
-        let global = val::GlobalEnv::new();
+        let global = GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
         // U0 : U1

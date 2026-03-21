@@ -70,7 +70,7 @@ pub fn translate_module<'c, 'db>(
     db: &'db dyn salsa::Database,
     hwml_module: &CompilationUnit<'db>,
 ) -> Result<MlirModuleWrapper> {
-    use hwml_core::val::GlobalEnv;
+    use hwml_core::GlobalEnv;
 
     // Start with an empty global environment
     let initial_env = GlobalEnv::new();
@@ -191,7 +191,7 @@ pub fn translate_checked_module<'c, 'db>(
 ///
 /// Returns an error if saturation fails (e.g., quotation errors).
 fn saturate_and_quote_for_circt<'db>(
-    global_env: &hwml_core::val::GlobalEnv<'db>,
+    global_env: &hwml_core::GlobalEnv<'db>,
     value: &hwml_core::val::Value<'db>,
     ty: &hwml_core::val::Value<'db>,
 ) -> Result<RcSyntax<'db>> {

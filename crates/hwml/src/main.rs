@@ -65,7 +65,7 @@ fn main() {
         match statement {
             hwml_surface::Statement::Def(def) => {
                 print!("============= elab def ==============");
-                let global_env = hwml_core::val::GlobalEnv::new();
+                let global_env = hwml_core::GlobalEnv::new();
                 let state = hwml_elab::SolverState::new();
                 let tc_env = hwml_core::check::TCEnvironment {
                     db: &db,

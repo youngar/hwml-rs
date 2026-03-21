@@ -15,8 +15,8 @@ use crate::{
     eval::{self, eval_telescope, run_closure},
     syn::{CaseBranch, RcSyntax, Syntax},
     val::{
-        self, Closure, Eliminator, Environment, Flex, GlobalEnv, HArrow, LocalEnv, MetaVariable,
-        Module, Normal, Rigid, Spine, TransparentEnv, TypeConstructor, Variable,
+        self, Closure, Eliminator, Environment, Flex, HArrow, LocalEnv, MetaVariable, Module,
+        Normal, Rigid, Spine, TransparentEnv, TypeConstructor, Variable,
     },
     QualifiedName, UniverseLevel, Value,
 };
@@ -29,7 +29,7 @@ pub enum Error<'db> {
     IllTyped(RcValue<'db>),
     /// Quotation can force evaluation, which may itself error.
     EvalError(eval::Error<'db>),
-    LookupError(val::LookupError<'db>),
+    LookupError(LookupError<'db>),
 }
 
 impl<'db> From<eval::Error<'db>> for Error<'db> {
@@ -38,8 +38,8 @@ impl<'db> From<eval::Error<'db>> for Error<'db> {
     }
 }
 
-impl<'db> From<val::LookupError<'db>> for Error<'db> {
-    fn from(error: val::LookupError<'db>) -> Self {
+impl<'db> From<LookupError<'db>> for Error<'db> {
+    fn from(error: LookupError<'db>) -> Self {
         Error::LookupError(error)
     }
 }
@@ -931,8 +931,8 @@ mod tests {
     use crate::eval;
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
-    use crate::val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
     use crate::Database;
+    use crate::*;
     use hwml_support::salsa::IntoWithDb;
 
     // =========================================================================
@@ -1287,14 +1287,14 @@ mod tests {
         let u0_rc = u0.clone();
 
         // No args: ?[0]
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
         let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_rc.clone());
         let syntax = quote(&global, 0, &meta, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
 
         // With args: ?[1 Bit]
-        let meta_id2 = MetaVariableId::new(1);
+        let meta_id2 = MetaVariableId(1);
         global.add_metavariable(
             meta_id2,
             vec![Syntax::UniverseCode(0).into()],

@@ -1,6 +1,6 @@
 use crate::val::{
-    self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
-    MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
+    self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, LocalEnv, Normal, Rigid,
+    SemTelescope, TransparentEnv, Value,
 };
 use crate::*;
 use std::{
@@ -914,13 +914,13 @@ mod tests {
     fn test_eval_metavariable_no_args() {
         // A metavariable with no arguments evaluates to a Flex neutral
         use crate::common::MetaVariableId;
-        use crate::val::GlobalEnv;
+        use crate::GlobalEnv;
 
         let db = Database::new();
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : U0
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
 
         let mut env = Environment::new(&global);
@@ -951,13 +951,13 @@ mod tests {
     fn test_eval_metavariable_with_args() {
         // A metavariable with arguments evaluates to a Flex neutral with a local env
         use crate::common::{Level, MetaVariableId};
-        use crate::val::GlobalEnv;
+        use crate::GlobalEnv;
 
         let db = Database::new();
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(
             meta_id,
             vec![Syntax::UniverseCode(0).into()],
@@ -976,7 +976,7 @@ mod tests {
                 assert_eq!(flex.head.id, meta_id);
                 assert_eq!(flex.head.local.depth(), 1);
                 // The argument should be ^sBit (an SLift value containing Bit)
-                match &**flex.head.local.get(Level::new(0)) {
+                match &*flex.head.local[Level::new(0)] {
                     Value::SLift(slift) => {
                         assert!(matches!(&*slift.ty, Value::Bit(_)));
                     }
@@ -1000,13 +1000,13 @@ mod tests {
     fn test_eval_metavariable_application() {
         // Applying a Flex neutral to an argument adds to its spine
         use crate::common::MetaVariableId;
-        use crate::val::GlobalEnv;
+        use crate::GlobalEnv;
 
         let db = Database::new();
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : ∀ (%x : U0) → U0
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         let pi_ty: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Binding(Syntax::UniverseCode(0).into()),

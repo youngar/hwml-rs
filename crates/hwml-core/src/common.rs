@@ -248,21 +248,12 @@ impl From<usize> for UniverseLevel {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct MetaVariableId {
-    /// Local index for metavariables
-    pub local_index: u16,
-}
-
-impl MetaVariableId {
-    pub fn new(local_index: u16) -> MetaVariableId {
-        MetaVariableId { local_index }
-    }
-}
+pub struct MetaVariableId(pub usize);
 
 impl std::fmt::Display for MetaVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         // Format as just the index number
         // The ?[ ] wrapper is added by the Metavariable printer
-        write!(f, "{}", self.local_index)
+        write!(f, "{}", self.0)
     }
 }

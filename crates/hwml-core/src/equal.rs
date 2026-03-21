@@ -1,3 +1,4 @@
+use crate::*;
 use crate::{
     common::{Level, MetaVariableId},
     eval::{self, run_closure},
@@ -17,7 +18,7 @@ pub enum Error<'db> {
     /// Indicates that the terms are not well-typed, so convertibility cannot be checked.
     IllTyped,
     EvalError(eval::Error<'db>),
-    LookupError(val::LookupError<'db>),
+    LookupError(LookupError<'db>),
 }
 
 impl<'db> From<eval::Error<'db>> for Error<'db> {
@@ -1115,7 +1116,7 @@ mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::syn::Syntax;
-    use crate::val::{GlobalEnv, LocalEnv, Spine};
+    use crate::val::{LocalEnv, Spine};
     use std::rc::Rc;
 
     // =========================================================================
@@ -1125,22 +1126,22 @@ mod tests {
     #[test]
     fn test_equate_metavariable_ids_same() {
         let global = GlobalEnv::new();
-        let id = MetaVariableId::new(0);
+        let id = MetaVariableId(0);
         assert!(equate_metavariable_ids(&global, 0, id, id).is_ok());
     }
 
     #[test]
     fn test_equate_metavariable_ids_different() {
         let global = GlobalEnv::new();
-        let id1 = MetaVariableId::new(0);
-        let id2 = MetaVariableId::new(1);
+        let id1 = MetaVariableId(0);
+        let id2 = MetaVariableId(1);
         assert!(equate_metavariable_ids(&global, 0, id1, id2).is_err());
     }
 
     #[test]
     fn test_equate_flexes_same_meta_empty_spine() {
         let mut global = GlobalEnv::new();
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
 
         let transparent = TransparentEnv::new();
@@ -1155,8 +1156,8 @@ mod tests {
     #[test]
     fn test_equate_flexes_different_metas() {
         let mut global = GlobalEnv::new();
-        let meta_id1 = MetaVariableId::new(0);
-        let meta_id2 = MetaVariableId::new(1);
+        let meta_id1 = MetaVariableId(0);
+        let meta_id2 = MetaVariableId(1);
         global.add_metavariable(meta_id1, vec![], Syntax::UniverseCode(0).into());
         global.add_metavariable(meta_id2, vec![], Syntax::UniverseCode(0).into());
 
@@ -1180,7 +1181,7 @@ mod tests {
     fn test_equate_flex_instances() {
         // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
         let mut global = GlobalEnv::new();
-        let meta_id = MetaVariableId::new(0);
+        let meta_id = MetaVariableId(0);
         global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
 
         let transparent = TransparentEnv::new();

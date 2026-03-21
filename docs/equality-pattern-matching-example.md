@@ -45,7 +45,7 @@ use hwml_core::*;
 #[test]
 fn test_equality_proof_type_refinement() {
     let db = Database::default();
-    let global = val::GlobalEnv::new();
+    let global = GlobalEnv::new();
     let mut env = check::TypeCheckEnv::new(&db, &global);
     
     // Build context:

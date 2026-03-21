@@ -1,12 +1,9 @@
 //! Pattern unification for dependent pattern matching.
 
+use crate::*;
 use crate::{
-    common::{Level, MetaVariableId},
     equal, eval,
-    val::{
-        DataConstructorInfo, Environment, GlobalEnv, LocalEnv, RcValue, TransparentEnv,
-        TypeConstructorInfo,
-    },
+    val::{Environment, LocalEnv, RcValue, TransparentEnv},
     QualifiedName, Value,
 };
 
@@ -33,7 +30,7 @@ pub enum PatternUnifyOutcome<'db> {
 pub enum Error<'db> {
     EvalError(eval::Error<'db>),
     EqualError(equal::Error<'db>),
-    LookupError(crate::val::LookupError<'db>),
+    LookupError(LookupError<'db>),
     Internal(String),
 }
 
@@ -49,8 +46,8 @@ impl<'db> From<equal::Error<'db>> for Error<'db> {
     }
 }
 
-impl<'db> From<crate::val::LookupError<'db>> for Error<'db> {
-    fn from(err: crate::val::LookupError<'db>) -> Self {
+impl<'db> From<LookupError<'db>> for Error<'db> {
+    fn from(err: LookupError<'db>) -> Self {
         Error::LookupError(err)
     }
 }
@@ -443,8 +440,8 @@ fn unify_equations<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::val::GlobalEnv;
     use crate::Database;
+    use crate::GlobalEnv;
     use hwml_support::IntoWithDb;
 
     use crate::test_utils::{load_prelude, VEC_PRELUDE};
@@ -642,7 +639,7 @@ mod tests {
             )],
         ) {
             Ok(EquationOutcome::Stuck(id)) => {
-                assert_eq!(id, MetaVariableId::new(42))
+                assert_eq!(id, MetaVariableId(42))
             }
             Ok(EquationOutcome::Success(_)) => panic!("Expected stuck, got success"),
             Ok(EquationOutcome::Conflict) => panic!("Expected stuck, got conflict"),

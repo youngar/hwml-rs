@@ -205,7 +205,7 @@ cargo test --workspace
 **Step 1: Build the context**
 ```rust
 let db = Database::default();
-let global = val::GlobalEnv::new();
+let global = GlobalEnv::new();
 let mut env = check::TypeCheckEnv::new(&db, &global);
 
 // Add variables to context

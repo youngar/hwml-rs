@@ -167,7 +167,7 @@ impl<'db> Elaborator<'db> {
             .collect();
 
         // Return it as a metavariable syntax node
-        Syntax::metavariable_rc(MetaVariableId::new(id), substitution)
+        Syntax::metavariable_rc(MetaVariableId(id), substitution)
     }
 
     /// Emits a unification constraint to the global solver.

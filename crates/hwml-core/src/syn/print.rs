@@ -1263,8 +1263,8 @@ mod tests {
     #[test]
     fn print_metavariable() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId::new(0), vec![])), @"?[0]");
-        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId::new(1), vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))])), @"?[1 !0 !1]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(0), vec![])), @"?[0]");
+        assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId(1), vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))])), @"?[1 !0 !1]");
     }
 
     // =========================================================================

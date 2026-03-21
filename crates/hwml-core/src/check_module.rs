@@ -11,11 +11,7 @@ use crate::syn::declaration::{
     PrimitiveDecl, TypeConstructorDecl,
 };
 use crate::syn::{RcSyntax, Syntax, Telescope};
-use crate::val::{
-    ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
-};
 use crate::*;
-use crate::{QualifiedName, RcValue};
 use salsa::Database;
 
 /// Errors that can occur during module checking.

@@ -18,8 +18,8 @@ let id = MetaVariableId(42);
 ```rust
 use hwml_core::common::SourceRange;
 
-let id = MetaVariableId::new(None, 0);
-let id = MetaVariableId::new(None, 42);
+let id = MetaVariableId(None, 0);
+let id = MetaVariableId(None, 42);
 ```
 
 ### 2. MetaVariableId Pattern Matching
@@ -120,7 +120,7 @@ let zonked_term = ctx.zonk(&term);
 
 ## Migration Checklist
 
-- [ ] Replace all `MetaVariableId(n)` with `MetaVariableId::new(None, n)`
+- [ ] Replace all `MetaVariableId(n)` with `MetaVariableId(None, n)`
 - [ ] Update pattern matches to not destructure MetaVariableId
 - [ ] Update `fresh_meta` calls to include SourceRange parameter
 - [ ] Change Vec indexing to HashMap lookups
@@ -181,12 +181,12 @@ Most test code was migrated using sed:
 ```bash
 # In hwml-core
 cd crates/hwml-core/src
-sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId::new(None, \1)/g' \
+sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId(None, \1)/g' \
     syn/parse.rs syn/print.rs check.rs eval.rs equal.rs quote.rs pattern_unify.rs
 
 # In hwml-elab
 cd crates/hwml-elab/src
-sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId::new(None, \1)/g' \
+sed -i.bak 's/MetaVariableId(\([0-9]\+\))/MetaVariableId(None, \1)/g' \
     engine.rs force.rs renaming.rs unify.rs
 ```
 
@@ -202,5 +202,5 @@ A: Unsolved non-poisoned metas are reported as errors by the typechecker. Poison
 A: Use the `Display` impl for MetaVariableId, which shows both the location and local index. Enable debug logging to see solver activity.
 
 **Q: Can I still use numeric IDs in tests?**
-A: Yes! The parser supports `?[N]` syntax which maps to `MetaVariableId::new(None, N)`.
+A: Yes! The parser supports `?[N]` syntax which maps to `MetaVariableId(None, N)`.
 

@@ -267,7 +267,7 @@ pub fn typecheck_snippet_hwmlc(source: &str) -> Result<(), Vec<String>> {
     };
 
     // Type-check the module
-    let global_env = hwml_core::val::GlobalEnv::new();
+    let global_env = hwml_core::GlobalEnv::new();
     match hwml_core::check_module::check_module(&db, &module, global_env) {
         Ok(_) => Ok(()),
         Err(e) => Err(vec![format!("Type error: {:?}", e)]),
@@ -332,7 +332,7 @@ fn typecheck_snippet_hwmlc_accumulated(
     };
 
     // Type-check the module
-    let global_env = hwml_core::val::GlobalEnv::new();
+    let global_env = hwml_core::GlobalEnv::new();
     match hwml_core::check_module::check_module(&db, &module, global_env) {
         Ok(_) => Ok(()),
         Err(e) => Err(vec![format!("Type error: {:?}", e)]),

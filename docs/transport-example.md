@@ -400,7 +400,7 @@ You can test this in `hwml-core` by constructing case expressions manually:
 ```rust
 // From crates/hwml-core/src/check.rs::test_check_transport
 let db = Database::default();
-let global = val::GlobalEnv::new();
+let global = GlobalEnv::new();
 let mut env = make_env(&db, &global);
 
 // Build context: [A : U0, B : U0, h : Eq U0 A B, x : A]

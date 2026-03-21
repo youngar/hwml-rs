@@ -284,7 +284,7 @@ impl<'input> State<'input> {
             id
         } else {
             // Name doesn't exist, allocate new ID. Use for named metas in parser
-            let id = MetaVariableId::new(self.next_meta_id as u16);
+            let id = MetaVariableId(self.next_meta_id);
             self.next_meta_id += 1;
             self.meta_names.insert(name, id);
             id
@@ -512,15 +512,15 @@ fn p_metavariable_id(state: &mut State) -> ParseResult<MetaVariableId> {
             // Numeric ID: ?[0], ?[1], etc.
             // Use  for testing/debugging
             state.advance_token();
-            Ok(MetaVariableId::new(n as u16))
+            Ok(MetaVariableId(n))
         }
         Some(Ok(Token::Zero)) => {
             state.advance_token();
-            Ok(MetaVariableId::new(0))
+            Ok(MetaVariableId(0))
         }
         Some(Ok(Token::One)) => {
             state.advance_token();
-            Ok(MetaVariableId::new(1))
+            Ok(MetaVariableId(1))
         }
         Some(Ok(Token::Variable(name))) => {
             // Named metavariable: ?[x], ?[myvar], etc.
@@ -1545,7 +1545,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "?[0]"),
-            &Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
+            &Syntax::metavariable_rc(MetaVariableId(0), vec![]),
         );
     }
 
@@ -1558,10 +1558,10 @@ mod tests {
             &parse(&db, "?[0] ?[1] ?[0]"),
             &Syntax::application_rc(
                 Syntax::application_rc(
-                    Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
-                    Syntax::metavariable_rc(MetaVariableId::new(1), vec![]),
+                    Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                    Syntax::metavariable_rc(MetaVariableId(1), vec![]),
                 ),
-                Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
             ),
         );
     }
@@ -1573,7 +1573,7 @@ mod tests {
             &db,
             &parse(&db, "λ %x → ?[0] %x"),
             &Syntax::lambda_rc(Binding(Syntax::application_rc(
-                Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
                 Syntax::variable_rc(Index(0)),
             ))),
         );
@@ -1587,10 +1587,10 @@ mod tests {
             &parse(&db, "?[0] ?[1] ?[2]"),
             &Syntax::application_rc(
                 Syntax::application_rc(
-                    Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
-                    Syntax::metavariable_rc(MetaVariableId::new(1), vec![]),
+                    Syntax::metavariable_rc(MetaVariableId(0), vec![]),
+                    Syntax::metavariable_rc(MetaVariableId(1), vec![]),
                 ),
-                Syntax::metavariable_rc(MetaVariableId::new(2), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(2), vec![]),
             ),
         );
     }
@@ -1603,7 +1603,7 @@ mod tests {
             &parse(&db, "?[0] : 𝒰0"),
             &Syntax::check_rc(
                 Syntax::UniverseCode(0).into(),
-                Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
+                Syntax::metavariable_rc(MetaVariableId(0), vec![]),
             ),
         );
     }
@@ -1615,7 +1615,7 @@ mod tests {
             &db,
             &parse(&db, "?[0 !0 !1]"),
             &Syntax::metavariable_rc(
-                MetaVariableId::new(0),
+                MetaVariableId(0),
                 vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))],
             ),
         );
