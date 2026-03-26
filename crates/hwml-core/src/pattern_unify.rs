@@ -223,8 +223,18 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
             .arguments
             .iter()
             .any(|arg| occurs_check(transparent, level, arg)),
-        Value::Pi(pi) => occurs_check(transparent, level, &pi.source),
         Value::Lambda(_) => false,
+
+        // NEW: Type codes
+        Value::PiCode(source, _target) => {
+            // Check source, but skip target closure for now
+            occurs_check(transparent, level, source)
+        }
+        Value::LiftCode(_shift, inner) => {
+            // Check the inner value
+            occurs_check(transparent, level, inner)
+        }
+
         Value::EqType(eq) => {
             occurs_check(transparent, level, &eq.ty)
                 || occurs_check(transparent, level, &eq.lhs)
@@ -234,9 +244,7 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
             occurs_check(transparent, level, &transport.proof)
                 || occurs_check(transparent, level, &transport.value)
         }
-        Value::Universe(_)
-        | Value::Lift(_)
-        | Value::Bit(_)
+        Value::Bit(_)
         | Value::Zero(_)
         | Value::One(_)
         | Value::Refl(_)
@@ -249,7 +257,9 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
         | Value::MLift(_)
         | Value::ModuleUniverse(_)
         | Value::Prim(_)
-        | Value::Constant(_) => false,
+        | Value::Constant(_)
+        | Value::UniverseCode(_)
+        | Value::BitCode => false,
         Value::Let(let_val) => {
             occurs_check(transparent, level, &let_val.ty)
                 || occurs_check(transparent, level, &let_val.value)
@@ -313,27 +323,27 @@ fn unify_equations<'db>(
                 solutions.push((level, lhs.clone()));
             }
 
-            (Value::Lambda(l1), Value::Lambda(l2), Value::Pi(pi)) => {
-                let var = Value::variable_rc(Level::new(depth), pi.source.clone());
+            (Value::Lambda(l1), Value::Lambda(l2), Value::PiCode(pi_source, pi_target)) => {
+                let var = Value::variable_rc(Level::new(depth), pi_source.clone());
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
-                let result_ty = eval::run_closure(global, &pi.target, [var])?;
+                let result_ty = eval::run_closure(global, pi_target, [var])?;
                 work_list.push((l1_body, l2_body, result_ty));
             }
 
-            (Value::Lambda(l1), _, Value::Pi(pi)) => {
-                let var = Value::variable_rc(Level::new(depth), pi.source.clone());
+            (Value::Lambda(l1), _, Value::PiCode(pi_source, pi_target)) => {
+                let var = Value::variable_rc(Level::new(depth), pi_source.clone());
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let rhs_applied = eval::run_application(global, &rhs, var.clone())?;
-                let result_ty = eval::run_closure(global, &pi.target, [var])?;
+                let result_ty = eval::run_closure(global, pi_target, [var])?;
                 work_list.push((l1_body, rhs_applied, result_ty));
             }
 
-            (_, Value::Lambda(l2), Value::Pi(pi)) => {
-                let var = Value::variable_rc(Level::new(depth), pi.source.clone());
+            (_, Value::Lambda(l2), Value::PiCode(pi_source, pi_target)) => {
+                let var = Value::variable_rc(Level::new(depth), pi_source.clone());
                 let lhs_applied = eval::run_application(global, &lhs, var.clone())?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
-                let result_ty = eval::run_closure(global, &pi.target, [var])?;
+                let result_ty = eval::run_closure(global, pi_target, [var])?;
                 work_list.push((lhs_applied, l2_body, result_ty));
             }
 
@@ -384,12 +394,12 @@ fn unify_equations<'db>(
                 }
             }
 
-            // Rule: Injectivity - equality types at Universe
-            (Value::EqType(eq1), Value::EqType(eq2), Value::Universe(_)) => {
+            // Rule: Injectivity - equality types at UniverseCode
+            (Value::EqType(eq1), Value::EqType(eq2), Value::UniverseCode(_)) => {
                 // Eq A x y ~ Eq B u v  becomes  A ~ B, x ~ u, y ~ v
                 // We need to get the type of A (which should be a universe)
                 // For simplicity, use U0 as the type for the type argument
-                let type_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
+                let type_ty: RcValue<'db> = Value::UniverseCode(0).into();
                 work_list.push((eq1.ty.clone(), eq2.ty.clone(), type_ty.clone()));
                 // x and y have type A (use eq1.ty as the type)
                 work_list.push((eq1.lhs.clone(), eq2.lhs.clone(), eq1.ty.clone()));
@@ -407,19 +417,16 @@ fn unify_equations<'db>(
                 // transport P1 h1 v1 ~ transport P2 h2 v2
                 // We need to unify the motives, proofs, and values
                 // For motives, we need to eta-expand them
-                let var = Value::variable_rc(
-                    Level::new(depth),
-                    Value::universe_rc(crate::common::UniverseLevel::new(0)),
-                );
+                let var = Value::variable_rc(Level::new(depth), Value::UniverseCode(0).into());
                 let m1_body = eval::run_closure(global, &t1.motive, [var.clone()])?;
                 let m2_body = eval::run_closure(global, &t2.motive, [var.clone()])?;
-                let motive_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
+                let motive_ty = Value::UniverseCode(0).into();
                 work_list.push((m1_body, m2_body, motive_ty));
 
-                let proof_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
+                let proof_ty = Value::UniverseCode(0).into();
                 work_list.push((t1.proof.clone(), t2.proof.clone(), proof_ty));
 
-                let value_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
+                let value_ty = Value::UniverseCode(0).into();
                 work_list.push((t1.value.clone(), t2.value.clone(), value_ty));
             }
 

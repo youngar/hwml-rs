@@ -677,7 +677,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.reset_names(depth);
                 let mut result = target;
                 for ty in tys.iter().rev() {
-                    result = Syntax::pi_rc(ty.clone(), Binding(result));
+                    result = Syntax::PiCode(ty.clone(), Binding(result)).into();
                 }
                 Ok(Some(result))
             }
@@ -726,9 +726,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
             }
             Token::Universe(level) => {
                 state.advance_token();
-                Ok(Some(Syntax::universe_rc(
-                    crate::common::UniverseLevel::new(level),
-                )))
+                Ok(Some(Syntax::UniverseCode(level).into()))
             }
             Token::HardwareUniverse => {
                 state.advance_token();
@@ -755,12 +753,8 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 p_rbracket(state)?;
                 Ok(Some(Syntax::metavariable_rc(id, substitution)))
             }
-            Token::Lift => {
-                state.advance_token();
-                let tm = p_atom(state)?;
-                Ok(Some(Syntax::lift_rc(tm)))
-            }
-            Token::SLift => {
+            Token::Lift | Token::SLift => {
+                // Legacy Lift token maps to SLift
                 state.advance_token();
                 let tm = p_atom(state)?;
                 Ok(Some(Syntax::slift_rc(tm)))
@@ -1422,9 +1416,9 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x %y → %x"),
-            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                Syntax::variable_rc(Index(1)),
-            )))),
+            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::variable_rc(
+                Index(1),
+            ))))),
         );
     }
 
@@ -1441,41 +1435,32 @@ mod tests {
     #[test]
     fn test_parse_pi_simple() {
         let db = Database::new();
-        assert_syntax_eq_data(
-            &db,
-            &parse(&db, "∀(%x : 𝒰0) → 𝒰0"),
-            &Syntax::pi_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Binding(Syntax::universe_rc(UniverseLevel::new(0))),
-            ),
-        );
+        let expected: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Binding(Syntax::UniverseCode(0).into()),
+        )
+        .into();
+        assert_syntax_eq_data(&db, &parse(&db, "∀(%x : 𝒰0) → 𝒰0"), &expected);
     }
 
     #[test]
     fn test_parse_universe() {
         let db = Database::new();
-        assert_syntax_eq_data(
-            &db,
-            &parse(&db, "𝒰0"),
-            &Syntax::universe_rc(UniverseLevel::new(0)),
-        );
+        assert_syntax_eq_data(&db, &parse(&db, "𝒰0"), &Syntax::UniverseCode(0).into());
     }
 
     #[test]
     fn test_parse_pi_multiple_vars() {
         let db = Database::new();
         // ∀(%x : 𝒰0) (%y : 𝒰0) → %x  =>  nested Pi, %x at index 1
-        assert_syntax_eq_data(
-            &db,
-            &parse(&db, "∀(%x : 𝒰0) (%y : 𝒰0) → %x"),
-            &Syntax::pi_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Binding(Syntax::pi_rc(
-                    Syntax::universe_rc(UniverseLevel::new(0)),
-                    Binding(Syntax::variable_rc(Index(1))),
-                )),
-            ),
-        );
+        let inner: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Binding(Syntax::variable_rc(Index(1))),
+        )
+        .into();
+        let expected: RcSyntax =
+            Syntax::PiCode(Syntax::UniverseCode(0).into(), Binding(inner)).into();
+        assert_syntax_eq_data(&db, &parse(&db, "∀(%x : 𝒰0) (%y : 𝒰0) → %x"), &expected);
     }
 
     #[test]
@@ -1485,12 +1470,10 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %f %x → %f %x"),
-            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                Syntax::application_rc(
-                    Syntax::variable_rc(Index(1)),
-                    Syntax::variable_rc(Index(0)),
-                ),
-            )))),
+            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::application_rc(
+                Syntax::variable_rc(Index(1)),
+                Syntax::variable_rc(Index(0)),
+            ))))),
         );
     }
 
@@ -1501,15 +1484,15 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %f %x %y → %f %x %y"),
-            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                Syntax::lambda_rc(Binding(Syntax::application_rc(
+            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::lambda_rc(
+                Binding(Syntax::application_rc(
                     Syntax::application_rc(
                         Syntax::variable_rc(Index(2)),
                         Syntax::variable_rc(Index(1)),
                     ),
                     Syntax::variable_rc(Index(0)),
-                ))),
-            )))),
+                )),
+            ))))),
         );
     }
 
@@ -1520,7 +1503,7 @@ mod tests {
             &db,
             &parse(&db, "(λ %x → %x) : 𝒰0"),
             &Syntax::check_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
+                Syntax::UniverseCode(0).into(),
                 Syntax::lambda_rc(Binding(Syntax::variable_rc(Index(0)))),
             ),
         );
@@ -1533,13 +1516,11 @@ mod tests {
             &db,
             &parse(&db, "(λ %f %x → %f %x) : 𝒰0"),
             &Syntax::check_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                    Syntax::application_rc(
-                        Syntax::variable_rc(Index(1)),
-                        Syntax::variable_rc(Index(0)),
-                    ),
-                )))),
+                Syntax::UniverseCode(0).into(),
+                Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::application_rc(
+                    Syntax::variable_rc(Index(1)),
+                    Syntax::variable_rc(Index(0)),
+                ))))),
             ),
         );
     }
@@ -1621,7 +1602,7 @@ mod tests {
             &db,
             &parse(&db, "?[0] : 𝒰0"),
             &Syntax::check_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
+                Syntax::UniverseCode(0).into(),
                 Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
             ),
         );
@@ -1697,7 +1678,7 @@ mod tests {
             &db,
             &parse(&db, "@42 : 𝒰0"),
             &Syntax::check_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
+                Syntax::UniverseCode(0).into(),
                 Syntax::constant_rc("42".into_with_db(&db)),
             ),
         );
@@ -1719,14 +1700,12 @@ mod tests {
     #[test]
     fn test_parse_constant_in_pi() {
         let db = Database::new();
-        assert_syntax_eq_data(
-            &db,
-            &parse(&db, "∀(%x : @42) → 𝒰0"),
-            &Syntax::pi_rc(
-                Syntax::constant_rc("42".into_with_db(&db)),
-                Binding(Syntax::universe_rc(UniverseLevel::new(0))),
-            ),
-        );
+        let expected: RcSyntax = Syntax::PiCode(
+            Syntax::constant_rc("42".into_with_db(&db)),
+            Binding(Syntax::UniverseCode(0).into()),
+        )
+        .into();
+        assert_syntax_eq_data(&db, &parse(&db, "∀(%x : @42) → 𝒰0"), &expected);
     }
 
     #[test]
@@ -1759,9 +1738,9 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x %y → !0"),
-            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                Syntax::variable_rc(Index(2)),
-            )))),
+            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::variable_rc(
+                Index(2),
+            ))))),
         );
     }
 
@@ -1772,12 +1751,10 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x %y → %y !0"),
-            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)),
-                    Syntax::variable_rc(Index(2)),
-                ),
-            )))),
+            &Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::application_rc(
+                Syntax::variable_rc(Index(0)),
+                Syntax::variable_rc(Index(2)),
+            ))))),
         );
     }
 
@@ -1785,14 +1762,12 @@ mod tests {
     fn test_parse_unbound_variable_in_pi() {
         let db = Database::new();
         // ∀(%x : 𝒰0) → !0  =>  at depth 1, !0 becomes index 1
-        assert_syntax_eq_data(
-            &db,
-            &parse(&db, "∀(%x : 𝒰0) → !0"),
-            &Syntax::pi_rc(
-                Syntax::universe_rc(UniverseLevel::new(0)),
-                Binding(Syntax::variable_rc(Index(1))),
-            ),
-        );
+        let expected: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Binding(Syntax::variable_rc(Index(1))),
+        )
+        .into();
+        assert_syntax_eq_data(&db, &parse(&db, "∀(%x : 𝒰0) → !0"), &expected);
     }
 
     #[test]
@@ -1817,19 +1792,18 @@ mod tests {
             ),
             (
                 "λ %x %y → %y !0",
-                Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
-                    Syntax::application_rc(
-                        Syntax::variable_rc(Index(0)),
-                        Syntax::variable_rc(Index(2)),
-                    ),
-                )))),
+                Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(Syntax::application_rc(
+                    Syntax::variable_rc(Index(0)),
+                    Syntax::variable_rc(Index(2)),
+                ))))),
             ),
             (
                 "∀(%x : 𝒰0) → !0",
-                Syntax::pi_rc(
-                    Syntax::universe_rc(UniverseLevel::new(0)),
+                Syntax::PiCode(
+                    Syntax::UniverseCode(0).into(),
                     Binding(Syntax::variable_rc(Index(1))),
-                ),
+                )
+                .into(),
             ),
             (
                 "!0 !1",
@@ -1931,9 +1905,9 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x %y → %x"),
-            &Syntax::module_rc(Binding(Syntax::module_rc(Binding(
-                Syntax::variable_rc(Index(1)),
-            )))),
+            &Syntax::module_rc(Binding(Syntax::module_rc(Binding(Syntax::variable_rc(
+                Index(1),
+            ))))),
         );
     }
 
@@ -2325,9 +2299,9 @@ mod tests {
             &parse(&db, "[@Some λ %0 → λ %0 → %0]"),
             &Syntax::data_constructor_rc(
                 "Some".into_with_db(&db),
-                vec![Syntax::lambda_rc(Binding(Syntax::lambda_rc(
-                    Binding(Syntax::variable_rc(Index(0))),
-                )))],
+                vec![Syntax::lambda_rc(Binding(Syntax::lambda_rc(Binding(
+                    Syntax::variable_rc(Index(0)),
+                ))))],
             ),
         );
     }
@@ -2413,7 +2387,7 @@ mod tests {
             &parse(&db, "#[@List 𝒰0]"),
             &Syntax::type_constructor_rc(
                 "List".into_with_db(&db),
-                vec![Syntax::universe_rc(UniverseLevel::new(0))],
+                vec![Syntax::UniverseCode(0).into()],
             ),
         );
     }
@@ -2553,11 +2527,7 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db).to_string(&db), "Option");
-            assert_syntax_eq_data(
-                &db,
-                &tc.universe,
-                &Syntax::universe_rc(UniverseLevel::new(0)),
-            );
+            assert_syntax_eq_data(&db, &tc.universe, &Syntax::UniverseCode(0).into());
         } else {
             panic!("Expected TypeConstructorDecl");
         }
@@ -2597,11 +2567,7 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db).to_string(&db), "Pair");
-            assert_syntax_eq_data(
-                &db,
-                &tc.universe,
-                &Syntax::universe_rc(UniverseLevel::new(0)),
-            );
+            assert_syntax_eq_data(&db, &tc.universe, &Syntax::UniverseCode(0).into());
         } else {
             panic!("Expected TypeConstructorDecl");
         }
@@ -2614,11 +2580,7 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db).to_string(&db), "Bool");
-            assert_syntax_eq_data(
-                &db,
-                &tc.universe,
-                &Syntax::universe_rc(UniverseLevel::new(0)),
-            );
+            assert_syntax_eq_data(&db, &tc.universe, &Syntax::UniverseCode(0).into());
         } else {
             panic!("Expected TypeConstructorDecl");
         }
@@ -2658,11 +2620,7 @@ mod tests {
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
             assert_eq!(tc.name.name(&db).to_string(&db), "Vec");
-            assert_syntax_eq_data(
-                &db,
-                &tc.universe,
-                &Syntax::universe_rc(UniverseLevel::new(0)),
-            );
+            assert_syntax_eq_data(&db, &tc.universe, &Syntax::UniverseCode(0).into());
         } else {
             panic!("Expected TypeConstructorDecl");
         }

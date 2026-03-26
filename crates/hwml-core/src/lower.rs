@@ -58,15 +58,21 @@ pub fn saturate_value<'db>(
 
         // Closures need special handling - we saturate their bodies
         Value::Lambda(lam) => saturate_lambda(global, lam),
-        Value::Pi(pi) => saturate_pi(global, pi),
         Value::Module(module) => saturate_module(global, module),
         Value::HArrow(harrow) => saturate_harrow(global, harrow),
 
-        // Recursive cases with subvalues
-        Value::Lift(lift) => {
-            let new_ty = saturate_value(global, &lift.ty)?;
-            Ok(Value::lift_rc(new_ty))
+        // NEW: Type codes with closures
+        Value::PiCode(source, target) => {
+            let new_source = saturate_value(global, source)?;
+            // For now, keep the closure as-is (will be handled during quoting)
+            Ok(Rc::new(Value::PiCode(new_source, target.clone())))
         }
+        Value::LiftCode(shift, inner) => {
+            let new_inner = saturate_value(global, inner)?;
+            Ok(Rc::new(Value::LiftCode(*shift, new_inner)))
+        }
+
+        // Recursive cases with subvalues
         Value::SLift(slift) => {
             let new_ty = saturate_value(global, &slift.ty)?;
             Ok(Value::slift_rc(new_ty))
@@ -112,7 +118,8 @@ pub fn saturate_value<'db>(
         Value::Flex(flex) => saturate_flex(global, flex),
 
         // Base cases: no subvalues to traverse
-        Value::Universe(_)
+        Value::UniverseCode(_)
+        | Value::BitCode
         | Value::HardwareUniverse(_)
         | Value::SignalUniverse(_)
         | Value::ModuleUniverse(_)
@@ -122,7 +129,10 @@ pub fn saturate_value<'db>(
         | Value::Prim(_)
         | Value::Constant(_)
         | Value::Refl(_)
-        | Value::Let(_) => Ok(Rc::new(value.clone())),
+        | Value::Let(_)
+        // NEW: Type codes without subvalues
+        | Value::UniverseCode(_)
+        | Value::BitCode => Ok(Rc::new(value.clone())),
     }
 }
 
@@ -191,7 +201,7 @@ fn saturate_closure<'db>(
         global,
         depth + 1,
         &saturated_body,
-        &Value::universe_rc(crate::common::UniverseLevel::new(0)),
+        &Value::UniverseCode(0).into(),
     )?;
 
     // Create a new closure with the saturated body
@@ -207,15 +217,9 @@ fn saturate_lambda<'db>(
     lam: &val::Lambda<'db>,
 ) -> Result<'db, RcValue<'db>> {
     // Use a placeholder type for the bound variable
-    let placeholder_ty = Value::universe_rc(crate::common::UniverseLevel::new(0));
+    let placeholder_ty = Value::UniverseCode(0).into();
     let new_body = saturate_closure(global, &lam.body, placeholder_ty)?;
     Ok(Value::lambda_rc(new_body))
-}
-
-fn saturate_pi<'db>(global: &GlobalEnv<'db>, pi: &val::Pi<'db>) -> Result<'db, RcValue<'db>> {
-    let new_source = saturate_value(global, &pi.source)?;
-    let new_target = saturate_closure(global, &pi.target, new_source.clone())?;
-    Ok(Value::pi_rc(new_source, new_target))
 }
 
 fn saturate_module<'db>(

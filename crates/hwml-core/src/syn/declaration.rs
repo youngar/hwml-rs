@@ -90,7 +90,7 @@ impl<'db> DataConstructorDecl<'db> {
     pub fn full_type(&self) -> RcSyntax<'db> {
         let mut result = self.result_type.clone();
         for ty in self.parameters.iter().rev() {
-            result = Syntax::pi_rc(ty.clone(), Binding(result));
+            result = Syntax::PiCode(ty.clone(), Binding(result)).into();
         }
         result
     }

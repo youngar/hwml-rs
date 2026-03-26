@@ -8,14 +8,31 @@ pub type DynBindingSyntax<'db> = DynBinding<RcSyntax<'db>>;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub enum Syntax<'db> {
-    Universe(Universe<'db>),
-    Lift(Lift<'db>),
+    // ========== Type codes (types as first-class terms) ==========
+    /// Type code: The universe of types at level `n`
+    /// This is a TERM that evaluates to a type code value
+    UniverseCode(usize),
 
+    /// Type code: Dependent function type (source, target)
+    /// This is a TERM that evaluates to a type code value
+    PiCode(RcSyntax<'db>, BindingSyntax<'db>),
+
+    /// Type code: Universe lifting for cumulativity
+    /// LiftCode(n, inner) shifts a type code up by n universe levels
+    /// Example: LiftCode(1, UniverseCode(0)) represents U_0 lifted to U_1
+    /// This enables modular compilation where definitions compiled at lower
+    /// universe levels can be reused at higher levels without recompilation.
+    LiftCode(usize, RcSyntax<'db>),
+
+    /// Type code: The Bit type (hardware primitive)
+    BitCode,
+
+    // ========== Equality types ==========
     Eq(EqType<'db>),
     Refl(Refl<'db>),
     Transport(Transport<'db>),
 
-    Pi(Pi<'db>),
+    // ========== Terms ==========
     Lambda(Lambda<'db>),
     Application(Application<'db>),
 
@@ -47,22 +64,6 @@ pub enum Syntax<'db> {
 }
 
 impl<'db> Syntax<'db> {
-    pub fn universe(level: UniverseLevel) -> Syntax<'db> {
-        Syntax::Universe(Universe::new(level))
-    }
-
-    pub fn universe_rc(level: UniverseLevel) -> RcSyntax<'db> {
-        Rc::new(Syntax::universe(level))
-    }
-
-    pub fn lift(ty: RcSyntax<'db>) -> Syntax<'db> {
-        Syntax::Lift(Lift::new(ty))
-    }
-
-    pub fn lift_rc(ty: RcSyntax<'db>) -> RcSyntax<'db> {
-        Rc::new(Syntax::lift(ty))
-    }
-
     pub fn eq(ty: RcSyntax<'db>, lhs: RcSyntax<'db>, rhs: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Eq(EqType::new(ty, lhs, rhs))
     }
@@ -93,14 +94,6 @@ impl<'db> Syntax<'db> {
         value: RcSyntax<'db>,
     ) -> RcSyntax<'db> {
         Rc::new(Syntax::transport(motive, proof, value))
-    }
-
-    pub fn pi(source: RcSyntax<'db>, target: BindingSyntax<'db>) -> Syntax<'db> {
-        Syntax::Pi(Pi::new(source, target))
-    }
-
-    pub fn pi_rc(source: RcSyntax<'db>, target: BindingSyntax<'db>) -> RcSyntax<'db> {
-        Rc::new(Syntax::pi(source, target))
     }
 
     pub fn lambda(body: BindingSyntax<'db>) -> Syntax<'db> {
@@ -347,33 +340,6 @@ impl<'db> Syntax<'db> {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct Universe<'db> {
-    pub level: UniverseLevel,
-    _marker: PhantomData<&'db ()>,
-}
-
-impl<'db> Universe<'db> {
-    pub fn new(level: UniverseLevel) -> Universe<'db> {
-        Universe {
-            level,
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub struct Lift<'db> {
-    pub ty: RcSyntax<'db>,
-}
-
-impl<'db> Lift<'db> {
-    pub fn new(ty: RcSyntax<'db>) -> Lift<'db> {
-        Lift { ty }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct EqType<'db> {
     pub ty: RcSyntax<'db>,
     pub lhs: RcSyntax<'db>,
@@ -417,18 +383,6 @@ impl<'db> Transport<'db> {
             proof,
             value,
         }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
-pub struct Pi<'db> {
-    pub source: RcSyntax<'db>,
-    pub target: BindingSyntax<'db>,
-}
-
-impl<'db> Pi<'db> {
-    pub fn new(source: RcSyntax<'db>, target: BindingSyntax<'db>) -> Pi<'db> {
-        Pi { source, target }
     }
 }
 

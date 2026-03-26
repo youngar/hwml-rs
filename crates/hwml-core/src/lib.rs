@@ -11,8 +11,8 @@ pub mod quote;
 pub mod source_range;
 pub mod syn;
 pub mod test_utils;
+pub mod ty; // Semantic type system (type codes architecture)
 pub mod typed;
-pub mod unify;
 pub mod val;
 pub mod word;
 

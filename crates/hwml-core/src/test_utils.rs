@@ -4,7 +4,7 @@
 //! and setting up test environments.
 
 use crate::check_module::check_module;
-use crate::common::{Level, UniverseLevel};
+use crate::common::Level;
 use crate::eval;
 use crate::quote::{quote, type_quote};
 use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
@@ -98,7 +98,7 @@ pub fn eval_str_at_depth<'db>(
 
     // Add dummy variables to the environment
     // Variables are added as rigid variables with type U0 for simplicity
-    let dummy_ty = Value::universe_rc(UniverseLevel::new(0));
+    let dummy_ty: RcValue = Value::UniverseCode(0).into();
     let dummy_vars: Vec<_> = (0..depth)
         .map(|i| Value::variable_rc(Level::new(i), dummy_ty.clone()))
         .collect();

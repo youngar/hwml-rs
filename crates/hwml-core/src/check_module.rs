@@ -148,7 +148,7 @@ fn add_type_constructor_to_env<'db>(
     tcon: &TypeConstructorDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let level = match tcon.universe.as_ref() {
-        Syntax::Universe(u) => u.level,
+        Syntax::UniverseCode(level) => *level,
         _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
     };
 
@@ -159,7 +159,8 @@ fn add_type_constructor_to_env<'db>(
 
     let dcon_names: Vec<_> = tcon.data_constructors.iter().map(|d| d.name).collect();
 
-    let mut tcon_info = TypeConstructorInfo::new(arguments.clone(), num_parameters, level);
+    let mut tcon_info =
+        TypeConstructorInfo::new(arguments.clone(), num_parameters, UniverseLevel::new(level));
     tcon_info.constructors = dcon_names;
     global.add_type_constructor(tcon.name, tcon_info);
 
@@ -186,7 +187,7 @@ fn validate_type_constructor<'db>(
 
     check_type(&mut tc_env, &tcon.universe)?;
     let universe_ty = crate::check::type_synth(&mut tc_env, &tcon.universe)?;
-    let Value::Universe(tcon_universe) = &*universe_ty else {
+    let Value::UniverseCode(tcon_universe_level) = &*universe_ty else {
         return Err(Error::InvalidTypeConstructorUniverse(tcon.name));
     };
 
@@ -203,7 +204,7 @@ fn validate_type_constructor<'db>(
     }
 
     for dcon in tcon.data_constructors.iter() {
-        validate_data_constructor(db, global, tcon, tcon_universe, dcon)?;
+        validate_data_constructor(db, global, tcon, *tcon_universe_level, dcon)?;
     }
 
     Ok(())
@@ -213,7 +214,7 @@ fn validate_data_constructor<'db>(
     db: &'db dyn Database,
     global: &GlobalEnv<'db>,
     tcon: &TypeConstructorDecl<'db>,
-    _tcon_universe: &crate::val::Universe<'db>,
+    _tcon_universe_level: usize,
     dcon: &DataConstructorDecl<'db>,
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
@@ -270,19 +271,20 @@ fn validate_metavariable<'db>(
 /// Determine if a type represents a hardware-level constant.
 ///
 /// HardwareUniverse constants have types that:
-/// - Are `Lift` types (^ht)
-/// - Are Pi types that eventually return a Lift type
+/// - Are `SLift` types (Sig s - signal types wrapped to hardware)
+/// - Are `MLift` types (Mod m - module types wrapped to hardware)
+/// - Are PiCode types that eventually return a hardware type
 ///
-/// For Pi types, we check the syntax of the target closure's body,
+/// For PiCode types, we check the syntax of the target closure's body,
 /// since closures contain unevaluated syntax.
 fn is_hardware_type(ty: &Value) -> bool {
     match ty {
-        // Direct Lift type: ^ht
-        Value::Lift(_) => true,
+        // SLift and MLift are hardware types
+        Value::SLift(_) | Value::MLift(_) => true,
 
-        // Pi type: check if the final return type is hardware
+        // PiCode type: check if the final return type is hardware
         // We need to check the syntax of the closure body
-        Value::Pi(pi) => is_hardware_type_syntax(&pi.target.term),
+        Value::PiCode(_, target) => is_hardware_type_syntax(&target.term),
 
         // Everything else is meta-level
         _ => false,
@@ -292,11 +294,11 @@ fn is_hardware_type(ty: &Value) -> bool {
 /// Check if syntax represents a hardware type.
 fn is_hardware_type_syntax<'db>(ty: &RcSyntax<'db>) -> bool {
     match ty.as_ref() {
-        // Lift type in syntax
-        Syntax::Lift(_) => true,
+        // SLift and MLift types in syntax
+        Syntax::SLift(_) | Syntax::MLift(_) => true,
 
-        // Pi type: check the target
-        Syntax::Pi(pi) => is_hardware_type_syntax(&pi.target),
+        // PiCode type: check the target
+        Syntax::PiCode(_, target) => is_hardware_type_syntax(&target.0),
 
         // Check term - recurse into the inner term
         Syntax::Check(check) => is_hardware_type_syntax(&check.term),
@@ -306,11 +308,12 @@ fn is_hardware_type_syntax<'db>(ty: &RcSyntax<'db>) -> bool {
     }
 }
 
-/// Extract the inner hardware type from a Lift type.
-/// Returns None if the type is not a Lift.
+/// Extract the inner hardware type from an SLift or MLift type.
+/// Returns None if the type is not a hardware lift.
 pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a RcValue<'db>> {
     match ty {
-        Value::Lift(lift) => Some(&lift.ty),
+        Value::SLift(slift) => Some(&slift.ty),
+        Value::MLift(mlift) => Some(&mlift.ty),
         _ => None,
     }
 }

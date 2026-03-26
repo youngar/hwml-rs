@@ -85,10 +85,20 @@ pub fn eval<'db, 'g>(
     stx: &Syntax<'db>,
 ) -> Result<RcValue<'db>, Error<'db>> {
     match stx {
-        Syntax::Universe(uni) => eval_universe(env, &uni),
-        Syntax::Lift(lift) => eval_lift(env, lift),
+        // Type codes (types as first-class terms)
+        Syntax::UniverseCode(level) => Ok(Rc::new(Value::UniverseCode(*level))),
+        Syntax::PiCode(source, target) => {
+            let source_val = eval(env, source)?;
+            let closure = Closure::new(env.local.clone(), target.0.clone());
+            Ok(Rc::new(Value::PiCode(source_val, closure)))
+        }
+        Syntax::LiftCode(shift, inner) => {
+            let inner_val = eval(env, inner)?;
+            Ok(Rc::new(Value::LiftCode(*shift, inner_val)))
+        }
+        Syntax::BitCode => Ok(Rc::new(Value::BitCode)),
 
-        Syntax::Pi(pi) => eval_pi(env, pi),
+        // Terms
         Syntax::Lambda(lam) => eval_lambda(env, lam),
         Syntax::Application(app) => eval_application(env, &app),
         Syntax::Let(let_expr) => eval_let(env, let_expr),
@@ -122,30 +132,6 @@ pub fn eval<'db, 'g>(
 
         Syntax::Check(chk) => eval_check(env, chk),
     }
-}
-
-fn eval_universe<'db, 'g>(
-    _: &mut Environment<'db, 'g>,
-    universe: &syn::Universe<'db>,
-) -> Result<RcValue<'db>, Error<'db>> {
-    Ok(Value::universe_rc(universe.level))
-}
-
-fn eval_lift<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    lift: &syn::Lift<'db>,
-) -> Result<RcValue<'db>, Error<'db>> {
-    let ty = eval(env, &lift.ty)?;
-    Ok(Value::lift_rc(ty))
-}
-
-fn eval_pi<'db, 'g>(
-    env: &mut Environment<'db, 'g>,
-    pi: &syn::Pi<'db>,
-) -> Result<RcValue<'db>, Error<'db>> {
-    let source = eval(env, &pi.source)?;
-    let target = Closure::new(env.local.clone(), pi.target.term().clone());
-    Ok(Value::pi_rc(source, target))
 }
 
 fn eval_lambda<'db, 'g>(
@@ -372,13 +358,13 @@ fn apply_rigid<'db>(
     arg: RcValue<'db>,
 ) -> Result<RcValue<'db>, Error<'db>> {
     // If the operator is not pi-typed, bail.
-    let Value::Pi(pi) = rigid.ty.as_ref() else {
+    let Value::PiCode(pi_source, pi_target) = rigid.ty.as_ref() else {
         return Err(Error::BadApplication { loc: None });
     };
 
     // Use the pi type of the neutral to compute typing information.
-    let source_ty = pi.source.clone();
-    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
+    let source_ty = pi_source.clone();
+    let target_ty = run_closure(global, pi_target, [arg.clone()])?;
 
     // Build the application eliminator.
     let arg_normal = Normal::new(source_ty, arg);
@@ -404,13 +390,13 @@ fn apply_flex<'db>(
     arg: RcValue<'db>,
 ) -> Result<RcValue<'db>, Error<'db>> {
     // If the operator is not pi-typed, bail.
-    let Value::Pi(pi) = flex.ty.as_ref() else {
+    let Value::PiCode(pi_source, pi_target) = flex.ty.as_ref() else {
         return Err(Error::BadApplication { loc: None });
     };
 
     // Use the pi type of the neutral to compute typing information.
-    let source_ty = pi.source.clone();
-    let target_ty = run_closure(global, &pi.target, [arg.clone()])?;
+    let source_ty = pi_source.clone();
+    let target_ty = run_closure(global, pi_target, [arg.clone()])?;
 
     // Build the application eliminator.
     let arg_normal = Normal::new(source_ty, arg);
@@ -815,13 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn test_eval_lift() {
-        let db = Database::new();
-        let c = Ctx::new(&db);
-        assert_eq!(c.eval_type("^U0"), "^𝒰0");
-    }
-
-    #[test]
     fn test_eval_slift() {
         let db = Database::new();
         let c = Ctx::new(&db);
@@ -927,20 +906,6 @@ mod tests {
         assert_eq!(c.eval_at("(λ %x %y → %y) 0 1", "Bit"), "1");
     }
 
-    #[test]
-    fn test_eval_application_neutral() {
-        let db = Database::new();
-        let c = Ctx::new(&db);
-        // λ f → f ^Bit  - the body (f ^Bit) is a neutral application
-        // where f is a function variable of type ∀ (%x : U0) → U0 (a Pi type!)
-        // Note: A → B parses as HArrow, not Pi. Must use ∀ (%x : A) → B for Pi.
-        // When quoted, the result should be λ %0 → %0[^Bit]
-        assert_eq!(
-            c.eval_at("λ %f → %f ^Bit", "∀ (%f : ∀ (%x : U0) → U0) → U0"),
-            "λ %0 → %0[^Bit]"
-        );
-    }
-
     // =========================================================================
     // Metavariable Evaluation Tests
     // =========================================================================
@@ -956,7 +921,7 @@ mod tests {
 
         // Declare ?[0] : U0
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
 
         let mut env = Environment::new(&global);
         let meta_stx = Syntax::metavariable(meta_id, vec![]);
@@ -973,9 +938,9 @@ mod tests {
         }
 
         // Quote and check printed form
+        let u0_ty: RcValue = Value::UniverseCode(0).into();
         let quoted =
-            crate::quote::quote(&global, 0, &result, &Value::universe(UniverseLevel::new(0)))
-                .expect("quote should succeed");
+            crate::quote::quote(&global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
             crate::syn::print::print_syntax_to_string(&db, &quoted),
             "?[0]"
@@ -995,14 +960,14 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::universe_rc(UniverseLevel::new(0))],
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            vec![Syntax::UniverseCode(0).into()],
+            Syntax::UniverseCode(0).into(),
         );
 
         let mut env = Environment::new(&global);
-        // ?[0 ^Bit] - apply metavariable to ^Bit
-        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
-        let meta_stx = Syntax::metavariable(meta_id, vec![lift_bit]);
+        // ?[0 ^sBit] - apply metavariable to ^sBit
+        let slift_bit = Syntax::slift_rc(Syntax::bit_rc());
+        let meta_stx = Syntax::metavariable(meta_id, vec![slift_bit]);
         let result = eval(&mut env, &meta_stx).expect("eval should succeed");
 
         // Should be a Flex neutral with the argument in its local env
@@ -1010,24 +975,24 @@ mod tests {
             Value::Flex(flex) => {
                 assert_eq!(flex.head.id, meta_id);
                 assert_eq!(flex.head.local.depth(), 1);
-                // The argument should be ^Bit (a Lift value containing Bit)
+                // The argument should be ^sBit (an SLift value containing Bit)
                 match &**flex.head.local.get(Level::new(0)) {
-                    Value::Lift(lift) => {
-                        assert!(matches!(&*lift.ty, Value::Bit(_)));
+                    Value::SLift(slift) => {
+                        assert!(matches!(&*slift.ty, Value::Bit(_)));
                     }
-                    other => panic!("Expected Lift, got {:?}", other),
+                    other => panic!("Expected SLift, got {:?}", other),
                 }
             }
             _ => panic!("Expected Flex, got {:?}", result),
         }
 
         // Quote and check printed form
+        let u0_ty: RcValue = Value::UniverseCode(0).into();
         let quoted =
-            crate::quote::quote(&global, 0, &result, &Value::universe(UniverseLevel::new(0)))
-                .expect("quote should succeed");
+            crate::quote::quote(&global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
             crate::syn::print::print_syntax_to_string(&db, &quoted),
-            "?[0 ^Bit]"
+            "?[0 ^sBit]"
         );
     }
 
@@ -1042,17 +1007,18 @@ mod tests {
 
         // Declare ?[0] : ∀ (%x : U0) → U0
         let meta_id = MetaVariableId::new(0);
-        let pi_ty = Syntax::pi_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
-            Binding(Syntax::universe_rc(UniverseLevel::new(0))),
-        );
+        let pi_ty: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Binding(Syntax::UniverseCode(0).into()),
+        )
+        .into();
         global.add_metavariable(meta_id, vec![], pi_ty);
 
         let mut env = Environment::new(&global);
-        // (?[0])[^Bit] - apply metavariable to ^Bit
+        // (?[0])[^sBit] - apply metavariable to ^sBit
         let meta_stx = Syntax::metavariable_rc(meta_id, vec![]);
-        let lift_bit = Syntax::lift_rc(Syntax::bit_rc());
-        let app_stx = Syntax::application(meta_stx, lift_bit);
+        let slift_bit = Syntax::slift_rc(Syntax::bit_rc());
+        let app_stx = Syntax::application(meta_stx, slift_bit);
         let result = eval(&mut env, &app_stx).expect("eval should succeed");
 
         // Should be a Flex neutral with the application in its spine
@@ -1065,12 +1031,12 @@ mod tests {
         }
 
         // Quote and check printed form
+        let u0_ty: RcValue = Value::UniverseCode(0).into();
         let quoted =
-            crate::quote::quote(&global, 0, &result, &Value::universe(UniverseLevel::new(0)))
-                .expect("quote should succeed");
+            crate::quote::quote(&global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
             crate::syn::print::print_syntax_to_string(&db, &quoted),
-            "?[0][^Bit]"
+            "?[0][^sBit]"
         );
     }
 

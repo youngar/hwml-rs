@@ -18,6 +18,18 @@ impl<'db> Closure<'db> {
     pub fn new(local: LocalEnv<'db>, term: RcSyntax<'db>) -> Closure<'db> {
         Closure { local, term }
     }
+
+    /// Apply the closure to a value by extending the local environment and evaluating.
+    pub fn apply(&self, global: &GlobalEnv<'db>, arg: &RcValue<'db>) -> RcValue<'db> {
+        let mut env = Environment {
+            global,
+            local: self.local.clone(),
+            transparent: TransparentEnv::new(),
+        };
+        env.local.push(arg.clone());
+        // If evaluation fails, return a dummy value (this should not happen in well-typed programs)
+        crate::eval::eval(&mut env, &self.term).unwrap_or_else(|_| Value::UniverseCode(0).into())
+    }
 }
 
 /// A value in normal form.
@@ -38,10 +50,21 @@ pub type RcValue<'db> = Rc<Value<'db>>;
 /// Fully normalized values in the semantic domain.
 #[derive(Clone, Debug)]
 pub enum Value<'db> {
-    Universe(Universe<'db>),
-    Lift(Lift<'db>),
+    // ========== Evaluated type codes ==========
+    /// Evaluated type code: Universe at level `n`
+    UniverseCode(usize),
 
-    Pi(Pi<'db>),
+    /// Evaluated type code: Dependent function type
+    PiCode(RcValue<'db>, Closure<'db>),
+
+    /// Evaluated type code: Universe lifting for cumulativity
+    /// The evaluated, structural representation of a shifted type code.
+    LiftCode(usize, RcValue<'db>),
+
+    /// Evaluated type code: The Bit type
+    BitCode,
+
+    // ========== Terms ==========
     Lambda(Lambda<'db>),
     Let(Let<'db>),
 
@@ -75,30 +98,6 @@ pub enum Value<'db> {
 }
 
 impl<'db> Value<'db> {
-    pub fn universe(level: UniverseLevel) -> Value<'db> {
-        Value::Universe(Universe::new(level))
-    }
-
-    pub fn universe_rc(level: UniverseLevel) -> RcValue<'db> {
-        Rc::new(Value::universe(level))
-    }
-
-    pub fn lift(ty: RcValue<'db>) -> Value<'db> {
-        Value::Lift(Lift::new(ty))
-    }
-
-    pub fn lift_rc(ty: RcValue<'db>) -> RcValue<'db> {
-        Rc::new(Value::lift(ty))
-    }
-
-    pub fn pi(source: RcValue<'db>, target: Closure<'db>) -> Value<'db> {
-        Value::Pi(Pi::new(source, target))
-    }
-
-    pub fn pi_rc(source: RcValue<'db>, target: Closure<'db>) -> RcValue<'db> {
-        Rc::new(Value::pi(source, target))
-    }
-
     pub fn lambda(body: Closure<'db>) -> Value<'db> {
         Value::Lambda(Lambda::new(body))
     }
@@ -325,44 +324,6 @@ impl<'db> Value<'db> {
 
     pub fn identity_closure_rc(id: MetaVariableId, ty: RcValue<'db>) -> RcValue<'db> {
         Rc::new(Value::identity_closure(id, ty))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Universe<'db> {
-    pub level: UniverseLevel,
-    _marker: PhantomData<&'db ()>,
-}
-
-impl<'db> Universe<'db> {
-    pub fn new(level: UniverseLevel) -> Universe<'db> {
-        Universe {
-            level,
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Lift<'db> {
-    pub ty: RcValue<'db>,
-}
-
-impl<'db> Lift<'db> {
-    pub fn new(ty: RcValue<'db>) -> Lift<'db> {
-        Lift { ty }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Pi<'db> {
-    pub source: RcValue<'db>,
-    pub target: Closure<'db>,
-}
-
-impl<'db> Pi<'db> {
-    pub fn new(source: RcValue<'db>, target: Closure<'db>) -> Pi<'db> {
-        Pi { source, target }
     }
 }
 

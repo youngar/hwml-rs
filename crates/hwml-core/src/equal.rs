@@ -3,7 +3,7 @@ use crate::{
     eval::{self, run_closure},
     val::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
-        LocalEnv, Module, Normal, Pi, Rigid, Spine, TransparentEnv, TypeConstructor,
+        LocalEnv, Module, Normal, RcValue, Rigid, Spine, TransparentEnv, TypeConstructor,
     },
     QualifiedName, UniverseLevel, Value,
 };
@@ -113,11 +113,66 @@ pub fn equate<'a, 'db: 'a>(
     }
 
     match ty {
-        Value::Universe(universe) => {
-            equate_universe_instances(global, transparent, depth, lhs, rhs, universe)
+        // NEW: Type codes
+        Value::UniverseCode(_level) => type_equiv(global, transparent, depth, lhs, rhs),
+        Value::PiCode(pi_source, pi_target) => {
+            // Eta-expand both sides and compare
+            // Create a fresh variable of the source type
+            let arg = Value::variable_rc(Level::new(depth), pi_source.clone());
+
+            match (lhs, rhs) {
+                (Value::Lambda(lhs), Value::Lambda(rhs)) => {
+                    // Both are lambdas - compare bodies
+                    let lhs_body = lhs.body.apply(global, &arg);
+                    let rhs_body = rhs.body.apply(global, &arg);
+                    let target_ty = pi_target.apply(global, &arg);
+                    equate(
+                        global,
+                        transparent,
+                        depth + 1,
+                        &lhs_body,
+                        &rhs_body,
+                        &target_ty,
+                    )
+                }
+                (Value::Lambda(lam), other) | (other, Value::Lambda(lam)) => {
+                    // One is a lambda, eta-expand the other
+                    let lam_body = lam.body.apply(global, &arg);
+                    let other_app = crate::eval::run_application(global, other, arg.clone())?;
+                    let target_ty = pi_target.apply(global, &arg);
+                    equate(
+                        global,
+                        transparent,
+                        depth + 1,
+                        &lam_body,
+                        &other_app,
+                        &target_ty,
+                    )
+                }
+                _ => {
+                    // Neither is a lambda - eta-expand both
+                    let lhs_app = crate::eval::run_application(global, lhs, arg.clone())?;
+                    let rhs_app = crate::eval::run_application(global, rhs, arg.clone())?;
+                    let target_ty = pi_target.apply(global, &arg);
+                    equate(
+                        global,
+                        transparent,
+                        depth + 1,
+                        &lhs_app,
+                        &rhs_app,
+                        &target_ty,
+                    )
+                }
+            }
         }
-        Value::Lift(lift) => equate_lift_instances(global, transparent, depth, lhs, rhs, lift),
-        Value::Pi(pi) => equate_pi_instances(global, transparent, depth, lhs, rhs, pi),
+        Value::BitCode => {
+            // Bit instances: 0 or 1
+            match (lhs, rhs) {
+                (Value::Zero(_), Value::Zero(_)) => Ok(()),
+                (Value::One(_), Value::One(_)) => Ok(()),
+                _ => Err(Error::NotConvertible),
+            }
+        }
         Value::TypeConstructor(tcon) => {
             equate_type_constructor_instances(global, transparent, depth, lhs, rhs, tcon)
         }
@@ -139,56 +194,6 @@ pub fn equate<'a, 'db: 'a>(
         Value::Flex(flex) => equate_flex_instances(global, transparent, depth, lhs, rhs, flex),
         Value::EqType(eq) => equate_eq_instances(global, transparent, depth, lhs, rhs, eq),
         _ => Err(Error::IllTyped),
-    }
-}
-
-pub fn equate_universe_instances<'db>(
-    global: &GlobalEnv<'db>,
-    transparent: &TransparentEnv<'db>,
-    depth: usize,
-    lhs: &Value<'db>,
-    rhs: &Value<'db>,
-    _universe: &val::Universe<'db>,
-) -> Result<'db> {
-    type_equiv(global, transparent, depth, lhs, rhs)
-}
-
-pub fn equate_lift_instances<'db>(
-    global: &GlobalEnv<'db>,
-    transparent: &TransparentEnv<'db>,
-    depth: usize,
-    lhs: &Value<'db>,
-    rhs: &Value<'db>,
-    lift: &val::Lift<'db>,
-) -> Result<'db> {
-    match lift.ty.as_ref() {
-        Value::SLift(slift) => equate_slift_instances(global, transparent, depth, lhs, rhs, slift),
-        Value::MLift(mlift) => equate_mlift_instances(global, transparent, depth, lhs, rhs, mlift),
-        // ^Bit evaluates to Lift(Bit) directly, not Lift(SLift(Bit))
-        Value::Bit(bit) => equate_bit_instances(global, transparent, depth, lhs, rhs, bit),
-        _ => Err(Error::IllTyped),
-    }
-}
-
-pub fn equate_pi_instances<'db>(
-    global: &GlobalEnv<'db>,
-    transparent: &TransparentEnv<'db>,
-    depth: usize,
-    lhs: &Value<'db>,
-    rhs: &Value<'db>,
-    pi: &Pi<'db>,
-) -> Result<'db> {
-    match (lhs, rhs) {
-        (Value::Lambda(lhs), Value::Lambda(rhs)) => {
-            equate_lambdas(global, transparent, depth, lhs, rhs, pi)
-        }
-        (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
-        (Value::Constant(lhs), Value::Constant(rhs)) => equate_constants(global, depth, lhs, rhs),
-        (Value::Rigid(lhs), Value::Rigid(rhs)) => {
-            equate_rigids(global, transparent, depth, lhs, rhs)
-        }
-        (Value::Flex(lhs), Value::Flex(rhs)) => equate_flexes(global, transparent, depth, lhs, rhs),
-        _ => Err(Error::NotConvertible),
     }
 }
 
@@ -441,11 +446,9 @@ pub fn type_equiv<'db>(
 ) -> Result<'db> {
     // Try structural comparison first
     let result = match (lhs, rhs) {
-        (Value::Pi(lhs), Value::Pi(rhs)) => equate_pis(global, transparent, depth, lhs, rhs),
         (Value::TypeConstructor(lhs), Value::TypeConstructor(rhs)) => {
             equate_type_constructors(global, transparent, depth, lhs, rhs)
         }
-        (Value::Universe(lhs), Value::Universe(rhs)) => equate_universes(global, depth, lhs, rhs),
         (Value::Rigid(lhs), Value::Rigid(rhs)) => {
             equate_rigids(global, transparent, depth, lhs, rhs)
         }
@@ -453,8 +456,31 @@ pub fn type_equiv<'db>(
         (Value::Prim(lhs), Value::Prim(rhs)) => equate_prims(global, depth, lhs, rhs),
         (Value::Constant(lhs), Value::Constant(rhs)) => equate_constants(global, depth, lhs, rhs),
 
-        // HardwareUniverse types that can appear as meta-level types
-        (Value::Lift(lhs), Value::Lift(rhs)) => equate_lifts(global, transparent, depth, lhs, rhs),
+        // NEW: Type codes (types as first-class terms)
+        (Value::UniverseCode(l1), Value::UniverseCode(l2)) => {
+            if l1 == l2 {
+                Ok(())
+            } else {
+                Err(Error::NotConvertible)
+            }
+        }
+        (Value::LiftCode(shift1, val1), Value::LiftCode(shift2, val2)) => {
+            if shift1 == shift2 {
+                type_equiv(global, transparent, depth, val1, val2)
+            } else {
+                Err(Error::NotConvertible)
+            }
+        }
+        (Value::PiCode(s1, t1), Value::PiCode(s2, t2)) => {
+            // Equate source types
+            type_equiv(global, transparent, depth, s1, s2)?;
+            // Equate target closures under a fresh variable
+            let var = Value::variable_rc(Level::new(depth), s1.clone());
+            let t1_body = run_closure(global, t1, vec![var.clone()])?;
+            let t2_body = run_closure(global, t2, vec![var])?;
+            type_equiv(global, transparent, depth + 1, &t1_body, &t2_body)
+        }
+        (Value::BitCode, Value::BitCode) => Ok(()),
 
         // SLift and MLift are hardware type constructors
         (Value::SLift(lhs), Value::SLift(rhs)) => slift_equiv(global, transparent, depth, lhs, rhs),
@@ -541,81 +567,6 @@ pub fn module_type_equiv<'db>(
         (Value::Flex(lhs), Value::Flex(rhs)) => equate_flexes(global, transparent, depth, lhs, rhs),
         _ => Err(Error::NotConvertible),
     }
-}
-
-pub fn equate_universes<'db>(
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    lhs: &val::Universe<'db>,
-    rhs: &val::Universe<'db>,
-) -> Result<'db> {
-    let lhs = lhs.level;
-    let rhs = rhs.level;
-    equate_universe_levels(global, depth, lhs, rhs)
-}
-
-pub fn equate_lifts<'db>(
-    global: &GlobalEnv<'db>,
-    transparent: &TransparentEnv<'db>,
-    depth: usize,
-    lhs: &val::Lift<'db>,
-    rhs: &val::Lift<'db>,
-) -> Result<'db> {
-    let lhs_ty = &lhs.ty;
-    let rhs_ty = &rhs.ty;
-    type_equiv(global, transparent, depth, lhs_ty, rhs_ty)
-}
-
-pub fn equate_pis<'db>(
-    global: &GlobalEnv<'db>,
-    transparent: &TransparentEnv<'db>,
-    depth: usize,
-    lhs: &Pi<'db>,
-    rhs: &Pi<'db>,
-) -> Result<'db> {
-    type_equiv(global, transparent, depth, &lhs.source, &rhs.source)?;
-    let arg = Value::variable_rc(Level::new(depth), lhs.source.clone());
-    let self_target = run_closure(global, &lhs.target, [arg.clone()])?;
-    let other_target = run_closure(global, &rhs.target, [arg])?;
-
-    let mut inner_env = transparent.clone();
-    inner_env.push_rigid();
-
-    type_equiv(global, &inner_env, depth + 1, &self_target, &other_target)
-}
-
-/// Compare two lambdas at a given Pi type.
-/// Lambdas are the canonical instances of Pi types.
-pub fn equate_lambdas<'db>(
-    global: &GlobalEnv<'db>,
-    transparent: &TransparentEnv<'db>,
-    depth: usize,
-    lhs: &val::Lambda<'db>,
-    rhs: &val::Lambda<'db>,
-    pi: &Pi<'db>,
-) -> Result<'db> {
-    // Create a fresh variable of the source type
-    let arg = Value::variable_rc(Level::new(depth), pi.source.clone());
-
-    // Apply both lambda bodies to the fresh variable
-    let lhs_result = run_closure(global, &lhs.body, [arg.clone()])?;
-    let rhs_result = run_closure(global, &rhs.body, [arg.clone()])?;
-
-    // Get the result type by running the Pi's target closure
-    let result_ty = run_closure(global, &pi.target, [arg])?;
-
-    let mut inner_env = transparent.clone();
-    inner_env.push_rigid();
-
-    // Compare the results at the result type
-    equate(
-        global,
-        &inner_env,
-        depth + 1,
-        &lhs_result,
-        &rhs_result,
-        &result_ty,
-    )
 }
 
 fn equate_type_constructors<'db>(
@@ -974,7 +925,7 @@ pub fn equate_cases<'db>(
         return Err(Error::NotConvertible);
     }
 
-    let branch_ty = Value::universe_rc(UniverseLevel::new(0));
+    let branch_ty = Value::UniverseCode(0).into();
 
     for (lbranch, rbranch) in izip!(lhs.branches.iter(), rhs.branches.iter()) {
         // Check that the constructors are the same.
@@ -1190,10 +1141,10 @@ mod tests {
     fn test_equate_flexes_same_meta_empty_spine() {
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
 
         let transparent = TransparentEnv::new();
-        let u0_ty = Value::universe_rc(UniverseLevel::new(0));
+        let u0_ty: RcValue = Value::UniverseCode(0).into();
         let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
         let flex1 = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
         let flex2 = val::Flex::new(meta_val, Spine::empty(), u0_ty);
@@ -1206,11 +1157,11 @@ mod tests {
         let mut global = GlobalEnv::new();
         let meta_id1 = MetaVariableId::new(0);
         let meta_id2 = MetaVariableId::new(1);
-        global.add_metavariable(meta_id1, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
-        global.add_metavariable(meta_id2, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(meta_id1, vec![], Syntax::UniverseCode(0).into());
+        global.add_metavariable(meta_id2, vec![], Syntax::UniverseCode(0).into());
 
         let transparent = TransparentEnv::new();
-        let u0_ty = Value::universe_rc(UniverseLevel::new(0));
+        let u0_ty: RcValue = Value::UniverseCode(0).into();
         let flex1 = val::Flex::new(
             val::MetaVariable::new(meta_id1, LocalEnv::new()),
             Spine::empty(),
@@ -1230,10 +1181,10 @@ mod tests {
         // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::universe_rc(UniverseLevel::new(0)));
+        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
 
         let transparent = TransparentEnv::new();
-        let u0_ty = Value::universe_rc(UniverseLevel::new(0));
+        let u0_ty: RcValue = Value::UniverseCode(0).into();
         let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
         let flex_ty = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
 
@@ -1252,8 +1203,8 @@ mod tests {
     fn test_type_equiv_universes() {
         let global = GlobalEnv::new();
         let transparent = TransparentEnv::new();
-        let u0 = Value::universe(UniverseLevel::new(0));
-        let u1 = Value::universe(UniverseLevel::new(1));
+        let u0: RcValue = Value::UniverseCode(0).into();
+        let u1: RcValue = Value::UniverseCode(1).into();
 
         // Same universe levels are equivalent
         assert!(type_equiv(&global, &transparent, 0, &u0, &u0).is_ok());
@@ -1267,14 +1218,13 @@ mod tests {
     fn test_type_equiv_lift() {
         let global = GlobalEnv::new();
         let transparent = TransparentEnv::new();
-        // Lift types contain hardware types (SLift or MLift)
-        // ^$Bit is Lift(SLift(Bit))
+        // SLift types lift hardware types to the software universe
+        // ^$Bit is SLift(Bit)
         let slift_bit = Value::slift_rc(Value::bit_rc());
-        let lift_bit = Value::lift(slift_bit.clone());
-        let lift_bit2 = Value::lift(Value::slift_rc(Value::bit_rc()));
+        let slift_bit2 = Value::slift_rc(Value::bit_rc());
 
         // Same lifted types are equivalent
-        assert!(type_equiv(&global, &transparent, 0, &lift_bit, &lift_bit2).is_ok());
+        assert!(type_equiv(&global, &transparent, 0, &slift_bit, &slift_bit2).is_ok());
     }
 
     #[test]

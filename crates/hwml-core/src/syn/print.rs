@@ -206,9 +206,6 @@ impl Properties {
     }
 }
 
-const UNIVERSE: Properties = Properties::new((None, None));
-const LIFT: Properties = Properties::new((None, Some(5)));
-const PI: Properties = Properties::new((None, Some(3)));
 const LAMBDA: Properties = Properties::new((None, Some(3)));
 const APP: Properties = Properties::new((Some(4), Some(5)));
 #[allow(dead_code)]
@@ -466,10 +463,30 @@ impl<'db> Print for Syntax<'db> {
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         match self {
-            Syntax::Universe(uni) => uni.print(db, st, p),
-            Syntax::Lift(lift) => lift.print(db, st, p),
+            // NEW: Type codes
+            Syntax::UniverseCode(level) => p.text_owned(&format!("𝒰{}", level)),
+            Syntax::LiftCode(shift, inner) => {
+                p.text_owned(&format!("↑{} ", shift))?;
+                inner.print(db, st, p)
+            }
+            Syntax::PiCode(source, target) => {
+                p.text("∀")?;
+                p.space()?;
+                p.text("(")?;
+                p.text_owned(&format!("%{}", st.depth))?;
+                p.space()?;
+                p.text(":")?;
+                p.space()?;
+                source.print(db, st, p)?;
+                p.text(")")?;
+                p.space()?;
+                p.text("→")?;
+                p.space()?;
+                target.print(db, st, p)
+            }
+            Syntax::BitCode => p.text("$Bit"),
 
-            Syntax::Pi(pi) => pi.print(db, st, p),
+            // Terms
             Syntax::Lambda(lam) => lam.print(db, st, p),
             Syntax::Application(app) => app.print(db, st, p),
             Syntax::Let(let_expr) => let_expr.print(db, st, p),
@@ -503,33 +520,6 @@ impl<'db> Print for Syntax<'db> {
 
             Syntax::Check(chk) => chk.print(db, st, p),
         }
-    }
-}
-
-impl<'db> Print for Universe<'db> {
-    fn print<R: Render>(
-        &self,
-        _db: &dyn salsa::Database,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        ensure(st, p, UNIVERSE, |_, p| {
-            p.text_owned(&format!("𝒰{}", self.level))
-        })
-    }
-}
-
-impl<'db> Print for Lift<'db> {
-    fn print<R: Render>(
-        &self,
-        db: &dyn salsa::Database,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        ensure(st, p, LIFT, |st, p| {
-            p.text("^")?;
-            print_rhs_subterm(db, st, p, &*self.ty, LIFT.rhs_prec())
-        })
     }
 }
 
@@ -584,45 +574,6 @@ impl<'db> Print for Transport<'db> {
             p.text("by")?;
             p.space()?;
             print_internal_subterm(db, st, p, &*self.proof)
-        })
-    }
-}
-
-impl<'db> Print for Pi<'db> {
-    fn print<R: Render>(
-        &self,
-        db: &dyn salsa::Database,
-        st: State,
-        p: &mut Printer<R>,
-    ) -> Result<(), R::Error> {
-        ensure(st, p, PI, |mut st, p| {
-            p.cgroup(0, |p| {
-                let mut next = self;
-                p.text("∀ ")?;
-                p.cgroup(2, |p| {
-                    loop {
-                        p.text("(")?;
-                        p.cgroup(INDENT, |p| {
-                            print_binder(st, p, &next.target)?;
-                            p.text(" :")?;
-                            p.space()?;
-                            print_rhs_subterm(db, st, p, &*next.source, CHECK.rhs_prec())
-                        })?;
-                        p.text(")")?;
-                        st = st.inc_depth();
-
-                        match next.target.term().as_ref() {
-                            Syntax::Pi(pi) => next = &pi,
-                            _ => break,
-                        }
-                        p.space()?;
-                    }
-                    Ok(())
-                })?;
-                p.text(" →")?;
-                p.space()?;
-                print_rhs_subterm(db, st, p, &*next.target, PI.rhs_prec())
-            })
         })
     }
 }
@@ -1073,7 +1024,7 @@ impl<'db> Print for Check<'db> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Index, MetaVariableId, UniverseLevel};
+    use crate::common::{Index, MetaVariableId};
     use crate::Database;
     use hwml_support::IntoWithDb;
     use insta::assert_snapshot;
@@ -1088,23 +1039,28 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn print_universe() {
+    fn print_universe_code() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::universe(UniverseLevel::new(0))), @"𝒰0");
-        assert_snapshot!(p(&db, &Syntax::universe(UniverseLevel::new(1))), @"𝒰1");
+        assert_snapshot!(p(&db, &Syntax::UniverseCode(0)), @"𝒰0");
+        assert_snapshot!(p(&db, &Syntax::UniverseCode(1)), @"𝒰1");
     }
 
     #[test]
-    fn print_lift() {
+    fn print_pi_code() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::lift(Syntax::bit_rc())), @"^Bit");
-    }
-
-    #[test]
-    fn print_pi() {
-        let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding(Syntax::universe_rc(UniverseLevel::new(1))))), @"∀ (%0 : 𝒰0) → 𝒰1");
-        assert_snapshot!(p(&db, &Syntax::pi(Syntax::universe_rc(UniverseLevel::new(0)), Binding(Syntax::pi_rc(Syntax::variable_rc(Index(0)), Binding(Syntax::variable_rc(Index(0))))))), @"∀ (%0 : 𝒰0) (%1 : %0) → %1");
+        let pi1: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Binding(Syntax::UniverseCode(1).into()),
+        )
+        .into();
+        assert_snapshot!(p(&db, &pi1), @"∀ (%0 : 𝒰0) → 𝒰1");
+        let inner: RcSyntax = Syntax::PiCode(
+            Syntax::variable_rc(Index(0)),
+            Binding(Syntax::variable_rc(Index(0))),
+        )
+        .into();
+        let pi2: RcSyntax = Syntax::PiCode(Syntax::UniverseCode(0).into(), Binding(inner)).into();
+        assert_snapshot!(p(&db, &pi2), @"∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %1");
     }
 
     #[test]
@@ -1211,7 +1167,7 @@ mod tests {
     fn print_eq_type() {
         let db = Database::new();
         let eq = Syntax::eq_rc(
-            Syntax::universe_rc(UniverseLevel::new(0)),
+            Syntax::UniverseCode(0).into(),
             Syntax::variable_rc(Index(0)),
             Syntax::variable_rc(Index(1)),
         );
@@ -1318,7 +1274,7 @@ mod tests {
     #[test]
     fn print_check() {
         let db = Database::new();
-        assert_snapshot!(p(&db, &Syntax::check(Syntax::universe_rc(UniverseLevel::new(0)), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
+        assert_snapshot!(p(&db, &Syntax::check(Syntax::UniverseCode(0).into(), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
     }
 
     // =========================================================================
