@@ -170,15 +170,60 @@ impl<'db> Elaborator<'db> {
         Syntax::metavariable_rc(MetaVariableId::new(id), substitution)
     }
 
+    /// Emits a unification constraint to the global solver.
+    ///
+    /// This defers the proof that `actual` and `expected` are definitionally equal.
+    pub fn emit_unify(&self, actual: Rc<Ty<'db>>, expected: Rc<Ty<'db>>) {
+        self.state
+            .borrow_mut()
+            .constraints
+            .push(Constraint::Unify(actual, expected));
+    }
+
     /// Synthesizes a type for a surface expression.
     ///
     /// Returns both the elaborated Core syntax and its inferred type.
     pub async fn synth(
         &mut self,
-        _expr: &hwml_surface::Expression,
+        expr: &hwml_surface::Expression,
     ) -> Result<(Rc<Syntax<'db>>, Rc<Ty<'db>>), ElabError> {
-        // TODO: Implement bidirectional type synthesis
-        todo!("synth: bidirectional type synthesis")
+        use hwml_surface::Expression;
+
+        match expr {
+            // Software Universe: Type (defaulting to U_0 for now)
+            Expression::Universe(u) => {
+                let level = u.level.unwrap_or(0) as usize;
+                let syn = Rc::new(Syntax::UniverseCode(level));
+                let ty = Rc::new(Ty::UniverseType);
+                Ok((syn, ty))
+            }
+
+            // Variable Lookup
+            Expression::Id(id) => {
+                use hwml_core::Index;
+
+                // Convert the identifier to a string for lookup
+                let name = String::from_utf8_lossy(&id.value).to_string();
+
+                // Search backwards through the environment (most recent binding first)
+                if let Some(index) = self.env.names.iter().rev().position(|n| n == &name) {
+                    // Create a Variable with the de Bruijn index using the helper
+                    let syn = Syntax::variable_rc(Index(index));
+
+                    // Retrieve the semantic type from the parallel vector
+                    let actual_index = self.env.names.len() - 1 - index;
+                    let ty = self.env.types[actual_index].clone();
+
+                    Ok((syn, ty))
+                } else {
+                    // TODO: Add global database lookup here later
+                    Err(ElabError::NotInScope { name })
+                }
+            }
+
+            // For all other expressions, we cannot infer a type
+            _ => Err(ElabError::CannotInfer),
+        }
     }
 
     /// Checks a surface expression against an expected type.
@@ -186,11 +231,16 @@ impl<'db> Elaborator<'db> {
     /// Returns the elaborated Core syntax.
     pub async fn check(
         &mut self,
-        _expr: &hwml_surface::Expression,
-        _expected: Rc<Ty<'db>>,
+        expr: &hwml_surface::Expression,
+        expected: Rc<Ty<'db>>,
     ) -> Result<Rc<Syntax<'db>>, ElabError> {
-        // TODO: Implement bidirectional type checking
-        todo!("check: bidirectional type checking")
+        // We will add specific push rules (like checking Lambda against Pi) here soon.
+
+        // THE FALLBACK RULE: If we don't have a specific check rule, we pull!
+        // This is the fundamental check-to-synth conversion.
+        let (syn, actual_ty) = self.synth(expr).await?;
+        self.emit_unify(actual_ty, expected);
+        Ok(syn)
     }
 }
 
@@ -221,7 +271,7 @@ mod tests {
 
         // Push a variable (using dummy values)
         let ty = Rc::new(Ty::UniverseType);
-        let val = Rc::new(Value::Prim("test".into()));
+        let val = Rc::new(Value::UniverseCode(0));
         env.push("x".to_string(), ty.clone(), val.clone());
 
         assert_eq!(env.depth(), 1);
@@ -251,7 +301,8 @@ mod tests {
         assert_eq!(state.next_meta_id(), 1);
         assert_eq!(state.meta_types.len(), 1);
         assert_eq!(state.solutions.len(), 1);
-        assert_eq!(state.meta_types.get(&0), Some(&ty));
+        // Note: We can't compare Ty values directly since Ty doesn't implement PartialEq
+        assert!(state.meta_types.get(&0).is_some());
         assert!(state.solutions.get(&0).is_some());
 
         // Verify the syntax node was created
@@ -268,7 +319,7 @@ mod tests {
     fn test_elab_env_cloning() {
         let mut env1 = ElabEnv::new();
         let ty = Rc::new(Ty::UniverseType);
-        let val = Rc::new(Value::Prim("test".into()));
+        let val = Rc::new(Value::UniverseCode(0));
         env1.push("x".to_string(), ty.clone(), val.clone());
 
         // Clone should be O(1) thanks to im::Vector
@@ -284,5 +335,110 @@ mod tests {
         assert_eq!(env2.depth(), 2);
         assert_eq!(env2.lookup("x"), Some(1)); // x is now at index 1 from the end
         assert_eq!(env2.lookup("y"), Some(0)); // y is at index 0 from the end
+    }
+
+    #[tokio::test]
+    async fn test_synth_universe() {
+        use hwml_surface::{Expression, Universe};
+
+        let global = GlobalEnv::new();
+        let mut elab = Elaborator::new(&global);
+
+        // Create a surface syntax for "Type" (Universe with level 0)
+        let expr = Expression::Universe(Universe::new(0..4, Some(0)));
+
+        // Synthesize the type
+        let (syn, ty) = elab.synth(&expr).await.expect("synth should succeed");
+
+        // Verify the elaborated syntax is UniverseCode(0)
+        match &*syn {
+            Syntax::UniverseCode(level) => {
+                assert_eq!(*level, 0);
+            }
+            _ => panic!("Expected UniverseCode, got {:?}", syn),
+        }
+
+        // Verify the inferred type is UniverseType
+        match &*ty {
+            Ty::UniverseType => {
+                // Success!
+            }
+            _ => panic!("Expected UniverseType, got {:?}", ty),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_synth_variable() {
+        use hwml_core::Index;
+        use hwml_surface::{Expression, Id};
+
+        let global = GlobalEnv::new();
+        let mut elab = Elaborator::new(&global);
+
+        // Push a variable "x" into the environment
+        let x_ty = Rc::new(Ty::UniverseType);
+        let x_val = Rc::new(Value::UniverseCode(0));
+        elab.env.push("x".to_string(), x_ty.clone(), x_val);
+
+        // Create a surface syntax for the identifier "x"
+        let expr = Expression::Id(Id::new(0..1, "x".as_bytes().into()));
+
+        // Synthesize the type
+        let (syn, ty) = elab.synth(&expr).await.expect("synth should succeed");
+
+        // Verify the elaborated syntax is Variable(0)
+        match &*syn {
+            Syntax::Variable(var) => {
+                assert_eq!(var.index, Index(0));
+            }
+            _ => panic!("Expected Variable, got {:?}", syn),
+        }
+
+        // Verify the inferred type matches what we pushed
+        match &*ty {
+            Ty::UniverseType => {
+                // Success!
+            }
+            _ => panic!("Expected UniverseType, got {:?}", ty),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_fallback() {
+        use hwml_surface::{Expression, Universe};
+
+        let global = GlobalEnv::new();
+        let mut elab = Elaborator::new(&global);
+
+        // Create a surface syntax for "Type"
+        let expr = Expression::Universe(Universe::new(0..4, Some(0)));
+
+        // Check it against UniverseType (should succeed via fallback)
+        let expected = Rc::new(Ty::UniverseType);
+        let syn = elab
+            .check(&expr, expected.clone())
+            .await
+            .expect("check should succeed");
+
+        // Verify the elaborated syntax is UniverseCode(0)
+        match &*syn {
+            Syntax::UniverseCode(level) => {
+                assert_eq!(*level, 0);
+            }
+            _ => panic!("Expected UniverseCode, got {:?}", syn),
+        }
+
+        // Verify a constraint was emitted
+        let state = elab.state.borrow();
+        assert_eq!(state.constraints.len(), 1);
+
+        // Verify the constraint is Unify(UniverseType, UniverseType)
+        match &state.constraints[0] {
+            Constraint::Unify(actual, expected_ty) => {
+                assert!(matches!(&**actual, Ty::UniverseType));
+                assert!(matches!(&**expected_ty, Ty::UniverseType));
+            }
+            _ => panic!("Expected Unify constraint"),
+        }
     }
 }

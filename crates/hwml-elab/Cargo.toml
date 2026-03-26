@@ -29,6 +29,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
