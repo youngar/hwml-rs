@@ -21,9 +21,11 @@ futures.workspace = true
 hwml_core.workspace = true
 hwml_surface.workspace = true
 hwml_support.workspace = true
+im.workspace = true
 salsa.workspace = true
 slab.workspace = true
 itertools.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
