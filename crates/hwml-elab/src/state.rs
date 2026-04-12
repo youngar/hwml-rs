@@ -9,17 +9,15 @@
 //! 2. **Global Context (`SolverState`)**: Tracks metavariables and deferred constraints.
 //!    This strictly grows over the course of elaborating a file.
 
-use hwml_core::common::MetaVariableId;
-use hwml_core::syn::Syntax;
 use hwml_core::ty::Ty;
-use hwml_core::val::{GlobalEnv, Value};
+use hwml_core::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Type alias for metavariable IDs
 /// Uses u16 to match MetaVariableId::local_index in hwml_core
-pub type MetaId = u16;
+pub type MetaId = usize;
 
 /// The local elaboration environment.
 ///
@@ -113,7 +111,7 @@ impl<'db> SolverState<'db> {
 
     /// Returns the next available metavariable ID
     pub fn next_meta_id(&self) -> MetaId {
-        self.meta_types.len() as u16
+        self.meta_types.len()
     }
 }
 
@@ -308,7 +306,7 @@ mod tests {
         // Verify the syntax node was created
         match &*meta {
             Syntax::Metavariable(mv) => {
-                assert_eq!(mv.id.local_index, 0);
+                assert_eq!(mv.id.0, 0);
                 assert_eq!(mv.substitution.len(), 0); // Empty context
             }
             _ => panic!("Expected Metavariable, got {:?}", meta),

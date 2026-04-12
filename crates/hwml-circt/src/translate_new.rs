@@ -236,8 +236,8 @@ fn extract_input_types<'db>(
     let mut current = ty;
     loop {
         match &**current {
-            Syntax::Pi(pi) => {
-                current = &pi.target;
+            Syntax::PiCode(src, tgt) => {
+                current = &tgt;
             }
             _ => break,
         }
@@ -246,7 +246,7 @@ fn extract_input_types<'db>(
     // At this point we expect a lifted hardware type. If so, delegate to
     // the HArrow helper to extract the actual hardware argument types.
     match &**current {
-        Syntax::Lift(lift) => extract_hardware_input_types(&lift.ty),
+        Syntax::LiftCode(_, code) => extract_hardware_input_types(&code),
         _ => Vec::new(),
     }
 }
@@ -324,7 +324,7 @@ fn translate_constant_to_module<'c, 'db>(
     for (i, input_ty) in input_types.iter().enumerate() {
         // Unwrap Lift if present, then check if this is a Bit type
         let inner_ty = match &**input_ty {
-            Syntax::Lift(lift) => &lift.ty,
+            Syntax::LiftCode(_, ty) => &ty,
             _ => input_ty,
         };
 

@@ -83,7 +83,7 @@ The Core IR has a concrete textual syntax mapping to `Syntax<'db>` in `crates/hw
 | `SignalUniverse` | `Syntax::SignalUniverse` | unit |
 | `HardwareUniverse` | `Syntax::HardwareUniverse` | unit |
 | `ModuleUniverse` | `Syntax::ModuleUniverse` | unit |
-| `^A` | `Syntax::Lift(ty)` | `RcSyntax` |
+| `^A` | `Syntax::LiftCode(ty)` | `RcSyntax` |
 | `^s A` | `Syntax::LiftSignal(ty)` | `RcSyntax` |
 | `^m A` | `Syntax::LiftModule(ty)` | `RcSyntax` |
 | `M -> N` | `Syntax::HardwareArrow(dom, cod)` | `(RcSyntax, RcSyntax)` |
@@ -400,7 +400,7 @@ The Core IR includes a **separate universe hierarchy** for hardware description,
 
 **Syntax**: `^A`
 
-**AST**: `Syntax::Lift(RcSyntax)`
+**AST**: `Syntax::LiftCode(RcSyntax)`
 
 **Typing Rule** (CheckType):
 ```

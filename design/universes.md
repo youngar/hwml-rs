@@ -80,7 +80,7 @@ If the unifier compares two `Ty`s, it doesn't care about levels.
 **Rule 2: Commuting `El` with `Lift`**
 This is the single mathematical rule Sterling insists on. If the unifier is comparing two things inside the `El` wrapper, it must respect the `Lift` coercion.
 If the unifier sees:
-`Ty::El(Syntax::Lift(0, 1, NatCode))` $\equiv$ `Ty::El(NatCode)`
+`Ty::El(Syntax::LiftCode(0, 1, NatCode))` $\equiv$ `Ty::El(NatCode)`
 It immediately returns `true`. The `El` operator mathematically absorbs the `Lift` coercion. A `Nat` in universe 1 is the exact same semantic type as a `Nat` in universe 0!
 
 ### Summary for your Team

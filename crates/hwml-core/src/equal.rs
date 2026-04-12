@@ -3,8 +3,8 @@ use crate::{
     common::{Level, MetaVariableId},
     eval::{self, run_closure},
     val::{
-        self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
-        LocalEnv, Module, Normal, RcValue, Rigid, Spine, TransparentEnv, TypeConstructor,
+        self, Application, Case, DataConstructor, Eliminator, Environment, Flex, HArrow, LocalEnv,
+        Module, Normal, Rigid, Spine, TransparentEnv, TypeConstructor,
     },
     QualifiedName, UniverseLevel, Value,
 };

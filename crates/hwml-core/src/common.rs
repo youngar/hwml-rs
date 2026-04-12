@@ -250,6 +250,12 @@ impl From<usize> for UniverseLevel {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MetaVariableId(pub usize);
 
+impl Into<usize> for MetaVariableId {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
 impl std::fmt::Display for MetaVariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         // Format as just the index number

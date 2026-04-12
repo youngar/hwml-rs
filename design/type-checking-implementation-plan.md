@@ -141,7 +141,7 @@ pub fn type_synth<'db, 'g>(
         Syntax::Metavariable(metavariable) => type_synth_metavariable(env, metavariable),
         
         // HardwareUniverse constructs
-        Syntax::Lift(lift) => type_synth_lift(env, lift),
+        Syntax::LiftCode(lift) => type_synth_lift(env, lift),
         Syntax::Quote(quote) => type_synth_quote(env, quote),
         
         _ => Err(Error::BadSynth {
@@ -412,7 +412,7 @@ pub fn check_type<'db, 'g>(
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
     // Special cases for hardware constructs
-    if let Syntax::Lift(lift) = term {
+    if let Syntax::LiftCode(lift) = term {
         return check_lift_is_type(env, lift);
     }
 
@@ -498,7 +498,7 @@ pub fn type_check<'db, 'g>(
         Syntax::HArrow(harrow) => type_check_harrow(env, harrow, ty),
         
         // Staging constructs
-        Syntax::Lift(lift) => type_check_lift(env, lift, ty),
+        Syntax::LiftCode(lift) => type_check_lift(env, lift, ty),
         Syntax::Quote(quote) => type_check_quote(env, quote, ty),
         
         _ => type_check_synth_term(env, term, ty),
@@ -587,7 +587,7 @@ fn type_check_lift<'db, 'g>(
             Ok(())
         }
         _ => Err(Error::BadCtor {
-            tm: Rc::new(Syntax::Lift(lift.clone())),
+            tm: Rc::new(Syntax::LiftCode(lift.clone())),
             ty_exp: Rc::new(ty_exp.clone()),
         }),
     }

@@ -1149,7 +1149,7 @@ fn type_synth_transport<'db, 'g>(
 /// It enables subsumption, allowing terms of type A to be used where type B is expected
 /// if A is a subtype of B.
 pub fn is_subtype<'db>(
-    global: &val::GlobalEnv<'db>,
+    global: &GlobalEnv<'db>,
     transparent: &val::TransparentEnv<'db>,
     depth: usize,
     a: &Value<'db>,

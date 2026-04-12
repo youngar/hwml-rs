@@ -61,31 +61,31 @@ fn main() {
     let info = hwml_core::SourceInfo::File(title);
     let source_file = hwml_core::Source::new(&db, info);
 
-    for statement in program.statements {
-        match statement {
-            hwml_surface::Statement::Def(def) => {
-                print!("============= elab def ==============");
-                let global_env = hwml_core::GlobalEnv::new();
-                let state = hwml_elab::SolverState::new();
-                let tc_env = hwml_core::check::TCEnvironment {
-                    db: &db,
-                    values: hwml_core::val::Environment::new(&global_env),
-                    types: Vec::new(),
-                };
-                let task_spawner = hwml_elab::TaskSpawner::new();
-                let env = hwml_elab::SolverEnvironment::new(None, tc_env, task_spawner);
-                if let Some(expr) = def.ty {
-                    print!("******* elab type *******");
-                    let ty = hwml_elab::synth_expr(env.clone(), *expr);
-                    hwml_core::syn::dump_syntax(&db, ty.as_ref());
-                }
-                print!("******* elab value *******");
-                let value = hwml_elab::synth_expr(env.clone(), *def.value);
-                hwml_core::syn::dump_syntax(&db, value.as_ref());
-            }
-            _ => (),
-        }
-    }
+    // for statement in program.statements {
+    //     match statement {
+    //         hwml_surface::Statement::Def(def) => {
+    //             print!("============= elab def ==============");
+    //             let global_env = hwml_core::GlobalEnv::new();
+    //             let state = hwml_elab::SolverState::new();
+    //             let tc_env = hwml_core::check::TCEnvironment {
+    //                 db: &db,
+    //                 values: hwml_core::val::Environment::new(&global_env),
+    //                 types: Vec::new(),
+    //             };
+    //             // let task_spawner = hwml_elab::TaskSpawner::new();
+    //             let env = hwml_elab::SolverEnvironment::new(None, tc_env, task_spawner);
+    //             if let Some(expr) = def.ty {
+    //                 print!("******* elab type *******");
+    //                 let ty = hwml_elab::synth_expr(env.clone(), *expr);
+    //                 hwml_core::syn::dump_syntax(&db, ty.as_ref());
+    //             }
+    //             print!("******* elab value *******");
+    //             let value = hwml_elab::synth_expr(env.clone(), *def.value);
+    //             hwml_core::syn::dump_syntax(&db, value.as_ref());
+    //         }
+    //         _ => (),
+    //     }
+    // }
     // Elaborate the program
     // let results: Vec<()> = vec![];
     // // hwml_elab::elaborate_program(&db, source_file, &program);
@@ -162,7 +162,7 @@ fn run_core(args: Args) {
                     );
                 }
                 hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {
-                    println!("  - meta ?{}: {:?}", m.id.local_index, m.ty);
+                    println!("  - meta ?{}: {:?}", m.id, m.ty);
                 }
             }
         }
@@ -191,7 +191,7 @@ fn run_core(args: Args) {
                 }
             }
             hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {
-                print!("  meta ?{} : ", m.id.local_index);
+                print!("  meta ?{} : ", m.id);
                 hwml_core::syn::dump_syntax(&db, &m.ty);
             }
         }
