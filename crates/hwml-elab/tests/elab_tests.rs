@@ -417,6 +417,108 @@ fn elaborate_identity_function() {
     }
 }
 
+// ─── Gap 3: pruning ───────────────────────────────────────────────────────────
+
+/// ?m[x] = ?m2[x, y] where y is out of scope of ?m.
+/// ?m2 should be pruned to ?m2'[x]; ?m solved to ?m2'[x].
+#[test]
+fn pattern_unify_prunes_out_of_scope_flex_arg() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let y1 = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+
+    // ?m of arity 1, parameterized over x (level 0).
+    let m_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+    let mut m_local = LocalEnv::new();
+    m_local.push(x0.clone());
+    let flex_m = make_meta_flex(m_id, m_local);
+
+    // ?m2 of arity 2, parameterized over x and y.
+    let m2_id = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
+    let mut m2_local = LocalEnv::new();
+    m2_local.push(x0.clone());
+    m2_local.push(y1.clone());
+    let rhs = Rc::new(Value::Flex(make_meta_flex(m2_id, m2_local)));
+
+    // pattern_unify(?m[x] = ?m2[x, y]) — y is out of scope of ?m.
+    let solved = pattern::pattern_unify(&global, &mut state, &flex_m, rhs, ty).unwrap();
+    assert!(solved, "pruning should let unification succeed");
+
+    // ?m2 must be solved (pruned to a fresh meta that doesn't depend on y).
+    assert!(state.meta_solution(m2_id).is_some(), "?m2 should be pruned/solved");
+    // ?m must be solved too.
+    assert!(state.meta_solution(m_id).is_some(), "?m should be solved");
+}
+
+/// ?m[x] = ?m2[x] where all args are in scope — no pruning, ?m2 stays unsolved.
+#[test]
+fn pattern_unify_no_prune_when_all_flex_args_in_scope() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+
+    // Both ?m and ?m2 parameterized over x only.
+    let m_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+    let mut m_local = LocalEnv::new();
+    m_local.push(x0.clone());
+    let flex_m = make_meta_flex(m_id, m_local);
+
+    let m2_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+    let mut m2_local = LocalEnv::new();
+    m2_local.push(x0.clone());
+    let rhs = Rc::new(Value::Flex(make_meta_flex(m2_id, m2_local)));
+
+    let solved = pattern::pattern_unify(&global, &mut state, &flex_m, rhs, ty).unwrap();
+    assert!(solved, "same-scope flex should unify");
+
+    // ?m2 should NOT be pruned — it stays unsolved.
+    assert!(state.meta_solution(m2_id).is_none(), "?m2 should not be solved when all args in scope");
+    // ?m should be solved to reference ?m2.
+    assert!(state.meta_solution(m_id).is_some(), "?m should be solved");
+}
+
+// ─── Gap 4: lowering ─────────────────────────────────────────────────────────
+
+/// ?m[x] = f x where f = x (rigid variable) applied to another rigid variable.
+/// Result: ?m solved to `λx. x x` (a self-application — tests spine lowering).
+#[test]
+fn pattern_unify_lowers_rigid_with_spine() {
+    use hwml_core::val::{Eliminator, Normal, Spine};
+
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+
+    // ?m of arity 1.
+    let m_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+    let mut m_local = LocalEnv::new();
+    m_local.push(x0.clone());
+    let flex_m = make_meta_flex(m_id, m_local);
+
+    // RHS = x0 applied to x0: Rigid(Level(0), Spine([Application(x0)])).
+    let mut spine = Spine::empty();
+    spine.push(Eliminator::application(Normal::new(var_ty.clone(), x0.clone())));
+    let rhs = Rc::new(Value::Rigid(hwml_core::val::Rigid::new(
+        hwml_core::val::Variable::new(Level::new(0)),
+        spine,
+        var_ty.clone(),
+    )));
+
+    let solved = pattern::pattern_unify(&global, &mut state, &flex_m, rhs, ty).unwrap();
+    assert!(solved, "lowering should solve ?m");
+    assert!(state.meta_solution(m_id).is_some(), "?m should be solved after lowering");
+}
+
 // ─── Surface AST builders ────────────────────────────────────────────────────
 
 fn id_expr(name: &[u8]) -> Box<hwml_surface::Expression> {

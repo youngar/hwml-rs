@@ -300,7 +300,7 @@ fn compute_intersection<'db>(
 
 /// Build the syntax solution for `?m`:
 /// `λ(old_arity). Metavariable(m', [Index(old_arity-1-kept[0]), ..., Index(old_arity-1-kept[j])])`
-fn intersection_syntax_solution<'db>(
+pub(crate) fn intersection_syntax_solution<'db>(
     new_meta_id: MetaId,
     old_arity: usize,
     kept: &[usize],
@@ -321,7 +321,7 @@ fn intersection_syntax_solution<'db>(
 /// `Flex(m', LocalEnv([Rigid(Level(kept[0])), ..., Rigid(Level(kept[j]))]), [], dummy_ty)`
 ///
 /// `subst_value(this, actual_ρ)` = `Flex(m', [actual_ρ[kept[0]], ..., actual_ρ[kept[j]]], [])`.
-fn intersection_value_solution<'db>(new_meta_id: MetaId, kept: &[usize]) -> RcValue<'db> {
+pub(crate) fn intersection_value_solution<'db>(new_meta_id: MetaId, kept: &[usize]) -> RcValue<'db> {
     let dummy_ty: RcValue<'db> = Rc::new(Value::UniverseCode(0));
     let mut inner_local = LocalEnv::new();
     for &pos in kept {
