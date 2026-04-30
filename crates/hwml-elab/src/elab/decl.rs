@@ -1,21 +1,321 @@
-use hwml_core::{ConstantDecl, TypeConstructorDecl};
+use std::rc::Rc;
 
-use crate::error::ElabError;
+use hwml_core::{RcSyntax, ty::Ty};
+use hwml_surface::{BindingGroup, Def, Inductive, TypedBindingGroup};
 
-use super::Elaborator;
+use crate::{
+    elab::{self, Elaborator},
+    error::ElabError,
+    solver::{SolveError, Solver},
+    zonk::zonk,
+};
 
-/// Elaborate a top-level constant definition (`def name : ty = body`).
-pub fn elab_constant<'a, 'db>(
-    _elab: &mut Elaborator<'a, 'db>,
-    _decl: &ConstantDecl<'db>,
-) -> Result<(), ElabError<'db>> {
-    todo!("elab_constant: Phase 3")
+// ─── Result types ─────────────────────────────────────────────────────────────
+
+/// Elaborated constant (type-checked type and value).
+#[derive(Debug, Clone)]
+pub struct ElaboratedConstant<'db> {
+    pub name: Vec<u8>,
+    pub ty: RcSyntax<'db>,
+    pub value: RcSyntax<'db>,
 }
 
-/// Elaborate a top-level inductive type declaration.
+/// Elaborated data constructor.
+#[derive(Debug, Clone)]
+pub struct ElaboratedConstructor<'db> {
+    pub name: Vec<u8>,
+    /// Parameter types (telescope).
+    pub params: Vec<RcSyntax<'db>>,
+    /// Return type of the constructor.
+    pub result: RcSyntax<'db>,
+}
+
+/// Elaborated inductive type declaration.
+#[derive(Debug, Clone)]
+pub struct ElaboratedInductive<'db> {
+    pub name: Vec<u8>,
+    /// Type parameters (telescope).
+    pub params: Vec<RcSyntax<'db>>,
+    /// Index types (telescope).
+    pub indices: Vec<RcSyntax<'db>>,
+    /// Universe expression.
+    pub universe: RcSyntax<'db>,
+    pub constructors: Vec<ElaboratedConstructor<'db>>,
+}
+
+// ─── Top-level elaboration entry points ───────────────────────────────────────
+
+/// Elaborate a surface `def` declaration.
+///
+/// Handles:
+/// - `def f : T = v` — no bindings, explicit type
+/// - `def f (x:A) ... : T = v` — typed bindings desugared to Pi/Lambda
+/// - `def f = v` — no annotation, infer type
+///
+/// Runs the constraint solver after elaboration. Does NOT run zonk (caller decides when).
+pub fn elab_constant<'a, 'db>(
+    elab: &mut Elaborator<'a, 'db>,
+    def: &Def,
+) -> Result<ElaboratedConstant<'db>, ElabError<'db>> {
+    let name = def.id.value.to_vec();
+
+    let (ty_syn, value_syn) = if def.bindings.groups.is_empty() {
+        // No bindings: simple case.
+        match &def.ty {
+            Some(ty_expr) => {
+                let ty_syn =
+                    elab::expr::check(elab, ty_expr, Rc::new(Ty::UniverseType))?.into_inner();
+                let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
+                let val_syn =
+                    elab::expr::check(elab, &def.value, Rc::new(Ty::El(ty_code)))?.into_inner();
+                (ty_syn, val_syn)
+            }
+            None => {
+                // No annotation: synth the value, get its type.
+                let (val_syn, val_ty) = elab::expr::synth(elab, &def.value)?.into_inner();
+                let ty_syn = quote_type(elab, &val_ty)?;
+                (ty_syn, val_syn)
+            }
+        }
+    } else {
+        // Has bindings: desugar into Pi + Fun.
+        let typed_groups = collect_typed_groups(&def.bindings.groups);
+
+        let ty_syn = match &def.ty {
+            Some(ty_expr) => {
+                if typed_groups.is_empty() {
+                    // Only untyped binders: check the declared type, use Fun for value.
+                    elab::expr::check(elab, ty_expr, Rc::new(Ty::UniverseType))?.into_inner()
+                } else {
+                    // Pi type from typed bindings + target.
+                    let pi = build_pi_expr(typed_groups, ty_expr);
+                    elab::expr::check(
+                        elab,
+                        &hwml_surface::Expression::Pi(pi),
+                        Rc::new(Ty::UniverseType),
+                    )?
+                    .into_inner()
+                }
+            }
+            None => return Err(ElabError::CannotInfer { span: None }),
+        };
+
+        let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
+        let fun_expr = build_fun_expr(&def.bindings.groups, &def.value);
+        let val_syn =
+            elab::expr::check(elab, &fun_expr, Rc::new(Ty::El(ty_code)))?.into_inner();
+
+        (ty_syn, val_syn)
+    };
+
+    run_solver(elab)?;
+
+    Ok(ElaboratedConstant { name, ty: ty_syn, value: value_syn })
+}
+
+/// Elaborate a surface `inductive` declaration.
+///
+/// Runs the constraint solver after elaboration. Does NOT run zonk.
 pub fn elab_inductive<'a, 'db>(
-    _elab: &mut Elaborator<'a, 'db>,
-    _decl: &TypeConstructorDecl<'db>,
+    elab: &mut Elaborator<'a, 'db>,
+    ind: &Inductive,
+) -> Result<ElaboratedInductive<'db>, ElabError<'db>> {
+    let name = ind.name.value.to_vec();
+
+    // Elaborate parameters: each typed binding group → one syntax type per binder.
+    let (params, param_ctx) = elab_telescope(elab, &ind.parameters.groups)?;
+
+    // Elaborate indices in the extended param context.
+    let (indices, _idx_ctx) = {
+        let mut inner = Elaborator {
+            kernel: crate::kernel::Kernel::new(
+                elab.kernel.global,
+                param_ctx.clone(),
+                elab.kernel.state,
+            ),
+        };
+        elab_telescope(&mut inner, &ind.indices.groups)?
+    };
+
+    // Elaborate universe in the param+index context.
+    let universe_syn = {
+        let mut inner = Elaborator {
+            kernel: crate::kernel::Kernel::new(
+                elab.kernel.global,
+                param_ctx.clone(),
+                elab.kernel.state,
+            ),
+        };
+        elab::expr::check(&mut inner, &ind.universe, Rc::new(Ty::UniverseType))?.into_inner()
+    };
+
+    // Elaborate constructors in the param context.
+    let constructors = {
+        let mut inner = Elaborator {
+            kernel: crate::kernel::Kernel::new(
+                elab.kernel.global,
+                param_ctx,
+                elab.kernel.state,
+            ),
+        };
+        ind.constructors
+            .iter()
+            .map(|ctor| elab_constructor(&mut inner, ctor))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    run_solver(elab)?;
+
+    Ok(ElaboratedInductive { name, params, indices, universe: universe_syn, constructors })
+}
+
+/// Elaborate a constructor: type expression is `(A:T) -> ... -> Result`.
+/// For now, treat the entire constructor type as one expression.
+fn elab_constructor<'a, 'db>(
+    elab: &mut Elaborator<'a, 'db>,
+    ctor: &hwml_surface::Constructor,
+) -> Result<ElaboratedConstructor<'db>, ElabError<'db>> {
+    let name = ctor.name.value.to_vec();
+    // Elaborate the constructor type as a type-code.
+    let ty_syn =
+        elab::expr::check(elab, &ctor.ty, Rc::new(Ty::UniverseType))?.into_inner();
+    // The full type is a Pi chain; for now store as empty params + result.
+    Ok(ElaboratedConstructor { name, params: vec![], result: ty_syn })
+}
+
+// ─── Telescope elaboration ────────────────────────────────────────────────────
+
+/// Elaborate a list of typed binding groups into a telescope.
+/// Returns both the type syntax list and the extended context after adding all binders.
+fn elab_telescope<'a, 'db>(
+    elab: &mut Elaborator<'a, 'db>,
+    groups: &[TypedBindingGroup],
+) -> Result<(Vec<RcSyntax<'db>>, crate::ctx::ElabCtx<'db>), ElabError<'db>> {
+    let mut types = Vec::new();
+    let mut current_ctx = elab.kernel.ctx.clone();
+
+    for group in groups {
+        let ty_syn = {
+            let mut inner = Elaborator {
+                kernel: crate::kernel::Kernel::new(
+                    elab.kernel.global,
+                    current_ctx.clone(),
+                    elab.kernel.state,
+                ),
+            };
+            elab::expr::check(&mut inner, &group.ty, Rc::new(Ty::UniverseType))?.into_inner()
+        };
+
+        let ty_code = {
+            let inner = crate::kernel::Kernel::new(
+                elab.kernel.global,
+                current_ctx.clone(),
+                elab.kernel.state,
+            );
+            inner.eval_syn_flex(&ty_syn)
+        };
+
+        let dom_ty: hwml_core::ty::RcTy<'db> = Rc::new(Ty::El(ty_code.clone()));
+
+        for binder in &group.binders {
+            let binder_name = binder_to_name(binder);
+            let var = current_ctx.fresh_var(ty_code.clone());
+            current_ctx = current_ctx.push_bound(binder_name, dom_ty.clone(), var);
+            types.push(ty_syn.clone());
+        }
+    }
+
+    Ok((types, current_ctx))
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Run the constraint solver after elaboration.
+fn run_solver<'a, 'db>(elab: &mut Elaborator<'a, 'db>) -> Result<(), ElabError<'db>> {
+    let mut solver = Solver::new(elab.kernel.state, elab.kernel.global);
+    solver.run().map_err(|e| match e {
+        SolveError::Elab(e) => e,
+        SolveError::NoProgress => ElabError::CannotInfer { span: None },
+    })
+}
+
+/// Run solver then zonk. Use when a definition is complete and all metas must be resolved.
+pub fn run_solver_and_zonk<'a, 'db>(
+    elab: &mut Elaborator<'a, 'db>,
 ) -> Result<(), ElabError<'db>> {
-    todo!("elab_inductive: Phase 3")
+    run_solver(elab)?;
+    zonk(elab.kernel.state)
+}
+
+/// Collect only the typed binding groups from a mixed binding list.
+fn collect_typed_groups(groups: &[BindingGroup]) -> Vec<TypedBindingGroup> {
+    groups
+        .iter()
+        .filter_map(|g| match g {
+            BindingGroup::Typed(tg) => Some(tg.clone()),
+            BindingGroup::Untyped(_) => None,
+        })
+        .collect()
+}
+
+/// Build a surface `Pi` expression from typed groups + target.
+fn build_pi_expr(
+    typed_groups: Vec<TypedBindingGroup>,
+    target: &hwml_surface::Expression,
+) -> hwml_surface::Pi {
+    hwml_surface::Pi {
+        loc: 0..0,
+        bindings: hwml_surface::TypedBindings { groups: typed_groups },
+        target: Box::new(target.clone()),
+    }
+}
+
+/// Build a surface `Fun` expression from all binding groups + body.
+/// If groups is empty, returns the body expression directly.
+fn build_fun_expr(
+    groups: &[BindingGroup],
+    body: &hwml_surface::Expression,
+) -> hwml_surface::Expression {
+    if groups.is_empty() {
+        return body.clone();
+    }
+    hwml_surface::Expression::Fun(hwml_surface::Fun {
+        loc: 0..0,
+        bindings: hwml_surface::Bindings { groups: groups.to_vec() },
+        expr: Box::new(body.clone()),
+    })
+}
+
+/// Extract a name string from a binder expression.
+fn binder_to_name(expr: &hwml_surface::Expression) -> String {
+    if let hwml_surface::Expression::Id(id) = expr {
+        String::from_utf8_lossy(&id.value).to_string()
+    } else {
+        "_".to_string()
+    }
+}
+
+/// Quote a `Ty` value to a `Syntax` term (for use as type annotation).
+/// Only handles `Ty::El(code)` (returns the code) and `Ty::UniverseType`.
+/// Returns Err(CannotInfer) for complex types that can't be directly represented.
+fn quote_type<'a, 'db>(
+    elab: &mut Elaborator<'a, 'db>,
+    ty: &hwml_core::ty::Ty<'db>,
+) -> Result<RcSyntax<'db>, ElabError<'db>> {
+    use hwml_core::{ty::Ty as CoreTy, Value};
+    match ty {
+        CoreTy::UniverseType => {
+            let (syn, _) = elab.kernel.synth_universe(None)?.into_inner();
+            Ok(syn)
+        }
+        CoreTy::El(code) => {
+            let depth = elab.kernel.ctx.depth();
+            let universe_val = Value::UniverseCode(0);
+            match hwml_core::quote::quote(elab.kernel.global, depth, code, &universe_val) {
+                Ok(syn) => Ok(syn),
+                Err(_) => Err(ElabError::CannotInfer { span: None }),
+            }
+        }
+        _ => Err(ElabError::CannotInfer { span: None }),
+    }
 }

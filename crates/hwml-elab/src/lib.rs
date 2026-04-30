@@ -6,5 +6,6 @@ pub mod kernel;
 pub mod meta;
 pub mod solver;
 pub mod state;
+pub mod subst;
 pub mod unify;
 pub mod zonk;

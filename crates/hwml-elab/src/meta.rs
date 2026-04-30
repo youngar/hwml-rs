@@ -1,4 +1,4 @@
-use hwml_core::{RcValue, ty::RcTy};
+use hwml_core::{RcSyntax, RcValue, ty::RcTy};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct MetaId(pub u32);
@@ -9,12 +9,21 @@ pub enum MetaKind {
     UniverseLevel,
 }
 
+/// A solved metavariable stores both representations:
+/// - `syntax`: closed term (abstracted over meta's arity) for zonking
+/// - `value`: evaluated form for fast `force_flex` during unification
+#[derive(Debug, Clone)]
+pub struct MetaSolution<'db> {
+    pub syntax: RcSyntax<'db>,
+    pub value: RcValue<'db>,
+}
+
 #[derive(Debug, Clone)]
 pub struct MetaEntry<'db> {
     pub id: MetaId,
     pub ty: RcTy<'db>,
     pub arity: usize,
-    pub solution: Option<RcValue<'db>>,
+    pub solution: Option<MetaSolution<'db>>,
     pub kind: MetaKind,
 }
 

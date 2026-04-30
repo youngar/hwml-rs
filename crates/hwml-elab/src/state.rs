@@ -1,11 +1,12 @@
-use std::collections::{HashMap, VecDeque};
+use std::{collections::{HashMap, VecDeque}, rc::Rc};
 
-use hwml_core::{RcValue, ty::RcTy, val::GlobalEnv};
+use hwml_core::{RcSyntax, RcValue, Value, ty::{RcTy, Ty}, val::GlobalEnv, eval};
 
 use crate::{
     constraint::{Constraint, ConstraintEntry, ConstraintId, ConstraintStatus},
     error::ElabError,
-    meta::{MetaEntry, MetaId, MetaKind},
+    meta::{MetaEntry, MetaId, MetaKind, MetaSolution},
+    subst,
 };
 
 pub struct SolverState<'db> {
@@ -41,38 +42,65 @@ impl<'db> SolverState<'db> {
         self.metas.get(&id)
     }
 
+    /// Returns the cached value of a solved meta (for unification / force_flex).
     pub fn meta_solution(&self, id: MetaId) -> Option<&RcValue<'db>> {
-        self.metas.get(&id)?.solution.as_ref()
+        self.metas.get(&id)?.solution.as_ref().map(|s| &s.value)
+    }
+
+    /// Returns the syntax of a solved meta (for zonking / post-hoc verification).
+    pub fn meta_solution_syntax(&self, id: MetaId) -> Option<&RcSyntax<'db>> {
+        self.metas.get(&id)?.solution.as_ref().map(|s| &s.syntax)
     }
 
     pub fn solve_meta(
         &mut self,
         id: MetaId,
+        syn: RcSyntax<'db>,
         val: RcValue<'db>,
     ) -> Result<(), ElabError<'db>> {
         let entry = self.metas.get_mut(&id).ok_or(ElabError::UnsolvedMeta { meta: id, span: None })?;
         if entry.solution.is_some() {
             return Err(ElabError::MetaAlreadySolved { meta: id });
         }
-        entry.solution = Some(val);
+        // Kind consistency: UniverseLevel metas must resolve to a universe code or flex.
+        if matches!(entry.kind, MetaKind::UniverseLevel) {
+            match val.as_ref() {
+                Value::UniverseCode(_) | Value::Flex(_) => {}
+                _ => {
+                    return Err(ElabError::TypeMismatch {
+                        expected: Rc::new(Ty::UniverseType),
+                        actual: entry.ty.clone(),
+                        span: None,
+                    });
+                }
+            }
+        }
+        entry.solution = Some(MetaSolution { syntax: syn, value: val });
         self.wake(id);
         Ok(())
     }
 
-    /// Attempt to reduce a Flex to its value if its meta is solved.
-    /// Returns `None` when unsolved; full evaluation deferred to Phase 2.
+    /// Reduce a Flex to its value if the meta is solved.
+    ///
+    /// Applies the solution (in meta's scope, levels 0..arity-1) to the actual
+    /// local env in the Flex, then runs the remaining spine.
     pub fn force_flex(
         &self,
-        _global: &GlobalEnv<'db>,
+        global: &GlobalEnv<'db>,
         flex: &hwml_core::val::Flex<'db>,
     ) -> Option<RcValue<'db>> {
         let id = MetaId(flex.head.id.local_index as u32);
-        let _solution = self.metas.get(&id)?.solution.as_ref()?;
-        // Full substitution + spine-reduction implemented in Phase 2.
-        todo!("force_flex: Phase 2")
+        let solution = self.metas.get(&id)?.solution.as_ref()?.value.clone();
+        // Substitute meta parameters (levels 0..arity-1) with actual local env values.
+        let substituted =
+            subst::subst_value(global, &solution, &flex.head.local).ok()?;
+        // Run remaining spine eliminations.
+        eval::run_spine(global, substituted, &flex.spine).ok()
     }
 
     /// Create a HetEq constraint together with its witness meta atomically.
+    /// Create a HetEq constraint. `witness` is the meta whose solution proves lhs ≡ rhs;
+    /// callers (e.g. `kernel::expect`) create it via `fresh_meta` and pass it here.
     pub fn emit_het_eq(
         &mut self,
         lhs: RcValue<'db>,
@@ -80,8 +108,8 @@ impl<'db> SolverState<'db> {
         rhs: RcValue<'db>,
         rhs_ty: RcTy<'db>,
         depth: usize,
+        witness: MetaId,
     ) -> ConstraintId {
-        let witness = self.fresh_meta(lhs_ty.clone(), depth, MetaKind::Term);
         let cid = ConstraintId(self.next_constraint);
         self.next_constraint += 1;
         let constraint = Constraint::HetEq { lhs, lhs_ty, rhs, rhs_ty, witness, depth };

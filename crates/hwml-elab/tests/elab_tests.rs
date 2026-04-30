@@ -1,0 +1,472 @@
+use std::rc::Rc;
+
+use hwml_core::{
+    Level, Syntax, Value,
+    ty::Ty,
+    val::{GlobalEnv, LocalEnv, MetaVariable, Spine},
+    MetaVariableId,
+};
+use hwml_elab::{
+    ctx::ElabCtx,
+    elab::{Elaborator, expr},
+    error::ElabError,
+    kernel::Kernel,
+    meta::{MetaId, MetaKind},
+    solver::Solver,
+    state::SolverState,
+    unify::pattern,
+    zonk::zonk,
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+fn empty_global<'db>() -> GlobalEnv<'db> {
+    GlobalEnv::new()
+}
+
+fn make_meta_flex<'db>(
+    id: MetaId,
+    local: LocalEnv<'db>,
+) -> hwml_core::val::Flex<'db> {
+    let dummy: hwml_core::RcValue<'db> = Rc::new(Value::UniverseCode(0));
+    let mv = MetaVariable::new(MetaVariableId::new(id.0 as u16), local);
+    hwml_core::val::Flex::new(mv, Spine::empty(), dummy)
+}
+
+// ─── SolverState unit tests ───────────────────────────────────────────────────
+
+#[test]
+fn fresh_meta_correct_arity_and_kind() {
+    let mut state = SolverState::new();
+    let ty = Rc::new(Ty::UniverseType);
+    let id = state.fresh_meta(ty, 3, MetaKind::Term);
+    let entry = state.meta(id).expect("meta should exist");
+    assert_eq!(entry.arity, 3);
+    assert!(matches!(entry.kind, MetaKind::Term));
+    assert!(entry.solution.is_none());
+}
+
+#[test]
+fn emit_het_eq_creates_constraint_and_witness() {
+    let mut state = SolverState::new();
+    let ty = Rc::new(Ty::UniverseType);
+    let lhs: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let rhs: hwml_core::RcValue = Rc::new(Value::UniverseCode(1));
+
+    let before_metas = state.iter_metas().count();
+    let before_constraints = state.iter_constraints().count();
+
+    // Caller creates the witness meta, then passes it to emit_het_eq.
+    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+    state.emit_het_eq(lhs, ty.clone(), rhs, ty.clone(), 0, witness);
+
+    assert_eq!(state.iter_metas().count(), before_metas + 1);
+    assert_eq!(state.iter_constraints().count(), before_constraints + 1);
+    assert_eq!(state.active_count(), 1);
+}
+
+#[test]
+fn solve_meta_wakes_blocked_constraints() {
+    let mut state = SolverState::new();
+    let ty = Rc::new(Ty::UniverseType);
+    let meta_id = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+
+    // Emit a HetEq constraint that should be blocked on meta_id.
+    let dummy_val: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+    let cid = state.emit_het_eq(dummy_val.clone(), ty.clone(), dummy_val.clone(), ty.clone(), 0, witness);
+
+    // Drain the queue so we know only our re-queue comes back.
+    while state.pop_active().is_some() {}
+    // Manually block cid on meta_id.
+    state.block_on(cid, &[meta_id]);
+    assert_eq!(state.active_count(), 0, "should be blocked after draining");
+
+    // Solve the meta — this should re-queue the constraint.
+    let sol_val: hwml_core::RcValue = Rc::new(Value::UniverseCode(42));
+    let sol_syn: hwml_core::RcSyntax = Rc::new(Syntax::UniverseCode(42));
+    state.solve_meta(meta_id, sol_syn, sol_val).expect("solve should succeed");
+
+    assert_eq!(state.active_count(), 1, "constraint should be re-queued after solve");
+}
+
+#[test]
+fn force_flex_returns_solution_after_solve() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty = Rc::new(Ty::UniverseType);
+    let meta_id = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+
+    let flex = make_meta_flex(meta_id, LocalEnv::new());
+
+    // Before solve: no solution.
+    assert!(state.force_flex(&global, &flex).is_none());
+
+    let sol_val: hwml_core::RcValue = Rc::new(Value::UniverseCode(7));
+    let sol_syn: hwml_core::RcSyntax = Rc::new(Syntax::UniverseCode(7));
+    state.solve_meta(meta_id, sol_syn, sol_val).unwrap();
+
+    let forced = state.force_flex(&global, &flex).expect("should return solution");
+    match forced.as_ref() {
+        Value::UniverseCode(7) => {}
+        other => panic!("expected UniverseCode(7), got {other:?}"),
+    }
+}
+
+// ─── Pattern unification tests ────────────────────────────────────────────────
+
+#[test]
+fn pattern_unify_linear_solves_meta() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    // Create meta ?m of arity 1: ?m[x] where x is at level 0.
+    let meta_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+
+    // Build local env: [Variable(level 0)].
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let mut local = LocalEnv::new();
+    local.push(Rc::new(Value::variable(Level::new(0), var_ty.clone())));
+
+    let flex = make_meta_flex(meta_id, local);
+
+    // RHS = Variable(level 0) — in meta scope, should become Variable(level 0).
+    let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+
+    let solved = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty).unwrap();
+    assert!(solved, "pattern unification should succeed");
+
+    let solution = state.meta_solution(meta_id).expect("meta should be solved");
+    match solution.as_ref() {
+        Value::Rigid(r) if r.head.level == Level::new(0) => {}
+        other => panic!("expected Variable(Level(0)), got {other:?}"),
+    }
+}
+
+#[test]
+fn pattern_unify_scope_violation_returns_err() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    // ?m of arity 1, parameterized over level 0.
+    let meta_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let mut local = LocalEnv::new();
+    local.push(Rc::new(Value::variable(Level::new(0), var_ty.clone())));
+
+    let flex = make_meta_flex(meta_id, local);
+
+    // RHS = Variable(level 1) — NOT in the meta's scope (only level 0 was passed).
+    let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+
+    let result = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty);
+    match result {
+        Err(ElabError::ScopeViolation { .. }) => {}
+        other => panic!("expected ScopeViolation, got {other:?}"),
+    }
+}
+
+// ─── Gap 1: rigid mismatch ────────────────────────────────────────────────────
+
+#[test]
+fn unify_rigid_mismatch_is_hard_failure() {
+    use hwml_elab::unify::Unifier;
+
+    let global = empty_global();
+    let mut state = SolverState::new();
+
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // Two distinct rigid variables at different levels.
+    let x: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let y: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+    let mut u = Unifier::new(&global, &mut state, 2);
+    let result = u.unify(x, ty.clone(), y, ty);
+    match result {
+        Err(ElabError::UnificationFailure { .. }) => {}
+        other => panic!("expected UnificationFailure, got {other:?}"),
+    }
+}
+
+// ─── Gap 2: non-linear inversion ─────────────────────────────────────────────
+
+#[test]
+fn pattern_unify_nonlinear_soft_fails_when_rhs_mentions_duplicate() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    // ?m of arity 2, but BOTH args are the same level 0 (non-linear).
+    let meta_id = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let mut local = LocalEnv::new();
+    local.push(x0.clone());
+    local.push(x0.clone()); // duplicate: non-linear
+
+    let flex = make_meta_flex(meta_id, local);
+
+    // RHS mentions level 0 (the ambiguous variable) — should soft-fail (Ok(false)).
+    let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let result = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty.clone()).unwrap();
+    assert!(!result, "non-linear pattern with ambiguous RHS should soft-fail");
+    assert!(state.meta_solution(meta_id).is_none(), "meta should remain unsolved");
+}
+
+#[test]
+fn pattern_unify_nonlinear_succeeds_when_rhs_avoids_duplicate() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    // ?m[x, x, z]: non-linear for x (level 0), linear for z (level 1).
+    let meta_id = state.fresh_meta(ty.clone(), 3, MetaKind::Term);
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let z1 = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+    let mut local = LocalEnv::new();
+    local.push(x0.clone()); // pos 0: level 0 — ambiguous (appears twice)
+    local.push(x0.clone()); // pos 1: level 0 — ambiguous
+    local.push(z1.clone()); // pos 2: level 1 — linear
+
+    let flex = make_meta_flex(meta_id, local);
+
+    // RHS = z (level 1) — only the linear variable. Should succeed.
+    let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+    let result = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty.clone()).unwrap();
+    assert!(result, "non-linear pattern with non-ambiguous RHS should succeed");
+    assert!(state.meta_solution(meta_id).is_some(), "meta should be solved");
+}
+
+// ─── Gap 5: same-meta intersection ───────────────────────────────────────────
+
+#[test]
+fn unify_same_meta_trivial_succeeds_without_solving() {
+    use hwml_elab::unify::Unifier;
+
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let meta_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let mut local = LocalEnv::new();
+    local.push(x0.clone());
+
+    // ?m[x] = ?m[x] with same local — should return Solved without solving ?m.
+    let lhs = Rc::new(Value::Flex(
+        hwml_core::val::Flex::new(
+            hwml_core::val::MetaVariable::new(
+                hwml_core::MetaVariableId::new(meta_id.0 as u16),
+                local.clone(),
+            ),
+            hwml_core::val::Spine::empty(),
+            Rc::new(Value::UniverseCode(0)),
+        )
+    ));
+    let rhs = lhs.clone();
+
+    let mut u = Unifier::new(&global, &mut state, 1);
+    let result = u.unify(lhs, ty.clone(), rhs, ty).unwrap();
+    assert!(matches!(result, hwml_elab::unify::UnifyResult::Solved));
+    // Meta should NOT be solved — trivially true constraint discharged without constraining ?m.
+    assert!(state.meta_solution(meta_id).is_none());
+}
+
+#[test]
+fn unify_same_meta_partial_intersection_creates_new_meta() {
+    use hwml_elab::unify::Unifier;
+
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let meta_id = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let y1 = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+
+    let meta_vid = hwml_core::MetaVariableId::new(meta_id.0 as u16);
+
+    // ?m[x, y] (lhs local = [x, y])
+    let mut lhs_local = LocalEnv::new();
+    lhs_local.push(x0.clone());
+    lhs_local.push(y1.clone());
+    let lhs = Rc::new(Value::Flex(hwml_core::val::Flex::new(
+        hwml_core::val::MetaVariable::new(meta_vid, lhs_local),
+        hwml_core::val::Spine::empty(),
+        Rc::new(Value::UniverseCode(0)),
+    )));
+
+    // ?m[y, x] (rhs local = [y, x]) — positions differ
+    let mut rhs_local = LocalEnv::new();
+    rhs_local.push(y1.clone());
+    rhs_local.push(x0.clone());
+    let rhs = Rc::new(Value::Flex(hwml_core::val::Flex::new(
+        hwml_core::val::MetaVariable::new(meta_vid, rhs_local),
+        hwml_core::val::Spine::empty(),
+        Rc::new(Value::UniverseCode(0)),
+    )));
+
+    let metas_before = state.iter_metas().count();
+    let mut u = Unifier::new(&global, &mut state, 2);
+    let result = u.unify(lhs, ty.clone(), rhs, ty).unwrap();
+    assert!(matches!(result, hwml_elab::unify::UnifyResult::Solved));
+
+    // ?m should now be solved.
+    assert!(state.meta_solution(meta_id).is_some(), "?m should be solved after intersection");
+    // A new meta ?m' should have been created.
+    assert_eq!(state.iter_metas().count(), metas_before + 1, "intersection should create one new meta");
+}
+
+// ─── Kernel expect tests ──────────────────────────────────────────────────────
+
+/// `expect` fast path: same Ty::UniverseType on both sides → no new meta.
+#[test]
+fn expect_fast_path_equal_types_no_meta() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ctx = ElabCtx::empty();
+    let mut kernel = Kernel::new(&global, ctx, &mut state);
+
+    // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
+    let checked = kernel.synth_universe(Some(0)).unwrap();
+    let meta_count_before = kernel.state.iter_metas().count();
+
+    // expect with the same Ty::UniverseType → fast path, no new meta.
+    let _ = kernel.expect(Rc::new(Ty::UniverseType), checked).into_inner();
+
+    assert_eq!(kernel.state.iter_metas().count(), meta_count_before);
+}
+
+/// `expect` slow path: different types → new witness meta + HetEq constraint emitted.
+#[test]
+fn expect_slow_path_emits_het_eq() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ctx = ElabCtx::empty();
+    let mut kernel = Kernel::new(&global, ctx, &mut state);
+
+    // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
+    let checked = kernel.synth_universe(Some(0)).unwrap();
+
+    // Expect at Ty::El(UniverseCode(0)) — different from Ty::UniverseType → slow path.
+    let different_ty: hwml_core::ty::RcTy =
+        Rc::new(Ty::El(Rc::new(Value::UniverseCode(0))));
+    let constraint_before = kernel.state.iter_constraints().count();
+
+    let _ = kernel.expect(different_ty, checked).into_inner();
+
+    assert!(
+        kernel.state.iter_constraints().count() > constraint_before,
+        "expect slow path should emit a HetEq constraint"
+    );
+}
+
+// ─── Integration test: identity function ─────────────────────────────────────
+
+#[test]
+fn elaborate_identity_function() {
+    use hwml_surface::Expression;
+
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ctx = ElabCtx::empty();
+
+    // Type: (A : Type) -> A -> A
+    // In surface AST:
+    //   Pi { bindings: [(A : Universe)], target: Arrow { A, A } }
+    let pi_ty = build_id_type();
+    // Value: fun A a => a
+    let fun_val = build_id_fun();
+
+    // Synth the type first.
+    let mut elab = Elaborator { kernel: Kernel::new(&global, ctx.clone(), &mut state) };
+    let (ty_syn, ty_kind) = expr::synth(&mut elab, &pi_ty)
+        .expect("type synthesis should succeed")
+        .into_inner();
+    assert!(
+        matches!(ty_kind.as_ref(), Ty::UniverseType),
+        "Pi type should have kind UniverseType"
+    );
+
+    // Check the fun against the synthesized type.
+    // We need the type as El(code). Evaluate ty_syn to get the code.
+    let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
+    let ty_as_el: hwml_core::ty::RcTy = Rc::new(Ty::El(ty_code));
+    let _val_syn = expr::check(&mut elab, &fun_val, ty_as_el)
+        .expect("identity function should type-check")
+        .into_inner();
+
+    // Run solver.
+    {
+        let mut solver = Solver::new(&mut state, &global);
+        solver.run().expect("solver should not error");
+    }
+
+    // Zonk: resolve universe metas (should default to 0).
+    zonk(&mut state).expect("zonk should succeed");
+
+    // All metas should be solved.
+    for (_, entry) in state.iter_metas() {
+        assert!(entry.solution.is_some(), "all metas should be solved after zonk");
+    }
+}
+
+// ─── Surface AST builders ────────────────────────────────────────────────────
+
+fn id_expr(name: &[u8]) -> Box<hwml_surface::Expression> {
+    Box::new(hwml_surface::Expression::Id(hwml_surface::Id {
+        loc: 0..0,
+        value: name.to_vec().into_boxed_slice(),
+    }))
+}
+
+fn universe_expr() -> Box<hwml_surface::Expression> {
+    Box::new(hwml_surface::Expression::Universe(hwml_surface::Universe {
+        loc: 0..0,
+        level: None,
+    }))
+}
+
+/// Build the type `(A : Type) -> A -> A` as a surface expression.
+fn build_id_type() -> hwml_surface::Expression {
+    let pi = hwml_surface::Pi {
+        loc: 0..0,
+        bindings: hwml_surface::TypedBindings {
+            groups: vec![hwml_surface::TypedBindingGroup {
+                binders: vec![id_expr(b"A")],
+                ty: universe_expr(),
+            }],
+        },
+        target: Box::new(hwml_surface::Expression::Arrow(hwml_surface::Arrow {
+            loc: 0..0,
+            source: id_expr(b"A"),
+            target: id_expr(b"A"),
+        })),
+    };
+    hwml_surface::Expression::Pi(pi)
+}
+
+/// Build `fun A a => a` as a surface expression.
+fn build_id_fun() -> hwml_surface::Expression {
+    let fun = hwml_surface::Fun {
+        loc: 0..0,
+        bindings: hwml_surface::Bindings {
+            groups: vec![
+                hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
+                    binders: id_expr(b"A"),
+                }),
+                hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
+                    binders: id_expr(b"a"),
+                }),
+            ],
+        },
+        expr: id_expr(b"a"),
+    };
+    hwml_surface::Expression::Fun(fun)
+}
