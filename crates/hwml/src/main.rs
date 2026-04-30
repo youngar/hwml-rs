@@ -63,25 +63,15 @@ fn main() {
 
     for statement in program.statements {
         match statement {
-            hwml_surface::Statement::Def(def) => {
-                print!("============= elab def ==============");
-                let global_env = hwml_core::val::GlobalEnv::new();
-                let state = hwml_elab::SolverState::new();
-                let tc_env = hwml_core::check::TCEnvironment {
-                    db: &db,
-                    values: hwml_core::val::Environment::new(&global_env),
-                    types: Vec::new(),
-                };
-                let task_spawner = hwml_elab::TaskSpawner::new();
-                let env = hwml_elab::SolverEnvironment::new(None, tc_env, task_spawner);
-                if let Some(expr) = def.ty {
-                    print!("******* elab type *******");
-                    let ty = hwml_elab::synth_expr(env.clone(), *expr);
-                    hwml_core::syn::dump_syntax(&db, ty.as_ref());
-                }
-                print!("******* elab value *******");
-                let value = hwml_elab::synth_expr(env.clone(), *def.value);
-                hwml_core::syn::dump_syntax(&db, value.as_ref());
+            hwml_surface::Statement::Def(_def) => {
+                // TODO: Re-enable elaboration once the new Mazzoli-style elaborator is complete
+                // The legacy elaborator was removed because it used the old Core API
+                //
+                // print!("============= elab def ==============");
+                // let global_env = hwml_core::val::GlobalEnv::new();
+                // let state = hwml_elab::SolverState::new();
+                // // ... old elab code ...
+                println!("Elaboration not yet implemented for new Core");
             }
             _ => (),
         }

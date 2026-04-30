@@ -229,26 +229,36 @@ fn extract_hsyntax_from_syntax<'db>(
 /// `Lift ht` in the result, where `ht` is a hardware arrow type. The
 /// returned vector contains the argument types from that HArrow chain.
 fn extract_input_types<'db>(
-    ty: &hwml_core::syn::RcSyntax<'db>,
+    _ty: &hwml_core::syn::RcSyntax<'db>,
 ) -> Vec<hwml_core::syn::RcSyntax<'db>> {
-    // Strip off outer Pi binders – these are meta-level parameters, not
-    // hardware ports.
-    let mut current = ty;
-    loop {
-        match &**current {
-            Syntax::Pi(pi) => {
-                current = &pi.target;
-            }
-            _ => break,
-        }
-    }
+    // TODO: This function needs to be rewritten to work with the new Core architecture.
+    // The old Core had Syntax::Pi with a target field, but the new Core uses PiCode
+    // with a Binding for the codomain, and SLift/MLift instead of Lift.
+    // This code also doesn't align with the type code architecture where types are
+    // represented as codes, not directly as syntax trees.
+    //
+    // For now, returning empty vec to allow compilation.
+    Vec::new()
 
-    // At this point we expect a lifted hardware type. If so, delegate to
-    // the HArrow helper to extract the actual hardware argument types.
-    match &**current {
-        Syntax::Lift(lift) => extract_hardware_input_types(&lift.ty),
-        _ => Vec::new(),
-    }
+    // // OLD CODE (broken with new Core):
+    // // Strip off outer Pi binders – these are meta-level parameters, not
+    // // hardware ports.
+    // let mut current = ty;
+    // loop {
+    //     match &**current {
+    //         Syntax::PiCode(dom, cod) => {
+    //             current = &cod.0;  // Access the Binding's inner term
+    //         }
+    //         _ => break,
+    //     }
+    // }
+    //
+    // // At this point we expect a lifted hardware type. If so, delegate to
+    // // the HArrow helper to extract the actual hardware argument types.
+    // match &**current {
+    //     Syntax::SLift(lift) => extract_hardware_input_types(&lift.ty),
+    //     _ => Vec::new(),
+    // }
 }
 
 /// Extract input types from a hardware arrow type structure (HArrow).
@@ -319,12 +329,12 @@ fn translate_constant_to_module<'c, 'db>(
     }
 
     // Convert input types to CIRCT types
-    // For now, we only support $Bit types (possibly wrapped in Lift)
+    // For now, we only support $Bit types (possibly wrapped in SLift)
     let mut input_ports = Vec::new();
     for (i, input_ty) in input_types.iter().enumerate() {
-        // Unwrap Lift if present, then check if this is a Bit type
+        // Unwrap SLift if present, then check if this is a Bit type
         let inner_ty = match &**input_ty {
-            Syntax::Lift(lift) => &lift.ty,
+            Syntax::SLift(slift) => &slift.ty,
             _ => input_ty,
         };
 
