@@ -2,9 +2,29 @@ use crate::*;
 
 pub use std::ops::Range;
 
+/// Identifies a single source file within a library.
+#[salsa::interned]
+pub struct SourceFileId {
+    /// Interned library name (e.g. "my-hardware").
+    pub library_name: Word<'db>,
+    /// Interned canonical absolute path to the file.
+    pub canonical_path: Word<'db>,
+}
+
+impl<'db> SourceFileId<'db> {
+    pub fn path_str<Db>(&self, db: &'db Db) -> &'db str
+    where
+        Db: salsa::Database,
+    {
+        self.canonical_path(db).text(db)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum SourceInfo<'db> {
-    File(Word<'db>),
+    /// A real source file, identified by library name + canonical path.
+    File(SourceFileId<'db>),
+    /// Synthetic / compiler-generated code; label is for display only.
     Synthetic(Word<'db>),
 }
 
@@ -14,7 +34,7 @@ impl<'db> SourceInfo<'db> {
         Db: salsa::Database,
     {
         match self {
-            SourceInfo::File(name) => name.text(db),
+            SourceInfo::File(id) => id.path_str(db),
             SourceInfo::Synthetic(name) => name.text(db),
         }
     }

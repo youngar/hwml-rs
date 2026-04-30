@@ -19,7 +19,7 @@ pub mod word;
 pub use binding::*;
 pub use common::*;
 pub use name::*;
-pub use source_range::*;
+pub use source_range::{HasSourceRange, Source, SourceFileId, SourceInfo, SourceRange, WithSourceRange};
 pub use typed::Typed;
 pub use word::Word;
 
