@@ -630,6 +630,61 @@ fn pattern_unify_lowers_rigid_with_spine() {
     assert!(state.meta_solution(m_id).is_some(), "?m should be solved after lowering");
 }
 
+// ─── het_reduce ───────────────────────────────────────────────────────────────
+
+/// het_reduce fires when both types are `El(...)` with different codes, the values are
+/// structurally heterogeneous (unifier returns Stuck, not Err), and at least one type
+/// code is an unsolved meta.
+///
+/// Setup: `HetEq(UniverseCode(0) : El(?typeA),  PiCode(?dom,?cod) : El(UniverseCode(0)))`.
+/// - `UniverseCode(0)` vs `PiCode(...)` → unifier's `_ => Stuck` branch (no hard failure).
+/// - `lhs_ty = El(?typeA)` (unsolved meta), `rhs_ty = El(UniverseCode(0))` (concrete).
+/// Expected:
+/// - het_reduce emits type-eq sub-constraint: `?typeA = UniverseCode(0)`.
+/// - ?typeA is solved to `UniverseCode(0)`.
+/// - More constraints in state than the one emitted (type-eq was added).
+#[test]
+fn solver_het_reduce_emits_type_eq_subconstraint() {
+    use hwml_core::val::Closure;
+    let global = empty_global();
+    let mut state = SolverState::new();
+
+    // ?typeA: the unknown LHS type code (a universe-level meta, arity=0).
+    let type_a_id = state.fresh_meta(Rc::new(Ty::UniverseType), 0, MetaKind::UniverseLevel);
+    let type_a_val: hwml_core::RcValue = Rc::new(Value::Flex(make_meta_flex(type_a_id, LocalEnv::new())));
+
+    let lhs_ty: hwml_core::ty::RcTy = Rc::new(Ty::El(type_a_val));
+    let rhs_ty: hwml_core::ty::RcTy = Rc::new(Ty::El(Rc::new(Value::UniverseCode(0))));
+
+    // LHS value: a concrete type code (not a flex meta) → unifier can't solve it.
+    let lhs_val: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+
+    // RHS value: a Pi code with unsolved doms.
+    let dom_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let cod_clos = Closure::new(LocalEnv::new(), Rc::new(Syntax::UniverseCode(0)));
+    let rhs_val: hwml_core::RcValue = Rc::new(Value::PiCode(dom_ty, cod_clos));
+
+    // Emit HetEq(UniverseCode(0) : El(?typeA),  PiCode(...) : El(UniverseCode(0))).
+    let witness = state.fresh_meta(lhs_ty.clone(), 0, MetaKind::Term);
+    let constraints_before = state.iter_constraints().count();
+    state.emit_het_eq(lhs_val, lhs_ty, rhs_val, rhs_ty, 0, witness);
+
+    let mut solver = Solver::new(&mut state, &global);
+    solver.run().expect("solver should not error");
+
+    // het_reduce should have emitted a type-eq sub-constraint.
+    assert!(
+        state.iter_constraints().count() > constraints_before + 1,
+        "het_reduce should emit at least one type-eq sub-constraint"
+    );
+
+    // The type-eq sub-constraint should have solved ?typeA to UniverseCode(0).
+    assert!(
+        state.meta_solution(type_a_id).is_some(),
+        "?typeA should be solved by the type-eq sub-constraint"
+    );
+}
+
 // ─── Surface AST builders ────────────────────────────────────────────────────
 
 fn id_expr(name: &[u8]) -> Box<hwml_surface::Expression> {
