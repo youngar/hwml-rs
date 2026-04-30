@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use hwml_core::{
-    Level, Syntax, Value,
+    Database, Level, Syntax, Value,
     ty::Ty,
     val::{GlobalEnv, LocalEnv, MetaVariable, Spine},
     MetaVariableId,
@@ -414,6 +414,117 @@ fn elaborate_identity_function() {
     // All metas should be solved.
     for (_, entry) in state.iter_metas() {
         assert!(entry.solution.is_some(), "all metas should be solved after zonk");
+    }
+}
+
+// ─── Constructor injectivity ──────────────────────────────────────────────────
+
+fn make_qn<'db>(db: &'db Database, name: &str) -> hwml_core::QualifiedName<'db> {
+    use hwml_core::{name::{Atom, Fixity, Name}, word::Word};
+    let word = Word::new(db, name);
+    let atom = Atom::new(word);
+    let n = Name::new(db, Fixity::Closed, Box::from([atom]));
+    hwml_core::QualifiedName::new(db, None, n)
+}
+
+/// `DataConstructor(c, [a1, b1]) = DataConstructor(c, [m_a, m_b])`
+/// should decompose into two sub-constraints and mark the outer one solved.
+#[test]
+fn solver_data_constructor_injectivity() {
+    use hwml_core::val::DataConstructor;
+
+    let db = Database::new();
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let a1: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+    let b1: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
+
+    // Metas with arity=2 so they can reference a1 (Level 0) and b1 (Level 1).
+    let mut local_2var = LocalEnv::new();
+    local_2var.push(a1.clone());
+    local_2var.push(b1.clone());
+
+    let m_a = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
+    let m_b = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
+    let m_a_val: hwml_core::RcValue = Rc::new(Value::Flex(make_meta_flex(m_a, local_2var.clone())));
+    let m_b_val: hwml_core::RcValue = Rc::new(Value::Flex(make_meta_flex(m_b, local_2var.clone())));
+
+    // Use a real QualifiedName from a Salsa DB.
+    let qn = make_qn(&db, "MyCon");
+
+    let lhs = Rc::new(Value::DataConstructor(DataConstructor::new(qn, vec![a1.clone(), b1.clone()])));
+    let rhs = Rc::new(Value::DataConstructor(DataConstructor::new(qn, vec![m_a_val, m_b_val])));
+
+    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+    let constraints_before = state.iter_constraints().count();
+    state.emit_het_eq(lhs, ty.clone(), rhs, ty.clone(), 2, witness);
+
+    let mut solver = Solver::new(&mut state, &global);
+    solver.run().expect("solver should not error");
+
+    // Outer constraint decomposed → two new sub-constraints created.
+    assert!(
+        state.iter_constraints().count() > constraints_before + 1,
+        "constructor injectivity should emit 2 sub-constraints"
+    );
+}
+
+/// Mismatched DataConstructor names → hard UnificationFailure.
+#[test]
+fn solver_data_constructor_mismatch_is_hard_failure() {
+    use hwml_core::val::DataConstructor;
+
+    let db = Database::new();
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    let a: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
+
+    let qn1 = make_qn(&db, "Con1");
+    let qn2 = make_qn(&db, "Con2");
+
+    let lhs = Rc::new(Value::DataConstructor(DataConstructor::new(qn1, vec![a.clone()])));
+    let rhs = Rc::new(Value::DataConstructor(DataConstructor::new(qn2, vec![a.clone()])));
+
+    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+    state.emit_het_eq(lhs, ty.clone(), rhs, ty.clone(), 1, witness);
+
+    let mut solver = Solver::new(&mut state, &global);
+    let result = solver.run();
+    assert!(
+        matches!(result, Err(hwml_elab::solver::SolveError::Elab(hwml_elab::error::ElabError::UnificationFailure { .. }))),
+        "mismatched constructors should be a hard failure"
+    );
+}
+
+// ─── Identity solver step ─────────────────────────────────────────────────────
+
+/// Two definitionally-equal rigid values → constraint solved immediately.
+#[test]
+fn solver_identity_solves_equal_rigid_values() {
+    let global = empty_global();
+    let mut state = SolverState::new();
+    let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
+
+    let val: hwml_core::RcValue = Rc::new(Value::UniverseCode(3));
+
+    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
+    let _cid = state.emit_het_eq(val.clone(), ty.clone(), val.clone(), ty.clone(), 0, witness);
+
+    let mut solver = Solver::new(&mut state, &global);
+    solver.run().expect("solver should not error");
+
+    // All constraints should be solved.
+    for (_, entry) in state.iter_constraints() {
+        assert!(
+            matches!(entry.status, hwml_elab::constraint::ConstraintStatus::Solved),
+            "identity constraint should be solved"
+        );
     }
 }
 
