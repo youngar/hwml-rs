@@ -22,14 +22,14 @@ pub enum UnifyResult {
 }
 
 pub struct Unifier<'a, 'db> {
-    pub global: &'db GlobalEnv<'db>,
+    pub global: &'a GlobalEnv<'db>,
     pub state: &'a mut SolverState<'db>,
     pub depth: usize,
 }
 
 impl<'a, 'db> Unifier<'a, 'db> {
     pub fn new(
-        global: &'db GlobalEnv<'db>,
+        global: &'a GlobalEnv<'db>,
         state: &'a mut SolverState<'db>,
         depth: usize,
     ) -> Self {

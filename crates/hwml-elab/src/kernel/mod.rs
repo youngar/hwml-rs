@@ -1,14 +1,20 @@
 use std::rc::Rc;
 
 use hwml_core::{
-    Binding, Index, Level, RcSyntax, RcValue, Syntax, Value,
+    Binding, Index, Level, QualifiedName, RcSyntax, RcValue, Syntax, Value,
     ty::{RcTy, Ty},
-    val::{Closure, GlobalEnv, LocalEnv},
+    val::{Closure, ConstantInfo, DataConstructorInfo, GlobalEnv, LocalEnv, PrimitiveInfo, TypeConstructorInfo},
     eval,
 };
 use hwml_surface::Expression;
 
-use crate::{ctx::ElabCtx, error::ElabError, meta::{MetaId, MetaKind}, state::SolverState};
+use crate::{
+    ctx::ElabCtx,
+    error::ElabError,
+    meta::{MetaId, MetaKind},
+    names::{GlobalNameKind, RcGlobalNameTable},
+    state::SolverState,
+};
 
 /// Zero-cost proof a term was built by a kernel typing rule.
 /// `new` is `pub(crate)` — only this module can construct `Checked` values.
@@ -25,18 +31,113 @@ impl<T> Checked<T> {
 }
 
 pub struct Kernel<'a, 'db> {
-    pub global: &'db GlobalEnv<'db>,
+    pub global: &'a GlobalEnv<'db>,
     pub ctx: ElabCtx<'db>,
     pub state: &'a mut SolverState<'db>,
+    /// Secondary name index: maps flat surface name bytes → (QualifiedName, kind).
+    /// Built externally by the elaboration pipeline and shared via Rc.
+    /// Defaults to empty; inner kernel clones (cheap: Rc increment).
+    pub global_names: RcGlobalNameTable<'db>,
 }
 
 impl<'a, 'db> Kernel<'a, 'db> {
+    /// Create a kernel with an empty global name table.
+    /// Use `new_with_names` when global name resolution is needed.
     pub fn new(
-        global: &'db GlobalEnv<'db>,
+        global: &'a GlobalEnv<'db>,
         ctx: ElabCtx<'db>,
         state: &'a mut SolverState<'db>,
     ) -> Self {
-        Kernel { global, ctx, state }
+        Kernel { global, ctx, state, global_names: Rc::default() }
+    }
+
+    pub fn new_with_names(
+        global: &'a GlobalEnv<'db>,
+        ctx: ElabCtx<'db>,
+        state: &'a mut SolverState<'db>,
+        global_names: RcGlobalNameTable<'db>,
+    ) -> Self {
+        Kernel { global, ctx, state, global_names }
+    }
+
+    // -------------------------------------------------------------------------
+    // Global name lookup
+    // -------------------------------------------------------------------------
+
+    /// Synthesize a constant reference.
+    pub fn synth_constant(
+        &self,
+        name: QualifiedName<'db>,
+        info: &ConstantInfo<'db>,
+    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
+        let syn = hwml_core::Syntax::constant_rc(name);
+        let ty_val = self.eval_syn_flex(&info.ty);
+        Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
+    }
+
+    /// Synthesize a primitive reference.
+    pub fn synth_primitive(
+        &self,
+        name: QualifiedName<'db>,
+        info: &PrimitiveInfo<'db>,
+    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
+        let syn = hwml_core::Syntax::prim_rc(name);
+        let ty_val = self.eval_syn_flex(&info.ty);
+        Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
+    }
+
+    /// Synthesize a type constructor reference (zero arguments).
+    pub fn synth_type_constructor(
+        &self,
+        name: QualifiedName<'db>,
+        info: &TypeConstructorInfo<'db>,
+    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
+        let syn = hwml_core::Syntax::type_constructor_rc(name, vec![]);
+        let universe_syn: RcSyntax<'db> = Rc::new(Syntax::UniverseCode(info.level.into()));
+        let ty_val = self.eval_syn_flex(&universe_syn);
+        Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
+    }
+
+    /// Synthesize a data constructor reference (zero arguments).
+    pub fn synth_data_constructor(
+        &self,
+        name: QualifiedName<'db>,
+        info: &DataConstructorInfo<'db>,
+    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
+        let syn = hwml_core::Syntax::data_constructor_rc(name, vec![]);
+        let ty_val = self.eval_syn_flex(&info.ty);
+        Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
+    }
+
+    /// Look up a surface name (bytes) in the global name table and synthesize it.
+    pub fn synth_global_by_bytes(
+        &self,
+        name_bytes: &[u8],
+    ) -> Option<Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>> {
+        let (qname, kind) = self.global_names.get(name_bytes)?;
+        let result = match kind {
+            GlobalNameKind::Constant => self
+                .global
+                .constant(*qname)
+                .ok()
+                .map(|info| self.synth_constant(*qname, info)),
+            GlobalNameKind::Primitive => self
+                .global
+                .primitive(*qname)
+                .ok()
+                .map(|info| self.synth_primitive(*qname, info)),
+            GlobalNameKind::TypeConstructor => self
+                .global
+                .type_constructor(*qname)
+                .ok()
+                .map(|info| self.synth_type_constructor(*qname, info)),
+            GlobalNameKind::DataConstructor => self
+                .global
+                .data_constructor(*qname)
+                .ok()
+                .map(|info| self.synth_data_constructor(*qname, info)),
+        };
+        result
     }
 
     // -------------------------------------------------------------------------
@@ -135,6 +236,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         global: self.global,
                         ctx: self.ctx.clone(),
                         state: self.state,
+                        global_names: self.global_names.clone(),
                     },
                 },
                 arg,
@@ -180,6 +282,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         global: self.global,
                         ctx: self.ctx.clone(),
                         state: self.state,
+                        global_names: self.global_names.clone(),
                     },
                 },
                 &fun.expr,
@@ -203,6 +306,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 global: self.global,
                 ctx: extended_ctx,
                 state: self.state,
+                global_names: self.global_names.clone(),
             };
 
             if !remaining_names.is_empty() || !rest_groups.is_empty() {
@@ -215,14 +319,29 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         inner_kernel.check_lambda(&remaining_fun, dom2, cod2)?.into_inner()
                     }
                     Err(_) => {
-                        // Codomain is an unsolved meta — defer via expr::check + expect.
-                        let ret_ty = Rc::new(Ty::El(ret_code));
-                        crate::elab::expr::check(
-                            &mut crate::elab::Elaborator { kernel: inner_kernel },
-                            &remaining_fun.expr,
-                            ret_ty,
-                        )?
-                        .into_inner()
+                        // Codomain not yet a Pi (unsolved meta). Mint a fresh meta for
+                        // each remaining binder and recurse so binders are still consumed.
+                        let binder_count = count_binders(&remaining_fun.bindings);
+                        if binder_count == 0 {
+                            let ret_ty = Rc::new(Ty::El(ret_code));
+                            crate::elab::expr::check(
+                                &mut crate::elab::Elaborator { kernel: inner_kernel },
+                                &remaining_fun.expr,
+                                ret_ty,
+                            )?
+                            .into_inner()
+                        } else {
+                            // Create a fresh Pi meta for the stuck type and recurse.
+                            let depth = inner_kernel.ctx.depth();
+                            let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
+                            let dom_meta =
+                                inner_kernel.state.fresh_meta(universe_ty.clone(), depth, MetaKind::Term);
+                            let (dom_syn, _) = inner_kernel.synth_meta(dom_meta)?.into_inner();
+                            let dom_val = inner_kernel.eval_syn_flex(&dom_syn);
+                            let cod_term = Rc::new(Syntax::UniverseCode(0));
+                            let cod_clos2 = Closure::new(inner_kernel.ctx.to_local_env(), cod_term);
+                            inner_kernel.check_lambda(&remaining_fun, dom_val, cod_clos2)?.into_inner()
+                        }
                     }
                 }
             } else {
@@ -368,6 +487,16 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 let cod_clos = Closure::new(local, cod.clone());
                 Rc::new(Value::PiCode(dom_val, cod_clos))
             }
+            Syntax::Lambda(lam) => {
+                let body_clos = Closure::new(local, lam.body.0.clone());
+                Value::lambda_rc(body_clos)
+            }
+            Syntax::Application(app) => {
+                let fun_val = self.flex_eval_with_local(&app.function, local.clone());
+                let arg_val = self.flex_eval_with_local(&app.argument, local.clone());
+                eval::run_application(self.global, &fun_val, arg_val)
+                    .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)))
+            }
             _ => eval::substitute(self.global, syn, local)
                 .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0))),
         }
@@ -433,6 +562,14 @@ fn types_syntactically_equal<'db>(a: &Ty<'db>, b: &Ty<'db>) -> bool {
         (Ty::El(c1), Ty::El(c2)) => Rc::ptr_eq(c1, c2),
         _ => false,
     }
+}
+
+/// Count total binders across all groups in a `Bindings`.
+fn count_binders(bindings: &hwml_surface::Bindings) -> usize {
+    bindings.groups.iter().map(|g| match g {
+        hwml_surface::BindingGroup::Untyped(_) => 1,
+        hwml_surface::BindingGroup::Typed(tg) => tg.binders.len(),
+    }).sum()
 }
 
 /// Build a synthetic `Fun` with the remaining binders for recursive lambda checking.

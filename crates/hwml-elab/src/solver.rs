@@ -18,7 +18,7 @@ use crate::{
 
 pub struct Solver<'a, 'db> {
     pub state: &'a mut SolverState<'db>,
-    pub global: &'db GlobalEnv<'db>,
+    pub global: &'a GlobalEnv<'db>,
 }
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ impl<'db> From<ElabError<'db>> for SolveError<'db> {
 }
 
 impl<'a, 'db> Solver<'a, 'db> {
-    pub fn new(state: &'a mut SolverState<'db>, global: &'db GlobalEnv<'db>) -> Self {
+    pub fn new(state: &'a mut SolverState<'db>, global: &'a GlobalEnv<'db>) -> Self {
         Solver { state, global }
     }
 

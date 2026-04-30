@@ -17,11 +17,20 @@ pub struct Elaborator<'a, 'db> {
 
 impl<'a, 'db> Elaborator<'a, 'db> {
     pub fn new(
-        global: &'db GlobalEnv<'db>,
+        global: &'a GlobalEnv<'db>,
         ctx: ElabCtx<'db>,
         state: &'a mut SolverState<'db>,
     ) -> Self {
         Elaborator { kernel: Kernel::new(global, ctx, state) }
+    }
+
+    pub fn new_with_names(
+        global: &'a GlobalEnv<'db>,
+        ctx: ElabCtx<'db>,
+        state: &'a mut SolverState<'db>,
+        global_names: crate::names::RcGlobalNameTable<'db>,
+    ) -> Self {
+        Elaborator { kernel: Kernel::new_with_names(global, ctx, state, global_names) }
     }
 
     /// Pull-mode: infer (term, type).

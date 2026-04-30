@@ -1,12 +1,18 @@
 use std::rc::Rc;
 
-use hwml_core::{RcSyntax, ty::Ty};
+use hwml_core::{
+    RcSyntax, Syntax,
+    eval,
+    ty::Ty,
+    val::{Environment, GlobalEnv},
+};
 use hwml_surface::{BindingGroup, Def, Inductive, TypedBindingGroup};
 
 use crate::{
     elab::{self, Elaborator},
     error::ElabError,
     solver::{SolveError, Solver},
+    state::SolverState,
     zonk::zonk,
 };
 
@@ -128,10 +134,11 @@ pub fn elab_inductive<'a, 'db>(
     // Elaborate indices in the extended param context.
     let (indices, _idx_ctx) = {
         let mut inner = Elaborator {
-            kernel: crate::kernel::Kernel::new(
+            kernel: crate::kernel::Kernel::new_with_names(
                 elab.kernel.global,
                 param_ctx.clone(),
                 elab.kernel.state,
+                elab.kernel.global_names.clone(),
             ),
         };
         elab_telescope(&mut inner, &ind.indices.groups)?
@@ -140,10 +147,11 @@ pub fn elab_inductive<'a, 'db>(
     // Elaborate universe in the param+index context.
     let universe_syn = {
         let mut inner = Elaborator {
-            kernel: crate::kernel::Kernel::new(
+            kernel: crate::kernel::Kernel::new_with_names(
                 elab.kernel.global,
                 param_ctx.clone(),
                 elab.kernel.state,
+                elab.kernel.global_names.clone(),
             ),
         };
         elab::expr::check(&mut inner, &ind.universe, Rc::new(Ty::UniverseType))?.into_inner()
@@ -152,10 +160,11 @@ pub fn elab_inductive<'a, 'db>(
     // Elaborate constructors in the param context.
     let constructors = {
         let mut inner = Elaborator {
-            kernel: crate::kernel::Kernel::new(
+            kernel: crate::kernel::Kernel::new_with_names(
                 elab.kernel.global,
                 param_ctx,
                 elab.kernel.state,
+                elab.kernel.global_names.clone(),
             ),
         };
         ind.constructors
@@ -197,20 +206,22 @@ fn elab_telescope<'a, 'db>(
     for group in groups {
         let ty_syn = {
             let mut inner = Elaborator {
-                kernel: crate::kernel::Kernel::new(
+                kernel: crate::kernel::Kernel::new_with_names(
                     elab.kernel.global,
                     current_ctx.clone(),
                     elab.kernel.state,
+                    elab.kernel.global_names.clone(),
                 ),
             };
             elab::expr::check(&mut inner, &group.ty, Rc::new(Ty::UniverseType))?.into_inner()
         };
 
         let ty_code = {
-            let inner = crate::kernel::Kernel::new(
+            let inner = crate::kernel::Kernel::new_with_names(
                 elab.kernel.global,
                 current_ctx.clone(),
                 elab.kernel.state,
+                elab.kernel.global_names.clone(),
             );
             inner.eval_syn_flex(&ty_syn)
         };
@@ -293,6 +304,36 @@ fn binder_to_name(expr: &hwml_surface::Expression) -> String {
     } else {
         "_".to_string()
     }
+}
+
+/// Post-hoc verification of an elaborated constant via the hwml-core kernel checker.
+///
+/// After zonk all metas in `state` have solutions. This function:
+/// 1. Substitutes all meta solutions into `ty_syn` and `value_syn` (syntax-level).
+/// 2. Runs `check_type` + `type_check` from `hwml_core::check` on the clean syntax.
+///
+/// This is the MLIR-verifier sanity check — should never fail if elaboration is sound.
+pub fn verify_elaborated_constant<'db>(
+    global: &GlobalEnv<'db>,
+    state: &SolverState<'db>,
+    db: &'db dyn salsa::Database,
+    ty_syn: &Syntax<'db>,
+    value_syn: &Syntax<'db>,
+) -> Result<(), hwml_core::check::Error<'db>> {
+    // Produce meta-free syntax by substituting all solved metas.
+    let ty_clean = crate::zonk::substitute_metas_in_syntax(ty_syn, state);
+    let val_clean = crate::zonk::substitute_metas_in_syntax(value_syn, state);
+
+    let mut env = hwml_core::check::TCEnvironment {
+        db,
+        values: Environment::new(global),
+        types: Vec::new(),
+    };
+    hwml_core::check::check_type(&mut env, &ty_clean)?;
+    let mut eval_env = Environment::new(global);
+    let ty_val = eval::eval(&mut eval_env, &ty_clean)
+        .map_err(hwml_core::check::Error::EvaluationFailure)?;
+    hwml_core::check::type_check(&mut env, &val_clean, &ty_val)
 }
 
 /// Quote a `Ty` value to a `Syntax` term (for use as type annotation).

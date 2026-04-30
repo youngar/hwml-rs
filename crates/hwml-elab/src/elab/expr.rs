@@ -22,7 +22,13 @@ pub fn synth<'a, 'db>(
             let name = String::from_utf8_lossy(&id.value).to_string();
             match elab.kernel.ctx.lookup(&name) {
                 Some((idx, _)) => elab.kernel.synth_var(idx),
-                None => Err(ElabError::NotInScope { name, span: None }),
+                None => {
+                    // Fall back to global name table (constants, primitives, type constructors).
+                    match elab.kernel.synth_global_by_bytes(&id.value) {
+                        Some(result) => result,
+                        None => Err(ElabError::NotInScope { name, span: None }),
+                    }
+                }
             }
         }
         Expression::App(app) => {
@@ -126,7 +132,7 @@ fn synth_pi_binders<'a, 'db>(
 
     let cod_checked = {
         let mut inner = Elaborator {
-            kernel: Kernel { global: elab.kernel.global, ctx: ext_ctx, state: elab.kernel.state },
+            kernel: Kernel { global: elab.kernel.global, ctx: ext_ctx, state: elab.kernel.state, global_names: elab.kernel.global_names.clone() },
         };
         // Re-check dom_ty_expr in extended ctx for proper de Bruijn shifts.
         synth_pi_binders(&mut inner, &binders[1..], dom_ty_expr, rest_groups, target)?
@@ -152,7 +158,7 @@ fn synth_arrow<'a, 'db>(
 
     let cod_syn = {
         let mut inner = Elaborator {
-            kernel: Kernel { global: elab.kernel.global, ctx: ext_ctx, state: elab.kernel.state },
+            kernel: Kernel { global: elab.kernel.global, ctx: ext_ctx, state: elab.kernel.state, global_names: elab.kernel.global_names.clone() },
         };
         check(&mut inner, &arrow.target, Rc::new(Ty::UniverseType))?.into_inner()
     };
@@ -183,7 +189,7 @@ fn synth_let_in<'a, 'db>(
 
     let (body_syn, body_ty) = {
         let mut inner = Elaborator {
-            kernel: Kernel { global: elab.kernel.global, ctx: ext_ctx, state: elab.kernel.state },
+            kernel: Kernel { global: elab.kernel.global, ctx: ext_ctx, state: elab.kernel.state, global_names: elab.kernel.global_names.clone() },
         };
         synth(&mut inner, &let_in.expr)?.into_inner()
     };

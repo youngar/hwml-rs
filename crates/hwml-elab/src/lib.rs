@@ -4,6 +4,8 @@ pub mod elab;
 pub mod error;
 pub mod kernel;
 pub mod meta;
+pub mod names;
+pub mod program;
 pub mod solver;
 pub mod state;
 pub mod subst;
