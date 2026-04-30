@@ -1,4 +1,4 @@
-use hwml_core::{RcValue, SourceRange, ty::RcTy};
+use hwml_core::{ty::RcTy, RcValue, SourceRange};
 
 use crate::meta::MetaId;
 
@@ -35,5 +35,9 @@ pub enum ElabError<'db> {
     },
     MetaAlreadySolved {
         meta: MetaId,
+    },
+    NotImplemented {
+        feature: String,
+        span: Option<SourceRange<'db>>,
     },
 }

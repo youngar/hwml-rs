@@ -1,0 +1,16 @@
+flags: {}
+extra-package-dbs: []
+packages:
+ - '.'
+ghc-options:
+    $everything: -fprof-auto
+    "tog": -rtsopts -j4
+extra-deps:
+  - is-0.4.3 
+  - wl-pprint-1.2.1
+  - placeholders-0.1
+  - comonad-5.0.5
+  - BNFC-2.8.3
+  - geniplate-mirror-0.7.6
+ 
+resolver: lts-12.26

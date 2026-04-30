@@ -1,10 +1,13 @@
 use std::rc::Rc;
 
 use hwml_core::{
-    Binding, Index, Level, QualifiedName, RcSyntax, RcValue, Syntax, Value,
-    ty::{RcTy, Ty},
-    val::{Closure, ConstantInfo, DataConstructorInfo, GlobalEnv, LocalEnv, PrimitiveInfo, TypeConstructorInfo},
     eval,
+    ty::{RcTy, Ty},
+    val::{
+        Closure, ConstantInfo, DataConstructorInfo, GlobalEnv, LocalEnv, PrimitiveInfo,
+        TypeConstructorInfo,
+    },
+    Binding, Index, Level, Name, QualifiedName, RcSyntax, RcValue, Syntax, Value,
 };
 use hwml_surface::Expression;
 
@@ -12,8 +15,10 @@ use crate::{
     ctx::ElabCtx,
     error::ElabError,
     meta::{MetaId, MetaKind},
-    names::{GlobalNameKind, RcGlobalNameTable},
+    names::GlobalNameKind,
+    resolver::{resolve_path, Resolver},
     state::SolverState,
+    stub_table::StubTable,
 };
 
 /// Zero-cost proof a term was built by a kernel typing rule.
@@ -34,30 +39,29 @@ pub struct Kernel<'a, 'db> {
     pub global: &'a GlobalEnv<'db>,
     pub ctx: ElabCtx<'db>,
     pub state: &'a mut SolverState<'db>,
-    /// Secondary name index: maps flat surface name bytes → (QualifiedName, kind).
-    /// Built externally by the elaboration pipeline and shared via Rc.
-    /// Defaults to empty; inner kernel clones (cheap: Rc increment).
-    pub global_names: RcGlobalNameTable<'db>,
+    /// Scoped name resolution using Resolver + StubTable.
+    /// The resolver tracks the current namespace and open directives.
+    /// The stub table contains all harvested global declarations.
+    pub resolver: &'a Resolver<'db>,
+    pub stub_table: &'a StubTable<'db>,
 }
 
 impl<'a, 'db> Kernel<'a, 'db> {
-    /// Create a kernel with an empty global name table.
-    /// Use `new_with_names` when global name resolution is needed.
+    /// Create a kernel with resolver and stub table for scoped name resolution.
     pub fn new(
         global: &'a GlobalEnv<'db>,
         ctx: ElabCtx<'db>,
         state: &'a mut SolverState<'db>,
+        resolver: &'a Resolver<'db>,
+        stub_table: &'a StubTable<'db>,
     ) -> Self {
-        Kernel { global, ctx, state, global_names: Rc::default() }
-    }
-
-    pub fn new_with_names(
-        global: &'a GlobalEnv<'db>,
-        ctx: ElabCtx<'db>,
-        state: &'a mut SolverState<'db>,
-        global_names: RcGlobalNameTable<'db>,
-    ) -> Self {
-        Kernel { global, ctx, state, global_names }
+        Kernel {
+            global,
+            ctx,
+            state,
+            resolver,
+            stub_table,
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -109,35 +113,87 @@ impl<'a, 'db> Kernel<'a, 'db> {
         Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
     }
 
-    /// Look up a surface name (bytes) in the global name table and synthesize it.
-    pub fn synth_global_by_bytes(
+    /// Look up a surface name using scoped resolution (Resolver + StubTable) and synthesize it.
+    /// Respects the current namespace and `open` directives.
+    pub fn synth_global_by_path<Db>(
         &self,
-        name_bytes: &[u8],
-    ) -> Option<Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>> {
-        let (qname, kind) = self.global_names.get(name_bytes)?;
-        let result = match kind {
-            GlobalNameKind::Constant => self
-                .global
-                .constant(*qname)
-                .ok()
-                .map(|info| self.synth_constant(*qname, info)),
-            GlobalNameKind::Primitive => self
-                .global
-                .primitive(*qname)
-                .ok()
-                .map(|info| self.synth_primitive(*qname, info)),
-            GlobalNameKind::TypeConstructor => self
-                .global
-                .type_constructor(*qname)
-                .ok()
-                .map(|info| self.synth_type_constructor(*qname, info)),
-            GlobalNameKind::DataConstructor => self
-                .global
-                .data_constructor(*qname)
-                .ok()
-                .map(|info| self.synth_data_constructor(*qname, info)),
-        };
-        result
+        db: &'db Db,
+        path: &[Name<'db>],
+    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>
+    where
+        Db: salsa::Database,
+    {
+        // Use resolver to find all matching qualified names in scope
+        let candidates = resolve_path(db, self.stub_table, self.resolver, path);
+
+        if candidates.is_empty() {
+            return Err(ElabError::NotInScope {
+                name: format!("{:?}", path),
+                span: None,
+            });
+        }
+
+        if candidates.len() > 1 {
+            return Err(ElabError::NotInScope {
+                name: format!("Ambiguous: {:?}", path),
+                span: None,
+            });
+        }
+
+        let qname = candidates[0];
+
+        // Look up the kind from the stub table
+        let stub = self
+            .stub_table
+            .get(qname)
+            .ok_or_else(|| ElabError::NotInScope {
+                name: format!("{:?}", path),
+                span: None,
+            })?;
+
+        // Synthesize based on kind
+        match stub.kind {
+            GlobalNameKind::Constant => {
+                let info = self
+                    .global
+                    .constant(qname)
+                    .map_err(|e| ElabError::NotInScope {
+                        name: format!("{:?}: {:?}", path, e),
+                        span: None,
+                    })?;
+                self.synth_constant(qname, info)
+            }
+            GlobalNameKind::Primitive => {
+                let info = self
+                    .global
+                    .primitive(qname)
+                    .map_err(|e| ElabError::NotInScope {
+                        name: format!("{:?}: {:?}", path, e),
+                        span: None,
+                    })?;
+                self.synth_primitive(qname, info)
+            }
+            GlobalNameKind::TypeConstructor => {
+                let info =
+                    self.global
+                        .type_constructor(qname)
+                        .map_err(|e| ElabError::NotInScope {
+                            name: format!("{:?}: {:?}", path, e),
+                            span: None,
+                        })?;
+                self.synth_type_constructor(qname, info)
+            }
+            GlobalNameKind::DataConstructor => {
+                let info =
+                    self.global
+                        .data_constructor(qname)
+                        .map_err(|e| ElabError::NotInScope {
+                            name: format!("{:?}: {:?}", path, e),
+                            span: None,
+                        })?;
+                self.synth_data_constructor(qname, info)
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -155,7 +211,10 @@ impl<'a, 'db> Kernel<'a, 'db> {
         }
         // Convert de Bruijn index to level.
         let level = Level::new(depth - 1 - idx.0);
-        let entry = self.ctx.lookup_level(level).ok_or(ElabError::CannotInfer { span: None })?;
+        let entry = self
+            .ctx
+            .lookup_level(level)
+            .ok_or(ElabError::CannotInfer { span: None })?;
         let syn = Syntax::variable_rc(idx);
         Ok(Checked::new((syn, entry.ty.clone())))
     }
@@ -170,7 +229,10 @@ impl<'a, 'db> Kernel<'a, 'db> {
         &self,
         id: MetaId,
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
-        let entry = self.state.meta(id).ok_or(ElabError::UnsolvedMeta { meta: id, span: None })?;
+        let entry = self.state.meta(id).ok_or(ElabError::UnsolvedMeta {
+            meta: id,
+            span: None,
+        })?;
         let ty = entry.ty.clone();
         let depth = self.ctx.depth();
         let substitution: Vec<RcSyntax<'db>> =
@@ -215,11 +277,15 @@ impl<'a, 'db> Kernel<'a, 'db> {
     /// Synthesize an application: function already synthesized, check arg against domain.
     ///
     /// Expects `fun_ty` to be `Ty::El(Value::PiCode(dom_code, cod_clos))` after forcing.
-    pub fn synth_app(
+    pub fn synth_app<Db>(
         &mut self,
+        db: &'db Db,
         fun: Checked<(RcSyntax<'db>, RcTy<'db>)>,
         arg: &Expression,
-    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
+    ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>
+    where
+        Db: salsa::Database,
+    {
         let (fun_syn, fun_ty) = fun.into_inner();
 
         // Force fun_ty to find a PiCode.
@@ -229,6 +295,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let dom_ty: RcTy<'db> = Rc::new(Ty::El(dom_code.clone()));
         let arg_syn = {
             let arg_checked = crate::elab::expr::check(
+                db,
                 // We need a temporary Elaborator view; borrow self's fields.
                 // Use a scope to avoid borrow issues by building the Elaborator inline.
                 &mut crate::elab::Elaborator {
@@ -236,7 +303,8 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         global: self.global,
                         ctx: self.ctx.clone(),
                         state: self.state,
-                        global_names: self.global_names.clone(),
+                        resolver: self.resolver,
+                        stub_table: self.stub_table,
                     },
                 },
                 arg,
@@ -264,12 +332,16 @@ impl<'a, 'db> Kernel<'a, 'db> {
     ///
     /// `dom_code` = value-level type code for the domain.
     /// `cod_clos` = codomain closure: `cod_clos.apply(global, &var)` gives the return type code.
-    pub fn check_lambda(
+    pub fn check_lambda<Db>(
         &mut self,
+        db: &'db Db,
         fun: &hwml_surface::Fun,
         dom_code: RcValue<'db>,
         cod_clos: Closure<'db>,
-    ) -> Result<Checked<RcSyntax<'db>>, ElabError<'db>> {
+    ) -> Result<Checked<RcSyntax<'db>>, ElabError<'db>>
+    where
+        Db: salsa::Database,
+    {
         // Collect the names from the first binding group.
         let (names, rest_groups) = peel_first_binder_group(&fun.bindings);
 
@@ -277,12 +349,14 @@ impl<'a, 'db> Kernel<'a, 'db> {
             // No binders left: check body directly against the remaining type.
             let body_ty: RcTy<'db> = Rc::new(Ty::El(dom_code));
             return crate::elab::expr::check(
+                db,
                 &mut crate::elab::Elaborator {
                     kernel: Kernel {
                         global: self.global,
                         ctx: self.ctx.clone(),
                         state: self.state,
-                        global_names: self.global_names.clone(),
+                        resolver: self.resolver,
+                        stub_table: self.stub_table,
                     },
                 },
                 &fun.expr,
@@ -306,7 +380,8 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 global: self.global,
                 ctx: extended_ctx,
                 state: self.state,
-                global_names: self.global_names.clone(),
+                resolver: self.resolver,
+                stub_table: self.stub_table,
             };
 
             if !remaining_names.is_empty() || !rest_groups.is_empty() {
@@ -315,9 +390,9 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 let remaining_fun = build_remaining_fun(fun, &remaining_names, &rest_groups);
                 let ret_ty_el: RcTy<'db> = Rc::new(Ty::El(ret_code.clone()));
                 match inner_kernel.force_to_pi(ret_ty_el) {
-                    Ok((dom2, cod2)) => {
-                        inner_kernel.check_lambda(&remaining_fun, dom2, cod2)?.into_inner()
-                    }
+                    Ok((dom2, cod2)) => inner_kernel
+                        .check_lambda(db, &remaining_fun, dom2, cod2)?
+                        .into_inner(),
                     Err(_) => {
                         // Codomain not yet a Pi (unsolved meta). Mint a fresh meta for
                         // each remaining binder and recurse so binders are still consumed.
@@ -325,7 +400,10 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         if binder_count == 0 {
                             let ret_ty = Rc::new(Ty::El(ret_code));
                             crate::elab::expr::check(
-                                &mut crate::elab::Elaborator { kernel: inner_kernel },
+                                db,
+                                &mut crate::elab::Elaborator {
+                                    kernel: inner_kernel,
+                                },
                                 &remaining_fun.expr,
                                 ret_ty,
                             )?
@@ -334,13 +412,18 @@ impl<'a, 'db> Kernel<'a, 'db> {
                             // Create a fresh Pi meta for the stuck type and recurse.
                             let depth = inner_kernel.ctx.depth();
                             let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
-                            let dom_meta =
-                                inner_kernel.state.fresh_meta(universe_ty.clone(), depth, MetaKind::Term);
+                            let dom_meta = inner_kernel.state.fresh_meta(
+                                universe_ty.clone(),
+                                depth,
+                                MetaKind::Term,
+                            );
                             let (dom_syn, _) = inner_kernel.synth_meta(dom_meta)?.into_inner();
                             let dom_val = inner_kernel.eval_syn_flex(&dom_syn);
                             let cod_term = Rc::new(Syntax::UniverseCode(0));
                             let cod_clos2 = Closure::new(inner_kernel.ctx.to_local_env(), cod_term);
-                            inner_kernel.check_lambda(&remaining_fun, dom_val, cod_clos2)?.into_inner()
+                            inner_kernel
+                                .check_lambda(db, &remaining_fun, dom_val, cod_clos2)?
+                                .into_inner()
                         }
                     }
                 }
@@ -348,7 +431,10 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 // No remaining binders: check body against return type.
                 let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
                 crate::elab::expr::check(
-                    &mut crate::elab::Elaborator { kernel: inner_kernel },
+                    db,
+                    &mut crate::elab::Elaborator {
+                        kernel: inner_kernel,
+                    },
                     &fun.expr,
                     ret_ty,
                 )?
@@ -390,16 +476,19 @@ impl<'a, 'db> Kernel<'a, 'db> {
 
         // Slow path: mint witness meta `t : expected_ty`.
         let depth = self.ctx.depth();
-        let witness_id =
-            self.state.fresh_meta(expected_ty.clone(), depth, MetaKind::Term);
-        let (t_syn, _) = self.synth_meta(witness_id)
+        let witness_id = self
+            .state
+            .fresh_meta(expected_ty.clone(), depth, MetaKind::Term);
+        let (t_syn, _) = self
+            .synth_meta(witness_id)
             .expect("freshly minted meta always exists")
             .into_inner();
 
         // Evaluate rhs and compute the constraint.
         // Use a placeholder value if evaluation fails (meta-containing term).
         let dummy_code: RcValue<'db> = Rc::new(Value::UniverseCode(0));
-        let rhs_val = self.eval_syn(&rhs_syn)
+        let rhs_val = self
+            .eval_syn(&rhs_syn)
             .unwrap_or_else(|_| dummy_code.clone());
 
         // Witness meta value: Flex neutral (unsolved meta applied to ctx vars).
@@ -407,9 +496,11 @@ impl<'a, 'db> Kernel<'a, 'db> {
             hwml_core::MetaVariableId::new(witness_id.0 as u16),
             self.ctx.to_local_env(),
         );
-        let witness_val: RcValue<'db> = Rc::new(Value::Flex(
-            hwml_core::val::Flex::new(mv, hwml_core::val::Spine::empty(), dummy_code.clone()),
-        ));
+        let witness_val: RcValue<'db> = Rc::new(Value::Flex(hwml_core::val::Flex::new(
+            mv,
+            hwml_core::val::Spine::empty(),
+            dummy_code.clone(),
+        )));
 
         self.state.emit_het_eq(
             witness_val,
@@ -527,10 +618,17 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 // Convert TyClosure.body (RcTy) to a Closure<'db> — use a dummy Syntax.
                 // This only works for non-dependent codomains (same type for all inputs).
                 // Full dependent support requires PiCode representation.
-                let dom_code = ty_to_value_code(dom).unwrap_or_else(|| Rc::new(Value::UniverseCode(0)));
+                let dom_code =
+                    ty_to_value_code(dom).unwrap_or_else(|| Rc::new(Value::UniverseCode(0)));
                 // The TyClosure.body is already a Ty, not evaluatable — synthesize a dummy closure.
                 let _ = cod;
-                Ok((dom_code, Closure::new(hwml_core::val::LocalEnv::new(), Rc::new(Syntax::UniverseCode(0)))))
+                Ok((
+                    dom_code,
+                    Closure::new(
+                        hwml_core::val::LocalEnv::new(),
+                        Rc::new(Syntax::UniverseCode(0)),
+                    ),
+                ))
             }
             _ => Err(ElabError::TypeMismatch {
                 expected: Rc::new(Ty::UniverseType), // placeholder
@@ -566,10 +664,14 @@ fn types_syntactically_equal<'db>(a: &Ty<'db>, b: &Ty<'db>) -> bool {
 
 /// Count total binders across all groups in a `Bindings`.
 fn count_binders(bindings: &hwml_surface::Bindings) -> usize {
-    bindings.groups.iter().map(|g| match g {
-        hwml_surface::BindingGroup::Untyped(_) => 1,
-        hwml_surface::BindingGroup::Typed(tg) => tg.binders.len(),
-    }).sum()
+    bindings
+        .groups
+        .iter()
+        .map(|g| match g {
+            hwml_surface::BindingGroup::Untyped(_) => 1,
+            hwml_surface::BindingGroup::Typed(tg) => tg.binders.len(),
+        })
+        .sum()
 }
 
 /// Build a synthetic `Fun` with the remaining binders for recursive lambda checking.
@@ -585,7 +687,9 @@ fn build_remaining_fun(
                 loc: 0..0,
                 value: n.as_bytes().to_vec().into_boxed_slice(),
             }));
-            hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup { binders: binder })
+            hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
+                binders: binder,
+            })
         })
         .collect();
     groups.extend_from_slice(rest_groups);
@@ -613,9 +717,11 @@ fn peel_first_binder_group(
             // The binder is an expression (typically an Id).
             extract_binder_name(&ug.binders).into_iter().collect()
         }
-        hwml_surface::BindingGroup::Typed(tg) => {
-            tg.binders.iter().filter_map(|b| extract_binder_name(b)).collect()
-        }
+        hwml_surface::BindingGroup::Typed(tg) => tg
+            .binders
+            .iter()
+            .filter_map(|b| extract_binder_name(b))
+            .collect(),
     };
     (names, rest)
 }
@@ -628,9 +734,4 @@ pub(crate) fn extract_binder_name(expr: &Expression) -> Option<String> {
     }
 }
 
-/// Evaluate a syntax term to a value for the `expect` slow path.
-/// Falls back to a neutral if the term contains unsolved metas.
-fn rhs_val_clone<'db>(_syn: &Syntax<'db>) -> RcValue<'db> {
-    // Placeholder: full evaluation happens in the constraint solver.
-    Rc::new(Value::UniverseCode(0))
-}
+// Removed dead function rhs_val_clone - was never called

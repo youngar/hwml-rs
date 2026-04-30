@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(pdftotext *)",
+      "Bash(cargo build *)",
+      "Bash(INSTA_UPDATE=always cargo test -p hwml_elab --test snap_tests)",
+      "Bash(cargo insta *)",
+      "Bash(python3 -c ' *)",
+      "Bash(node *)",
+      "Bash(INSTA_UPDATE=unseen cargo test -p hwml_elab --test snap_tests)"
+    ]
+  }
+}

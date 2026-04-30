@@ -2,11 +2,13 @@
 ///
 /// Run with `cargo test -p hwml_elab --test snap_tests`.
 /// Accept new snapshots with `cargo insta review` or `INSTA_UPDATE=always cargo test`.
-use hwml_core::{Database, val::GlobalEnv};
+use hwml_core::{val::GlobalEnv, Database};
 use hwml_elab::{
     ctx::ElabCtx,
-    elab::{Elaborator, decl::elab_constant},
+    elab::{decl::elab_constant, Elaborator},
+    resolver::Resolver,
     state::SolverState,
+    stub_table::StubTable,
     zonk::{substitute_metas_in_syntax, zonk},
 };
 use hwml_surface::syntax::Statement;
@@ -30,15 +32,19 @@ fn elab_str(input: &str) -> String {
 
     let mut out = String::new();
 
+    // Create empty resolver and stub table for isolated test elaboration
+    let resolver = Resolver::new();
+    let stub_table = StubTable::new();
+
     for stmt in &program.statements {
         match stmt {
             Statement::Def(def) => {
                 let name = String::from_utf8_lossy(&def.id.value).into_owned();
                 let mut state = SolverState::new();
                 let ctx = ElabCtx::empty();
-                let mut elab = Elaborator::new(&global, ctx, &mut state);
+                let mut elab = Elaborator::new(&global, ctx, &mut state, &resolver, &stub_table);
 
-                match elab_constant(&mut elab, def) {
+                match elab_constant(&db, &mut elab, def) {
                     Ok(c) => {
                         // Solver already ran inside elab_constant; run zonk to resolve universe metas.
                         match zonk(&mut state) {
@@ -50,8 +56,7 @@ fn elab_str(input: &str) -> String {
                         }
                         let ty_clean = substitute_metas_in_syntax(&c.ty, &state);
                         let val_clean = substitute_metas_in_syntax(&c.value, &state);
-                        let ty_str =
-                            hwml_core::syn::print::print_syntax_to_string(&db, &ty_clean);
+                        let ty_str = hwml_core::syn::print::print_syntax_to_string(&db, &ty_clean);
                         let val_str =
                             hwml_core::syn::print::print_syntax_to_string(&db, &val_clean);
                         out.push_str(&format!("-- {name}\ntype:  {ty_str}\nvalue: {val_str}\n\n"));
@@ -108,7 +113,6 @@ value: λ %0 %1 → %0
 "#);
 }
 
-
 // ── Level 2: higher-order ─────────────────────────────────────────────────────
 
 #[test]
@@ -149,7 +153,8 @@ fn snap_compose() {
 
 #[test]
 fn snap_flip_function() {
-    let src = "def flip (A : Type) (B : Type) (C : Type) (f : A -> B -> C) (b : B) (a : A) : C := f a b";
+    let src =
+        "def flip (A : Type) (B : Type) (C : Type) (f : A -> B -> C) (b : B) (a : A) : C := f a b";
     insta::assert_snapshot!(elab_str(src), @r#"
 -- flip
 type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %2) → ∀ (%4 : %2) → %2)

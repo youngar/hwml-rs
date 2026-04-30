@@ -1,0 +1,265 @@
+name:                tog
+version:             1.0
+license:             BSD3
+author:              Francesco Mazzoli <f@mazzo.li>, Víctor López Juan <victor@lopezjuan.com>
+maintainer:          Víctor López Juan <victor@lopezjuan.com>
+build-type:          Simple
+cabal-version:       >= 1.10
+tested-with:         GHC == 8.4.3
+
+flag tog-lazy-term-view
+   description: Switch to lazy terms
+   manual: True
+   default: False
+
+flag tog-lazy-hash-consing
+   description: Compute hash-consing id lazily
+   manual: True
+   default: False
+
+
+library
+  if flag(tog-lazy-term-view)
+     cpp-options: -DTogLazyTermView
+  else
+     cpp-options: -DTogStrictTermView
+
+  if flag(tog-lazy-hash-consing)
+     cpp-options: -DTogLazyHashConsed
+  else
+     cpp-options: -DTogStrictHashConsed
+
+
+
+  exposed-modules:     Tog.Abstract
+                     , Tog.CheckFile
+                     , Tog.Elaborate
+                     , Tog.Error
+                     , Tog.Instrumentation
+                     , Tog.Instrumentation.Conf
+                     , Tog.Main
+                     , Tog.Monad
+                     , Tog.Names
+                     , Tog.Names.Sorts
+                     , Tog.Parse
+                     , Tog.PrettyPrint
+                     , Tog.ScopeCheck
+                     , Tog.Term
+                     , Tog.TypeCheck
+                     , Tog.Unify
+                     , Tog.Raw
+
+                     , Tog.Test.Utils
+                     , Tog.Test.Utils.DashDash
+                     , Tog.Test.Utils.RunHaskell
+                     , Tog.Test.Utils.RTS
+                     , Tog.Test.Config
+                     , Tog.Test.Files.Dirs
+
+                     , Tog.Test.Suite.Utils
+
+                     , Tog.Unify.Class
+                     , Tog.Unify.Impl
+                     , Tog.Term.Impl
+
+                     , Tog.Prelude
+
+
+                     , Data.Refinement
+                     , Data.ISet
+
+  other-modules:       Data.Collect
+                     , Data.FreeLattice
+                     , Data.BitSet
+                     , Data.PhysEq
+                     , Data.KHashMap
+
+                     , Tog.Elaborate.Constraint
+                     , Tog.Instrumentation.Debug
+                     , Tog.Instrumentation.Debug.Label
+                     , Tog.Instrumentation.Timing
+                     , Tog.Term.FreeVars
+                     , Tog.Term.Core
+                     , Tog.Term.Guard
+                     , Tog.Term.Impl.Common
+                     , Tog.Term.Impl.Common.Nadathur
+                     , Tog.Term.Impl.GraphReduce
+                     , Tog.Term.Impl.GraphReduceUnpack
+                     -- , Tog.Term.Impl.Hashed
+                     , Tog.Term.Impl.Simple
+                     , Tog.Term.Impl.Suspended
+                     , Tog.Term.Impl.HashConsed2
+                     -- , Tog.Term.Impl.HashConsed3
+                     , Tog.Term.Impl.HashConsed4
+                     -- , Tog.Term.Impl.HashConsed4P
+                     -- , Tog.Term.Impl.SuspendedHC
+                     -- , Tog.Term.Impl.SuspendedHCI
+                     , Tog.Unify.Impl.Simple
+                     -- , Tog.Unify.Impl.Heterogeneous
+                     -- , Tog.Unify.Impl.Heterogeneous.Spine
+                     -- , Tog.Unify.Impl.Single
+                     , Tog.Unify.Impl.Twin
+                     , Tog.Unify.Impl.Mock
+                     , Tog.Term.MetaVars
+                     , Tog.Term.Subst
+                     , Tog.Term.Synonyms
+                     , Tog.Term.Types
+                     , Tog.Unify.Common
+                     -- , Tog.Unify.Common.Scheduler
+                     -- , Tog.Unify.Common.Graph
+
+                     , Tog.Unify.Core
+                     , Tog.Unify.Blockers
+                     , Tog.Unify.Algebra
+                     , Tog.Unify.History
+
+                     -- , Tog.Unify.Heterogeneous.Core
+
+                     -- * intern-tog
+                     -----------------
+                     , Data.Interned
+                     -- , Data.Interned.ByteString
+                     , Data.Interned.String
+                     , Data.Interned.Text
+                     -- , Data.Interned.IntSet
+                     , Data.Interned.Internal
+                     --  Data.Interned.Internal.ByteString
+                     , Data.Interned.Internal.String
+                     , Data.Interned.Internal.Text
+
+                     -- * bnfc  
+                     -----------------
+                       Tog.Raw.ErrM
+                     , Tog.Raw.Abs
+                     , Tog.Raw.Lex
+                     , Tog.Raw.Layout
+                     , Tog.Raw.Print
+                     , Tog.Raw.Par
+                     , Tog.Raw.Skel
+  
+  build-depends:       array >= 0.4
+                     , aeson >= 1.0
+                     , aeson-pretty >= 0.8.5
+                     , lattices >= 1.5
+                     , base >= 4.6
+                     , bifunctors >= 4.1.1.1
+                     , blaze-html >= 0.9.0.1 && <1.0
+                     , boxes >= 0.1
+                     , bytestring >= 0.10
+                     , containers >= 0.5.7
+                     , constraints >= 0.8
+                     , deepseq >= 1.4.2.0
+                     , directory >= 1.3
+                     , either >= 4.3.2
+                     , geniplate-mirror >= 0.7.4
+                     , generic-deriving >= 1.11
+                     , hashable >= 1.2
+                     , hashtables >= 1.1
+                     , is >= 0.4.1
+                     -- , intern-tog >= 0.9.1.4
+                     , lattices >= 1.5.0
+                     , lens >= 4.4
+                     , MissingH >= 1.4.0.1
+                     , mtl >= 2.2.2
+                     , monad-loops >= 0.4.3
+                     , nats >= 0.2
+                     , optparse-applicative >= 0.13
+                     , profunctors >= 4.3
+                     , safe >= 0.3.8
+                     , semigroups >= 0.15
+                     , split >= 0.2
+                     , tagged >= 0.7.2
+                     , temporary >= 1.2.1.1
+                     , transformers >= 0.2
+                     , transformers-compat >= 0.3
+                     , unordered-containers >= 0.2.5
+                     , unix >= 2.7
+                     , wl-pprint >= 1.1
+                     , data-default >= 0.2
+                     , placeholders >= 0.1
+                     , ghc-prim >= 0.5
+                     , gitrev >= 1.3.1
+                     , vector >= 0.11
+                     , data-fix
+                     , comonad > 5.0.3
+
+
+                     , process >= 1.6.3.0
+                     , temporary >= 1.2.0.4
+                     , regex-compat >= 0.95
+                     , filepath >= 1.4.1.0
+                     , Glob >= 0.7
+                     , text
+                     , time
+                     , async
+
+  hs-source-dirs:      src, deps/intern-tog, bnfc/src
+  include-dirs:        src
+  default-language:    Haskell2010
+  ghc-options:         -Wall -O2 -Wno-redundant-constraints -Wno-unused-top-binds
+                       -Wno-name-shadowing
+                       -Wno-dodgy-exports -Wno-unused-imports -Wno-partial-type-signatures
+                       -Wno-deprecations
+
+  if os(darwin)
+    c-sources: cbits/time-osx.c
+  else {
+    if os(windows)
+      c-sources: cbits/time-windows.c
+    else
+      c-sources: cbits/time-posix.c
+  }
+
+
+  cc-options:          -fPIC
+
+  build-tools:         alex, happy
+
+  default-extensions:  BangPatterns
+                     , CPP
+                     , ConstraintKinds
+                     , DataKinds
+                     , DefaultSignatures
+                     , DeriveDataTypeable
+                     , DeriveFoldable
+                     , DeriveFunctor
+                     , DeriveGeneric
+                     , DeriveTraversable
+                     , ExistentialQuantification
+                     , FlexibleContexts
+                     , FlexibleInstances
+                     , FunctionalDependencies
+                     , GADTs
+                     , GeneralizedNewtypeDeriving
+                     , InstanceSigs
+                     , KindSignatures
+                     , LambdaCase
+                     , TupleSections
+                     , MultiParamTypeClasses
+                     , NamedFieldPuns
+                     , PatternGuards
+                     , PatternSynonyms
+                     , PartialTypeSignatures
+                     , PolyKinds
+                     , RankNTypes
+                     , RecordWildCards
+                     , ScopedTypeVariables
+                     , StandaloneDeriving
+                     , TupleSections
+                     , TypeFamilies
+                     , TypeOperators
+                     , TypeSynonymInstances
+                     , TypeApplications
+                     , TypeInType
+                     , TemplateHaskell
+                     , UnicodeSyntax
+                     , ViewPatterns
+                     , OverloadedLabels
+                     , OverloadedStrings
+                     , DuplicateRecordFields
+                     , UndecidableInstances
+
+executable tog
+  main-is:             tog.hs
+  build-depends:       base >= 4.6, tog
+  default-language:    Haskell2010

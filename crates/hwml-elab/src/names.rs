@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use hwml_core::{Atom, Fixity, Name, QualifiedName, Word};
 
 /// Kinds of global names the elaborator can reference.
@@ -11,15 +8,6 @@ pub enum GlobalNameKind {
     TypeConstructor,
     DataConstructor,
 }
-
-/// Table mapping flat name bytes (e.g. `b"Nat"`) to a global QualifiedName and its kind.
-///
-/// This is a secondary index built alongside `GlobalEnv` so the elaborator can
-/// resolve unqualified surface `Id` values to core `QualifiedName`s without
-/// needing the Salsa database inside the kernel.
-pub type GlobalNameTable<'db> = HashMap<Vec<u8>, (QualifiedName<'db>, GlobalNameKind)>;
-
-pub type RcGlobalNameTable<'db> = Rc<GlobalNameTable<'db>>;
 
 /// Build a single-segment `QualifiedName` from UTF-8 bytes.
 ///

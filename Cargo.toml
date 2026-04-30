@@ -25,6 +25,7 @@ hwml_support = { path = "crates/hwml-support" }
 hwml_surface = { path = "crates/hwml-surface" }
 hwml_circt_sys = { path = "crates/hwml-circt-sys" }
 hwml_circt = { path = "crates/hwml-circt" }
+hwml_workspace = { path = "crates/hwml-workspace" }
 mdbook_hwml = { path = "crates/mdbook-hwml" }
 
 # External Crates
@@ -43,6 +44,7 @@ eyre = "0.6.12"
 futures = "0.3"
 im = "15.1"
 insta = { version = "1.43.1", features = ["yaml"] }
+indexmap = "2"
 itertools = "0.13"
 la-arena = "0.3.1"
 lalrpop = { version = "0.22.1", features = ["unicode"] }

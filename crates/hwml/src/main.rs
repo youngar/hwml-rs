@@ -56,59 +56,29 @@ fn main() {
     // Create Salsa database
     let db = hwml_core::Database::new();
 
-    // Create source file for location tracking
-    let title = hwml_core::Word::new(&db, path_str);
-    let info = hwml_core::SourceInfo::File(title);
-    let source_file = hwml_core::Source::new(&db, info);
+    let mut global = hwml_core::val::GlobalEnv::new();
+    let result = hwml_elab::program::elab_program(&db, &mut global, &program);
 
-    for statement in program.statements {
-        match statement {
-            hwml_surface::Statement::Def(_def) => {
-                // TODO: Re-enable elaboration once the new Mazzoli-style elaborator is complete
-                // The legacy elaborator was removed because it used the old Core API
-                //
-                // print!("============= elab def ==============");
-                // let global_env = hwml_core::val::GlobalEnv::new();
-                // let state = hwml_elab::SolverState::new();
-                // // ... old elab code ...
-                println!("Elaboration not yet implemented for new Core");
+    for decl in &result.decls {
+        match decl {
+            hwml_elab::program::ElaboratedDecl::Constant { name, info } => {
+                println!("def {}:", name.to_string(&db));
+                println!("  type:  {}", hwml_core::syn::print::print_syntax_to_string(&db, &info.ty));
+                println!("  value: {}", hwml_core::syn::print::print_syntax_to_string(&db, &info.value));
             }
-            _ => (),
+            hwml_elab::program::ElaboratedDecl::Primitive { name, info } => {
+                println!("prim {}:", name.to_string(&db));
+                println!("  type: {}", hwml_core::syn::print::print_syntax_to_string(&db, &info.ty));
+            }
+            hwml_elab::program::ElaboratedDecl::TypeConstructor { name, info } => {
+                println!("inductive {} (level {})", name.to_string(&db), info.level);
+            }
         }
     }
-    // Elaborate the program
-    // let results: Vec<()> = vec![];
-    // // hwml_elab::elaborate_program(&db, source_file, &program);
 
-    // // Display results
-    // println!(
-    //     "Elaboration complete. {} statement(s) processed.",
-    //     results.len()
-    // );
-    // println!();
-
-    // for (i, result) in results.iter().enumerate() {
-    //     println!("Statement {}:", i + 1);
-
-    //     // Show the elaborated term
-    //     if let Some(term) = &result.term {
-    //         println!(
-    //             "  Core term: {}",
-    //             hwml_core::syn::print::print_syntax_to_string(&db, term)
-    //         );
-    //     } else {
-    //         println!("  Core term: <failed to elaborate>");
-    //     }
-
-    //     // Show diagnostics
-    //     if !result.diagnostics.is_empty() {
-    //         println!("  Diagnostics:");
-    //         for diag in &result.diagnostics {
-    //             println!("    {}: {}", diag.location, diag.message);
-    //         }
-    //     }
-    //     println!();
-    // }
+    for err in &result.errors {
+        eprintln!("error: {:?}", err);
+    }
 }
 
 fn run_core(args: Args) {

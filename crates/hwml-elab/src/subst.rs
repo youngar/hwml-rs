@@ -8,12 +8,12 @@
 use std::rc::Rc;
 
 use hwml_core::{
-    RcValue, Value,
     eval::{self, run_spine},
     val::{
-        Closure, DataConstructor, Eliminator, EqType, Flex, GlobalEnv, Lambda, LocalEnv, MetaVariable,
-        Normal, Refl, Rigid, Spine, Transport, TypeConstructor, Variable,
+        Closure, DataConstructor, Eliminator, EqType, Flex, GlobalEnv, Lambda, LocalEnv,
+        MetaVariable, Normal, Rigid, Spine, Transport, TypeConstructor, Variable,
     },
+    RcValue, Value,
 };
 
 /// Substitute levels `0..local.depth()-1` throughout a value.
@@ -62,14 +62,18 @@ pub fn subst_value<'db>(
             let new_ty = subst_value(global, &eq.ty, local)?;
             let new_lhs = subst_value(global, &eq.lhs, local)?;
             let new_rhs = subst_value(global, &eq.rhs, local)?;
-            Ok(Rc::new(Value::EqType(EqType::new(new_ty, new_lhs, new_rhs))))
+            Ok(Rc::new(Value::EqType(EqType::new(
+                new_ty, new_lhs, new_rhs,
+            ))))
         }
         Value::Refl(_) => Ok(Rc::new(val.clone())), // Refl has no value fields
         Value::Transport(t) => {
             let new_motive = subst_closure(&t.motive, local);
             let new_proof = subst_value(global, &t.proof, local)?;
             let new_value = subst_value(global, &t.value, local)?;
-            Ok(Rc::new(Value::Transport(Transport::new(new_motive, new_proof, new_value))))
+            Ok(Rc::new(Value::Transport(Transport::new(
+                new_motive, new_proof, new_value,
+            ))))
         }
         // For other values that may contain types/values, substitute conservatively.
         _ => Ok(Rc::new(val.clone())),
