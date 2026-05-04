@@ -1,8 +1,6 @@
 use crossbeam_channel::{Receiver, Sender};
-use hwml_db::{
-    db::{File, HwmlDatabase},
-    *,
-};
+use hwml_db::db::HwmlDatabase;
+use hwml_vfs::LspVfs;
 use lsp_server::{
     Connection, Message, Notification as TNotification, Request as TRequest, RequestId,
     Response as TResponse,
@@ -13,20 +11,14 @@ use lsp_types::{
     SaveOptions, ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, Uri,
 };
-use salsa::Setter;
-use std::{collections::HashMap, error::Error, time::Instant};
-
-struct DocumentInfo {
-    version: Option<i32>,
-    file: db::File,
-}
+use std::{error::Error, path::PathBuf, time::Instant};
 
 pub(crate) type ResponseHandler = fn(&mut Server, TResponse);
 type ReqQueue = lsp_server::ReqQueue<(String, Instant), ResponseHandler>;
 
 struct Server {
     sender: Sender<Message>,
-    documents: HashMap<Uri, DocumentInfo>,
+    vfs: LspVfs,
     db: HwmlDatabase,
     req_queue: ReqQueue,
 }
@@ -35,7 +27,7 @@ impl Server {
     fn new(sender: Sender<Message>) -> Self {
         Self {
             sender,
-            documents: HashMap::new(),
+            vfs: LspVfs::new(),
             db: HwmlDatabase::new(),
             req_queue: ReqQueue::default(),
         }
@@ -58,23 +50,34 @@ impl Server {
     }
 
     fn apply_document_edits(
+        vfs: &mut LspVfs,
         db: &mut HwmlDatabase,
-        document: &DocumentInfo,
+        uri: &Uri,
         edits: &[TextDocumentContentChangeEvent],
     ) {
-        let file = document.file;
+        // Get the current file from VFS
+        let Some(file) = vfs.get_by_uri(uri) else {
+            eprintln!("Warning: Trying to edit unopened document: {uri:?}");
+            return;
+        };
+
         for edit in edits {
             if let Some(range) = edit.range {
-                let mut text = file.text(db);
-                let line_info = db::get_line_info(db, file);
+                // Incremental edit - apply to specific range
+                let mut text = file.text(db).to_string();
+                let line_info = hwml_db::db::get_line_info(db, file);
                 let start =
                     line_info.offset((range.start.line as usize, range.start.character as usize));
                 let end = line_info.offset((range.end.line as usize, range.end.character as usize));
                 text.replace_range(start..end, edit.text.as_str());
-                file.set_text(db).to(text);
+
+                // Update via VFS (triggers Salsa invalidation)
+                vfs.update_document(db, uri, text)
+                    .expect("Failed to update document");
             } else {
-                // Whole document replace.
-                file.set_text(db).to(edit.text.clone());
+                // Whole document replace
+                vfs.update_document(db, uri, edit.text.clone())
+                    .expect("Failed to update document");
             }
         }
     }
@@ -83,25 +86,29 @@ impl Server {
         let text_document = params.text_document;
         let uri = text_document.uri;
         let text: String = text_document.text;
-        let file = File::new(&self.db, text);
-        self.documents.insert(
-            uri.clone(),
-            DocumentInfo {
-                file,
-                version: None,
-            },
-        );
-        let document = self.documents.get(&uri).unwrap();
-        self.compile_file(&self.db, &uri, &document);
+
+        // Convert URI to file path (simple conversion for now)
+        // URI format: "file:///path/to/file.hwml"
+        let path = PathBuf::from(uri.as_str().trim_start_matches("file://"));
+
+        // Open document in VFS
+        let file = self.vfs.open_document(&self.db, uri.clone(), path, text);
+
+        // Compile the newly opened file
+        self.compile_file(&self.db, &uri, file);
     }
 
     fn recv_did_change_text_document(&mut self, params: DidChangeTextDocumentParams) {
         let text_document = params.text_document;
         let uri = text_document.uri;
         let edits = params.content_changes;
-        if let Some(document) = self.documents.get(&uri) {
-            Self::apply_document_edits(&mut self.db, document, edits.as_slice());
-            self.compile_file(&self.db, &uri, document);
+
+        // Apply edits via VFS
+        Self::apply_document_edits(&mut self.vfs, &mut self.db, &uri, edits.as_slice());
+
+        // Recompile after changes
+        if let Some(file) = self.vfs.get_by_uri(&uri) {
+            self.compile_file(&self.db, &uri, file);
         }
     }
 
@@ -241,11 +248,12 @@ impl Server {
         }
     }
 
-    fn compile_file(&self, db: &HwmlDatabase, uri: &Uri, document: &DocumentInfo) {
-        let _program = db::parse_program(&*db, document.file);
-        let diagnostics = db::parse_program::accumulated::<db::Diagnostics>(db, document.file);
+    fn compile_file(&self, db: &HwmlDatabase, uri: &Uri, file: hwml_db::db::SourceFile) {
+        let _program = hwml_db::db::parse_program(&*db, file);
+        let diagnostics =
+            hwml_db::db::parse_program::accumulated::<hwml_db::db::Diagnostics>(db, file);
         if diagnostics.len() > 0 {
-            let line_info = db::get_line_info(db, document.file);
+            let line_info = hwml_db::db::get_line_info(db, file);
             let lsp_diagnostics = diagnostics
                 .into_iter()
                 .map(|diagnostic| {

@@ -25,6 +25,7 @@ hwml_support = { path = "crates/hwml-support" }
 hwml_surface = { path = "crates/hwml-surface" }
 hwml_circt_sys = { path = "crates/hwml-circt-sys" }
 hwml_circt = { path = "crates/hwml-circt" }
+hwml_vfs = { path = "crates/hwml-vfs" }
 hwml_workspace = { path = "crates/hwml-workspace" }
 mdbook_hwml = { path = "crates/mdbook-hwml" }
 
@@ -61,6 +62,7 @@ regex = "1.10"
 salsa = { git = "https://github.com/salsa-rs/salsa", rev = "75c5337" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
+tempfile = "3.13"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 pretty = "0.12.5"

@@ -15,6 +15,7 @@ license.workspace = true
 clap.workspace = true
 hwml_core.workspace = true
 hwml_db.workspace = true
+hwml_vfs.workspace = true
 hwml_surface.workspace = true
 hwml_elab.workspace = true
 hwml_support.workspace = true

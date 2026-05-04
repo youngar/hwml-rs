@@ -27,5 +27,8 @@ salsa.workspace = true
 [build-dependencies]
 lalrpop.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

@@ -1,5 +1,6 @@
 use clap::Parser;
-use std::fs;
+use hwml_db::CompilerSession;
+use hwml_vfs::{OsVfs, Vfs};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -44,8 +45,15 @@ fn main() {
 
     // Surface mode (default)
     let path = args.file.canonicalize().unwrap();
-    let path_str: Box<str> = path.to_string_lossy().into();
-    let contents = fs::read_to_string(&path).expect("Should have been able to read the file");
+
+    // Use VFS to load the file
+    let session = CompilerSession::new();
+    let mut vfs = OsVfs::new();
+    let source_file = vfs
+        .get_or_create_file(&session.db, &path)
+        .expect("Failed to load file");
+    let contents = source_file.text(&session.db);
+
     let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
 
     let Some(program) = parse_result else {
@@ -63,12 +71,21 @@ fn main() {
         match decl {
             hwml_elab::program::ElaboratedDecl::Constant { name, info } => {
                 println!("def {}:", name.to_string(&db));
-                println!("  type:  {}", hwml_core::syn::print::print_syntax_to_string(&db, &info.ty));
-                println!("  value: {}", hwml_core::syn::print::print_syntax_to_string(&db, &info.value));
+                println!(
+                    "  type:  {}",
+                    hwml_core::syn::print::print_syntax_to_string(&db, &info.ty)
+                );
+                println!(
+                    "  value: {}",
+                    hwml_core::syn::print::print_syntax_to_string(&db, &info.value)
+                );
             }
             hwml_elab::program::ElaboratedDecl::Primitive { name, info } => {
                 println!("prim {}:", name.to_string(&db));
-                println!("  type: {}", hwml_core::syn::print::print_syntax_to_string(&db, &info.ty));
+                println!(
+                    "  type: {}",
+                    hwml_core::syn::print::print_syntax_to_string(&db, &info.ty)
+                );
             }
             hwml_elab::program::ElaboratedDecl::TypeConstructor { name, info } => {
                 println!("inductive {} (level {})", name.to_string(&db), info.level);
@@ -83,7 +100,14 @@ fn main() {
 
 fn run_core(args: Args) {
     let path = args.file.canonicalize().unwrap();
-    let input = fs::read_to_string(&path).expect("Should have been able to read the file");
+
+    // Use VFS to load the file
+    let session = CompilerSession::new();
+    let mut vfs = OsVfs::new();
+    let source_file = vfs
+        .get_or_create_file(&session.db, &path)
+        .expect("Failed to load file");
+    let input = source_file.text(&session.db);
 
     let db = hwml_core::Database::new();
 

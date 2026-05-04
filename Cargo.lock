@@ -738,6 +738,7 @@ dependencies = [
  "hwml_elab",
  "hwml_support",
  "hwml_surface",
+ "hwml_vfs",
  "la-arena",
  "lalrpop-util",
  "salsa",
@@ -808,6 +809,7 @@ dependencies = [
  "lalrpop-util",
  "logos",
  "salsa",
+ "tempfile",
 ]
 
 [[package]]
@@ -839,6 +841,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "hwml_db",
+ "hwml_vfs",
  "lsp-server",
  "lsp-types",
  "notify-debouncer-mini",
@@ -865,6 +868,17 @@ dependencies = [
  "lalrpop",
  "lalrpop-util",
  "logos",
+]
+
+[[package]]
+name = "hwml_vfs"
+version = "0.0.0"
+dependencies = [
+ "hwml_db",
+ "lsp-types",
+ "salsa",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

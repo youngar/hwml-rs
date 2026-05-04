@@ -1,0 +1,28 @@
+[package]
+name = "hwml_vfs"
+description = "Virtual File System abstraction for HWML compiler"
+
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+hwml_db.workspace = true
+
+salsa.workspace = true
+thiserror.workspace = true
+lsp-types.workspace = true
+
+[features]
+default = []
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

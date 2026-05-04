@@ -1,7 +1,5 @@
 #![allow(unreachable_patterns)]
 
-use dashmap::{DashMap, Entry};
-use eyre::{Context, Result};
 use lalrpop_util::lexer::Token;
 use lalrpop_util::ParseError;
 use lalrpop_util::ParseError::*;
@@ -13,7 +11,13 @@ use crate::ir::Program;
 use hwml_support::line_info::LineInfo;
 
 #[salsa::input]
-pub struct File {
+pub struct SourceFile {
+    /// Canonical absolute path to the file
+    #[return_ref]
+    pub path: PathBuf,
+
+    /// File content as UTF-8 string
+    #[return_ref] // Critical: avoid cloning strings on every query
     pub text: String,
 }
 
@@ -21,8 +25,6 @@ pub struct File {
 #[derive(Clone)]
 pub struct HwmlDatabase {
     storage: salsa::Storage<Self>,
-    // Maps a Url to its current contents.
-    files: DashMap<PathBuf, File>,
     // The logs are only used for testing and demonstrating reuse:
     logs: Arc<Mutex<Option<Vec<String>>>>,
 }
@@ -51,25 +53,7 @@ impl HwmlDatabase {
         Self {
             storage: Default::default(),
             logs: Default::default(),
-            files: DashMap::new(),
         }
-    }
-
-    pub fn input(&self, path: PathBuf) -> Result<File> {
-        let path = path
-            .canonicalize()
-            .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-        Ok(match self.files.entry(path.clone()) {
-            // If the file already exists in our cache then just return it.
-            Entry::Occupied(entry) => *entry.get(),
-            // If we haven't read this file yet set up the watch, read the
-            // contents, store it in the cache, and return it.
-            Entry::Vacant(entry) => {
-                let contents = std::fs::read_to_string(&path)
-                    .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-                *entry.insert(File::new(self, contents))
-            }
-        })
     }
 }
 
@@ -101,12 +85,12 @@ pub struct Diagnostic {
 pub struct Diagnostics(pub Diagnostic);
 
 #[salsa::tracked]
-pub fn gather_diagnostics(db: &dyn salsa::Database, text_doc: File) {
+pub fn gather_diagnostics(db: &dyn salsa::Database, text_doc: SourceFile) {
     compile(db, text_doc);
 }
 
 #[salsa::tracked]
-pub fn compile(db: &dyn salsa::Database, text_doc: File) {
+pub fn compile(db: &dyn salsa::Database, text_doc: SourceFile) {
     let _program = parse_program(db, text_doc);
 }
 
@@ -146,12 +130,12 @@ impl From<&ParseError<usize, Token<'_>, &str>> for Diagnostic {
 }
 
 #[salsa::tracked]
-pub fn get_line_info(db: &dyn salsa::Database, source_program: File) -> LineInfo {
+pub fn get_line_info(db: &dyn salsa::Database, source_program: SourceFile) -> LineInfo {
     LineInfo::from_bytes(source_program.text(db).as_bytes())
 }
 
 #[salsa::tracked]
-pub fn parse_program(db: &dyn salsa::Database, source_program: File) -> Program<'_> {
+pub fn parse_program(db: &dyn salsa::Database, source_program: SourceFile) -> Program<'_> {
     // let mut errors = Vec::new();
     // let text = source_program.text(db);
     // let result = hwml_parser::grammar::ProgramParser::new().parse(&mut errors, &text);
