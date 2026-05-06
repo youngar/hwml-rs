@@ -732,6 +732,7 @@ name = "hwml"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hwml-workspace",
  "hwml_circt",
  "hwml_core",
  "hwml_db",
@@ -803,13 +804,18 @@ dependencies = [
  "dashmap",
  "derive-new",
  "eyre",
+ "hwml-workspace",
+ "hwml_core",
+ "hwml_elab",
  "hwml_support",
+ "hwml_surface",
  "la-arena",
  "lalrpop",
  "lalrpop-util",
  "logos",
  "salsa",
  "tempfile",
+ "walkdir",
 ]
 
 [[package]]
@@ -865,6 +871,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "derive-new",
+ "hwml_support",
  "lalrpop",
  "lalrpop-util",
  "logos",
@@ -1190,6 +1197,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "hwml_core",
+ "hwml_db",
  "mdbook-core",
  "mdbook-preprocessor",
  "pulldown-cmark",

@@ -26,7 +26,7 @@ hwml_surface = { path = "crates/hwml-surface" }
 hwml_circt_sys = { path = "crates/hwml-circt-sys" }
 hwml_circt = { path = "crates/hwml-circt" }
 hwml_vfs = { path = "crates/hwml-vfs" }
-hwml_workspace = { path = "crates/hwml-workspace" }
+hwml_workspace = { path = "crates/hwml-workspace", package = "hwml-workspace" }
 mdbook_hwml = { path = "crates/mdbook-hwml" }
 
 # External Crates
