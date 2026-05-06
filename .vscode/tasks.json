@@ -4,6 +4,7 @@
         {
             "type": "npm",
             "script": "compile",
+            "path": "hwml-vscode/",
             "group": "build",
             "presentation": {
                 "panel": "dedicated",
@@ -16,6 +17,7 @@
         {
             "type": "npm",
             "script": "watch",
+            "path": "hwml-vscode/",
             "isBackground": true,
             "group": {
                 "kind": "build",

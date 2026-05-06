@@ -7,17 +7,19 @@
         {
             "type": "extensionHost",
             "request": "launch",
-            "name": "Run Extension",
+            "name": "Run HWML Extension",
             "runtimeExecutable": "${execPath}",
             "args": [
-                "--extensionDevelopmentPath=${workspaceRoot}"
+                "--extensionDevelopmentPath=${workspaceRoot}/hwml-vscode",
+                "${workspaceRoot}/examples/simple-workspace"
             ],
             "outFiles": [
-                "${workspaceRoot}/out/**/*.js"
+                "${workspaceRoot}/hwml-vscode/out/**/*.js"
             ],
             "preLaunchTask": {
                 "type": "npm",
-                "script": "watch"
+                "script": "watch",
+                "path": "hwml-vscode/"
             }
         }
     ]
