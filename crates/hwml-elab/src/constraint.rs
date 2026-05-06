@@ -1,23 +1,22 @@
-use hwml_core::{RcValue, ty::RcTy};
+use hwml_core::{ty::RcTy, Name, RcSyntax, RcValue};
 
 use crate::meta::MetaId;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct ConstraintId(pub u32);
 
-/// Constraint kinds. Every equality constraint carries an ExEl-style witness
-/// meta: the "anti-unification meta" that gets solved to the common solution,
-/// preventing commitment to a specific direction before the solver is ready.
+/// Constraint kinds. Every equality constraint carries a witness meta that gets
+/// solved to the common solution when both sides are found to be equal.
 #[derive(Debug, Clone)]
 pub enum Constraint<'db> {
-    /// Heterogeneous equality (tog JmEq): `lhs : lhs_ty ≡ rhs : rhs_ty`.
-    /// When `lhs_ty = rhs_ty` this reduces to standard homogeneous equality.
-    /// `witness` is the ExEl anti-unification meta — solved alongside `lhs`.
-    HetEq {
+    /// Homogeneous equality: `lhs = rhs : ty`.
+    /// Both sides must have the same type `ty`.
+    /// The `witness` meta is the anti-unification variable — when the
+    /// constraint is solved (lhs = rhs), the witness gets solved to the common value.
+    Eq {
         lhs: RcValue<'db>,
-        lhs_ty: RcTy<'db>,
         rhs: RcValue<'db>,
-        rhs_ty: RcTy<'db>,
+        ty: RcTy<'db>,
         witness: MetaId,
         depth: usize,
     },
@@ -25,6 +24,24 @@ pub enum Constraint<'db> {
     LevelLeq {
         smaller: RcValue<'db>,
         larger: RcValue<'db>,
+    },
+    /// Type-directed dot resolution: `receiver.field_name`
+    /// Suspended when receiver type is an unsolved metavariable.
+    /// When the receiver type is solved to a concrete type constructor `T`,
+    /// this resolves to `T/field_name` applied to the receiver.
+    ResolveDot {
+        /// The elaborated receiver value (e.g., `x`)
+        receiver_val: RcSyntax<'db>,
+        /// The receiver's type (may contain an unsolved metavariable)
+        receiver_ty: RcTy<'db>,
+        /// The field/method name to resolve (e.g., "foo")
+        field_name: Name<'db>,
+        /// Fresh metavariable for the resulting elaborated expression
+        result_val_meta: MetaId,
+        /// Fresh metavariable for the resulting type
+        result_ty_meta: MetaId,
+        /// Elaboration depth for proper context
+        depth: usize,
     },
 }
 
@@ -45,6 +62,10 @@ pub struct ConstraintEntry<'db> {
 
 impl<'db> ConstraintEntry<'db> {
     pub fn new(id: ConstraintId, constraint: Constraint<'db>) -> Self {
-        ConstraintEntry { id, constraint, status: ConstraintStatus::Active }
+        ConstraintEntry {
+            id,
+            constraint,
+            status: ConstraintStatus::Active,
+        }
     }
 }

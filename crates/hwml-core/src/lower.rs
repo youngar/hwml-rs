@@ -128,11 +128,9 @@ pub fn saturate_value<'db>(
         | Value::One(_)
         | Value::Prim(_)
         | Value::Constant(_)
+        | Value::StuckApplication(_) // Stuck applications are already normalized
         | Value::Refl(_)
-        | Value::Let(_)
-        // NEW: Type codes without subvalues
-        | Value::UniverseCode(_)
-        | Value::BitCode => Ok(Rc::new(value.clone())),
+        | Value::Let(_) => Ok(Rc::new(value.clone())),
     }
 }
 

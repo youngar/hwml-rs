@@ -7,6 +7,8 @@ pub mod meta;
 pub mod names;
 pub mod program;
 pub mod resolver;
+pub mod scc;
+pub mod scc_elab;
 pub mod solver;
 pub mod state;
 pub mod stub_table;

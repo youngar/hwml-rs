@@ -23,12 +23,12 @@ impl<'db> std::fmt::Display for DuplicateDefinitionError<'db> {
 
 impl<'db> std::error::Error for DuplicateDefinitionError<'db> {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StubTable<'db> {
     stubs: HashMap<QualifiedName<'db>, Stub<'db>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stub<'db> {
     pub kind: GlobalNameKind,
     pub source_range: SourceRange<'db>,
@@ -84,7 +84,7 @@ pub fn harvest_program<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
     source: hwml_core::Source<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     program: &surface::Program,
 ) -> Result<(), String> {
     harvest_statements(db, stub_table, source, namespace, &program.statements)
@@ -94,7 +94,7 @@ pub fn harvest_statements<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
     source: hwml_core::Source<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     statements: &[surface::Statement],
 ) -> Result<(), String> {
     for statement in statements {
@@ -107,7 +107,7 @@ fn harvest_statement<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
     source: hwml_core::Source<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     statement: &surface::Statement,
 ) -> Result<(), String> {
     match statement {
@@ -143,17 +143,17 @@ fn harvest_namespace<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
     source: hwml_core::Source<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     ns: &surface::Namespace,
 ) -> Result<(), String> {
     // Extend the current namespace with the new new namespace, and recurse into
     // the namespace's statements.
     let path =
         surface_id_to_path(db, &ns.name).ok_or_else(|| "Invalid namespace name".to_string())?;
-    let namespace = QualifiedName::qualify_path(db, Some(namespace), &path)
+    let namespace = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify namespace".to_string())?;
     for statement in &ns.statements {
-        harvest_statement(db, stub_table, source, namespace, statement)?;
+        harvest_statement(db, stub_table, source, Some(namespace), statement)?;
     }
     Ok(())
 }
@@ -161,14 +161,15 @@ fn harvest_namespace<'db>(
 fn harvest_def<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     def: &surface::Def,
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
     let path =
         surface_id_to_path(db, &def.id).ok_or_else(|| "Invalid definition name".to_string())?;
-    let name = QualifiedName::qualify_path(db, Some(namespace), &path)
+    let name: QualifiedName<'_> = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify definition name".to_string())?;
+
     stub_table
         .insert(name, GlobalNameKind::Constant, source_range)
         .map_err(|e| e.to_string())?;
@@ -178,13 +179,14 @@ fn harvest_def<'db>(
 fn harvest_meta<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     meta: &surface::Meta,
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
     let path = surface_id_to_path(db, &meta.id).ok_or_else(|| "Invalid meta name".to_string())?;
-    let name = QualifiedName::qualify_path(db, Some(namespace), &path)
+    let name = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify meta name".to_string())?;
+
     stub_table
         .insert(name, GlobalNameKind::Constant, source_range)
         .map_err(|e| e.to_string())?;
@@ -194,14 +196,15 @@ fn harvest_meta<'db>(
 fn harvest_prim<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     prim: &surface::Prim,
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
     let path =
         surface_id_to_path(db, &prim.id).ok_or_else(|| "Invalid primitive name".to_string())?;
-    let name = QualifiedName::qualify_path(db, Some(namespace), &path)
+    let name = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify primitive name".to_string())?;
+
     stub_table
         .insert(name, GlobalNameKind::Primitive, source_range)
         .map_err(|e| e.to_string())?;
@@ -211,15 +214,16 @@ fn harvest_prim<'db>(
 fn harvest_inductive<'db>(
     db: &'db dyn salsa::Database,
     stub_table: &mut StubTable<'db>,
-    namespace: QualifiedName<'db>,
+    namespace: Option<QualifiedName<'db>>,
     ind: &surface::Inductive,
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
     // Add the data type definition.
     let path =
         surface_id_to_path(db, &ind.name).ok_or_else(|| "Invalid inductive name".to_string())?;
-    let name = QualifiedName::qualify_path(db, Some(namespace), &path)
+    let name = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify inductive name".to_string())?;
+
     stub_table
         .insert(name, GlobalNameKind::TypeConstructor, source_range.clone())
         .map_err(|e| e.to_string())?;

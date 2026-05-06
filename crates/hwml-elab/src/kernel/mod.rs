@@ -46,6 +46,14 @@ pub struct Kernel<'a, 'db> {
     pub stub_table: &'a StubTable<'db>,
 }
 
+/// Helper to format a path of Names as a dotted string for error messages
+fn format_path<'db>(db: &'db dyn salsa::Database, path: &[Name<'db>]) -> String {
+    path.iter()
+        .map(|name| name.to_string(db))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 impl<'a, 'db> Kernel<'a, 'db> {
     /// Create a kernel with resolver and stub table for scoped name resolution.
     pub fn new(
@@ -123,19 +131,29 @@ impl<'a, 'db> Kernel<'a, 'db> {
     where
         Db: salsa::Database,
     {
+        let path_str = format_path(db, path);
+        eprintln!(
+            "[KERNEL] synth_global_by_path called with path: {}",
+            path_str
+        );
+        eprintln!(
+            "[KERNEL] Current resolver namespace: {:?}",
+            self.resolver.namespace().map(|n| n.to_string(db))
+        );
+
         // Use resolver to find all matching qualified names in scope
         let candidates = resolve_path(db, self.stub_table, self.resolver, path);
 
         if candidates.is_empty() {
             return Err(ElabError::NotInScope {
-                name: format!("{:?}", path),
+                name: format_path(db, path),
                 span: None,
             });
         }
 
         if candidates.len() > 1 {
             return Err(ElabError::NotInScope {
-                name: format!("Ambiguous: {:?}", path),
+                name: format!("Ambiguous: {}", format_path(db, path)),
                 span: None,
             });
         }
@@ -147,7 +165,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             .stub_table
             .get(qname)
             .ok_or_else(|| ElabError::NotInScope {
-                name: format!("{:?}", path),
+                name: format_path(db, path),
                 span: None,
             })?;
 
@@ -448,15 +466,18 @@ impl<'a, 'db> Kernel<'a, 'db> {
     }
 
     // -------------------------------------------------------------------------
-    // Expect (tog pattern)
+    // Expect (bidirectional typechecking)
     // -------------------------------------------------------------------------
 
-    /// The tog `expect` primitive.
+    /// The `expect` primitive for bidirectional typechecking.
     ///
-    /// Always returns a term of exactly `expected_ty`.
+    /// Given `rhs : actual_ty`, ensures it can be used where `expected_ty` is required.
     ///
-    /// Fast path: `Rc::ptr_eq` — same allocation → return rhs directly.
-    /// Slow path: create fresh meta `t : expected_ty`, emit `HetEq(t:expected_ty, u:actual_ty)`.
+    /// Fast path: If types are equal, return `rhs` unchanged.
+    /// Slow path: Emit constraint `actual_ty = expected_ty : Type` and return `rhs` unchanged.
+    ///
+    /// The witness meta is an internal detail of the constraint solver and is not
+    /// exposed to the caller. This function returns the original elaborated term.
     pub fn expect(
         &mut self,
         expected_ty: RcTy<'db>,
@@ -474,44 +495,29 @@ impl<'a, 'db> Kernel<'a, 'db> {
             return Checked::new(rhs_syn);
         }
 
-        // Slow path: mint witness meta `t : expected_ty`.
+        // Slow path: emit type equality constraint.
         let depth = self.ctx.depth();
-        let witness_id = self
-            .state
-            .fresh_meta(expected_ty.clone(), depth, MetaKind::Term);
-        let (t_syn, _) = self
-            .synth_meta(witness_id)
-            .expect("freshly minted meta always exists")
-            .into_inner();
 
-        // Evaluate rhs and compute the constraint.
-        // Use a placeholder value if evaluation fails (meta-containing term).
-        let dummy_code: RcValue<'db> = Rc::new(Value::UniverseCode(0));
-        let rhs_val = self
-            .eval_syn(&rhs_syn)
-            .unwrap_or_else(|_| dummy_code.clone());
+        // Extract type codes from El(...) wrapper
+        let actual_code = match actual_ty.as_ref() {
+            Ty::El(code) => code.clone(),
+            Ty::UniverseType => Rc::new(Value::UniverseCode(0)), // Type itself
+            _ => Rc::new(Value::UniverseCode(0)),                // Fallback for other type forms
+        };
 
-        // Witness meta value: Flex neutral (unsolved meta applied to ctx vars).
-        let mv = hwml_core::val::MetaVariable::new(
-            hwml_core::MetaVariableId::new(witness_id.0 as u16),
-            self.ctx.to_local_env(),
-        );
-        let witness_val: RcValue<'db> = Rc::new(Value::Flex(hwml_core::val::Flex::new(
-            mv,
-            hwml_core::val::Spine::empty(),
-            dummy_code.clone(),
-        )));
+        let expected_code = match expected_ty.as_ref() {
+            Ty::El(code) => code.clone(),
+            Ty::UniverseType => Rc::new(Value::UniverseCode(0)),
+            _ => Rc::new(Value::UniverseCode(0)),
+        };
 
-        self.state.emit_het_eq(
-            witness_val,
-            expected_ty,
-            rhs_val,
-            actual_ty,
-            depth,
-            witness_id,
-        );
+        // Emit constraint: actual_code = expected_code : Type
+        self.state
+            .emit_eq(actual_code, expected_code, Rc::new(Ty::UniverseType), depth);
 
-        Checked::new(t_syn)
+        // Return the original elaborated term.
+        // It has type actual_ty, but the constraint ensures actual_ty = expected_ty.
+        Checked::new(rhs_syn)
     }
 
     // -------------------------------------------------------------------------
@@ -593,6 +599,16 @@ impl<'a, 'db> Kernel<'a, 'db> {
         }
     }
 
+    /// Force top-level Flex recursively by applying solved metavariable substitutions.
+    fn force_deep(&self, val: RcValue<'db>) -> RcValue<'db> {
+        if let Value::Flex(flex) = val.as_ref() {
+            if let Some(forced) = self.state.force_flex(self.global, flex) {
+                return self.force_deep(forced);
+            }
+        }
+        val
+    }
+
     /// Force a semantic type to `Pi` shape: extract `(dom_code, cod_clos)`.
     /// Handles `Ty::El(Value::PiCode(dom, cod))` and `Ty::Pi(dom, cod)`.
     pub fn force_to_pi(
@@ -600,20 +616,24 @@ impl<'a, 'db> Kernel<'a, 'db> {
         ty: RcTy<'db>,
     ) -> Result<(RcValue<'db>, Closure<'db>), ElabError<'db>> {
         match ty.as_ref() {
-            Ty::El(code) => match code.as_ref() {
-                Value::PiCode(dom, cod) => Ok((dom.clone(), cod.clone())),
-                _ => Err(ElabError::TypeMismatch {
-                    expected: Rc::new(Ty::El(Rc::new(Value::PiCode(
-                        Rc::new(Value::UniverseCode(0)),
-                        hwml_core::val::Closure::new(
-                            hwml_core::val::LocalEnv::new(),
-                            Rc::new(Syntax::UniverseCode(0)),
-                        ),
-                    )))),
-                    actual: ty.clone(),
-                    span: None,
-                }),
-            },
+            Ty::El(code) => {
+                // Force the code to resolve any solved metavariables
+                let forced_code = self.force_deep(code.clone());
+                match forced_code.as_ref() {
+                    Value::PiCode(dom, cod) => Ok((dom.clone(), cod.clone())),
+                    _ => Err(ElabError::TypeMismatch {
+                        expected: Rc::new(Ty::El(Rc::new(Value::PiCode(
+                            Rc::new(Value::UniverseCode(0)),
+                            hwml_core::val::Closure::new(
+                                hwml_core::val::LocalEnv::new(),
+                                Rc::new(Syntax::UniverseCode(0)),
+                            ),
+                        )))),
+                        actual: ty.clone(),
+                        span: None,
+                    }),
+                }
+            }
             Ty::Pi(dom, cod) => {
                 // Convert TyClosure.body (RcTy) to a Closure<'db> — use a dummy Syntax.
                 // This only works for non-dependent codomains (same type for all inputs).

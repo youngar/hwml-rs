@@ -3,6 +3,7 @@
 use lalrpop_util::lexer::Token;
 use lalrpop_util::ParseError;
 use lalrpop_util::ParseError::*;
+use std::collections::HashMap;
 use std::convert::From;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -19,6 +20,26 @@ pub struct SourceFile {
     /// File content as UTF-8 string
     #[return_ref] // Critical: avoid cloning strings on every query
     pub text: String,
+}
+
+/// VfsFileMap tracks all known files in the workspace.
+/// This is a Salsa input that gets updated when files are added/removed.
+/// Module resolution queries use this for pure lookup (no IO).
+#[salsa::input]
+pub struct VfsFileMap {
+    /// Map of canonical path → SourceFile
+    /// Using Arc for cheap cloning when updating
+    #[return_ref]
+    pub files: Arc<HashMap<PathBuf, SourceFile>>,
+}
+
+/// Manifest path as a Salsa input for workspace loading.
+/// This allows Salsa to track when the manifest changes.
+#[salsa::input]
+pub struct ManifestPath {
+    /// Canonical absolute path to hwml.toml
+    #[return_ref]
+    pub path: PathBuf,
 }
 
 #[salsa::db]
@@ -61,7 +82,7 @@ impl HwmlDatabase {
 impl salsa::Database for HwmlDatabase {
     fn salsa_event(&self, event: &dyn Fn() -> salsa::Event) {
         let event = event();
-        eprintln!("Event: {event:?}");
+        // eprintln!("Event: {event:?}");  // Disabled: too noisy for production
         // Log interesting events, if logging is enabled
         if let Some(logs) = &mut *self.logs.lock().unwrap() {
             // only log interesting events
@@ -135,7 +156,7 @@ pub fn get_line_info(db: &dyn salsa::Database, source_program: SourceFile) -> Li
 }
 
 #[salsa::tracked]
-pub fn parse_program(db: &dyn salsa::Database, source_program: SourceFile) -> Program<'_> {
+pub fn parse_program(db: &dyn salsa::Database, _source_program: SourceFile) -> Program<'_> {
     // let mut errors = Vec::new();
     // let text = source_program.text(db);
     // let result = hwml_parser::grammar::ProgramParser::new().parse(&mut errors, &text);

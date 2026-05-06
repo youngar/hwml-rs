@@ -43,7 +43,7 @@ fn fresh_meta_correct_arity_and_kind() {
 }
 
 #[test]
-fn emit_het_eq_creates_constraint_and_witness() {
+fn emit_eq_creates_constraint_and_witness() {
     let mut state = SolverState::new();
     let ty = Rc::new(Ty::UniverseType);
     let lhs: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
@@ -52,10 +52,10 @@ fn emit_het_eq_creates_constraint_and_witness() {
     let before_metas = state.iter_metas().count();
     let before_constraints = state.iter_constraints().count();
 
-    // Caller creates the witness meta, then passes it to emit_het_eq.
-    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
-    state.emit_het_eq(lhs, ty.clone(), rhs, ty.clone(), 0, witness);
+    // emit_eq creates the witness meta internally for anti-unification.
+    state.emit_eq(lhs, rhs, ty, 0);
 
+    // The witness meta is created internally, so we expect +1 meta
     assert_eq!(state.iter_metas().count(), before_metas + 1);
     assert_eq!(state.iter_constraints().count(), before_constraints + 1);
     assert_eq!(state.active_count(), 1);
@@ -67,17 +67,9 @@ fn solve_meta_wakes_blocked_constraints() {
     let ty = Rc::new(Ty::UniverseType);
     let meta_id = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
 
-    // Emit a HetEq constraint that should be blocked on meta_id.
+    // Emit an Eq constraint that should be blocked on meta_id.
     let dummy_val: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
-    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
-    let cid = state.emit_het_eq(
-        dummy_val.clone(),
-        ty.clone(),
-        dummy_val.clone(),
-        ty.clone(),
-        0,
-        witness,
-    );
+    let cid = state.emit_eq(dummy_val.clone(), dummy_val.clone(), ty.clone(), 0);
 
     // Drain the queue so we know only our re-queue comes back.
     while state.pop_active().is_some() {}
@@ -195,7 +187,7 @@ fn unify_rigid_mismatch_is_hard_failure() {
 
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
     let mut u = Unifier::new(&global, &mut state, 2);
-    let result = u.unify(x, ty.clone(), y, ty);
+    let result = u.unify(x, y, ty);
     match result {
         Err(ElabError::UnificationFailure { .. }) => {}
         other => panic!("expected UnificationFailure, got {other:?}"),
@@ -373,9 +365,9 @@ fn expect_fast_path_equal_types_no_meta() {
     assert_eq!(kernel.state.iter_metas().count(), meta_count_before);
 }
 
-/// `expect` slow path: different types → new witness meta + HetEq constraint emitted.
+/// `expect` slow path: different types → equality constraint emitted.
 #[test]
-fn expect_slow_path_emits_het_eq() {
+fn expect_slow_path_emits_constraint() {
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
@@ -392,7 +384,7 @@ fn expect_slow_path_emits_het_eq() {
 
     assert!(
         kernel.state.iter_constraints().count() > constraint_before,
-        "expect slow path should emit a HetEq constraint"
+        "expect slow path should emit an equality constraint"
     );
 }
 
@@ -539,9 +531,8 @@ fn solver_data_constructor_injectivity() {
         vec![m_a_val, m_b_val],
     )));
 
-    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
     let constraints_before = state.iter_constraints().count();
-    state.emit_het_eq(lhs, ty.clone(), rhs, ty.clone(), 2, witness);
+    state.emit_eq(lhs, rhs, ty, 2);
 
     let mut solver = Solver::new(&mut state, &global);
     solver.run().expect("solver should not error");
@@ -578,8 +569,7 @@ fn solver_data_constructor_mismatch_is_hard_failure() {
         vec![a.clone()],
     )));
 
-    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
-    state.emit_het_eq(lhs, ty.clone(), rhs, ty.clone(), 1, witness);
+    state.emit_eq(lhs, rhs, ty, 1);
 
     let mut solver = Solver::new(&mut state, &global);
     let result = solver.run();
@@ -605,8 +595,7 @@ fn solver_identity_solves_equal_rigid_values() {
 
     let val: hwml_core::RcValue = Rc::new(Value::UniverseCode(3));
 
-    let witness = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
-    let _cid = state.emit_het_eq(val.clone(), ty.clone(), val.clone(), ty.clone(), 0, witness);
+    let _cid = state.emit_eq(val.clone(), val.clone(), ty, 0);
 
     let mut solver = Solver::new(&mut state, &global);
     solver.run().expect("solver should not error");
@@ -734,62 +723,6 @@ fn pattern_unify_lowers_rigid_with_spine() {
     assert!(
         state.meta_solution(m_id).is_some(),
         "?m should be solved after lowering"
-    );
-}
-
-// ─── het_reduce ───────────────────────────────────────────────────────────────
-
-/// het_reduce fires when both types are `El(...)` with different codes, the values are
-/// structurally heterogeneous (unifier returns Stuck, not Err), and at least one type
-/// code is an unsolved meta.
-///
-/// Setup: `HetEq(UniverseCode(0) : El(?typeA),  PiCode(?dom,?cod) : El(UniverseCode(0)))`.
-/// - `UniverseCode(0)` vs `PiCode(...)` → unifier's `_ => Stuck` branch (no hard failure).
-/// - `lhs_ty = El(?typeA)` (unsolved meta), `rhs_ty = El(UniverseCode(0))` (concrete).
-/// Expected:
-/// - het_reduce emits type-eq sub-constraint: `?typeA = UniverseCode(0)`.
-/// - ?typeA is solved to `UniverseCode(0)`.
-/// - More constraints in state than the one emitted (type-eq was added).
-#[test]
-fn solver_het_reduce_emits_type_eq_subconstraint() {
-    use hwml_core::val::Closure;
-    let global = empty_global();
-    let mut state = SolverState::new();
-
-    // ?typeA: the unknown LHS type code (a universe-level meta, arity=0).
-    let type_a_id = state.fresh_meta(Rc::new(Ty::UniverseType), 0, MetaKind::UniverseLevel);
-    let type_a_val: hwml_core::RcValue =
-        Rc::new(Value::Flex(make_meta_flex(type_a_id, LocalEnv::new())));
-
-    let lhs_ty: hwml_core::ty::RcTy = Rc::new(Ty::El(type_a_val));
-    let rhs_ty: hwml_core::ty::RcTy = Rc::new(Ty::El(Rc::new(Value::UniverseCode(0))));
-
-    // LHS value: a concrete type code (not a flex meta) → unifier can't solve it.
-    let lhs_val: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
-
-    // RHS value: a Pi code with unsolved doms.
-    let dom_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
-    let cod_clos = Closure::new(LocalEnv::new(), Rc::new(Syntax::UniverseCode(0)));
-    let rhs_val: hwml_core::RcValue = Rc::new(Value::PiCode(dom_ty, cod_clos));
-
-    // Emit HetEq(UniverseCode(0) : El(?typeA),  PiCode(...) : El(UniverseCode(0))).
-    let witness = state.fresh_meta(lhs_ty.clone(), 0, MetaKind::Term);
-    let constraints_before = state.iter_constraints().count();
-    state.emit_het_eq(lhs_val, lhs_ty, rhs_val, rhs_ty, 0, witness);
-
-    let mut solver = Solver::new(&mut state, &global);
-    solver.run().expect("solver should not error");
-
-    // het_reduce should have emitted a type-eq sub-constraint.
-    assert!(
-        state.iter_constraints().count() > constraints_before + 1,
-        "het_reduce should emit at least one type-eq sub-constraint"
-    );
-
-    // The type-eq sub-constraint should have solved ?typeA to UniverseCode(0).
-    assert!(
-        state.meta_solution(type_a_id).is_some(),
-        "?typeA should be solved by the type-eq sub-constraint"
     );
 }
 

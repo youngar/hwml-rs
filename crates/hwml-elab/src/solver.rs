@@ -1,24 +1,25 @@
 use std::rc::Rc;
 
 use hwml_core::{
-    Level, RcValue, Value,
-    equal,
-    eval,
+    equal, eval,
+    quote::type_quote,
     ty::{RcTy, Ty},
     val::{GlobalEnv, TransparentEnv},
+    Level, RcValue, Value,
 };
 
 use crate::{
     constraint::{Constraint, ConstraintId, ConstraintStatus},
     error::ElabError,
-    meta::{MetaId, MetaKind},
+    meta::MetaId,
     state::SolverState,
-    unify::{UnifyResult, Unifier},
+    unify::{Unifier, UnifyResult},
 };
 
 pub struct Solver<'a, 'db> {
     pub state: &'a mut SolverState<'db>,
     pub global: &'a GlobalEnv<'db>,
+    pub db: &'db dyn salsa::Database,
 }
 
 #[derive(Debug)]
@@ -34,8 +35,12 @@ impl<'db> From<ElabError<'db>> for SolveError<'db> {
 }
 
 impl<'a, 'db> Solver<'a, 'db> {
-    pub fn new(state: &'a mut SolverState<'db>, global: &'a GlobalEnv<'db>) -> Self {
-        Solver { state, global }
+    pub fn new(
+        state: &'a mut SolverState<'db>,
+        global: &'a GlobalEnv<'db>,
+        db: &'db dyn salsa::Database,
+    ) -> Self {
+        Solver { state, global, db }
     }
 
     /// Run flat constraint solver until queue empty or no progress.
@@ -63,50 +68,85 @@ impl<'a, 'db> Solver<'a, 'db> {
         constraint: &Constraint<'db>,
     ) -> Result<(), SolveError<'db>> {
         match constraint.clone() {
-            Constraint::HetEq { lhs, lhs_ty, rhs, rhs_ty, depth, .. } => {
-                self.step_het_eq(cid, lhs, lhs_ty, rhs, rhs_ty, depth)
-            }
-            Constraint::LevelLeq { smaller, larger } => {
-                self.step_level_leq(cid, smaller, larger)
-            }
+            Constraint::Eq {
+                lhs,
+                rhs,
+                ty,
+                witness,
+                depth,
+            } => self.step_eq(cid, lhs, rhs, ty, witness, depth),
+            Constraint::LevelLeq { smaller, larger } => self.step_level_leq(cid, smaller, larger),
+            Constraint::ResolveDot {
+                receiver_val,
+                receiver_ty,
+                field_name,
+                result_val_meta,
+                result_ty_meta,
+                depth,
+            } => self.step_resolve_dot(
+                cid,
+                receiver_val,
+                receiver_ty,
+                field_name,
+                result_val_meta,
+                result_ty_meta,
+                depth,
+            ),
         }
     }
 
-    fn step_het_eq(
+    /// Solve homogeneous equality constraint: `lhs = rhs : ty`.
+    ///
+    /// When lhs and rhs are definitionally equal, we solve the witness meta to
+    /// the common value (anti-unification).
+    fn step_eq(
         &mut self,
         cid: ConstraintId,
         lhs: RcValue<'db>,
-        lhs_ty: RcTy<'db>,
         rhs: RcValue<'db>,
-        rhs_ty: RcTy<'db>,
+        ty: RcTy<'db>,
+        witness: MetaId,
         depth: usize,
     ) -> Result<(), SolveError<'db>> {
-        // Step 1: force both sides and their types.
+        // Step 1: force both sides
         let lhs_f = force_deep(self.state, self.global, lhs.clone());
         let rhs_f = force_deep(self.state, self.global, rhs.clone());
-        let lhs_ty_f = force_ty(self.state, self.global, lhs_ty);
-        let rhs_ty_f = force_ty(self.state, self.global, rhs_ty);
+        let ty_f = force_ty(self.state, self.global, ty.clone());
 
-        // Step 2: identity — definitional equality check (no delta-reduction, no let env).
-        if try_identity(self.global, depth, &lhs_f, &rhs_f, &lhs_ty_f) {
+        // Step 2: identity check — if definitionally equal, solve witness and mark solved
+        if try_identity(self.global, depth, &lhs_f, &rhs_f, &ty_f) {
+            // Solve the witness meta to the common value (anti-unification).
+            // Convert lhs_f back to syntax for the meta solution.
+            if let Ok(lhs_syntax) = type_quote(self.global, depth, &lhs_f) {
+                let _ = self.state.solve_meta(witness, lhs_syntax, lhs_f.clone());
+            }
             self.state.mark_solved(cid);
             return Ok(());
         }
 
-        // Step 3: run the unifier (handles eta, pattern unification, flex-rigid).
+        // Step 3: run the unifier (handles eta, pattern unification, flex-rigid)
+        // Note: unifier now expects homogeneous equality (same type for both sides)
         let result = {
             let mut unifier = Unifier::new(self.global, self.state, depth);
-            unifier.unify(lhs_f.clone(), lhs_ty_f.clone(), rhs_f.clone(), rhs_ty_f.clone())
+            unifier.unify(lhs_f.clone(), rhs_f.clone(), ty_f.clone())
         };
         match result? {
             UnifyResult::Solved => {
-                self.state.mark_solved(cid);
+                // Unification solved metas; try identity check again
+                let lhs_f2 = force_deep(self.state, self.global, lhs_f.clone());
+                let rhs_f2 = force_deep(self.state, self.global, rhs_f.clone());
+                if try_identity(self.global, depth, &lhs_f2, &rhs_f2, &ty_f) {
+                    if let Ok(lhs_syntax) = type_quote(self.global, depth, &lhs_f2) {
+                        let _ = self.state.solve_meta(witness, lhs_syntax, lhs_f2);
+                    }
+                    self.state.mark_solved(cid);
+                }
                 return Ok(());
             }
             UnifyResult::Stuck => {}
         }
 
-        // Step 4: structural decomposition rules.
+        // Step 4: structural decomposition rules
 
         // Pi injectivity: PiCode(A,B) = PiCode(A',B').
         if self.try_pi_injectivity(cid, &lhs_f, &rhs_f, depth) {
@@ -118,65 +158,15 @@ impl<'a, 'db> Solver<'a, 'db> {
             return Ok(());
         }
 
-        // Step 5: het_reduce — if types are not definitionally equal and both are El(...),
-        // emit a type-eq sub-constraint and block until types are proven equal.
-        // Only fires AFTER structural rules: pattern unification must have a chance to solve
-        // flex values before we attempt to force type equality.
-        let types_differ = !try_types_equal(self.global, depth, &lhs_ty_f, &rhs_ty_f);
-        let both_el = matches!(lhs_ty_f.as_ref(), Ty::El(_))
-            && matches!(rhs_ty_f.as_ref(), Ty::El(_));
-        if types_differ && both_el {
-            return self.step_het_reduce(cid, lhs_f, lhs_ty_f, rhs_f, rhs_ty_f, depth);
-        }
-
-        // Step 6: block on unsolved metas (terms and types).
+        // Step 5: block on unsolved metas
         let mut blocking = Vec::new();
         collect_flex_heads(self.state, &lhs_f, &mut blocking);
         collect_flex_heads(self.state, &rhs_f, &mut blocking);
-        collect_flex_heads_ty(self.state, &lhs_ty_f, &mut blocking);
-        collect_flex_heads_ty(self.state, &rhs_ty_f, &mut blocking);
+        collect_flex_heads_ty(self.state, &ty_f, &mut blocking);
         blocking.dedup();
         if !blocking.is_empty() {
             self.state.block_on(cid, &blocking);
         }
-        Ok(())
-    }
-
-    /// Types are not definitionally equal: emit a type-equality sub-constraint and
-    /// block the original until the type metas are resolved.
-    fn step_het_reduce(
-        &mut self,
-        cid: ConstraintId,
-        _lhs: RcValue<'db>,
-        lhs_ty: RcTy<'db>,
-        _rhs: RcValue<'db>,
-        rhs_ty: RcTy<'db>,
-        depth: usize,
-    ) -> Result<(), SolveError<'db>> {
-        // Collect metas that appear in the type codes.
-        let mut blocking = Vec::new();
-        collect_flex_heads_ty(self.state, &lhs_ty, &mut blocking);
-        collect_flex_heads_ty(self.state, &rhs_ty, &mut blocking);
-        blocking.dedup();
-
-        if blocking.is_empty() {
-            // Types differ with no unresolved metas: genuine type mismatch.
-            return Err(SolveError::Elab(ElabError::TypeMismatch {
-                expected: lhs_ty,
-                actual: rhs_ty,
-                span: None,
-            }));
-        }
-
-        // Emit type-equality constraint: lhs_ty_val = rhs_ty_val at UniverseType.
-        let lhs_ty_val = ty_as_val(&lhs_ty);
-        let rhs_ty_val = ty_as_val(&rhs_ty);
-        let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
-        let w_ty = self.state.fresh_meta(universe_ty.clone(), depth, MetaKind::Term);
-        self.state.emit_het_eq(lhs_ty_val, universe_ty.clone(), rhs_ty_val, universe_ty, depth, w_ty);
-
-        // Block original on the type metas; it will be re-run once they're solved.
-        self.state.block_on(cid, &blocking);
         Ok(())
     }
 
@@ -192,22 +182,15 @@ impl<'a, 'db> Solver<'a, 'db> {
         if let (Value::PiCode(d1, c1), Value::PiCode(d2, c2)) = (lhs.as_ref(), rhs.as_ref()) {
             let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
 
-            let w1 = self.state.fresh_meta(universe_ty.clone(), depth, MetaKind::Term);
-            self.state.emit_het_eq(
-                d1.clone(), universe_ty.clone(),
-                d2.clone(), universe_ty.clone(),
-                depth, w1,
-            );
+            // Emit: d1 = d2 : Type (domain equality)
+            self.state
+                .emit_eq(d1.clone(), d2.clone(), universe_ty.clone(), depth);
 
+            // Emit: cod1 = cod2 : Type (codomain equality under fresh variable)
             let var: RcValue<'db> = Rc::new(Value::variable(Level::new(depth), d1.clone()));
             let cod1 = c1.apply(self.global, &var);
             let cod2 = c2.apply(self.global, &var);
-            let w2 = self.state.fresh_meta(universe_ty.clone(), depth + 1, MetaKind::Term);
-            self.state.emit_het_eq(
-                cod1, universe_ty.clone(),
-                cod2, universe_ty,
-                depth + 1, w2,
-            );
+            self.state.emit_eq(cod1, cod2, universe_ty, depth + 1);
 
             self.state.mark_solved(cid);
             true
@@ -313,7 +296,7 @@ impl<'a, 'db> Solver<'a, 'db> {
         eval_telescope_types(self.global, &info.arguments, args, dummy)
     }
 
-    /// Emit HetEq constraints for parallel argument lists.
+    /// Emit homogeneous equality constraints for parallel argument lists.
     fn emit_arg_constraints(
         &mut self,
         args1: &[RcValue<'db>],
@@ -322,13 +305,13 @@ impl<'a, 'db> Solver<'a, 'db> {
         depth: usize,
     ) {
         for i in 0..args1.len() {
-            let ty = arg_types.get(i).cloned().unwrap_or_else(|| Rc::new(Ty::UniverseType));
-            let w = self.state.fresh_meta(ty.clone(), depth, MetaKind::Term);
-            self.state.emit_het_eq(
-                args1[i].clone(), ty.clone(),
-                args2[i].clone(), ty,
-                depth, w,
-            );
+            let ty = arg_types
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| Rc::new(Ty::UniverseType));
+            // emit_eq creates witness meta internally
+            self.state
+                .emit_eq(args1[i].clone(), args2[i].clone(), ty, depth);
         }
     }
 
@@ -362,6 +345,123 @@ impl<'a, 'db> Solver<'a, 'db> {
         }
         Ok(())
     }
+
+    // ─── ResolveDot ───────────────────────────────────────────────────────────
+
+    #[allow(clippy::too_many_arguments)]
+    fn step_resolve_dot(
+        &mut self,
+        cid: ConstraintId,
+        receiver_val: hwml_core::RcSyntax<'db>,
+        receiver_ty: RcTy<'db>,
+        field_name: hwml_core::Name<'db>,
+        result_val_meta: MetaId,
+        result_ty_meta: MetaId,
+        depth: usize,
+    ) -> Result<(), SolveError<'db>> {
+        use hwml_core::QualifiedName;
+
+        // Force the receiver type to resolve metavariables
+        let forced_ty = force_ty(self.state, self.global, receiver_ty.clone());
+
+        match forced_ty.as_ref() {
+            Ty::El(code) => {
+                let forced_code = force_deep(self.state, self.global, code.clone());
+
+                match forced_code.as_ref() {
+                    Value::TypeConstructor(tc) => {
+                        // Concrete type! Resolve field_name in the type's namespace
+                        let type_name = tc.constructor;
+
+                        // Construct the qualified field name: TypeNamespace/field_name
+                        let field_qualified =
+                            QualifiedName::qualify_path(self.db, Some(type_name), &[field_name])
+                                .ok_or_else(|| {
+                                    SolveError::Elab(ElabError::NotInScope {
+                                        name: format!(
+                                            "{}.{}",
+                                            type_name.to_string(self.db),
+                                            field_name.to_string(self.db)
+                                        ),
+                                        span: None,
+                                    })
+                                })?;
+
+                        // Look up the field in the global environment
+                        let field_info = self.global.constant(field_qualified).map_err(|_| {
+                            SolveError::Elab(ElabError::NotInScope {
+                                name: format!(
+                                    "{}.{}",
+                                    type_name.to_string(self.db),
+                                    field_name.to_string(self.db)
+                                ),
+                                span: None,
+                            })
+                        })?;
+
+                        // Build the result: application of field to receiver
+                        let field_syn = hwml_core::Syntax::constant_rc(field_qualified);
+                        let result_syn = hwml_core::Syntax::application_rc(field_syn, receiver_val);
+
+                        // Evaluate the field type
+                        let field_ty_val = eval::substitute(
+                            self.global,
+                            &field_info.ty,
+                            hwml_core::val::LocalEnv::new(),
+                        )
+                        .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)));
+
+                        let result_ty = Rc::new(Ty::El(field_ty_val.clone()));
+
+                        // Solve the metavariables
+                        self.state.solve_meta(
+                            result_val_meta,
+                            result_syn,
+                            eval::substitute(
+                                self.global,
+                                &field_info.value,
+                                hwml_core::val::LocalEnv::new(),
+                            )
+                            .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0))),
+                        )?;
+                        self.state.solve_meta(
+                            result_ty_meta,
+                            field_info.ty.clone(),
+                            field_ty_val,
+                        )?;
+
+                        // Mark constraint as solved
+                        self.state.mark_solved(cid);
+                        Ok(())
+                    }
+                    Value::Flex(flex) => {
+                        // Still a metavariable - block on it
+                        let meta_id = MetaId(flex.head.id.local_index as u32);
+                        self.state.block_on(cid, &[meta_id]);
+                        Ok(())
+                    }
+                    _ => {
+                        // Not a type constructor - error
+                        Err(SolveError::Elab(ElabError::NotInScope {
+                            name: format!(
+                                "Cannot resolve field '{}' on non-constructor type",
+                                field_name.to_string(self.db)
+                            ),
+                            span: None,
+                        }))
+                    }
+                }
+            }
+            _ => {
+                // Type is not El(...) - error
+                Err(SolveError::Elab(ElabError::TypeMismatch {
+                    expected: Rc::new(Ty::UniverseType),
+                    actual: forced_ty,
+                    span: None,
+                }))
+            }
+        }
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -388,10 +488,10 @@ fn try_identity<'db>(
     depth: usize,
     lhs: &Value<'db>,
     rhs: &Value<'db>,
-    lhs_ty: &Ty<'db>,
+    ty: &Ty<'db>,
 ) -> bool {
     // Convert Ty to Value for equate's type argument.
-    let ty_val: RcValue<'db> = match lhs_ty {
+    let ty_val: RcValue<'db> = match ty {
         Ty::El(code) => code.clone(),
         Ty::UniverseType => Rc::new(Value::UniverseCode(0)),
         _ => return false,
@@ -401,11 +501,7 @@ fn try_identity<'db>(
 }
 
 /// Collect unsolved Flex meta IDs from the top-level of a value.
-fn collect_flex_heads<'db>(
-    state: &SolverState<'db>,
-    val: &Value<'db>,
-    out: &mut Vec<MetaId>,
-) {
+fn collect_flex_heads<'db>(state: &SolverState<'db>, val: &Value<'db>, out: &mut Vec<MetaId>) {
     if let Value::Flex(flex) = val {
         let id = MetaId(flex.head.id.local_index as u32);
         if state.meta_solution(id).is_none() {
@@ -415,53 +511,23 @@ fn collect_flex_heads<'db>(
 }
 
 /// Collect unsolved Flex meta IDs from the code inside a `Ty::El`.
-fn collect_flex_heads_ty<'db>(
-    state: &SolverState<'db>,
-    ty: &Ty<'db>,
-    out: &mut Vec<MetaId>,
-) {
+fn collect_flex_heads_ty<'db>(state: &SolverState<'db>, ty: &Ty<'db>, out: &mut Vec<MetaId>) {
     if let Ty::El(code) = ty {
         collect_flex_heads(state, code, out);
     }
 }
 
 /// Force the type-code inside `Ty::El` through meta substitution.
-fn force_ty<'db>(
-    state: &SolverState<'db>,
-    global: &GlobalEnv<'db>,
-    ty: RcTy<'db>,
-) -> RcTy<'db> {
+fn force_ty<'db>(state: &SolverState<'db>, global: &GlobalEnv<'db>, ty: RcTy<'db>) -> RcTy<'db> {
     if let Ty::El(code) = ty.as_ref() {
         let forced = force_deep(state, global, code.clone());
-        if Rc::ptr_eq(code, &forced) { ty } else { Rc::new(Ty::El(forced)) }
+        if Rc::ptr_eq(code, &forced) {
+            ty
+        } else {
+            Rc::new(Ty::El(forced))
+        }
     } else {
         ty
-    }
-}
-
-/// Check definitional equality of two types.
-fn try_types_equal<'db>(
-    global: &GlobalEnv<'db>,
-    depth: usize,
-    a: &Ty<'db>,
-    b: &Ty<'db>,
-) -> bool {
-    match (a, b) {
-        (Ty::UniverseType, Ty::UniverseType) => true,
-        (Ty::El(ca), Ty::El(cb)) => {
-            if Rc::ptr_eq(ca, cb) { return true; }
-            let transparent = TransparentEnv::new();
-            equal::equate(global, &transparent, depth, ca, cb, &Value::UniverseCode(0)).is_ok()
-        }
-        _ => false,
-    }
-}
-
-/// Extract the semantic value from a `Ty` for use in equality constraints.
-fn ty_as_val<'db>(ty: &Ty<'db>) -> RcValue<'db> {
-    match ty {
-        Ty::El(code) => code.clone(),
-        _ => Rc::new(Value::UniverseCode(0)),
     }
 }
 

@@ -258,7 +258,7 @@ pub fn extract_snippets(markdown: &str) -> Vec<Snippet> {
 /// assert!(typecheck_snippet_hwmlc("prim $Nat : U0;").is_ok());
 /// ```
 pub fn typecheck_snippet_hwmlc(source: &str) -> Result<(), Vec<String>> {
-    let db = hwml_core::Database::new();
+    let db = hwml_db::HwmlDatabase::new();
 
     // Parse the module
     let module = match hwml_core::syn::parse_module(&db, source) {
@@ -316,7 +316,7 @@ fn typecheck_snippet_hwmlc_accumulated(
     accumulated_source: &str,
     new_source: &str,
 ) -> Result<(), Vec<String>> {
-    let db = hwml_core::Database::new();
+    let db = hwml_db::HwmlDatabase::new();
 
     // Combine accumulated source with new source
     let combined_source = if accumulated_source.is_empty() {

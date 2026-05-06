@@ -3,10 +3,10 @@ pub mod pattern;
 use std::rc::Rc;
 
 use hwml_core::{
-    Binding, Index, Level, MetaVariableId, RcSyntax, RcValue, Syntax, Value,
     eval,
     ty::{RcTy, Ty},
     val::{Eliminator, Flex, GlobalEnv, LocalEnv, MetaVariable, Normal, Spine},
+    Binding, Index, Level, MetaVariableId, RcSyntax, RcValue, Syntax, Value,
 };
 
 use crate::{
@@ -28,12 +28,12 @@ pub struct Unifier<'a, 'db> {
 }
 
 impl<'a, 'db> Unifier<'a, 'db> {
-    pub fn new(
-        global: &'a GlobalEnv<'db>,
-        state: &'a mut SolverState<'db>,
-        depth: usize,
-    ) -> Self {
-        Unifier { global, state, depth }
+    pub fn new(global: &'a GlobalEnv<'db>, state: &'a mut SolverState<'db>, depth: usize) -> Self {
+        Unifier {
+            global,
+            state,
+            depth,
+        }
     }
 
     /// Force a value by substituting solved metas.
@@ -47,7 +47,12 @@ impl<'a, 'db> Unifier<'a, 'db> {
     }
 
     /// Apply a value to a single argument (for eta expansion).
-    fn apply_val(&self, fun: RcValue<'db>, arg: RcValue<'db>, arg_ty: RcValue<'db>) -> RcValue<'db> {
+    fn apply_val(
+        &self,
+        fun: RcValue<'db>,
+        arg: RcValue<'db>,
+        arg_ty: RcValue<'db>,
+    ) -> RcValue<'db> {
         let elim = Eliminator::application(Normal::new(arg_ty, arg));
         let mut spine = Spine::empty();
         spine.push(elim);
@@ -55,15 +60,14 @@ impl<'a, 'db> Unifier<'a, 'db> {
             .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)))
     }
 
-    /// Typed, eta-aware unification (heterogeneous entry point).
+    /// Typed, eta-aware unification (homogeneous - both sides have same type).
     pub fn unify(
         &mut self,
         lhs: RcValue<'db>,
-        lhs_ty: RcTy<'db>,
         rhs: RcValue<'db>,
-        _rhs_ty: RcTy<'db>,
+        ty: RcTy<'db>,
     ) -> Result<UnifyResult, ElabError<'db>> {
-        self.unify_at(lhs, rhs, lhs_ty)
+        self.unify_at(lhs, rhs, ty)
     }
 
     /// Homogeneous typed unification with eta.
@@ -159,7 +163,11 @@ impl<'a, 'db> Unifier<'a, 'db> {
                 if n == m {
                     Ok(UnifyResult::Solved)
                 } else {
-                    Err(ElabError::UnificationFailure { lhs: lhs.clone(), rhs: rhs.clone(), span: None })
+                    Err(ElabError::UnificationFailure {
+                        lhs: lhs.clone(),
+                        rhs: rhs.clone(),
+                        span: None,
+                    })
                 }
             }
             (Value::BitCode, Value::BitCode) => Ok(UnifyResult::Solved),
@@ -172,8 +180,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
                     UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
                     UnifyResult::Solved => {}
                 }
-                let var: RcValue<'db> =
-                    Rc::new(Value::variable(Level::new(self.depth), d1));
+                let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), d1));
                 let ret1 = c1.apply(self.global, &var);
                 let ret2 = c2.apply(self.global, &var);
                 self.depth += 1;
@@ -276,11 +283,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
 // ─── Intersection helpers ──────────────────────────────────────────────────────
 
 /// Compute positions where ρ[i] and ξ[i] are the same rigid variable.
-fn compute_intersection<'db>(
-    lhs: &LocalEnv<'db>,
-    rhs: &LocalEnv<'db>,
-    arity: usize,
-) -> Vec<usize> {
+fn compute_intersection<'db>(lhs: &LocalEnv<'db>, rhs: &LocalEnv<'db>, arity: usize) -> Vec<usize> {
     let mut kept = Vec::new();
     for i in 0..arity {
         let lv = lhs.get(Level::new(i));
@@ -321,7 +324,10 @@ pub(crate) fn intersection_syntax_solution<'db>(
 /// `Flex(m', LocalEnv([Rigid(Level(kept[0])), ..., Rigid(Level(kept[j]))]), [], dummy_ty)`
 ///
 /// `subst_value(this, actual_ρ)` = `Flex(m', [actual_ρ[kept[0]], ..., actual_ρ[kept[j]]], [])`.
-pub(crate) fn intersection_value_solution<'db>(new_meta_id: MetaId, kept: &[usize]) -> RcValue<'db> {
+pub(crate) fn intersection_value_solution<'db>(
+    new_meta_id: MetaId,
+    kept: &[usize],
+) -> RcValue<'db> {
     let dummy_ty: RcValue<'db> = Rc::new(Value::UniverseCode(0));
     let mut inner_local = LocalEnv::new();
     for &pos in kept {

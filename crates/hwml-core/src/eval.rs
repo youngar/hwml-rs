@@ -296,6 +296,17 @@ fn eval_constant<'db, 'g>(
         .global
         .constant(constant.name)
         .map_err(|_| Error::UnknownConstant { loc: None })?;
+
+    // CRITICAL FIX: Respect the is_opaque flag
+    // If the constant is opaque (during mutual recursion elaboration),
+    // treat it as an irreducible neutral term, NOT as a value to unfold.
+    if info.is_opaque {
+        // Create a neutral constant that cannot be reduced
+        // This prevents infinite loops during mutual recursion
+        // The constant will still type-check, but won't evaluate to its body
+        return Ok(Value::constant_rc(constant.name));
+    }
+
     let mut unfold_env = Environment {
         global: env.global,
         local: LocalEnv::new(),
@@ -431,6 +442,7 @@ pub fn run_application<'db>(
         Value::Lambda(lambda) => apply_lambda(global, lambda, arg),
         Value::Rigid(rigid) => apply_rigid(global, rigid, arg),
         Value::Flex(flex) => apply_flex(global, flex, arg),
+        Value::Constant(constant) => apply_constant(global, constant, arg), // 👈 NEW!
         _ => Err(Error::BadApplication { loc: None }),
     }
 }
@@ -442,6 +454,60 @@ pub fn apply_lambda<'db>(
     arg: RcValue<'db>,
 ) -> Result<RcValue<'db>, Error<'db>> {
     run_closure(global, &lambda.body, [arg])
+}
+
+/// Perform the application of an opaque constant to an argument.
+///
+/// CRITICAL FIX FOR BUG #2: Stuck Application for Opaque Constants
+///
+/// When a constant is opaque (during mutual recursion), eval_constant returns
+/// Value::Constant instead of unfolding. If we try to apply it during type-checking
+/// (e.g., in type indices like `Vec A (f x)`), we must create a stuck neutral term.
+///
+/// This is essential for dependent types because:
+/// - Type-checking may evaluate type indices for definitional equality
+/// - Unification compares normalized terms
+/// - Pattern matching on indices requires evaluation
+///
+/// We create a StuckApplication with:
+/// 1. Head: the opaque constant
+/// 2. Spine: the arguments
+/// 3. Result type: computed by applying the Pi type's codomain
+fn apply_constant<'db>(
+    global: &GlobalEnv<'db>,
+    constant: &val::Constant<'db>,
+    arg: RcValue<'db>,
+) -> Result<RcValue<'db>, Error<'db>> {
+    // Get the constant's type signature
+    let info = global
+        .constant(constant.name)
+        .map_err(|_| Error::UnknownConstant { loc: None })?;
+
+    // Evaluate the type to get a Pi type
+    let mut env = val::Environment {
+        global,
+        local: val::LocalEnv::new(),
+        transparent: val::TransparentEnv::new(),
+    };
+    let const_ty = eval(&mut env, &info.ty)?;
+
+    // Extract the Pi type to compute the result type
+    let Value::PiCode(_pi_source, pi_target) = const_ty.as_ref() else {
+        return Err(Error::BadApplication { loc: None });
+    };
+
+    // Compute the result type by applying the codomain closure
+    let result_ty = run_closure(global, pi_target, [arg.clone()])?;
+
+    // Create a stuck application with a spine of one argument
+    let spine = val::Spine::new(vec![val::Eliminator::application(val::Normal {
+        ty: const_ty.clone(), // TODO: This should be the argument's type, not the function's
+        value: arg,
+    })]);
+
+    Ok(Rc::new(Value::StuckApplication(
+        val::StuckApplication::new(constant.clone(), spine, result_ty),
+    )))
 }
 
 fn eval_case<'db, 'g>(

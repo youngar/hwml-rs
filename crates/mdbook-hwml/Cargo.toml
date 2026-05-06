@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 # Core compiler library (clean API, no markdown dependencies)
 hwml_core.workspace = true
+hwml_db.workspace = true
 
 # mdBook preprocessor integration
 mdbook-core.workspace = true

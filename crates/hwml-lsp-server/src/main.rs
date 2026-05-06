@@ -21,15 +21,60 @@ struct Server {
     vfs: LspVfs,
     db: HwmlDatabase,
     req_queue: ReqQueue,
+    /// Workspace root directory (from LSP initialization)
+    workspace_root: Option<PathBuf>,
+    /// Path to hwml.toml manifest (if found)
+    workspace_manifest: Option<PathBuf>,
 }
 
 impl Server {
-    fn new(sender: Sender<Message>) -> Self {
+    fn new(sender: Sender<Message>, workspace_root: Option<PathBuf>) -> Self {
         Self {
             sender,
             vfs: LspVfs::new(),
             db: HwmlDatabase::new(),
             req_queue: ReqQueue::default(),
+            workspace_root,
+            workspace_manifest: None,
+        }
+    }
+
+    /// Find hwml.toml in the workspace root directory
+    fn find_workspace_manifest(root: &PathBuf) -> Option<PathBuf> {
+        let manifest = root.join("hwml.toml");
+        if manifest.exists() {
+            Some(manifest)
+        } else {
+            None
+        }
+    }
+
+    /// Initialize workspace by finding and loading hwml.toml
+    fn initialize_workspace(&mut self) {
+        if let Some(ref root) = self.workspace_root {
+            if let Some(manifest) = Self::find_workspace_manifest(root) {
+                eprintln!("Found workspace manifest: {}", manifest.display());
+                self.workspace_manifest = Some(manifest.clone());
+                self.reload_workspace();
+            } else {
+                eprintln!("No hwml.toml found in workspace root: {}", root.display());
+            }
+        } else {
+            eprintln!("No workspace root provided");
+        }
+    }
+
+    /// Reload workspace declarations from hwml.toml
+    /// This is called on initialization and when files change
+    ///
+    /// Note: The actual workspace_declarations() call would happen here,
+    /// but it returns StubTable<'db> which we can't easily store.
+    /// Instead, we'll call workspace_declarations() on-demand when
+    /// implementing language features like go-to-definition.
+    fn reload_workspace(&mut self) {
+        if let Some(ref manifest) = self.workspace_manifest {
+            eprintln!("Workspace manifest ready: {}", manifest.display());
+            eprintln!("  (workspace_declarations will be loaded on-demand for language features)");
         }
     }
 
@@ -96,6 +141,11 @@ impl Server {
 
         // Compile the newly opened file
         self.compile_file(&self.db, &uri, file);
+
+        // Reload workspace declarations (file opening triggers Salsa invalidation)
+        if self.workspace_manifest.is_some() {
+            self.reload_workspace();
+        }
     }
 
     fn recv_did_change_text_document(&mut self, params: DidChangeTextDocumentParams) {
@@ -109,6 +159,11 @@ impl Server {
         // Recompile after changes
         if let Some(file) = self.vfs.get_by_uri(&uri) {
             self.compile_file(&self.db, &uri, file);
+        }
+
+        // Reload workspace declarations (edits trigger Salsa invalidation)
+        if self.workspace_manifest.is_some() {
+            self.reload_workspace();
         }
     }
 
@@ -293,9 +348,53 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         }
     };
 
-    let _params: InitializeParams = serde_json::from_value(initialization_params)?;
+    let params: InitializeParams = serde_json::from_value(initialization_params)?;
 
-    let mut server = Server::new(connection.sender);
+    // Extract workspace root from initialization parameters
+    // Use workspace_folders if available (modern), otherwise fall back to root_uri
+    let workspace_root = params
+        .workspace_folders
+        .as_ref()
+        .and_then(|folders| folders.first())
+        .and_then(|folder| {
+            // Convert URI to file path
+            // URI format: "file:///path/to/workspace"
+            let uri_str = folder.uri.as_str();
+            if uri_str.starts_with("file://") {
+                Some(PathBuf::from(&uri_str[7..])) // Skip "file://"
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            // Fallback to root_uri (older LSP spec)
+            #[allow(deprecated)]
+            params.root_uri.as_ref().and_then(|uri| {
+                let uri_str = uri.as_str();
+                if uri_str.starts_with("file://") {
+                    Some(PathBuf::from(&uri_str[7..])) // Skip "file://"
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| {
+            // Last fallback to root_path (very old LSP spec)
+            #[allow(deprecated)]
+            params.root_path.as_ref().map(PathBuf::from)
+        });
+
+    if let Some(ref root) = workspace_root {
+        eprintln!("LSP workspace root: {}", root.display());
+    } else {
+        eprintln!("LSP started without workspace root");
+    }
+
+    let mut server = Server::new(connection.sender, workspace_root);
+
+    // Initialize workspace (find and load hwml.toml)
+    server.initialize_workspace();
+
     server.run(connection.receiver)?;
 
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).

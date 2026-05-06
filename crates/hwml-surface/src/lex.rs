@@ -1,4 +1,4 @@
-use logos::{Logos, SpannedIter};
+use logos::Logos;
 use std::fmt;
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -158,33 +158,142 @@ impl fmt::Display for Token {
     }
 }
 
+/// A streaming lexer that tracks line:column positions natively.
+///
+/// Because HWML uses a **lossless grammar** (every byte is tokenized,
+/// including whitespace and comments), we can track line:column positions
+/// incrementally as we stream tokens with ZERO overhead - no pre-computation,
+/// no lookup tables, just a simple counter that updates based on tokens consumed.
 pub struct Lexer<'input> {
-    // instead of an iterator over characters, we have a token iterator
-    token_stream: SpannedIter<'input, Token>,
+    inner: logos::Lexer<'input, Token>,
+    line: usize,   // Current line (1-based for MLIR/CIRCT)
+    column: usize, // Current column (1-based for MLIR/CIRCT)
 }
 
 impl<'input> Lexer<'input> {
     pub fn new(input: &'input [u8]) -> Self {
-        // the Token::lexer() method is provided by the Logos trait
         Self {
-            token_stream: Token::lexer(input).spanned(),
+            inner: Token::lexer(input),
+            line: 1,
+            column: 1,
         }
     }
 }
 
+/// LALRPOP expects: (start_offset, Token, end_offset)
+/// We keep this interface for compatibility, but we also track line:column internally
 impl<'input> Iterator for Lexer<'input> {
     type Item = (usize, Token, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(result) = self.token_stream.next() {
-            match result {
-                (Ok(token), span) => match token.is_trivia() {
-                    true => continue,
-                    false => return Some((span.start, token, span.end)),
-                },
-                (Err(_err), _span) => panic!("invalid token"),
+        loop {
+            let token = self.inner.next()?;
+            let span = self.inner.span();
+            let slice = self.inner.slice();
+
+            // Capture location at START of token (for error reporting)
+            let _start_line = self.line;
+            let _start_column = self.column;
+
+            // Update line:column state based on the token we just consumed
+            match token {
+                Ok(Token::Newline) => {
+                    self.line += 1;
+                    self.column = 1;
+                }
+                Ok(Token::BlockComment) => {
+                    // Block comments can span multiple lines - scan for newlines
+                    let newlines = slice.iter().filter(|&&b| b == b'\n').count();
+                    if newlines > 0 {
+                        self.line += newlines;
+                        // Column is distance from last newline to end of comment
+                        let last_nl_idx = slice.iter().rposition(|&b| b == b'\n').unwrap();
+                        self.column = slice.len() - last_nl_idx;
+                    } else {
+                        // No newlines - just advance column by byte count
+                        self.column += slice.len();
+                    }
+                }
+                Ok(token) => {
+                    // All other tokens are single-line - just advance column
+                    // Using byte count (not char count) - fine for MLIR FileLineColLoc
+                    self.column += slice.len();
+
+                    // Skip trivia tokens (whitespace, comments) for LALRPOP
+                    if token.is_trivia() {
+                        continue;
+                    }
+
+                    // Return non-trivia token to LALRPOP
+                    return Some((span.start, token, span.end));
+                }
+                Err(_err) => {
+                    panic!("Lexical error at {}:{}", self.line, self.column);
+                }
             }
         }
-        return None;
+    }
+}
+
+/// Extended lexer that exposes line:column positions for each token.
+/// Use this when you need location information during parsing.
+pub struct LocLexer<'input> {
+    inner: logos::Lexer<'input, Token>,
+    line: usize,
+    column: usize,
+}
+
+impl<'input> LocLexer<'input> {
+    pub fn new(input: &'input [u8]) -> Self {
+        Self {
+            inner: Token::lexer(input),
+            line: 1,
+            column: 1,
+        }
+    }
+}
+
+/// The output: (Token, byte_span, start_line, start_column)
+/// All values are 1-based to match MLIR/CIRCT conventions
+pub type SpannedToken = (Token, std::ops::Range<usize>, usize, usize);
+
+impl<'input> Iterator for LocLexer<'input> {
+    type Item = SpannedToken;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let token = self.inner.next()?;
+        let span = self.inner.span();
+        let slice = self.inner.slice();
+
+        // Capture location at START of token
+        let out_line = self.line;
+        let out_column = self.column;
+
+        // Update state based on token consumed
+        match token {
+            Ok(Token::Newline) => {
+                self.line += 1;
+                self.column = 1;
+            }
+            Ok(Token::BlockComment) => {
+                let newlines = slice.iter().filter(|&&b| b == b'\n').count();
+                if newlines > 0 {
+                    self.line += newlines;
+                    let last_nl_idx = slice.iter().rposition(|&b| b == b'\n').unwrap();
+                    self.column = slice.len() - last_nl_idx;
+                } else {
+                    self.column += slice.len();
+                }
+            }
+            Ok(_) => {
+                self.column += slice.len();
+            }
+            Err(_) => {
+                // Still update column even on error
+                self.column += slice.len();
+            }
+        }
+
+        Some((token.unwrap_or(Token::Error), span, out_line, out_column))
     }
 }

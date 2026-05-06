@@ -4,7 +4,7 @@ use crate::{
     common::{Level, MetaVariableId},
     equal, eval,
     val::{
-        DataConstructorInfo, Environment, GlobalEnv, LocalEnv, RcValue, TransparentEnv,
+        DataConstructorInfo, Eliminator, Environment, GlobalEnv, LocalEnv, RcValue, TransparentEnv,
         TypeConstructorInfo,
     },
     QualifiedName, Value,
@@ -264,6 +264,18 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
             occurs_check(transparent, level, &let_val.ty)
                 || occurs_check(transparent, level, &let_val.value)
                 || occurs_check(transparent, level, &let_val.body)
+        }
+        Value::StuckApplication(stuck) => {
+            // Check the spine for occurrences
+            stuck.spine.iter().any(|elim| match elim {
+                Eliminator::Application(app) => {
+                    occurs_check(transparent, level, &app.argument.value)
+                }
+                Eliminator::Case(case) => case
+                    .parameters
+                    .iter()
+                    .any(|param| occurs_check(transparent, level, param)),
+            })
         }
     }
 }

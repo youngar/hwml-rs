@@ -19,6 +19,7 @@ hwml_vfs.workspace = true
 hwml_surface.workspace = true
 hwml_elab.workspace = true
 hwml_support.workspace = true
+hwml_workspace.workspace = true
 la-arena.workspace = true
 lalrpop-util.workspace = true
 salsa.workspace = true

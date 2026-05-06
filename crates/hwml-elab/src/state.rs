@@ -1,6 +1,14 @@
-use std::{collections::{HashMap, VecDeque}, rc::Rc};
+use std::{
+    collections::{HashMap, VecDeque},
+    rc::Rc,
+};
 
-use hwml_core::{RcSyntax, RcValue, Value, ty::{RcTy, Ty}, val::GlobalEnv, eval};
+use hwml_core::{
+    eval,
+    ty::{RcTy, Ty},
+    val::GlobalEnv,
+    RcSyntax, RcValue, Value,
+};
 
 use crate::{
     constraint::{Constraint, ConstraintEntry, ConstraintId, ConstraintStatus},
@@ -58,7 +66,10 @@ impl<'db> SolverState<'db> {
         syn: RcSyntax<'db>,
         val: RcValue<'db>,
     ) -> Result<(), ElabError<'db>> {
-        let entry = self.metas.get_mut(&id).ok_or(ElabError::UnsolvedMeta { meta: id, span: None })?;
+        let entry = self.metas.get_mut(&id).ok_or(ElabError::UnsolvedMeta {
+            meta: id,
+            span: None,
+        })?;
         if entry.solution.is_some() {
             return Err(ElabError::MetaAlreadySolved { meta: id });
         }
@@ -75,7 +86,10 @@ impl<'db> SolverState<'db> {
                 }
             }
         }
-        entry.solution = Some(MetaSolution { syntax: syn, value: val });
+        entry.solution = Some(MetaSolution {
+            syntax: syn,
+            value: val,
+        });
         self.wake(id);
         Ok(())
     }
@@ -92,41 +106,75 @@ impl<'db> SolverState<'db> {
         let id = MetaId(flex.head.id.local_index as u32);
         let solution = self.metas.get(&id)?.solution.as_ref()?.value.clone();
         // Substitute meta parameters (levels 0..arity-1) with actual local env values.
-        let substituted =
-            subst::subst_value(global, &solution, &flex.head.local).ok()?;
+        let substituted = subst::subst_value(global, &solution, &flex.head.local).ok()?;
         // Run remaining spine eliminations.
         eval::run_spine(global, substituted, &flex.spine).ok()
     }
 
-    /// Create a HetEq constraint together with its witness meta atomically.
-    /// Create a HetEq constraint. `witness` is the meta whose solution proves lhs ≡ rhs;
-    /// callers (e.g. `kernel::expect`) create it via `fresh_meta` and pass it here.
-    pub fn emit_het_eq(
+    /// Create a homogeneous equality constraint.
+    ///
+    /// Emits constraint: `lhs = rhs : ty`.
+    /// The witness meta is created internally and will be solved to the common value
+    /// when `lhs = rhs` is determined to be definitionally equal.
+    ///
+    /// This is the only way to create equality constraints. The witness meta is an
+    /// internal implementation detail and is not returned to the caller.
+    pub fn emit_eq(
         &mut self,
         lhs: RcValue<'db>,
-        lhs_ty: RcTy<'db>,
         rhs: RcValue<'db>,
-        rhs_ty: RcTy<'db>,
+        ty: RcTy<'db>,
         depth: usize,
-        witness: MetaId,
     ) -> ConstraintId {
+        // Create witness meta internally for anti-unification.
+        let witness = self.fresh_meta(ty.clone(), depth, MetaKind::Term);
+
         let cid = ConstraintId(self.next_constraint);
         self.next_constraint += 1;
-        let constraint = Constraint::HetEq { lhs, lhs_ty, rhs, rhs_ty, witness, depth };
-        self.constraints.insert(cid, ConstraintEntry::new(cid, constraint));
+        let constraint = Constraint::Eq {
+            lhs,
+            rhs,
+            ty,
+            witness,
+            depth,
+        };
+        self.constraints
+            .insert(cid, ConstraintEntry::new(cid, constraint));
         self.active_queue.push_back(cid);
         cid
     }
 
-    pub fn emit_level_leq(
-        &mut self,
-        smaller: RcValue<'db>,
-        larger: RcValue<'db>,
-    ) -> ConstraintId {
+    pub fn emit_level_leq(&mut self, smaller: RcValue<'db>, larger: RcValue<'db>) -> ConstraintId {
         let cid = ConstraintId(self.next_constraint);
         self.next_constraint += 1;
         let constraint = Constraint::LevelLeq { smaller, larger };
-        self.constraints.insert(cid, ConstraintEntry::new(cid, constraint));
+        self.constraints
+            .insert(cid, ConstraintEntry::new(cid, constraint));
+        self.active_queue.push_back(cid);
+        cid
+    }
+
+    pub fn emit_resolve_dot(
+        &mut self,
+        receiver_val: hwml_core::RcSyntax<'db>,
+        receiver_ty: RcTy<'db>,
+        field_name: hwml_core::Name<'db>,
+        result_val_meta: crate::meta::MetaId,
+        result_ty_meta: crate::meta::MetaId,
+        depth: usize,
+    ) -> ConstraintId {
+        let cid = ConstraintId(self.next_constraint);
+        self.next_constraint += 1;
+        let constraint = Constraint::ResolveDot {
+            receiver_val,
+            receiver_ty,
+            field_name,
+            result_val_meta,
+            result_ty_meta,
+            depth,
+        };
+        self.constraints
+            .insert(cid, ConstraintEntry::new(cid, constraint));
         self.active_queue.push_back(cid);
         cid
     }

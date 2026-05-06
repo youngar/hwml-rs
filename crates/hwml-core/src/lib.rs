@@ -19,7 +19,9 @@ pub mod word;
 pub use binding::*;
 pub use common::*;
 pub use name::*;
-pub use source_range::{HasSourceRange, Source, SourceFileId, SourceInfo, SourceRange, WithSourceRange};
+pub use source_range::{
+    HasSourceRange, Source, SourceFileId, SourceInfo, SourceRange, WithSourceRange,
+};
 pub use typed::Typed;
 pub use word::Word;
 
@@ -31,21 +33,20 @@ pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
 pub use typed::*;
 pub use val::{GlobalEnv, RcValue, Value};
 
+/// Test-only database for hwml-core unit tests.
+///
+/// **For production use, use `hwml_db::HwmlDatabase` instead.**
+///
+/// This minimal database is provided only for testing hwml-core in isolation.
 #[salsa::db]
 #[derive(Default, Clone)]
-pub struct Database {
+pub struct TestDatabase {
     storage: salsa::Storage<Self>,
 }
 
 #[salsa::db]
-impl salsa::Database for Database {
+impl salsa::Database for TestDatabase {
     fn salsa_event(&self, _event: &dyn Fn() -> salsa::Event) {
-        // No-op for simple database
-    }
-}
-
-impl Database {
-    pub fn new() -> Self {
-        Self::default()
+        // No-op for test database
     }
 }

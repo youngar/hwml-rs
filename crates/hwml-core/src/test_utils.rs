@@ -11,7 +11,7 @@ use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
 use crate::syn::print::print_syntax_to_string;
 use crate::syn::RcSyntax;
 use crate::val::{Environment, GlobalEnv, RcValue, Value};
-use crate::Database;
+use crate::TestDatabase;
 
 // ========== Prelude String Constants ==========
 // Note: Type constructor references use #[@Name args...], data constructor references use [@Name args...]
@@ -39,7 +39,7 @@ tcon @Vec (%a : U0) : (%n : #[@Nat]) -> U0 where \
     dcon @VCons (%n : #[@Nat]) (%x : %a) (%xs : #[@Vec %a %n]) : #[@Vec %a [@Succ %n]];";
 
 /// Parse a syntax string, panicking with a helpful message on failure.
-pub fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
+pub fn parse<'db>(db: &'db TestDatabase, input: &'db str) -> RcSyntax<'db> {
     parse_syntax(db, input).unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e))
 }
 
@@ -55,7 +55,7 @@ pub fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
 ///     meta ?[0] : U0;
 /// "#);
 /// ```
-pub fn load_prelude<'db>(db: &'db Database, prelude: &'db str) -> GlobalEnv<'db> {
+pub fn load_prelude<'db>(db: &'db TestDatabase, prelude: &'db str) -> GlobalEnv<'db> {
     let module =
         parse_module(db, prelude).unwrap_or_else(|e| panic!("Failed to parse prelude: {:?}", e));
     let checked = check_module(db, &module, GlobalEnv::new())
@@ -70,7 +70,11 @@ pub fn eval_term<'db>(global: &GlobalEnv<'db>, stx: &RcSyntax<'db>) -> RcValue<'
 }
 
 /// Parse and evaluate a string to a value.
-pub fn eval_str<'db>(db: &'db Database, global: &GlobalEnv<'db>, input: &'db str) -> RcValue<'db> {
+pub fn eval_str<'db>(
+    db: &'db TestDatabase,
+    global: &GlobalEnv<'db>,
+    input: &'db str,
+) -> RcValue<'db> {
     let stx = parse(db, input);
     eval_term(global, &stx)
 }
@@ -87,7 +91,7 @@ pub fn eval_str<'db>(db: &'db Database, global: &GlobalEnv<'db>, input: &'db str
 /// let val = eval_str_at_depth(&db, &global, "[@Succ %0]", 2);
 /// ```
 pub fn eval_str_at_depth<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     global: &GlobalEnv<'db>,
     input: &'db str,
     depth: usize,
@@ -119,7 +123,7 @@ pub fn eval_str_at_depth<'db>(
 /// assert_eq!(print_value_to_string(&db, &global, &val, &ty), "[@Succ [@Zero]]");
 /// ```
 pub fn print_value_to_string<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     global: &GlobalEnv<'db>,
     value: &Value<'db>,
     ty: &Value<'db>,
@@ -137,7 +141,7 @@ pub fn print_value_to_string<'db>(
 /// assert_eq!(print_type_to_string(&db, &global, &ty), "#[@Nat]");
 /// ```
 pub fn print_type_to_string<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     global: &GlobalEnv<'db>,
     ty: &Value<'db>,
 ) -> String {
@@ -148,7 +152,7 @@ pub fn print_type_to_string<'db>(
 /// Parse a context declaration of the form "%name : type".
 /// Returns the variable name and the parsed type syntax.
 fn parse_context_binding<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     binding: &'db str,
 ) -> Result<(String, RcSyntax<'db>), String> {
     let binding = binding.trim();
@@ -194,7 +198,7 @@ fn parse_context_binding<'db>(
 ///
 /// # Example
 /// ```ignore
-/// let db = Database::default();
+/// let db = TestDatabase::default();
 /// let global = load_prelude(&db, NAT_PRELUDE);
 /// // Context: n at level 0, m at level 1
 /// // %0 (index 0) refers to m (most recent variable)
@@ -202,7 +206,7 @@ fn parse_context_binding<'db>(
 /// let val = eval_with_context(&db, &global, "%n : #[@Nat]; %m : #[@Nat] |- [@Succ %0]");
 /// ```
 pub fn eval_with_context<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     global: &GlobalEnv<'db>,
     input: &'db str,
 ) -> RcValue<'db> {
@@ -256,7 +260,7 @@ pub fn eval_with_context<'db>(
         .unwrap_or_else(|e| panic!("Failed to eval expression '{:?}': {:?}", expr_syntax, e))
 }
 
-/// Convenience wrapper: evaluate with context and prelude, auto-managing Database.
+/// Convenience wrapper: evaluate with context and prelude.
 /// Returns the value for further inspection or use with print_value_to_string.
 ///
 /// # Example
@@ -267,7 +271,7 @@ pub fn eval_with_context<'db>(
 /// );
 /// ```
 pub fn eval_with_prelude_and_context<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     prelude: &'db str,
     context_and_expr: &'db str,
 ) -> RcValue<'db> {
@@ -276,14 +280,13 @@ pub fn eval_with_prelude_and_context<'db>(
 }
 
 /// Convenience wrapper: evaluate a simple expression with prelude, no context.
-/// Auto-manages Database creation.
 ///
 /// # Example
 /// ```ignore
 /// let val = eval_with_prelude(&db, NAT_PRELUDE, "[@Zero]");
 /// ```
 pub fn eval_with_prelude<'db>(
-    db: &'db Database,
+    db: &'db TestDatabase,
     prelude: &'db str,
     expr: &'db str,
 ) -> RcValue<'db> {

@@ -27,9 +27,15 @@ struct Args {
     #[arg(long = "skip-chec")]
     skip_check: bool,
 
-    /// Input file to read.
+    /// Use workspace mode with hwml.toml manifest.
+    /// If set, loads entire workspace including dependencies.
+    /// If not set, processes single file.
+    #[arg(short = 'w', long = "workspace")]
+    workspace: Option<PathBuf>,
+
+    /// Input file to read (required if --workspace not specified).
     #[arg(short = 'f', long = "file")]
-    file: PathBuf,
+    file: Option<PathBuf>,
 }
 
 fn main() {
@@ -43,8 +49,221 @@ fn main() {
         return;
     }
 
-    // Surface mode (default)
-    let path = args.file.canonicalize().unwrap();
+    // Workspace mode or single-file mode
+    if let Some(ref manifest_path) = args.workspace.clone() {
+        run_workspace(args, manifest_path.clone());
+    } else if let Some(ref file_path) = args.file.clone() {
+        run_single_file(args, file_path.clone());
+    } else {
+        eprintln!("Error: Either --file or --workspace must be specified");
+        std::process::exit(1);
+    }
+}
+
+/// Run in workspace mode (loads entire workspace from hwml.toml)
+fn run_workspace(args: Args, manifest_path: PathBuf) {
+    if args.verbose {
+        println!("Loading workspace from: {}", manifest_path.display());
+    }
+
+    // Load workspace declarations
+
+    // Create Salsa database for workspace aggregation
+    let mut workspace_db = hwml_db::HwmlDatabase::new();
+
+    // Create ManifestPath Salsa input
+    let manifest_path_input = hwml_db::ManifestPath::new(&mut workspace_db, manifest_path.clone());
+
+    // Load entire workspace including dependencies
+    // Returns both the stub table AND the file map with SourceFile instances
+    let (workspace_decls, source_files) =
+        hwml_db::workspace_declarations(&workspace_db, manifest_path_input);
+
+    if args.verbose {
+        println!("\nPhase 1: Workspace loaded");
+        println!("  Total declarations: {}", workspace_decls.len());
+        println!("  Source files cached: {}", source_files.len());
+    }
+
+    // Print all definitions
+    println!("\nWorkspace Definitions:");
+    println!("==================================================");
+    for (name, stub) in workspace_decls.stubs() {
+        println!("  {} ({:?})", name.to_string(&workspace_db), stub.kind);
+    }
+
+    // Elaborate with global stub table
+
+    if args.verbose {
+        println!("\nPhase 2: Elaboration (using global stub table)");
+    }
+
+    // Debug: Print database pointer and stub table
+    eprintln!(
+        "\n[DEBUG] Database pointer in Phase 1: {:p}",
+        &workspace_db as *const _
+    );
+
+    // Test: Verify Word interning works
+    let word1 = hwml_core::Word::new(&workspace_db, "Nat");
+    let word2 = hwml_core::Word::new(&workspace_db, "Nat");
+    eprintln!(
+        "[DEBUG] Word interning test: Word::new('Nat') twice = {:?} and {:?}, equal: {}",
+        word1,
+        word2,
+        word1 == word2
+    );
+
+    eprintln!("[DEBUG] STUB TABLE BEFORE ELABORATION:");
+    eprintln!("[DEBUG] Total entries: {}", workspace_decls.len());
+    for (name, stub) in workspace_decls.stubs() {
+        let segments = name.segments(&workspace_db);
+        eprintln!(
+            "[DEBUG]   {:?} = {} ({:?}), segments: {:?}",
+            name,
+            name.to_string(&workspace_db),
+            stub.kind,
+            segments
+                .iter()
+                .map(|n| n.to_string(&workspace_db))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    eprintln!("\n[DEBUG] CACHED SOURCE FILES:");
+    for (path, sf) in source_files.iter().take(3) {
+        eprintln!("[DEBUG]   SourceFile({:?}) -> {}", sf, path.display());
+    }
+    eprintln!(
+        "[DEBUG] Total: {} cached source files\n",
+        source_files.len()
+    );
+
+    // Load workspace to get access to files
+    let workspace = match hwml_workspace::Workspace::load(manifest_path) {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("Error loading workspace: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Use the same database for elaboration as we used for harvesting!
+    // This is critical - interned types (QualifiedName, etc.) must come from the same database
+    let mut global_env = hwml_core::val::GlobalEnv::new();
+
+    let mut total_elaborated = 0;
+    let mut total_errors = 0;
+
+    // Process each library in topological order
+    for lib_name in &workspace.topo_order {
+        let lib_manifest = &workspace.libraries[lib_name];
+
+        if args.verbose {
+            println!("\n  Elaborating library '{}'...", lib_name);
+        }
+
+        // LIBRARY-WIDE AGGREGATION: Collect all programs from all files in this library
+        // This is CRITICAL for correct cross-file mutual recursion and SCC analysis
+        let mut library_programs = Vec::new();
+
+        for source_path in &lib_manifest.source_files {
+            // Get the SAME SourceFile instance that was used during harvesting!
+            // This is CRITICAL - using a new SourceFile would create new interned Names
+            let source_file = match source_files.get(source_path) {
+                Some(sf) => {
+                    eprintln!(
+                        "[DEBUG] Found cached SourceFile({:?}) for {}",
+                        sf,
+                        source_path.display()
+                    );
+                    *sf
+                }
+                None => {
+                    eprintln!(
+                        "    Warning: SourceFile not found for {}",
+                        source_path.display()
+                    );
+                    continue;
+                }
+            };
+
+            // Parse using the Salsa-tracked query - this returns the SAME Program instance
+            // that was used during harvesting, with the SAME interned Names!
+            let program = match hwml_db::parse_surface_program(&workspace_db, source_file) {
+                Some(p) => p,
+                None => {
+                    eprintln!("    Warning: Failed to parse {}", source_path.display());
+                    continue;
+                }
+            };
+
+            library_programs.push((source_path.clone(), program));
+        }
+
+        // Elaborate the entire library at once with cross-file SCC analysis
+        eprintln!(
+            "[DEBUG] Elaborating library '{}' with {} files",
+            lib_name,
+            library_programs.len()
+        );
+
+        // Convert Vec<(PathBuf, Program)> to Vec<(PathBuf, &Program)>
+        let library_programs_refs: Vec<(std::path::PathBuf, &hwml_surface::Program)> =
+            library_programs
+                .iter()
+                .map(|(path, prog)| (path.clone(), prog))
+                .collect();
+
+        let result = hwml_elab::program::elab_library_with_sccs(
+            &workspace_db,
+            &mut global_env,
+            &library_programs_refs,
+            &workspace_decls,
+        );
+
+        total_elaborated += result.decls.len();
+        total_errors += result.errors.len();
+
+        if args.verbose && !result.decls.is_empty() {
+            println!(
+                "    Library '{}' - {} declarations elaborated",
+                lib_name,
+                result.decls.len()
+            );
+        }
+
+        // Show errors (they already include file paths from the elaborator)
+        for err in &result.errors {
+            eprintln!("    Error: {:?}", err);
+        }
+    }
+
+    // Phase 3: Summary
+    // ================
+
+    println!("\n");
+    println!("Workspace compilation complete!");
+    println!("================================");
+    println!("  Libraries processed: {}", workspace.topo_order.len());
+    println!("  Declarations elaborated: {}", total_elaborated);
+
+    if total_errors > 0 {
+        println!("  Errors: {}", total_errors);
+        std::process::exit(1);
+    } else {
+        println!("  Errors: 0");
+        println!("\nReady for Verilog emission.");
+    }
+}
+
+/// Run in single-file mode (legacy behavior)
+fn run_single_file(args: Args, file_path: PathBuf) {
+    if args.verbose {
+        println!("Processing single file: {}", file_path.display());
+    }
+
+    let path = file_path.canonicalize().unwrap();
 
     // Use VFS to load the file
     let session = CompilerSession::new();
@@ -62,7 +281,7 @@ fn main() {
     };
 
     // Create Salsa database
-    let db = hwml_core::Database::new();
+    let db = hwml_db::HwmlDatabase::new();
 
     let mut global = hwml_core::val::GlobalEnv::new();
     let result = hwml_elab::program::elab_program(&db, &mut global, &program);
@@ -99,7 +318,11 @@ fn main() {
 }
 
 fn run_core(args: Args) {
-    let path = args.file.canonicalize().unwrap();
+    let Some(file_path) = args.file else {
+        eprintln!("Error: --file required for core mode");
+        std::process::exit(1);
+    };
+    let path = file_path.canonicalize().unwrap();
 
     // Use VFS to load the file
     let session = CompilerSession::new();
@@ -109,7 +332,7 @@ fn run_core(args: Args) {
         .expect("Failed to load file");
     let input = source_file.text(&session.db);
 
-    let db = hwml_core::Database::new();
+    let db = hwml_db::HwmlDatabase::new();
 
     // Parse as a module instead of a single expression
     let module = match hwml_core::syn::parse_module(&db, &input) {
@@ -190,7 +413,7 @@ fn run_core(args: Args) {
 
 #[cfg(feature = "circt")]
 fn emit_circt_module(
-    db: &hwml_core::Database,
+    db: &hwml_db::HwmlDatabase,
     module: &hwml_core::syn::declaration::CompilationUnit,
     emit_mlir: bool,
     emit_verilog: bool,

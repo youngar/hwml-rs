@@ -1,3 +1,4 @@
+use hwml_support::LineInfo;
 use lalrpop_util::lalrpop_mod;
 
 use crate::{lex::Lexer, parsing::grammar::ProgramParser, syntax::Program};
@@ -8,10 +9,57 @@ lalrpop_mod!(
     pub grammar
 );
 
+/// Helper struct to track line information during parsing.
+///
+/// **NEW APPROACH**: Because HWML uses a lossless grammar, the lexer now
+/// tracks line:column natively as it streams tokens (see `LocLexer`).
+/// This ParserContext now uses lazy LineInfo only as a fallback for
+/// byte-offset-based grammar rules during migration.
+pub struct ParserContext {
+    /// Lazy-initialized LineInfo (only created if needed for byte offset conversion)
+    line_info: Option<LineInfo>,
+    /// Source input (for lazy LineInfo construction)
+    input: Vec<u8>,
+}
+
+impl ParserContext {
+    pub fn new(input: &[u8]) -> Self {
+        ParserContext {
+            line_info: None,
+            input: input.to_vec(),
+        }
+    }
+
+    /// Convert a byte offset to (line, column) - both 0-based
+    ///
+    /// **DEPRECATED**: Prefer using `LocLexer` which tracks line:column natively.
+    /// This is only for backward compatibility during migration.
+    pub fn offset_to_line_col(&mut self, offset: usize) -> (usize, usize) {
+        let line_info = self
+            .line_info
+            .get_or_insert_with(|| LineInfo::from_bytes(&self.input));
+        line_info.loc(offset)
+    }
+
+    /// Convert a byte range to (start_line, start_col, end_line, end_col) - all 0-based
+    ///
+    /// **DEPRECATED**: Prefer using `LocLexer` which provides start location directly.
+    /// This is only for backward compatibility during migration.
+    pub fn range_to_line_col(&mut self, start: usize, end: usize) -> (usize, usize, usize, usize) {
+        let line_info = self
+            .line_info
+            .get_or_insert_with(|| LineInfo::from_bytes(&self.input));
+        let (start_line, start_col) = line_info.loc(start);
+        let (end_line, end_col) = line_info.loc(end);
+        (start_line, start_col, end_line, end_col)
+    }
+}
+
 pub fn parse(input: &[u8]) -> Option<Program> {
+    let mut ctx = ParserContext::new(input);
     let lexer = Lexer::new(input);
     let parser = ProgramParser::new();
-    let result = parser.parse(input, lexer);
+    let result = parser.parse(input, &mut ctx, lexer);
     match result {
         Ok(program) => Some(program),
         Err(err) => {

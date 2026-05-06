@@ -12,7 +12,11 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+hwml_core.workspace = true
+hwml_elab.workspace = true
 hwml_support.workspace = true
+hwml_surface.workspace = true
+hwml_workspace.workspace = true
 
 annotate-snippets.workspace = true
 clap.workspace = true
@@ -23,6 +27,7 @@ la-arena.workspace = true
 lalrpop-util.workspace = true
 logos.workspace = true
 salsa.workspace = true
+walkdir.workspace = true
 
 [build-dependencies]
 lalrpop.workspace = true

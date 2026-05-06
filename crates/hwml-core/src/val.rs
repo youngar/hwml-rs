@@ -95,6 +95,7 @@ pub enum Value<'db> {
     Rigid(Rigid<'db>),
     /// Neutral headed by a metavariable.
     Flex(Flex<'db>),
+    StuckApplication(StuckApplication<'db>),
 }
 
 impl<'db> Value<'db> {
@@ -671,6 +672,19 @@ impl<'db> MetaVariable<'db> {
 }
 
 #[derive(Clone, Debug)]
+pub struct StuckApplication<'db> {
+    pub ty: RcValue<'db>,
+    pub head: Constant<'db>,
+    pub spine: Spine<'db>,
+}
+
+impl<'db> StuckApplication<'db> {
+    pub fn new(head: Constant<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> StuckApplication<'db> {
+        StuckApplication { head, spine, ty }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Rigid<'db> {
     pub ty: RcValue<'db>,
     pub head: Variable,
@@ -1160,11 +1174,38 @@ impl<'db> GlobalEnv<'db> {
 pub struct ConstantInfo<'db> {
     pub ty: RcSyntax<'db>,
     pub value: RcSyntax<'db>,
+    /// If `true`, the evaluator treats this constant as opaque (irreducible).
+    /// This is used during mutual recursion: constants in an SCC are marked
+    /// opaque during body elaboration to prevent infinite loops.
+    pub is_opaque: bool,
 }
 
 impl<'db> ConstantInfo<'db> {
     pub fn new(ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
-        ConstantInfo { ty, value }
+        ConstantInfo {
+            ty,
+            value,
+            is_opaque: false, // Default: transparent (can be reduced)
+        }
+    }
+
+    /// Create an opaque constant stub (for use during mutual recursion).
+    pub fn new_opaque(ty: RcSyntax<'db>, value: RcSyntax<'db>) -> Self {
+        ConstantInfo {
+            ty,
+            value,
+            is_opaque: true,
+        }
+    }
+
+    /// Mark this constant as transparent (allow reduction).
+    pub fn set_transparent(&mut self) {
+        self.is_opaque = false;
+    }
+
+    /// Mark this constant as opaque (block reduction).
+    pub fn set_opaque(&mut self) {
+        self.is_opaque = true;
     }
 }
 
