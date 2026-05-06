@@ -1,65 +1,106 @@
-# hwml README
+# HWML Language Support for Visual Studio Code
 
-This is the README for your extension "hwml". After writing up a brief description, we recommend including the following sections.
+Language support for HWML (Hardware Modeling Language) including syntax highlighting, diagnostics, and language server integration.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+- **Syntax Highlighting** - Full syntax highlighting for `.hwml` files
+- **Language Server Integration** - Real-time diagnostics and error checking
+- **Workspace Support** - Automatic detection of `hwml.toml` workspace files
+- **Library Support** - Multi-library workspace support with dependency management
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+1. **HWML LSP Server** - The language server binary must be built and available
 
-## Extension Settings
+   Build the LSP server from the project root:
+   ```bash
+   cargo build --package hwml_lsp_server
+   ```
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+2. **Rust Toolchain** - Required to build the LSP server (if not pre-built)
 
-For example:
+## Installation
+
+### Method 1: Install from VSIX (Recommended)
+
+1. Build the LSP server:
+   ```bash
+   cargo build --package hwml_lsp_server
+   ```
+
+2. Package the extension:
+   ```bash
+   cd hwml-vscode
+   npx vsce package
+   ```
+
+3. Install the generated `.vsix` file:
+   - In VSCode: Extensions → ... menu → Install from VSIX
+   - Or via command line: `code --install-extension hwml-vscode-0.0.1.vsix`
+
+### Method 2: Development Mode
+
+1. Build the LSP server (see above)
+
+2. Compile the extension:
+   ```bash
+   cd hwml-vscode
+   npm install
+   npm run compile
+   ```
+
+3. Open the `hwml-rust` workspace in VSCode
+
+4. Press F5 to launch the Extension Development Host
+
+## Configuration
 
 This extension contributes the following settings:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+* `hwml.server_path` - Path to the `hwml_lsp_server` executable (default: `hwml_lsp_server`)
+  - The extension automatically looks for the server in `target/debug/hwml_lsp_server` when working in the workspace
+  - For system-wide installation, ensure the binary is in your PATH or provide the full path
 
-## Known Issues
+* `hwml.trace.server` - Trace communication between VSCode and the language server
+  - Options: `off`, `messages`, `verbose`
+  - Default: `off`
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+* `hwml.maxNumberOfProblems` - Maximum number of problems to show (default: 100)
+
+## Commands
+
+* `HWML: Restart Language Server` - Restart the HWML language server
+
+## Usage
+
+1. Open a folder containing a `hwml.toml` workspace file
+2. The extension will activate automatically when you open a `.hwml` file
+3. The LSP server will load all libraries defined in the workspace
+
+## Workspace Structure
+
+```
+my-project/
+├── hwml.toml          # Workspace manifest
+└── src/
+    ├── main.hwml
+    └── util.hwml
+```
+
+Example `hwml.toml`:
+```toml
+[library]
+name = "my-project"
+edition = 2024
+```
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+Initial release with:
+- Syntax highlighting for `.hwml` files
+- Language server integration with diagnostics
+- Workspace and library support
+- Auto-detection of `hwml.toml` files

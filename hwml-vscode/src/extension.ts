@@ -13,21 +13,43 @@ import {
 let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
-    const outputChannel = vscode.window.createOutputChannel('hwml-vscode');
+    const outputChannel = vscode.window.createOutputChannel('HWML Language Server');
     context.subscriptions.push(outputChannel);
+
+    // Get server path from configuration
+    const config = workspace.getConfiguration('hwml');
+    let serverPath = config.get<string>('server_path', 'hwml_lsp_server');
+
+    // If server_path is just a binary name (no path separators),
+    // try to find it relative to the extension or in PATH
+    if (!serverPath.includes('/') && !serverPath.includes('\\')) {
+        // Try to find in workspace first (for development)
+        const workspaceFolders = workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            const wsPath = workspaceFolders[0].uri.fsPath;
+            const localServerPath = path.join(wsPath, 'target', 'debug', 'hwml_lsp_server');
+            const fs = require('fs');
+            if (fs.existsSync(localServerPath)) {
+                serverPath = localServerPath;
+                outputChannel.appendLine(`Found LSP server in workspace: ${serverPath}`);
+            }
+        }
+    }
+
+    outputChannel.appendLine(`Using LSP server: ${serverPath}`);
 
     // Get the path to the language server.
     let serverOptions: ServerOptions = {
-        command: '/Users/andrewyoung/wsp/hwml-rust/target/debug/hwml_lsp_server'
+        command: serverPath
     };
 
     // Options to control the language client
     let clientOptions: LanguageClientOptions = {
-        // Register the server for plain text documents
+        // Register the server for hwml documents
         documentSelector: [{ scheme: 'file', language: 'hwml' }],
         synchronize: {
-            // Notify the server about file changes to '.clientrc files contained in the workspace
-            fileEvents: workspace.createFileSystemWatcher('**/.hwml')
+            // Notify the server about file changes to hwml.toml files in the workspace
+            fileEvents: workspace.createFileSystemWatcher('**/hwml.toml')
         },
         outputChannel: outputChannel,
         revealOutputChannelOn: RevealOutputChannelOn.Info,
@@ -36,34 +58,21 @@ export function activate(context: ExtensionContext) {
     // Create the language client and start the client.
     client = new LanguageClient(
         'hwml',
-        'hwml Language Server',
+        'HWML Language Server',
         serverOptions,
         clientOptions
     );
 
-    // The command has been defined in the package.json file
-    // Now provide the implementation of the command with registerCommand
-    // The commandId parameter must match the command field in package.json
-    let disposable = vscode.commands.registerCommand('hwml.helloworld', () => {
-        // The code you place here will be executed every time your command is executed
-
-        // Display a message box to the user
-        vscode.window.showInformationMessage('Hello World!');
-    });
-    context.subscriptions.push(disposable);
-
-    let restartCommand = vscode.commands.registerCommand('hwml.restart', () => {
-        // The code you place here will be executed every time your command is executed
-
-        // Display a message box to the user
-        vscode.window.showInformationMessage('Restart!');
+    // Register restart command
+    let restartCommand = vscode.commands.registerCommand('hwml.restart', async () => {
+        if (client) {
+            outputChannel.appendLine('Restarting HWML Language Server...');
+            await client.stop();
+            await client.start();
+            vscode.window.showInformationMessage('HWML Language Server restarted');
+        }
     });
     context.subscriptions.push(restartCommand);
-
-    // outputChannel.show();
-    // outputChannel.appendLine("qwertyuiop");
-    // vscode.window.showInformationMessage("hello from the client!", "yes", "no");
-    // vscode.window.showErrorMessage("hello");
 
     // Start the client. This will also launch the server
     client.start();
