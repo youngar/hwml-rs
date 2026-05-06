@@ -764,16 +764,16 @@ mod tests {
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
     use crate::syn::RcSyntax;
-    use crate::Database;
+    use crate::TestDatabase;
 
     /// Test helper context
     struct Ctx<'db> {
-        db: &'db Database,
+        db: &'db TestDatabase,
         global: GlobalEnv<'db>,
     }
 
     impl<'db> Ctx<'db> {
-        fn new(db: &'db Database) -> Self {
+        fn new(db: &'db TestDatabase) -> Self {
             Self {
                 db,
                 global: GlobalEnv::new(),
@@ -820,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_eval_universes() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Universe evaluates to itself
         assert_eq!(c.eval_type("U0"), "𝒰0");
@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn test_eval_hardware_universes() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.eval_type("HardwareUniverse"), "HardwareUniverse");
         assert_eq!(c.eval_type("SignalUniverse"), "SignalUniverse");
@@ -838,14 +838,14 @@ mod tests {
 
     #[test]
     fn test_eval_bit() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.eval_type("Bit"), "Bit");
     }
 
     #[test]
     fn test_eval_bit_values() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.eval_at("0", "Bit"), "0");
         assert_eq!(c.eval_at("1", "Bit"), "1");
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_eval_pi() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // ∀ (x : U0) → U0
         assert_eq!(c.eval_type("∀ (%x : U0) → U0"), "∀ (%0 : 𝒰0) → 𝒰0");
@@ -861,21 +861,21 @@ mod tests {
 
     #[test]
     fn test_eval_harrow() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.eval_type("Bit → Bit"), "Bit → Bit");
     }
 
     #[test]
     fn test_eval_slift() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.eval_type("^sBit"), "^sBit");
     }
 
     #[test]
     fn test_eval_mlift() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.eval_type("^m(Bit → Bit)"), "^m(Bit → Bit)");
     }
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn test_eval_lambda_identity() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ x → x at ∀ (x : U0) → U0
         assert_eq!(c.eval_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn test_eval_lambda_beta_reduction() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // (λ x → x) U0  should reduce to U0
         assert_eq!(c.eval_type("(λ %x → %x) U0"), "𝒰0");
@@ -902,7 +902,7 @@ mod tests {
 
     #[test]
     fn test_eval_lambda_const_beta_reduction() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // (λ x → 0) 1  should reduce to 0
         assert_eq!(c.eval_at("(λ %x → 0) 1", "Bit"), "0");
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_eval_nested_lambda_beta_reduction() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // (λ x y → x) 0 1  should reduce to 0  (returns first arg)
         assert_eq!(c.eval_at("(λ %x %y → %x) 0 1", "Bit"), "0");
@@ -918,7 +918,7 @@ mod tests {
 
     #[test]
     fn test_eval_second_projection() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // (λ x y → y) 0 1  should reduce to 1
         assert_eq!(c.eval_at("(λ %x %y → %y) 0 1", "Bit"), "1");
@@ -930,7 +930,7 @@ mod tests {
 
     #[test]
     fn test_eval_module_identity() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // mod x → x
         assert_eq!(c.eval_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn test_eval_module_const() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // mod x → 0
         assert_eq!(c.eval_at("mod %x → 0", "Bit → Bit"), "mod %0 → 0");
@@ -954,7 +954,7 @@ mod tests {
 
     #[test]
     fn test_eval_variable_in_env() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // (λ x → x) 0  should give 0 (variable lookup in env)
         assert_eq!(c.eval_at("(λ %x → %x) 0", "Bit"), "0");
@@ -962,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_eval_variable_captures() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // (λ x → (λ y → x)) 0 1  should give 0 (captured variable)
         assert_eq!(c.eval_at("(λ %x → (λ %y → %x)) 0 1", "Bit"), "0");
@@ -982,7 +982,7 @@ mod tests {
         use crate::common::MetaVariableId;
         use crate::val::GlobalEnv;
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : U0
@@ -1019,7 +1019,7 @@ mod tests {
         use crate::common::{Level, MetaVariableId};
         use crate::val::GlobalEnv;
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] (%x : U0) : U0
@@ -1068,7 +1068,7 @@ mod tests {
         use crate::common::MetaVariableId;
         use crate::val::GlobalEnv;
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
 
         // Declare ?[0] : ∀ (%x : U0) → U0
@@ -1112,7 +1112,7 @@ mod tests {
 
     #[test]
     fn test_eval_eq_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Eq U0 0 1 should evaluate to an EqType value
         assert_eq!(c.eval_type("Eq Bit 0 1"), "Eq Bit 0 1");
@@ -1120,7 +1120,7 @@ mod tests {
 
     #[test]
     fn test_eval_refl() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // refl should evaluate to a Refl value
         assert_eq!(c.eval_at("refl", "Eq Bit 0 0"), "refl");
@@ -1128,7 +1128,7 @@ mod tests {
 
     #[test]
     fn test_eval_transport_with_refl() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // transport P refl v should reduce to v (critical optimization!)
         // transport 0 to λ %x → Bit by refl  should reduce to 0
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[test]
     fn test_eval_transport_stuck() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // transport with a neutral proof should remain stuck
         // We can't easily test this without a proper type context,
@@ -1147,7 +1147,7 @@ mod tests {
 
     #[test]
     fn test_eval_nested_eq() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Eq (Eq U0 %a %b) refl refl
         // This is an equality between two refl proofs

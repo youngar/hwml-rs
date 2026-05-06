@@ -456,13 +456,13 @@ fn unify_equations<'db>(
 mod tests {
     use super::*;
     use crate::val::GlobalEnv;
-    use crate::Database;
+    use crate::TestDatabase;
     use hwml_support::IntoWithDb;
 
     use crate::test_utils::{load_prelude, VEC_PRELUDE};
 
     /// Test helper to create a test database and global environment with Nat and Vec.
-    fn setup_nat_vec<'db>(db: &'db Database) -> GlobalEnv<'db> {
+    fn setup_nat_vec<'db>(db: &'db TestDatabase) -> GlobalEnv<'db> {
         load_prelude(db, VEC_PRELUDE)
     }
 
@@ -472,7 +472,7 @@ mod tests {
         // @VNil : (A : Type) -> Vec A @Zero
         use crate::test_utils::eval_str;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = setup_nat_vec(&db);
         let transparent = TransparentEnv::new();
 
@@ -504,7 +504,7 @@ mod tests {
         // @VNil produces Vec A @Zero, but scrutinee is Vec A (@Succ n)
         use crate::test_utils::eval_str;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = setup_nat_vec(&db);
         let transparent = TransparentEnv::new();
 
@@ -534,7 +534,7 @@ mod tests {
         // Expected: n ~ @Succ m, with new bindings for (m, x, xs)
         use crate::test_utils::eval_str_at_depth;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = setup_nat_vec(&db);
         let transparent = TransparentEnv::new();
 
@@ -571,7 +571,7 @@ mod tests {
         // This tests the occurs check directly
         use crate::test_utils::{eval_str, eval_str_at_depth};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = setup_nat_vec(&db);
         let transparent = TransparentEnv::new();
 
@@ -597,7 +597,7 @@ mod tests {
         // Test: Succ x ~ Succ y should produce x ~ y (which then becomes a solution)
         use crate::test_utils::{eval_str, eval_str_at_depth};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = setup_nat_vec(&db);
         let transparent = TransparentEnv::new();
 
@@ -636,7 +636,7 @@ mod tests {
         use crate::common::MetaVariableId;
         use crate::test_utils::{eval_str, eval_str_at_depth, load_prelude};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(
             &db,
             "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat]; meta ?[42] : U0;",
@@ -667,7 +667,7 @@ mod tests {
         // Test: λx.x ~ λy.y should succeed via eta-expansion
         use crate::test_utils::{eval_str, load_prelude};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, "");
         let transparent = TransparentEnv::new();
 
@@ -696,7 +696,7 @@ mod tests {
         // This should succeed by eta-expanding: x ~ f x
         use crate::test_utils::{eval_str, eval_str_at_depth};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
         let transparent = TransparentEnv::new();
 
@@ -725,7 +725,7 @@ mod tests {
         // So this SUCCEEDS (not a conflict!)
         use crate::test_utils::eval_str;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
         let transparent = TransparentEnv::new();
 
@@ -760,7 +760,7 @@ mod tests {
         // Without the fix: Would return Conflict (treating y as a rigid variable ≠ @Zero)
         use crate::test_utils::{eval_str, load_prelude};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(
             &db,
             "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];",
@@ -810,7 +810,7 @@ mod tests {
         // Without the fix: Would accept z := @Succ y, but y = z, so z := @Succ z (infinite!)
         use crate::test_utils::{eval_str, load_prelude};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(
             &db,
             "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];",
@@ -867,7 +867,7 @@ mod tests {
         // Without the fix: Would accept x := @Succ @Zero, completely ignoring that x = @Zero!
         use crate::test_utils::{eval_str, load_prelude};
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(
             &db,
             "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];",

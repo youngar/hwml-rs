@@ -1376,17 +1376,17 @@ mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
     use crate::syn::print::print_syntax_to_string;
-    use crate::Database;
+    use crate::TestDatabase;
     use hwml_support::IntoWithDb;
 
     /// Parse helper that panics with a message on failure.
-    fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
+    fn parse<'db>(db: &'db TestDatabase, input: &'db str) -> RcSyntax<'db> {
         parse_syntax(db, input).unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e))
     }
 
     /// Compare two syntax trees ignoring locations by comparing their printed output.
     fn assert_syntax_eq_data<'db>(
-        db: &'db Database,
+        db: &'db TestDatabase,
         actual: &RcSyntax<'db>,
         expected: &RcSyntax<'db>,
     ) {
@@ -1401,7 +1401,7 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_single_var() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %0 → %0"),
@@ -1411,7 +1411,7 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_multiple_vars() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %x %y → %x  =>  λ → λ → %1 (nested lambdas, %x at index 1)
         assert_syntax_eq_data(
             &db,
@@ -1424,7 +1424,7 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_with_parens() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "(λ %0 → %0)"),
@@ -1434,7 +1434,7 @@ mod tests {
 
     #[test]
     fn test_parse_pi_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let expected: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Binding(Syntax::UniverseCode(0).into()),
@@ -1445,13 +1445,13 @@ mod tests {
 
     #[test]
     fn test_parse_universe() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(&db, &parse(&db, "𝒰0"), &Syntax::UniverseCode(0).into());
     }
 
     #[test]
     fn test_parse_pi_multiple_vars() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // ∀(%x : 𝒰0) (%y : 𝒰0) → %x  =>  nested Pi, %x at index 1
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
@@ -1465,7 +1465,7 @@ mod tests {
 
     #[test]
     fn test_parse_application_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %f %x → %f %x  =>  λ → λ → app(%1, %0)
         assert_syntax_eq_data(
             &db,
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn test_parse_application_left_associative() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %f %x %y → %f %x %y  =>  λ → λ → λ → app(app(%2, %1), %0)
         assert_syntax_eq_data(
             &db,
@@ -1498,7 +1498,7 @@ mod tests {
 
     #[test]
     fn test_parse_check() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "(λ %x → %x) : 𝒰0"),
@@ -1511,7 +1511,7 @@ mod tests {
 
     #[test]
     fn test_parse_check_with_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "(λ %f %x → %f %x) : 𝒰0"),
@@ -1527,7 +1527,7 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %x → (λ %y → %y) %x  =>  λ → app(λ → %0, %0)
         assert_syntax_eq_data(
             &db,
@@ -1541,7 +1541,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "?[0]"),
@@ -1551,7 +1551,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_multiple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // ?[0] ?[1] ?[0]  =>  app(app(?[0], ?[1]), ?[0])
         assert_syntax_eq_data(
             &db,
@@ -1568,7 +1568,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_in_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → ?[0] %x"),
@@ -1581,7 +1581,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_ordering() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "?[0] ?[1] ?[2]"),
@@ -1597,7 +1597,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_with_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "?[0] : 𝒰0"),
@@ -1610,7 +1610,7 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_with_substitution() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "?[0 !0 !1]"),
@@ -1623,14 +1623,14 @@ mod tests {
 
     #[test]
     fn test_parse_metavariable_no_space_between_question_and_bracket() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // "? [0]" should fail - ?[ must be a single token
         assert!(parse_syntax(&db, "? [0]").is_err());
     }
 
     #[test]
     fn test_parse_constant_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@42"),
@@ -1640,7 +1640,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_zero() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@0"),
@@ -1650,7 +1650,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_large() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@123456789"),
@@ -1660,7 +1660,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@42 @99"),
@@ -1673,7 +1673,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_with_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@42 : 𝒰0"),
@@ -1686,7 +1686,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_in_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → @42 %x"),
@@ -1699,7 +1699,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_in_pi() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let expected: RcSyntax = Syntax::PiCode(
             Syntax::constant_rc("42".into_with_db(&db)),
             Binding(Syntax::UniverseCode(0).into()),
@@ -1710,19 +1710,19 @@ mod tests {
 
     #[test]
     fn test_parse_unbound_variable_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(&db, &parse(&db, "!0"), &Syntax::variable_rc(Index(0)));
     }
 
     #[test]
     fn test_parse_unbound_variable_higher() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(&db, &parse(&db, "!4"), &Syntax::variable_rc(Index(4)));
     }
 
     #[test]
     fn test_parse_unbound_variable_in_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %x → !0  =>  at depth 1, !0 becomes index 1
         assert_syntax_eq_data(
             &db,
@@ -1733,7 +1733,7 @@ mod tests {
 
     #[test]
     fn test_parse_unbound_variable_in_nested_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %x %y → !0  =>  at depth 2, !0 becomes index 2
         assert_syntax_eq_data(
             &db,
@@ -1746,7 +1746,7 @@ mod tests {
 
     #[test]
     fn test_parse_mixed_bound_and_unbound() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %x %y → %y !0  =>  %y is index 0, !0 is index 2
         assert_syntax_eq_data(
             &db,
@@ -1760,7 +1760,7 @@ mod tests {
 
     #[test]
     fn test_parse_unbound_variable_in_pi() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // ∀(%x : 𝒰0) → !0  =>  at depth 1, !0 becomes index 1
         let expected: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
@@ -1772,7 +1772,7 @@ mod tests {
 
     #[test]
     fn test_parse_unbound_variable_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "!0 !1"),
@@ -1782,7 +1782,7 @@ mod tests {
 
     #[test]
     fn test_parse_print_roundtrip_unbound() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let test_cases = vec![
             ("!0", Syntax::variable_rc(Index(0))),
             ("!5", Syntax::variable_rc(Index(5))),
@@ -1833,7 +1833,7 @@ mod tests {
 
     #[test]
     fn test_parse_hconstant_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@42"),
@@ -1843,7 +1843,7 @@ mod tests {
 
     #[test]
     fn test_parse_hconstant_zero() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@0"),
@@ -1853,7 +1853,7 @@ mod tests {
 
     #[test]
     fn test_parse_hconstant_large() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@123456789"),
@@ -1863,7 +1863,7 @@ mod tests {
 
     #[test]
     fn test_parse_hvariable_bound() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x → %x"),
@@ -1873,13 +1873,13 @@ mod tests {
 
     #[test]
     fn test_parse_hvariable_unbound() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(&db, &parse(&db, "!0"), &Syntax::variable_rc(Index(0)));
     }
 
     #[test]
     fn test_parse_hvariable_unbound_in_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // mod %x → !0  =>  at depth 1, !0 becomes index 1
         assert_syntax_eq_data(
             &db,
@@ -1890,7 +1890,7 @@ mod tests {
 
     #[test]
     fn test_parse_module_single_var() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x → %x"),
@@ -1900,7 +1900,7 @@ mod tests {
 
     #[test]
     fn test_parse_module_multiple_vars() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // mod %x %y → %x  =>  nested modules, %x at index 1
         assert_syntax_eq_data(
             &db,
@@ -1913,7 +1913,7 @@ mod tests {
 
     #[test]
     fn test_parse_module_with_parens() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "(mod %x → %x)"),
@@ -1923,7 +1923,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@f<Bit>(@x)"),
@@ -1937,7 +1937,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_chained() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // @f<Bit>(@x)<Bit>(@y)  =>  happ(happ(f, Bit, x), Bit, y)
         assert_syntax_eq_data(
             &db,
@@ -1956,7 +1956,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_with_harrow_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@f<Bit → Bit>(@x)"),
@@ -1970,7 +1970,7 @@ mod tests {
 
     #[test]
     fn test_parse_hcheck_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // (mod %x → %x) : Bit -> Bit
         assert_syntax_eq_data(
             &db,
@@ -1984,7 +1984,7 @@ mod tests {
 
     #[test]
     fn test_parse_hcheck_with_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // (@42<Bit>(@99)) : Bit
         assert_syntax_eq_data(
             &db,
@@ -2002,7 +2002,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_in_module() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // mod %f → @x<Bit>(%f)
         assert_syntax_eq_data(
             &db,
@@ -2017,7 +2017,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_with_nested_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // @f<Bit → Bit → Bit>(@x)
         assert_syntax_eq_data(
             &db,
@@ -2035,7 +2035,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_with_unbound_var() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // !0<Bit>(!1)
         assert_syntax_eq_data(
             &db,
@@ -2050,7 +2050,7 @@ mod tests {
 
     #[test]
     fn test_parse_happlication_nested_in_arg() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // @42<Bit>(@99<Bit>(@100))
         assert_syntax_eq_data(
             &db,
@@ -2069,7 +2069,7 @@ mod tests {
 
     #[test]
     fn test_parse_hterm_roundtrip_examples() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let test_cases = vec![
             "@42",
             "!0",
@@ -2095,7 +2095,7 @@ mod tests {
 
     #[test]
     fn test_parse_and_print_string_constant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "@hello");
         let printed = print_syntax_to_string(&db, &parsed);
         assert_eq!(printed, "@hello");
@@ -2103,7 +2103,7 @@ mod tests {
 
     #[test]
     fn test_parse_and_print_numeric_constant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "@42");
         let printed = print_syntax_to_string(&db, &parsed);
         assert_eq!(printed, "@42");
@@ -2111,7 +2111,7 @@ mod tests {
 
     #[test]
     fn test_string_interning_comprehensive() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let test_cases = vec!["@hello", "@world", "@foo", "@bar", "@hello"];
         let parsed_terms: Vec<_> = test_cases.iter().map(|s| parse(&db, s)).collect();
 
@@ -2132,28 +2132,28 @@ mod tests {
 
     #[test]
     fn test_parse_bit_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "Bit");
         assert!(matches!(parsed.as_ref(), Syntax::Bit(_)));
     }
 
     #[test]
     fn test_parse_zero_constant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "0");
         assert!(matches!(parsed.as_ref(), Syntax::Zero(_)));
     }
 
     #[test]
     fn test_parse_one_constant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "1");
         assert!(matches!(parsed.as_ref(), Syntax::One(_)));
     }
 
     #[test]
     fn test_parse_primitives() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "$xor"),
@@ -2188,7 +2188,7 @@ mod tests {
 
     #[test]
     fn test_parse_hconstant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@Add"),
@@ -2212,7 +2212,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_hierarchical_two_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
         let foo_bar = foo.qualify_name(&db, "bar");
         assert_syntax_eq_data(&db, &parse(&db, "@foo/bar"), &Syntax::constant_rc(foo_bar));
@@ -2220,7 +2220,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_hierarchical_three_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
         let foo_bar = foo.qualify_name(&db, "bar");
         let foo_bar_baz = foo_bar.qualify_name(&db, "baz");
@@ -2233,7 +2233,7 @@ mod tests {
 
     #[test]
     fn test_parse_primitive_hierarchical_two_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
         let path_to = path.qualify_name(&db, "to");
         assert_syntax_eq_data(&db, &parse(&db, "$path/to"), &Syntax::prim_rc(path_to));
@@ -2241,7 +2241,7 @@ mod tests {
 
     #[test]
     fn test_parse_primitive_hierarchical_three_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
         let path_to = path.qualify_name(&db, "to");
         let path_to_prim = path_to.qualify_name(&db, "prim");
@@ -2254,7 +2254,7 @@ mod tests {
 
     #[test]
     fn test_parse_constant_hierarchical_in_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
         let foo_bar = foo.qualify_name(&db, "bar");
         let foo_bar_baz = foo_bar.qualify_name(&db, "baz");
@@ -2269,7 +2269,7 @@ mod tests {
 
     #[test]
     fn test_parse_data_constructor_nullary() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "[@Nil]"),
@@ -2279,7 +2279,7 @@ mod tests {
 
     #[test]
     fn test_parse_data_constructor_unary_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "[@Some @42]"),
@@ -2292,7 +2292,7 @@ mod tests {
 
     #[test]
     fn test_parse_data_constructor_unary_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // [@Some λ %0 → λ %0 → %0]
         assert_syntax_eq_data(
             &db,
@@ -2308,7 +2308,7 @@ mod tests {
 
     #[test]
     fn test_parse_data_constructor_binary_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // [@Pair (λ %0 → %0) λ %0 → %0]
         assert_syntax_eq_data(
             &db,
@@ -2325,7 +2325,7 @@ mod tests {
 
     #[test]
     fn test_case_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // Case scrutinee must be a variable, wrapped in a lambda to bind %x
         assert_syntax_eq_data(
             &db,
@@ -2348,7 +2348,7 @@ mod tests {
 
     #[test]
     fn test_constructor_only_patterns() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // Case scrutinee must be a variable, wrapped in a lambda to bind %x
         assert_syntax_eq_data(
             &db,
@@ -2371,7 +2371,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_constructor_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "#[@Bool]"),
@@ -2381,7 +2381,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_constructor_with_args() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_syntax_eq_data(
             &db,
             &parse(&db, "#[@List 𝒰0]"),
@@ -2394,7 +2394,7 @@ mod tests {
 
     #[test]
     fn test_parse_case_no_return_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %x → %x case { @true => @1 | @false => @0 }
         // Case scrutinee must be a variable, wrapped in a lambda to bind %x
         assert_syntax_eq_data(
@@ -2418,7 +2418,7 @@ mod tests {
 
     #[test]
     fn test_parse_case_with_constructor_argument_pattern() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // λ %n → %n case { @Succ %m => %m }
         // Case scrutinee must be a variable, wrapped in a lambda to bind %n
         // In the branch body, %m is Index(0) (innermost binding from the pattern)
@@ -2439,7 +2439,7 @@ mod tests {
 
     #[test]
     fn test_parse_prim_declaration() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "prim $Nat : U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         assert!(
@@ -2449,7 +2449,7 @@ mod tests {
 
     #[test]
     fn test_parse_const_declaration() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "const @zero : @Nat;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         assert!(
@@ -2459,7 +2459,7 @@ mod tests {
 
     #[test]
     fn test_parse_tcon_declaration_no_dcons() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "tcon @List (%a : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         assert!(
@@ -2469,7 +2469,7 @@ mod tests {
 
     #[test]
     fn test_parse_tcon_declaration_with_dcons() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = "tcon @Option (%a : U0) : -> U0 where dcon @None : #[@Option %a] dcon @Some : %a -> #[@Option %a];";
         let module = parse_module(&db, input).expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
@@ -2491,7 +2491,7 @@ mod tests {
 
     #[test]
     fn test_parse_module_multiple_declarations() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = r#"
             prim $Nat : U0;
             const @zero : $Nat;
@@ -2515,14 +2515,14 @@ mod tests {
 
     #[test]
     fn test_parse_empty_module() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "").expect("parse failed");
         assert_eq!(module.declarations.len(), 0);
     }
 
     #[test]
     fn test_parse_parameterized_tcon() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "tcon @Option (%a : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
@@ -2535,7 +2535,7 @@ mod tests {
 
     #[test]
     fn test_parse_parameterized_tcon_with_dcons() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = r#"
             tcon @Option (%a : U0) : -> U0 where
                 dcon @None : #[@Option %a]
@@ -2561,7 +2561,7 @@ mod tests {
 
     #[test]
     fn test_parse_multi_param_tcon() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module =
             parse_module(&db, "tcon @Pair (%a : U0) (%b : U0) : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
@@ -2575,7 +2575,7 @@ mod tests {
 
     #[test]
     fn test_parse_tcon_no_params() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "tcon @Bool : -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
         if let Declaration::TypeConstructorDecl(tc) = &module.declarations[0] {
@@ -2588,7 +2588,7 @@ mod tests {
 
     #[test]
     fn test_parse_dcon_with_params() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = r#"
             tcon @List (%a : U0) : -> U0 where
                 dcon @Nil : #[@List %a]
@@ -2614,7 +2614,7 @@ mod tests {
 
     #[test]
     fn test_parse_tcon_with_indices() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module =
             parse_module(&db, "tcon @Vec (%a : U0) : (%n : #[@Nat]) -> U0;").expect("parse failed");
         assert_eq!(module.declarations.len(), 1);
@@ -2628,7 +2628,7 @@ mod tests {
 
     #[test]
     fn test_module_roundtrip_simple() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let module = parse_module(&db, "prim $Nat : U0;").expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
         let module2 = parse_module(&db, &output).expect("reparse failed");
@@ -2637,7 +2637,7 @@ mod tests {
 
     #[test]
     fn test_module_roundtrip_complex() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = r#"prim $Nat : U0;
 prim $Zero : $Nat;
 tcon @Bool : -> U0 where
@@ -2653,7 +2653,7 @@ const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
 
     #[test]
     fn test_module_roundtrip_with_params() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = r#"tcon @List (%a : U0) : -> U0 where
     dcon @Nil : #[@List %a]
     dcon @Cons (%x : %a) (%xs : #[@List %a]) : #[@List %a]
@@ -2666,7 +2666,7 @@ const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
 
     #[test]
     fn test_print_module_format() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let input = r#"prim $Nat : U0;
 tcon @List (%a : U0) : -> U0 where
     dcon @Nil : #[@List %a]
@@ -2685,28 +2685,28 @@ tcon @List (%a : U0) : -> U0 where
 
     #[test]
     fn test_parse_eq_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "Eq U0 0 1");
         assert!(matches!(parsed.as_ref(), Syntax::Eq(_)));
     }
 
     #[test]
     fn test_parse_refl() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "refl");
         assert!(matches!(parsed.as_ref(), Syntax::Refl(_)));
     }
 
     #[test]
     fn test_parse_transport() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let parsed = parse(&db, "transport 0 to λ %x → %x by refl");
         assert!(matches!(parsed.as_ref(), Syntax::Transport(_)));
     }
 
     #[test]
     fn test_parse_eq_roundtrip() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let test_cases = vec![
             ("Eq U0 0 1", "Eq 𝒰0 0 1"),
             ("refl", "refl"),

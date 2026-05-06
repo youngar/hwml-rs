@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_nat_prelude_parses() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
         // Verify Nat type constructor is defined
         assert!(global.type_constructor("Nat".into_with_db(&db)).is_ok());
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_bool_prelude_parses() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, BOOL_PRELUDE);
         // Verify Bool type constructor is defined
         assert!(global.type_constructor("Bool".into_with_db(&db)).is_ok());
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_vec_prelude_parses() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, VEC_PRELUDE);
         // Verify Vec type constructor is defined
         assert!(global.type_constructor("Vec".into_with_db(&db)).is_ok());
@@ -329,7 +329,7 @@ mod tests {
     fn test_eval_str_at_depth() {
         use crate::common::Level;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Parse "[@Succ %0]" with depth 1 (one variable in scope)
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_eval_str_at_depth_multiple_vars() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Parse "%1" with depth 2 (two variables in scope)
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_print_value_to_string_nat() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate [@Zero]
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_print_value_to_string_succ() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate [@Succ [@Zero]]
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_print_type_to_string() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate #[@Nat]
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_context_single_var() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate with one variable in context
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_context_multiple_vars() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate with two variables in context
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_context_second_var() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate with two variables, using the second one
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_context_bool() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, BOOL_PRELUDE);
 
         // Evaluate with Bool variable
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_prelude_and_context() {
-        let db = Database::default();
+        let db = TestDatabase::default();
 
         // Use the convenience wrapper
         let val = eval_with_prelude_and_context(&db, NAT_PRELUDE, "%n : #[@Nat] |- [@Succ %0]");
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_prelude() {
-        let db = Database::default();
+        let db = TestDatabase::default();
 
         // Use the convenience wrapper
         let val = eval_with_prelude(&db, NAT_PRELUDE, "[@Zero]");
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_context_empty_context() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Empty context should work
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_eval_with_context_dependent_types() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, VEC_PRELUDE);
 
         // Test with dependent types: Vec depends on Nat
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_print_value_with_context() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Evaluate with context and print the result

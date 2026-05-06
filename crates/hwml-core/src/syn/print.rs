@@ -1025,12 +1025,12 @@ impl<'db> Print for Check<'db> {
 mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId};
-    use crate::Database;
+    use crate::TestDatabase;
     use hwml_support::IntoWithDb;
     use insta::assert_snapshot;
 
     /// Helper to print syntax and return string
-    fn p(db: &Database, s: &Syntax) -> String {
+    fn p(db: &TestDatabase, s: &Syntax) -> String {
         print_syntax_to_string(db, s)
     }
 
@@ -1040,14 +1040,14 @@ mod tests {
 
     #[test]
     fn print_universe_code() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::UniverseCode(0)), @"𝒰0");
         assert_snapshot!(p(&db, &Syntax::UniverseCode(1)), @"𝒰1");
     }
 
     #[test]
     fn print_pi_code() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let pi1: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Binding(Syntax::UniverseCode(1).into()),
@@ -1065,14 +1065,14 @@ mod tests {
 
     #[test]
     fn print_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
         assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::lambda_rc(Binding(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
     }
 
     #[test]
     fn print_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)))), @"@f[@x]");
         assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db))), Syntax::constant_rc("y".into_with_db(&db)))), @"@f[@x, @y]");
     }
@@ -1083,21 +1083,21 @@ mod tests {
 
     #[test]
     fn print_type_constructor() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::type_constructor("Nat".into_with_db(&db), vec![])), @"#[@Nat]");
         assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![Syntax::constant_rc("A".into_with_db(&db)), Syntax::constant_rc("n".into_with_db(&db))])), @"#[@Vec @A @n]");
     }
 
     #[test]
     fn print_data_constructor() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::data_constructor("Nil".into_with_db(&db), vec![])), @"[@Nil]");
         assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![Syntax::constant_rc("x".into_with_db(&db)), Syntax::constant_rc("xs".into_with_db(&db))])), @"[@Cons @x @xs]");
     }
 
     #[test]
     fn print_case() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
         assert_snapshot!(p(&db, &Syntax::lambda_rc(Binding(Syntax::case_rc(
@@ -1115,19 +1115,19 @@ mod tests {
 
     #[test]
     fn print_hardware_universe() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::hardware()), @"HardwareUniverse");
     }
 
     #[test]
     fn print_slift() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::slift(Syntax::bit_rc())), @"^sBit");
     }
 
     #[test]
     fn print_mlift() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::mlift(Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()))), @"^m(Bit → Bit)");
     }
 
@@ -1137,25 +1137,25 @@ mod tests {
 
     #[test]
     fn print_signal_universe() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::signal_universe()), @"SignalUniverse");
     }
 
     #[test]
     fn print_bit() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::bit()), @"Bit");
     }
 
     #[test]
     fn print_zero() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::zero()), @"0");
     }
 
     #[test]
     fn print_one() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::one()), @"1");
     }
 
@@ -1165,7 +1165,7 @@ mod tests {
 
     #[test]
     fn print_eq_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let eq = Syntax::eq_rc(
             Syntax::UniverseCode(0).into(),
             Syntax::variable_rc(Index(0)),
@@ -1177,13 +1177,13 @@ mod tests {
 
     #[test]
     fn print_refl() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::refl()), @"refl");
     }
 
     #[test]
     fn print_transport() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         // The motive is just a regular syntax term now, not a Closure
         let motive = Syntax::variable_rc(Index(0)); // !0 (unbound at depth 0)
         let transport =
@@ -1203,27 +1203,27 @@ mod tests {
 
     #[test]
     fn print_module_universe() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::module_universe()), @"ModuleUniverse");
     }
 
     #[test]
     fn print_harrow() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::harrow(Syntax::bit_rc(), Syntax::bit_rc())), @"Bit → Bit");
         assert_snapshot!(p(&db, &Syntax::harrow(Syntax::bit_rc(), Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()))), @"Bit → Bit → Bit");
     }
 
     #[test]
     fn print_module() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::module(Binding(Syntax::variable_rc(Index(0))))), @"mod %0 → %0");
         assert_snapshot!(p(&db, &Syntax::module(Binding(Syntax::module_rc(Binding(Syntax::variable_rc(Index(1))))))), @"mod %0 %1 → %0");
     }
 
     #[test]
     fn print_happlication() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::happlication(
                         Syntax::constant_rc("m".into_with_db(&db)),
             Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
@@ -1237,32 +1237,32 @@ mod tests {
 
     #[test]
     fn print_prim() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::prim_from(&db, "and")), @"$and");
     }
 
     #[test]
     fn print_constant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::constant_from(&db, "myConst")), @"@myConst");
     }
 
     #[test]
     fn print_variable_bound() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
     }
 
     #[test]
     fn print_variable_unbound() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::variable(Index(0))), @"!0");
         assert_snapshot!(p(&db, &Syntax::variable(Index(1))), @"!1");
     }
 
     #[test]
     fn print_metavariable() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId::new(0), vec![])), @"?[0]");
         assert_snapshot!(p(&db, &Syntax::metavariable(MetaVariableId::new(1), vec![Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1))])), @"?[1 !0 !1]");
     }
@@ -1273,7 +1273,7 @@ mod tests {
 
     #[test]
     fn print_check() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::check(Syntax::UniverseCode(0).into(), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
     }
 
@@ -1283,7 +1283,7 @@ mod tests {
 
     #[test]
     fn print_constant_hierarchical_two_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
         let foo_bar = foo.qualify_name(&db, "bar");
         assert_snapshot!(p(&db, &Syntax::constant_rc(foo_bar)), @"@foo/bar");
@@ -1291,7 +1291,7 @@ mod tests {
 
     #[test]
     fn print_constant_hierarchical_three_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let foo: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "foo");
         let foo_bar = foo.qualify_name(&db, "bar");
         let foo_bar_baz = foo_bar.qualify_name(&db, "baz");
@@ -1300,7 +1300,7 @@ mod tests {
 
     #[test]
     fn print_primitive_hierarchical_two_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
         let path_to = path.qualify_name(&db, "to");
         assert_snapshot!(p(&db, &Syntax::prim_rc(path_to)), @"$path/to");
@@ -1308,7 +1308,7 @@ mod tests {
 
     #[test]
     fn print_primitive_hierarchical_three_components() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let path: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "path");
         let path_to = path.qualify_name(&db, "to");
         let path_to_prim = path_to.qualify_name(&db, "prim");
@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn print_type_constructor_hierarchical() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let std: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "std");
         let std_vec = std.qualify_name(&db, "Vec");
         assert_snapshot!(
@@ -1328,7 +1328,7 @@ mod tests {
 
     #[test]
     fn print_data_constructor_hierarchical() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let std: QualifiedName = hwml_support::FromWithDb::from_with_db(&db, "std");
         let std_some = std.qualify_name(&db, "Some");
         assert_snapshot!(

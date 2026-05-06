@@ -327,7 +327,7 @@ mod tests {
     use super::*;
     use crate::syn::{print::print_syntax_to_string, Syntax};
     use crate::val::LocalEnv;
-    use crate::Database;
+    use crate::TestDatabase;
     use hwml_support::salsa::IntoWithDb;
 
     /// Test that a simple value without HApplication passes through unchanged.
@@ -346,7 +346,7 @@ mod tests {
     /// Test that HApplication with a concrete Module is beta-reduced.
     #[test]
     fn test_saturate_happlication_with_module() {
-        let _db = Database::default();
+        let _db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Create a Module closure that returns its argument (identity)
@@ -376,7 +376,7 @@ mod tests {
     /// Test that HApplication with a non-Module (constant) is preserved.
     #[test]
     fn test_saturate_happlication_with_constant() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Create an HApplication where the module is a constant
@@ -444,7 +444,7 @@ mod tests {
     /// Test saturate_and_quote convenience function.
     #[test]
     fn test_saturate_and_quote() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Create a simple HApplication that reduces to One

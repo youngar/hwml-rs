@@ -2,14 +2,14 @@
 
 use hwml_circt::CirctBackend;
 use hwml_core::syn::declaration::CompilationUnit;
-use hwml_core::Database;
+use hwml_core::TestDatabase;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("HWML CIRCT Backend Example");
     println!("===========================\n");
 
     // Create a database for interning
-    let db = Database::new();
+    let db = TestDatabase::default();
 
     // Create a simple HWML module
     let module = CompilationUnit::new();

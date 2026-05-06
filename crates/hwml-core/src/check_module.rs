@@ -322,14 +322,14 @@ pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a RcValu
 mod tests {
     use super::*;
     use crate::syn::parse::parse_module;
-    use crate::Database;
+    use crate::TestDatabase;
 
     #[test]
     fn test_check_dependent_metavariable() {
         // Test that dependent metavariables are parsed and type-checked correctly.
         // A dependent metavariable: ?[0] : (A : U0) -> A -> U0
         // The type of the second argument (%x : %A) references the first argument.
-        let db = Database::default();
+        let db = TestDatabase::default();
         let input = "prim $Nat : U0; meta ?[0] (%A : U0) (%x : %A) : U0;";
         let module = parse_module(&db, input).expect("Failed to parse module");
         let result = check_module(&db, &module, GlobalEnv::new());

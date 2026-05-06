@@ -932,7 +932,7 @@ mod tests {
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
     use crate::val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
-    use crate::Database;
+    use crate::TestDatabase;
     use hwml_support::salsa::IntoWithDb;
 
     // =========================================================================
@@ -941,12 +941,12 @@ mod tests {
 
     /// Test context with database and global environment for concise tests.
     struct Ctx<'db> {
-        db: &'db Database,
+        db: &'db TestDatabase,
         global: GlobalEnv<'db>,
     }
 
     impl<'db> Ctx<'db> {
-        fn new(db: &'db Database) -> Self {
+        fn new(db: &'db TestDatabase) -> Self {
             Self {
                 db,
                 global: GlobalEnv::new(),
@@ -1034,7 +1034,7 @@ mod tests {
 
     #[test]
     fn test_quote_universes() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Software universes
         assert_eq!(c.quote_type("U0"), "𝒰0");
@@ -1051,14 +1051,14 @@ mod tests {
 
     #[test]
     fn test_quote_bit() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.quote_type("Bit"), "Bit");
     }
 
     #[test]
     fn test_quote_harrow() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.quote_type("Bit → Bit"), "Bit → Bit");
         // Chained: Bit → Bit → Bit
@@ -1067,7 +1067,7 @@ mod tests {
 
     #[test]
     fn test_quote_slift() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.quote_type("^sBit"), "^sBit");
         // Nested: ^s^sBit
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_quote_mlift() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.quote_type("^m(Bit → Bit)"), "^m(Bit → Bit)");
         // Nested: ^m^m(Bit → Bit)
@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn test_quote_bit_values() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         assert_eq!(c.quote_at("0", "Bit"), "0");
         assert_eq!(c.quote_at("1", "Bit"), "1");
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_quote_type_at_universe() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // U0 is a value of type U1
         assert_eq!(c.quote_at("U0", "U1"), "𝒰0");
@@ -1113,7 +1113,7 @@ mod tests {
 
     #[test]
     fn test_quote_modules() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Identity: mod x → x
         assert_eq!(c.quote_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn test_quote_lambdas() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Identity: λ x → x
         assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
@@ -1135,7 +1135,7 @@ mod tests {
 
     #[test]
     fn test_quote_pi_types() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Simple: ∀ (x : U0) → U0
         assert_eq!(c.quote_type("∀ (%x : U0) → U0"), "∀ (%0 : 𝒰0) → 𝒰0");
@@ -1158,7 +1158,7 @@ mod tests {
 
     #[test]
     fn test_quote_variables() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Variable at level 1, quoted at depth 2 → Index(0) → prints as "!0" (unbound)
         let bit_var = Value::variable(Level::new(1), c.bit());
@@ -1171,7 +1171,7 @@ mod tests {
 
     #[test]
     fn test_quote_constant_and_prim() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         let u0: RcValue = Value::UniverseCode(0).into();
         // Constant: @myConst
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn test_quote_eta_expansion() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Pi types eta-expand neutrals: f : A → B becomes λx. f x
         let pi_ty = c.pi_u0_u0();
@@ -1209,7 +1209,7 @@ mod tests {
 
     #[test]
     fn test_quote_type_constructors() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
         let u0: RcValue = Value::UniverseCode(0).into();
 
@@ -1244,7 +1244,7 @@ mod tests {
 
     #[test]
     fn test_quote_data_constructors() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
 
         // Register Unit type and tt constructor
@@ -1281,7 +1281,7 @@ mod tests {
     #[test]
     fn test_quote_metavariables() {
         use crate::common::MetaVariableId;
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
         let u0: RcValue = Value::UniverseCode(0).into();
         let u0_rc = u0.clone();
@@ -1313,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_quote_nested_binder_depths() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
 
         // ∀ (A : U0) → ∀ (x : A) → A
@@ -1329,7 +1329,7 @@ mod tests {
 
     #[test]
     fn test_quote_lift_with_neutral() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
 
         // ^s(x) where x is a variable
@@ -1344,7 +1344,7 @@ mod tests {
 
     #[test]
     fn test_quote_happlication() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
 
         // Create id<Bit>(0) - identity module applied to 0
@@ -1369,7 +1369,7 @@ mod tests {
 
     #[test]
     fn test_quote_neutral_via_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ f → f $Bit - the body (f $Bit) is a neutral application
         // Note: A → B parses as HArrow, not Pi. Use ∀ (%x : A) → B for Pi.
@@ -1381,7 +1381,7 @@ mod tests {
 
     #[test]
     fn test_quote_neutral_variable_in_lambda() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ x → x at type ∀ (x : Bit) → Bit gives λ %0 → %0
         assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : Bit) → Bit"), "λ %0 → %0");
@@ -1389,7 +1389,7 @@ mod tests {
 
     #[test]
     fn test_quote_neutral_nested_application() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ f → λ g → f (g $Bit) - nested neutral applications
         // f : ∀ (x : U0) → U0, g : ∀ (x : U0) → U0
@@ -1405,7 +1405,7 @@ mod tests {
 
     #[test]
     fn test_quote_module_neutral() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // mod x → x at type Bit → Bit
         assert_eq!(c.quote_at("mod %x → %x", "Bit → Bit"), "mod %0 → %0");
@@ -1419,7 +1419,7 @@ mod tests {
 
     #[test]
     fn test_quote_eq_type() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Eq Bit 0 1
         assert_eq!(c.quote_type("Eq Bit 0 1"), "Eq Bit 0 1");
@@ -1427,7 +1427,7 @@ mod tests {
 
     #[test]
     fn test_quote_refl() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // refl at Eq Bit 0 0
         assert_eq!(c.quote_at("refl", "Eq Bit 0 0"), "refl");
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[test]
     fn test_quote_transport() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // transport 0 to λ %x → Bit by refl reduces to 0 during eval
         // So we just verify the reduction works
@@ -1444,7 +1444,7 @@ mod tests {
 
     #[test]
     fn test_quote_nested_eq() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Eq (Eq U0 U0 U0) refl refl
         assert_eq!(
@@ -1461,7 +1461,7 @@ mod tests {
     fn test_quote_stuck_case_identity_bool() {
         use crate::test_utils::{load_prelude, BOOL_PRELUDE};
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, BOOL_PRELUDE);
 
         // Create a stuck case expression: %x case { True => False | False => True }
@@ -1502,7 +1502,7 @@ mod tests {
     fn test_quote_stuck_case_identity_nat() {
         use crate::test_utils::{load_prelude, NAT_PRELUDE};
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Create a stuck case expression: %n case { Zero => [@Succ [@Zero]] | Succ %m => %m }
@@ -1541,7 +1541,7 @@ mod tests {
     fn test_case_reduction_bool() {
         use crate::test_utils::{load_prelude, BOOL_PRELUDE};
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, BOOL_PRELUDE);
 
         // Test that case expressions reduce when the scrutinee is a known constructor
@@ -1569,7 +1569,7 @@ mod tests {
     fn test_case_reduction_nat() {
         use crate::test_utils::{load_prelude, NAT_PRELUDE};
 
-        let db = Database::new();
+        let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);
 
         // Test that case expressions reduce when the scrutinee is a known constructor
@@ -1600,7 +1600,7 @@ mod tests {
 
     #[test]
     fn test_lift_code_identity() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // LiftCode(1, UniverseCode(0)) should quote back to itself
@@ -1627,7 +1627,7 @@ mod tests {
 
     #[test]
     fn test_lift_code_nested() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // LiftCode can nest: LiftCode(1, LiftCode(2, UniverseCode(0)))

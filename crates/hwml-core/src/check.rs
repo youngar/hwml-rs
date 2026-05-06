@@ -1371,8 +1371,8 @@ mod tests {
     use crate::syn::RcSyntax;
 
     use crate::val::Closure;
-    use crate::Database;
     use crate::QualifiedName;
+    use crate::TestDatabase;
     use hwml_support::{FromWithDb, IntoWithDb};
 
     // ========== Prelude definitions ==========
@@ -1380,12 +1380,12 @@ mod tests {
     use crate::test_utils::{eval_str, load_prelude, NAT_PRELUDE, VEC_PRELUDE};
 
     /// Create a GlobalEnv with Nat type defined.
-    fn make_nat_global<'db>(db: &'db Database) -> val::GlobalEnv<'db> {
+    fn make_nat_global<'db>(db: &'db TestDatabase) -> val::GlobalEnv<'db> {
         load_prelude(db, NAT_PRELUDE)
     }
 
     /// Create a GlobalEnv with Nat and Vec types defined.
-    fn make_vec_global<'db>(db: &'db Database) -> val::GlobalEnv<'db> {
+    fn make_vec_global<'db>(db: &'db TestDatabase) -> val::GlobalEnv<'db> {
         load_prelude(db, VEC_PRELUDE)
     }
 
@@ -1402,7 +1402,7 @@ mod tests {
     }
 
     /// Parse helper - panics with message on failure
-    fn parse<'db>(db: &'db Database, input: &'db str) -> RcSyntax<'db> {
+    fn parse<'db>(db: &'db TestDatabase, input: &'db str) -> RcSyntax<'db> {
         parse_syntax(db, input).unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", input, e))
     }
 
@@ -1411,7 +1411,7 @@ mod tests {
     /// Test that hardware types (Bit) are NOT valid meta-level types.
     #[test]
     fn test_hwtype_is_not_valid_meta_type() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1423,7 +1423,7 @@ mod tests {
     /// Test that Universe is a valid meta-level type.
     #[test]
     fn test_universe_is_valid_meta_type() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1435,7 +1435,7 @@ mod tests {
     /// Test that Pi types with valid meta-level source/target are valid.
     #[test]
     fn test_pi_is_valid_meta_type() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1449,7 +1449,7 @@ mod tests {
     /// Test that check_type accepts Universe.
     #[test]
     fn test_check_type_accepts_universe() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1460,7 +1460,7 @@ mod tests {
     /// Test that check_type accepts Pi types.
     #[test]
     fn test_check_type_accepts_pi() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1471,7 +1471,7 @@ mod tests {
     /// Test that check_type accepts Bit (signal type - lives in SignalUniverse).
     #[test]
     fn test_check_type_accepts_bit() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1483,7 +1483,7 @@ mod tests {
     /// Test that check_type accepts HArrow (module type).
     #[test]
     fn test_check_type_accepts_harrow() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1497,7 +1497,7 @@ mod tests {
     /// Test that Universe synthesizes to a higher universe.
     #[test]
     fn test_synth_universe() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1514,7 +1514,7 @@ mod tests {
     /// Test that variables get their type from the environment.
     #[test]
     fn test_synth_variable() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1537,7 +1537,7 @@ mod tests {
     /// Test that constants get their type from the global environment.
     #[test]
     fn test_synth_constant() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         let cid = |s: &str| QualifiedName::from_with_db(&db, s);
@@ -1564,7 +1564,7 @@ mod tests {
     /// Test that primitives get their type from the global environment.
     #[test]
     fn test_synth_primitive() {
-        let db = Database::new();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         let cid = |s: &str| QualifiedName::from_with_db(&db, s);
@@ -1590,7 +1590,7 @@ mod tests {
     /// Test that Pi types check against Universe.
     #[test]
     fn test_check_pi_against_universe() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1605,7 +1605,7 @@ mod tests {
     /// Test that Lambda checks against Pi type.
     #[test]
     fn test_check_lambda_against_pi() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1626,7 +1626,7 @@ mod tests {
     /// Test that Bit checks against SignalUniverse.
     #[test]
     fn test_check_bit_against_signal_universe() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1639,7 +1639,7 @@ mod tests {
     /// Test that HArrow checks against ModuleUniverse.
     #[test]
     fn test_check_harrow_against_module_universe() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1655,7 +1655,7 @@ mod tests {
     /// Test that function application synthesizes the correct type.
     #[test]
     fn test_synth_application() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -1692,7 +1692,7 @@ mod tests {
     fn test_synth_metavariable_no_args() {
         use crate::common::MetaVariableId;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         // NEW: Declare ?[0] : U0 using UniverseCode
@@ -1717,7 +1717,7 @@ mod tests {
     fn test_synth_metavariable_with_args() {
         use crate::common::MetaVariableId;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         // NEW: Declare ?[0] (%x : U0) : U0 using UniverseCode
@@ -1747,7 +1747,7 @@ mod tests {
     fn test_synth_metavariable_wrong_arg_count() {
         use crate::common::MetaVariableId;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         // NEW: Declare ?[0] (%x : U0) : U0 (expects 1 argument) using UniverseCode
@@ -1770,7 +1770,7 @@ mod tests {
     fn test_synth_metavariable_wrong_arg_type() {
         use crate::common::MetaVariableId;
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         // NEW: Declare ?[0] (%x : $Bit) : U0 (expects Bit type) using BitCode
@@ -1797,7 +1797,7 @@ mod tests {
     /// Expected: values.local[0] becomes @Zero
     #[test]
     fn test_apply_subst_simple() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_nat_global(&db);
 
         let mut env = make_env(&db, &global);
@@ -1833,7 +1833,7 @@ mod tests {
     /// Expected: types[1] (the type of v) becomes Vec Bit @Zero
     #[test]
     fn test_apply_subst_dependent_type() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_vec_global(&db);
 
         let mut env = make_env(&db, &global);
@@ -1892,7 +1892,7 @@ mod tests {
     /// Expected: types[2] becomes Vec Bit @Zero, types[3] becomes Vec Bit (@Succ @Zero)
     #[test]
     fn test_apply_subst_multiple_solutions() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_vec_global(&db);
 
         let mut env = make_env(&db, &global);
@@ -1973,7 +1973,7 @@ mod tests {
     /// checked when only levels 0-2 were in scope.
     #[test]
     fn test_apply_subst_quote_depth_correctness() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_vec_global(&db);
 
         let mut env = make_env(&db, &global);
@@ -2086,7 +2086,7 @@ mod tests {
     /// n : Nat |- n case @Zero => @Zero, @Succ %m => @Zero : Nat
     #[test]
     fn test_exhaustive_nat_case() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_nat_global(&db);
         let mut env = make_env(&db, &global);
 
@@ -2114,7 +2114,7 @@ mod tests {
     /// n : Nat |- n case @Zero => @Zero : Nat  (missing @Succ)
     #[test]
     fn test_non_exhaustive_nat_case_missing_succ() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_nat_global(&db);
         let mut env = make_env(&db, &global);
 
@@ -2153,7 +2153,7 @@ mod tests {
     /// (@VCons is impossible because the index is @Zero)
     #[test]
     fn test_vec_at_zero_only_requires_vnil() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_vec_global(&db);
         let mut env = make_env(&db, &global);
 
@@ -2190,7 +2190,7 @@ mod tests {
     /// a : Type, n : Nat, v : Vec a n |- v case @VNil => ... (missing @VCons)
     #[test]
     fn test_vec_at_variable_requires_both_constructors() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = make_vec_global(&db);
         let mut env = make_env(&db, &global);
 
@@ -2231,7 +2231,7 @@ mod tests {
 
     #[test]
     fn test_check_eq_type() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2244,7 +2244,7 @@ mod tests {
 
     #[test]
     fn test_check_refl() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2257,7 +2257,7 @@ mod tests {
 
     #[test]
     fn test_check_refl_fails_on_different_endpoints() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2269,7 +2269,7 @@ mod tests {
 
     #[test]
     fn test_check_transport() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2331,7 +2331,7 @@ mod tests {
         // the underlying mechanism: using transport to cast from Vec A (n + n)
         // to Vec A m given a proof that (n + n) = m.
 
-        let db = Database::default();
+        let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
         // First, set up the type environment with Nat and Vec
@@ -2430,7 +2430,7 @@ mod tests {
 
     #[test]
     fn test_let_simple_synth() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2449,7 +2449,7 @@ mod tests {
 
     #[test]
     fn test_let_simple_check() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2462,7 +2462,7 @@ mod tests {
 
     #[test]
     fn test_let_body_uses_binding() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2481,7 +2481,7 @@ mod tests {
 
     #[test]
     fn test_let_nested() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2502,7 +2502,7 @@ mod tests {
         // CRITICAL TEST: This is the test case from the design document
         // let y = U0; let h : Eq U1 U0 y = refl;
         // This tests that δ-reduction works correctly in conversion checking
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2528,7 +2528,7 @@ mod tests {
 
     #[test]
     fn test_let_with_universe_values() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2547,7 +2547,7 @@ mod tests {
 
     #[test]
     fn test_let_type_annotation_checked() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2560,7 +2560,7 @@ mod tests {
 
     #[test]
     fn test_let_in_lambda_with_pi_type() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2576,7 +2576,7 @@ mod tests {
 
     #[test]
     fn test_let_in_lambda_body() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2594,7 +2594,7 @@ mod tests {
 
     #[test]
     fn test_pi_universe_max_rule() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2631,7 +2631,7 @@ mod tests {
 
     #[test]
     fn test_pi_universe_cumulativity() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2651,7 +2651,7 @@ mod tests {
 
     #[test]
     fn test_pi_universe_level_too_low_fails() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 
@@ -2672,7 +2672,7 @@ mod tests {
 
     #[test]
     fn test_universe_synthesis_increments() {
-        let db = Database::default();
+        let db = TestDatabase::default();
         let global = val::GlobalEnv::new();
         let mut env = make_env(&db, &global);
 

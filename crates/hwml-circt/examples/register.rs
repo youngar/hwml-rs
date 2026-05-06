@@ -9,7 +9,7 @@
 
 use hwml_circt::{translate, CirctContext};
 use hwml_core::syn::Syntax;
-use hwml_core::Database;
+use hwml_core::TestDatabase;
 use hwml_support::IntoWithDb;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Create database for interning
-    let db = Database::new();
+    let db = TestDatabase::default();
 
     // Create CIRCT context
     println!("Step 1: Creating CIRCT context...");
