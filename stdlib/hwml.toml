@@ -1,0 +1,3 @@
+[library]
+name = "stdlib"
+edition = 1

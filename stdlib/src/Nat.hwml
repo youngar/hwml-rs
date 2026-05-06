@@ -1,0 +1,101 @@
+// Nat: Natural numbers using Peano encoding
+
+inductive Std.Nat : Type where
+    | zero : Nat
+    | succ : Nat -> Nat
+
+// Nat operations live in Std.Nat namespace
+namespace Std.Nat {
+
+// Convenient aliases for small numbers
+def one : Nat := succ zero
+def two : Nat := succ one
+def three : Nat := succ two
+def four : Nat := succ three
+def five : Nat := succ four
+
+// Addition
+def add (m : Nat) (n : Nat) : Nat :=
+    match m with
+    | zero ~> n
+    | succ m' ~> succ (add m' n)
+    end
+
+// Multiplication
+def mul (m : Nat) (n : Nat) : Nat :=
+    match m with
+    | zero ~> zero
+    | succ m' ~> add n (mul m' n)
+    end
+
+// Predecessor (returns zero for zero)
+def pred (n : Nat) : Nat :=
+    match n with
+    | zero ~> zero
+    | succ n' ~> n'
+    end
+
+// Subtraction (saturating at zero)
+def sub (m : Nat) (n : Nat) : Nat :=
+    match n with
+    | zero ~> m
+    | succ n' ~> sub (pred m) n'
+    end
+
+// Check if a number is zero
+def is_zero (n : Nat) : Std.Bool :=
+    match n with
+    | zero ~> Std.true
+    | succ _ ~> Std.false
+    end
+
+// Equality test
+def eq (m : Nat) (n : Nat) : Std.Bool :=
+    match m with
+    | zero ~> is_zero n
+    | succ m' ~>
+        match n with
+        | zero ~> Std.false
+        | succ n' ~> eq m' n'
+        end
+    end
+
+// Less than or equal
+def le (m : Nat) (n : Nat) : Std.Bool :=
+    match m with
+    | zero ~> Std.true
+    | succ m' ~>
+        match n with
+        | zero ~> Std.false
+        | succ n' ~> le m' n'
+        end
+    end
+
+// Less than
+def lt (m : Nat) (n : Nat) : Std.Bool :=
+    Std.Bool.and (le m n) (Std.Bool.not (eq m n))
+
+// Greater than or equal
+def ge (m : Nat) (n : Nat) : Std.Bool :=
+    le n m
+
+// Greater than
+def gt (m : Nat) (n : Nat) : Std.Bool :=
+    lt n m
+
+// Minimum of two naturals
+def min (m : Nat) (n : Nat) : Nat :=
+    Std.Bool.ite Nat (le m n) m n
+
+// Maximum of two naturals
+def max (m : Nat) (n : Nat) : Nat :=
+    Std.Bool.ite Nat (le m n) n m
+
+// Power (exponentiation)
+def pow (base : Nat) (exp : Nat) : Nat :=
+    match exp with
+    | zero ~> one
+    | succ exp' ~> mul base (pow base exp')
+    end
+
+}

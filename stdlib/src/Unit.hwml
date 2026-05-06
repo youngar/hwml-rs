@@ -1,0 +1,23 @@
+// Unit: The unit type (True proposition in the Curry-Howard correspondence)
+
+// The Unit type itself lives in Std namespace
+namespace Std {
+    inductive Unit : Type where
+        | tt : Unit
+}
+
+// Unit operations live in Std.Unit namespace
+namespace Std.Unit {
+
+// The unique element of Unit
+def unit : Unit := tt
+
+// Any function from Unit can be uncurried - Unit carries no information
+def uncurry (A : Type) (f : Unit -> A) : A :=
+    f unit
+
+// Conversely, any value can be turned into a constant function from Unit
+def curry (A : Type) (a : A) : Unit -> A :=
+    fun _ => a
+
+}
