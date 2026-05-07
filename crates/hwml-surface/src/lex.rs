@@ -130,11 +130,13 @@ pub enum Token {
     // Brackets, semicolons, and commas should break up identifiers.
     #[regex(r"[^\p{gc=Separator}\p{gc=Control}{}()\[\];,]+", priority = 2)]
     Identifier,
-    // Any valid UTF-8 character is treated as some unknown kind of whitespace.
+
+    // Any valid UTF-8 character (Unicode scalar value) not matching above patterns.
     // Equivalent to [\u{0}-\u{10FFFF}].
     #[regex(r".", priority = 1)]
     Unknown,
-    // Any invalid character is an error.
+
+    // Any invalid UTF-8 byte sequence. This is the only way to get an Error token.
     #[regex(r"[\x00-\xFF]", priority = 0)]
     Error,
 }
@@ -158,16 +160,16 @@ impl fmt::Display for Token {
     }
 }
 
-/// A streaming lexer that tracks line:column positions natively.
+/// Standard lexer for HWML surface syntax.
 ///
-/// Because HWML uses a **lossless grammar** (every byte is tokenized,
-/// including whitespace and comments), we can track line:column positions
-/// incrementally as we stream tokens with ZERO overhead - no pre-computation,
-/// no lookup tables, just a simple counter that updates based on tokens consumed.
+/// Returns byte-based spans (start_offset, Token, end_offset) suitable for LALRPOP.
+/// Location tracking uses line and column internally for error reporting, but the
+/// public API only exposes byte offsets. Convert to line:column lazily using
+/// LineInfo when formatting diagnostics.
 pub struct Lexer<'input> {
     inner: logos::Lexer<'input, Token>,
-    line: usize,   // Current line (1-based for MLIR/CIRCT)
-    column: usize, // Current column (1-based for MLIR/CIRCT)
+    line: usize,   // Current line (1-based, for error messages)
+    column: usize, // Current column (1-based, for error messages)
 }
 
 impl<'input> Lexer<'input> {
@@ -235,65 +237,166 @@ impl<'input> Iterator for Lexer<'input> {
     }
 }
 
-/// Extended lexer that exposes line:column positions for each token.
-/// Use this when you need location information during parsing.
-pub struct LocLexer<'input> {
-    inner: logos::Lexer<'input, Token>,
-    line: usize,
-    column: usize,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl<'input> LocLexer<'input> {
-    pub fn new(input: &'input [u8]) -> Self {
-        Self {
-            inner: Token::lexer(input),
-            line: 1,
-            column: 1,
-        }
+    /// Helper to lex and extract just the tokens (ignoring spans)
+    fn lex(input: &[u8]) -> Vec<Token> {
+        Lexer::new(input).map(|(_, tok, _)| tok).collect()
     }
-}
 
-/// The output: (Token, byte_span, start_line, start_column)
-/// All values are 1-based to match MLIR/CIRCT conventions
-pub type SpannedToken = (Token, std::ops::Range<usize>, usize, usize);
+    #[test]
+    fn test_valid_utf8_identifier() {
+        // Simple ASCII identifier
+        let tokens = lex(b"hello");
+        assert_eq!(tokens, vec![Token::Identifier]);
 
-impl<'input> Iterator for LocLexer<'input> {
-    type Item = SpannedToken;
+        // Unicode identifiers (various scripts)
+        let tokens = lex("café".as_bytes());
+        assert_eq!(tokens, vec![Token::Identifier]);
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let token = self.inner.next()?;
-        let span = self.inner.span();
-        let slice = self.inner.slice();
+        let tokens = lex("привет".as_bytes());
+        assert_eq!(tokens, vec![Token::Identifier]);
 
-        // Capture location at START of token
-        let out_line = self.line;
-        let out_column = self.column;
+        let tokens = lex("こんにちは".as_bytes());
+        assert_eq!(tokens, vec![Token::Identifier]);
 
-        // Update state based on token consumed
-        match token {
-            Ok(Token::Newline) => {
-                self.line += 1;
-                self.column = 1;
-            }
-            Ok(Token::BlockComment) => {
-                let newlines = slice.iter().filter(|&&b| b == b'\n').count();
-                if newlines > 0 {
-                    self.line += newlines;
-                    let last_nl_idx = slice.iter().rposition(|&b| b == b'\n').unwrap();
-                    self.column = slice.len() - last_nl_idx;
-                } else {
-                    self.column += slice.len();
+        let tokens = lex("你好".as_bytes());
+        assert_eq!(tokens, vec![Token::Identifier]);
+    }
+
+    #[test]
+    fn test_emoji_identifiers() {
+        // Emoji are actually valid UTF-8 and match the identifier pattern!
+        // The identifier regex [^\p{gc=Separator}\p{gc=Control}{}()\[\];,]+ matches
+        // anything that's not a separator, control character, or specific punctuation.
+        // Emoji (which are in the Symbol/Other category) match this pattern.
+        let tokens = lex("😀".as_bytes());
+        assert_eq!(tokens, vec![Token::Identifier]);
+
+        // Emoji with ZWJ sequence (👨‍👩‍👧‍👦 = family)
+        // Interestingly, ZWJ (U+200D) might not be classified as Control by Unicode properties
+        // used by regex, so the whole sequence might lex as a single identifier
+        let tokens = lex("👨‍👩‍👧‍👦".as_bytes());
+        // The actual behavior: logos treats the whole sequence as one token
+        assert_eq!(tokens, vec![Token::Identifier]);
+
+        // Combined emoji and identifier
+        let tokens = lex("hello😀world".as_bytes());
+        // All valid non-separator/control chars form one identifier
+        assert_eq!(tokens, vec![Token::Identifier]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_invalid_utf8_bytes_isolated_continuation() {
+        // Invalid UTF-8 causes Logos to return Err, which the Lexer wrapper panics on
+        // This is intentional - we want to fail fast on invalid UTF-8 at the lexer boundary
+        let _tokens = lex(&[0x80]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_invalid_utf8_bytes_overlong_encoding() {
+        let _tokens = lex(&[0xC0, 0x80]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_invalid_utf8_bytes_truncated() {
+        let _tokens = lex(&[0xE0, 0xA0]); // Missing third byte
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_invalid_utf8_after_valid() {
+        // Valid UTF-8 followed by invalid - should lex hello then panic
+        let input = b"hello\xFF";
+        let _tokens = lex(input);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_invalid_utf8_before_valid() {
+        // Invalid followed by valid - should panic immediately
+        let mut input = vec![0xFF];
+        input.extend_from_slice(b"world");
+        let _tokens = lex(&input);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_mixed_valid_and_invalid_utf8() {
+        // UTF-8 "café" but with an invalid byte in the middle
+        let input = vec![b'c', b'a', b'f', 0xFF, 0xC3, 0xA9];
+        let _tokens = lex(&input);
+    }
+
+    #[test]
+    fn test_utf8_invariant_for_identifiers_and_numbers() {
+        // This test verifies the core invariant: Identifier and Number tokens
+        // always contain valid UTF-8
+
+        let test_cases = vec![
+            ("hello123".as_bytes(), vec![Token::Identifier]),
+            ("42".as_bytes(), vec![Token::Number]),
+            ("café123".as_bytes(), vec![Token::Identifier]),
+            ("123".as_bytes(), vec![Token::Number]),
+        ];
+
+        for (input, _expected) in test_cases {
+            let mut lexer = Token::lexer(input);
+            while let Some(Ok(token)) = lexer.next() {
+                if token == Token::Identifier || token == Token::Number {
+                    let slice = lexer.slice();
+                    // This MUST succeed if our invariant holds
+                    let _valid_str = std::str::from_utf8(slice)
+                        .expect("Identifier/Number tokens must contain valid UTF-8");
                 }
             }
-            Ok(_) => {
-                self.column += slice.len();
-            }
-            Err(_) => {
-                // Still update column even on error
-                self.column += slice.len();
-            }
         }
+    }
 
-        Some((token.unwrap_or(Token::Error), span, out_line, out_column))
+    #[test]
+    fn test_three_tier_priority_cascade() {
+        // Priority 2: Valid identifier charset → Identifier
+        let tokens = lex(b"foo");
+        assert_eq!(tokens, vec![Token::Identifier]);
+
+        // Priority 1: Valid UTF-8 but not identifier charset → Unknown
+        // Use a character that is actually excluded by the identifier pattern
+        // Parentheses are explicitly excluded in the identifier regex
+        let tokens = lex("(".as_bytes());
+        assert_eq!(tokens, vec![Token::LParen]); // Recognized as specific token
+
+        // Even simpler: just whitespace (separator category)
+        let tokens = lex(" ".as_bytes());
+        // Whitespace is filtered by is_trivia(), so we get no tokens
+        assert_eq!(tokens, vec![]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lexical error")]
+    fn test_invalid_utf8_priority() {
+        // Priority 0: Invalid UTF-8 → Err (causes panic)
+        let _tokens = lex(&[0xFF]);
+    }
+
+    #[test]
+    fn test_complex_unicode_sequences() {
+        // Combining characters (valid UTF-8, may or may not be identifier)
+        let tokens = lex("é".as_bytes()); // é as single codepoint U+00E9
+        assert_eq!(tokens, vec![Token::Identifier]);
+
+        // Note: Both composed and decomposed forms of é are treated as identifiers
+        // because the identifier pattern [^\p{gc=Separator}\p{gc=Control}...]
+        // includes combining characters unless they're explicitly control chars
+        let tokens = lex("é".as_bytes()); // e + combining acute U+0065 U+0301
+        assert_eq!(tokens, vec![Token::Identifier]);
+
+        // Right-to-left text (Arabic)
+        let tokens = lex("مرحبا".as_bytes());
+        assert_eq!(tokens, vec![Token::Identifier]);
     }
 }

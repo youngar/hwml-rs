@@ -589,7 +589,7 @@ pub fn type_check_case<'db, 'g>(
     let missing: Vec<String> = required_constructors
         .iter()
         .filter(|c| !user_provided.contains(c))
-        .map(|c| c.to_string(env.db))
+        .map(|c| c.name(env.db).to_string(env.db))
         .collect();
 
     if !missing.is_empty() {

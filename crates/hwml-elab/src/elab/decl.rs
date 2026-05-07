@@ -94,7 +94,7 @@ fn elab_constant_impl<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let name = def.id.value.to_vec();
+    let name = def.id.value.as_bytes().to_vec();
 
     // CRITICAL: Push the constant's namespace for ALL elaboration (type and value).
     // This matches the pattern used in elab_inductive_impl.
@@ -102,10 +102,17 @@ where
     // - We enter namespace Foo.myFunc
     // - Type and value expressions see this namespace
     // - Bare `helper` references resolve by walking up to parent `Foo` → finds `Foo.helper`
-    let def_path = crate::util::surface_id_to_path(db, &def.id).ok_or(ElabError::NotInScope {
-        name: String::from_utf8_lossy(&def.id.value).to_string(),
-        span: None,
-    })?;
+    let def_path =
+        crate::util::surface_id_to_path(db, &def.id).map_err(|e| ElabError::NotInScope {
+            name: format!("Invalid definition name: {}", e),
+            span: None,
+        })?;
+    if def_path.is_empty() {
+        return Err(ElabError::NotInScope {
+            name: def.id.value.to_string(),
+            span: None,
+        });
+    }
 
     // Push a namespace scope for the constant
     let def_resolver = elab.kernel.resolver.push_namespace(db, &def_path);
@@ -229,7 +236,7 @@ fn elab_inductive_impl<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let name = ind.name.value.to_vec();
+    let name = ind.name.value.as_bytes().to_vec();
 
     // CRITICAL: Push the inductive type's namespace for ALL elaboration (params, indices, universe, constructors).
     // For example, `inductive Std.Vec (A : Type) : (n : Nat) -> Type`
@@ -237,10 +244,17 @@ where
     // - Parameters, indices, and constructors all see this namespace
     // - Bare `Nat` references resolve by walking up to parent `Std` → finds `Std.Nat`
     // This differs slightly from Lean but provides consistent scoping.
-    let ind_path = crate::util::surface_id_to_path(db, &ind.name).ok_or(ElabError::NotInScope {
-        name: String::from_utf8_lossy(&ind.name.value).to_string(),
-        span: None,
-    })?;
+    let ind_path =
+        crate::util::surface_id_to_path(db, &ind.name).map_err(|e| ElabError::NotInScope {
+            name: format!("Invalid inductive name: {}", e),
+            span: None,
+        })?;
+    if ind_path.is_empty() {
+        return Err(ElabError::NotInScope {
+            name: ind.name.value.to_string(),
+            span: None,
+        });
+    }
 
     // Push a namespace scope for the inductive type
     let ind_resolver = elab.kernel.resolver.push_namespace(db, &ind_path);
@@ -331,7 +345,7 @@ fn elab_constructor<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let name = ctor.name.value.to_vec();
+    let name = ctor.name.value.as_bytes().to_vec();
     // Elaborate the constructor type as a type-code.
     let ty_syn = elab::expr::check(db, elab, &ctor.ty, Rc::new(Ty::UniverseType))?.into_inner();
     // The full type is a Pi chain; for now store as empty params + result.
@@ -493,7 +507,7 @@ fn build_fun_expr(
 /// Extract a name string from a binder expression.
 fn binder_to_name(expr: &hwml_surface::Expression) -> String {
     if let hwml_surface::Expression::Id(id) = expr {
-        String::from_utf8_lossy(&id.value).to_string()
+        id.value.to_string()
     } else {
         "_".to_string()
     }

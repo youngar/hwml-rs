@@ -1,10 +1,9 @@
 use std::str::FromStr;
 use crate::syntax::*;
 use crate::lex::Token;
-use crate::parsing::ParserContext;
 use lalrpop_util::ErrorRecovery;
 
-grammar<'input>(input: &'input [u8], ctx: &mut ParserContext);
+grammar<'input>(input: &'input [u8]);
 
 // Helper macro for comma-separated lists: (A, B, C)
 Comma<T>: Vec<T> = {
@@ -32,10 +31,7 @@ Stmt: Statement = {
 
 Namespace: Namespace = {
     <l:@L> "namespace" <name:Id> "{" <stmts:Stmt*> "}" <r:@R> => {
-        // Convert byte range to line:column range during parsing
-        let loc_range = ctx.range_to_line_col(l, r);
-        let line_col = crate::syntax::LineColRange::new(loc_range.0, loc_range.1, loc_range.2, loc_range.3);
-        Namespace::new_with_line_col(line_col, name, stmts)
+        Namespace::new(l..r, name, stmts)
     }
 };
 
@@ -253,13 +249,17 @@ TypedBindingGroup: TypedBindingGroup = {
 
 Num: Num = {
   <l:@L> <s:"num"> <r:@R> => {
-    Num::new(l..r, Box::from(&input[l..r]))
+    // SAFETY: The lexer guarantees all Number tokens contain valid UTF-8
+    let text = unsafe { std::str::from_utf8_unchecked(&input[l..r]) };
+    Num::new(l..r, Box::from(text))
   }
 };
 
 Id: Id = {
   <l:@L> <s:"id"> <r:@R> => {
-    Id::new(l..r, Box::from(&input[l..r]))
+    // SAFETY: The lexer guarantees all Identifier tokens contain valid UTF-8
+    let text = unsafe { std::str::from_utf8_unchecked(&input[l..r]) };
+    Id::new(l..r, Box::from(text))
   }
 };
 

@@ -108,12 +108,21 @@ where
             Statement::Inductive(ind) => {
                 // Push the inductive's namespace for parameter/index elaboration
                 // This ensures names resolve in the inductive's namespace context
-                let ind_path = crate::util::surface_id_to_path(db, &ind.name).ok_or(
-                    ElabError::NotInScope {
-                        name: String::from_utf8_lossy(&ind.name.value).to_string(),
-                        span: None,
-                    },
-                )?;
+                let ind_path = match crate::util::surface_id_to_path(db, &ind.name) {
+                    Ok(p) if !p.is_empty() => p,
+                    Ok(_) => {
+                        return Err(ElabError::NotInScope {
+                            name: format!("Inductive name '{}' is empty", ind.name.value),
+                            span: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(ElabError::NotInScope {
+                            name: format!("Invalid inductive name '{}': {}", ind.name.value, e),
+                            span: None,
+                        });
+                    }
+                };
                 let ind_resolver = decl_resolver.push_namespace(db, &ind_path);
 
                 // Elaborate just the header: params, indices, universe
@@ -346,17 +355,31 @@ where
 
                 // Process constructors
                 for ctor in &elaborated.constructors {
-                    let ctor_path = crate::util::surface_id_to_path(
+                    let ctor_name_str = String::from_utf8_lossy(&ctor.name).into_owned();
+                    let ctor_path = match crate::util::surface_id_to_path(
                         db,
                         &hwml_surface::Id {
-                            value: ctor.name.clone().into_boxed_slice(),
+                            value: ctor_name_str.clone().into(),
                             loc: 0..0,
                         },
-                    )
-                    .ok_or_else(|| ElabError::NotInScope {
-                        name: "Invalid constructor name".to_string(),
-                        span: None,
-                    })?;
+                    ) {
+                        Ok(p) if !p.is_empty() => p,
+                        Ok(_) => {
+                            return Err(ElabError::NotInScope {
+                                name: format!("Constructor name '{}' is empty", ctor_name_str),
+                                span: None,
+                            });
+                        }
+                        Err(e) => {
+                            return Err(ElabError::NotInScope {
+                                name: format!(
+                                    "Invalid constructor name '{}': {}",
+                                    ctor_name_str, e
+                                ),
+                                span: None,
+                            });
+                        }
+                    };
 
                     let ctor_qname = QualifiedName::qualify_path(db, Some(*qname), &ctor_path)
                         .ok_or_else(|| ElabError::NotInScope {

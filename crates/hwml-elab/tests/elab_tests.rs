@@ -3,7 +3,7 @@ use std::rc::Rc;
 use hwml_core::{
     ty::Ty,
     val::{GlobalEnv, LocalEnv, MetaVariable, Spine},
-    Database, Level, MetaVariableId, Syntax, Value,
+    Level, MetaVariableId, Syntax, TestDatabase, Value,
 };
 use hwml_elab::{
     ctx::ElabCtx,
@@ -11,8 +11,10 @@ use hwml_elab::{
     error::ElabError,
     kernel::Kernel,
     meta::{MetaId, MetaKind},
+    resolver::Resolver,
     solver::Solver,
     state::SolverState,
+    stub_table::StubTable,
     unify::pattern,
     zonk::zonk,
 };
@@ -284,7 +286,7 @@ fn unify_same_meta_trivial_succeeds_without_solving() {
     let rhs = lhs.clone();
 
     let mut u = Unifier::new(&global, &mut state, 1);
-    let result = u.unify(lhs, ty.clone(), rhs, ty).unwrap();
+    let result = u.unify(lhs, rhs, ty).unwrap();
     assert!(matches!(result, hwml_elab::unify::UnifyResult::Solved));
     // Meta should NOT be solved — trivially true constraint discharged without constraining ?m.
     assert!(state.meta_solution(meta_id).is_none());
@@ -327,7 +329,7 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
 
     let metas_before = state.iter_metas().count();
     let mut u = Unifier::new(&global, &mut state, 2);
-    let result = u.unify(lhs, ty.clone(), rhs, ty).unwrap();
+    let result = u.unify(lhs, rhs, ty).unwrap();
     assert!(matches!(result, hwml_elab::unify::UnifyResult::Solved));
 
     // ?m should now be solved.
@@ -351,7 +353,9 @@ fn expect_fast_path_equal_types_no_meta() {
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
-    let mut kernel = Kernel::new(&global, ctx, &mut state);
+    let resolver = Resolver::new();
+    let stub_table = StubTable::new();
+    let mut kernel = Kernel::new(&global, ctx, &mut state, &resolver, &stub_table);
 
     // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
     let checked = kernel.synth_universe(Some(0)).unwrap();
@@ -371,7 +375,9 @@ fn expect_slow_path_emits_constraint() {
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
-    let mut kernel = Kernel::new(&global, ctx, &mut state);
+    let resolver = Resolver::new();
+    let stub_table = StubTable::new();
+    let mut kernel = Kernel::new(&global, ctx, &mut state, &resolver, &stub_table);
 
     // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
     let checked = kernel.synth_universe(Some(0)).unwrap();
@@ -394,6 +400,7 @@ fn expect_slow_path_emits_constraint() {
 fn elaborate_identity_function() {
     use hwml_surface::Expression;
 
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
@@ -406,10 +413,12 @@ fn elaborate_identity_function() {
     let fun_val = build_id_fun();
 
     // Synth the type first.
+    let resolver = Resolver::new();
+    let stub_table = StubTable::new();
     let mut elab = Elaborator {
-        kernel: Kernel::new(&global, ctx.clone(), &mut state),
+        kernel: Kernel::new(&global, ctx.clone(), &mut state, &resolver, &stub_table),
     };
-    let (ty_syn, ty_kind) = expr::synth(&mut elab, &pi_ty)
+    let (ty_syn, ty_kind) = expr::synth(&db, &mut elab, &pi_ty)
         .expect("type synthesis should succeed")
         .into_inner();
     assert!(
@@ -421,13 +430,13 @@ fn elaborate_identity_function() {
     // We need the type as El(code). Evaluate ty_syn to get the code.
     let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
     let ty_as_el: hwml_core::ty::RcTy = Rc::new(Ty::El(ty_code));
-    let _val_syn = expr::check(&mut elab, &fun_val, ty_as_el)
+    let _val_syn = expr::check(&db, &mut elab, &fun_val, ty_as_el)
         .expect("identity function should type-check")
         .into_inner();
 
     // Run solver.
     {
-        let mut solver = Solver::new(&mut state, &global);
+        let mut solver = Solver::new(&mut state, &global, &db);
         solver.run().expect("solver should not error");
     }
 
@@ -450,7 +459,7 @@ fn elaborate_identity_verifier_passes() {
     use hwml_core::ty::Ty;
     use hwml_elab::elab::decl::verify_elaborated_constant;
 
-    let db = Database::new();
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
@@ -458,21 +467,23 @@ fn elaborate_identity_verifier_passes() {
     let pi_ty = build_id_type();
     let fun_val = build_id_fun();
 
+    let resolver = Resolver::new();
+    let stub_table = StubTable::new();
     let mut elab = Elaborator {
-        kernel: Kernel::new(&global, ctx.clone(), &mut state),
+        kernel: Kernel::new(&global, ctx.clone(), &mut state, &resolver, &stub_table),
     };
-    let (ty_syn, _) = expr::synth(&mut elab, &pi_ty)
+    let (ty_syn, _) = expr::synth(&db, &mut elab, &pi_ty)
         .expect("type synthesis should succeed")
         .into_inner();
 
     let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
     let ty_as_el: hwml_core::ty::RcTy = Rc::new(Ty::El(ty_code));
-    let val_syn = expr::check(&mut elab, &fun_val, ty_as_el)
+    let val_syn = expr::check(&db, &mut elab, &fun_val, ty_as_el)
         .expect("identity function should type-check")
         .into_inner();
 
     {
-        let mut solver = Solver::new(&mut state, &global);
+        let mut solver = Solver::new(&mut state, &global, &db);
         solver.run().expect("solver should not error");
     }
     zonk(&mut state).expect("zonk should succeed");
@@ -483,14 +494,9 @@ fn elaborate_identity_verifier_passes() {
 
 // ─── Constructor injectivity ──────────────────────────────────────────────────
 
-fn make_qn<'db>(db: &'db Database, name: &str) -> hwml_core::QualifiedName<'db> {
-    use hwml_core::{
-        name::{Atom, Fixity, Name},
-        word::Word,
-    };
-    let word = Word::new(db, name);
-    let atom = Atom::new(word);
-    let n = Name::new(db, Fixity::Closed, Box::from([atom]));
+fn make_qn<'db>(db: &'db hwml_core::TestDatabase, name: &str) -> hwml_core::QualifiedName<'db> {
+    let n = hwml_core::str_to_name(db, name)
+        .expect("Test helper should not be called with malformed names");
     hwml_core::QualifiedName::new(db, None, n)
 }
 
@@ -500,7 +506,7 @@ fn make_qn<'db>(db: &'db Database, name: &str) -> hwml_core::QualifiedName<'db> 
 fn solver_data_constructor_injectivity() {
     use hwml_core::val::DataConstructor;
 
-    let db = Database::new();
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -534,7 +540,7 @@ fn solver_data_constructor_injectivity() {
     let constraints_before = state.iter_constraints().count();
     state.emit_eq(lhs, rhs, ty, 2);
 
-    let mut solver = Solver::new(&mut state, &global);
+    let mut solver = Solver::new(&mut state, &global, &db);
     solver.run().expect("solver should not error");
 
     // Outer constraint decomposed → two new sub-constraints created.
@@ -549,7 +555,7 @@ fn solver_data_constructor_injectivity() {
 fn solver_data_constructor_mismatch_is_hard_failure() {
     use hwml_core::val::DataConstructor;
 
-    let db = Database::new();
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -571,7 +577,7 @@ fn solver_data_constructor_mismatch_is_hard_failure() {
 
     state.emit_eq(lhs, rhs, ty, 1);
 
-    let mut solver = Solver::new(&mut state, &global);
+    let mut solver = Solver::new(&mut state, &global, &db);
     let result = solver.run();
     assert!(
         matches!(
@@ -589,6 +595,7 @@ fn solver_data_constructor_mismatch_is_hard_failure() {
 /// Two definitionally-equal rigid values → constraint solved immediately.
 #[test]
 fn solver_identity_solves_equal_rigid_values() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -597,7 +604,7 @@ fn solver_identity_solves_equal_rigid_values() {
 
     let _cid = state.emit_eq(val.clone(), val.clone(), ty, 0);
 
-    let mut solver = Solver::new(&mut state, &global);
+    let mut solver = Solver::new(&mut state, &global, &db);
     solver.run().expect("solver should not error");
 
     // All constraints should be solved.
@@ -731,7 +738,7 @@ fn pattern_unify_lowers_rigid_with_spine() {
 fn id_expr(name: &[u8]) -> Box<hwml_surface::Expression> {
     Box::new(hwml_surface::Expression::Id(hwml_surface::Id {
         loc: 0..0,
-        value: name.to_vec().into_boxed_slice(),
+        value: std::str::from_utf8(name).expect("valid UTF-8").into(),
     }))
 }
 

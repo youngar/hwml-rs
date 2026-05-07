@@ -705,7 +705,7 @@ fn build_remaining_fun(
         .map(|n| {
             let binder = Box::new(hwml_surface::Expression::Id(hwml_surface::Id {
                 loc: 0..0,
-                value: n.as_bytes().to_vec().into_boxed_slice(),
+                value: n.clone().into_boxed_str(),
             }));
             hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
                 binders: binder,
@@ -748,7 +748,7 @@ fn peel_first_binder_group(
 
 pub(crate) fn extract_binder_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Id(id) => Some(String::from_utf8_lossy(&id.value).to_string()),
+        Expression::Id(id) => Some(id.value.to_string()),
         Expression::Paren(p) => extract_binder_name(&p.expr),
         _ => None,
     }

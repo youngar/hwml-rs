@@ -28,9 +28,11 @@ fn extract_expr_refs<'db>(
     match expr {
         Expression::Id(id) => {
             // Only add as dependency if NOT locally bound
-            if !locals.contains(&id.value.to_vec()) {
-                if let Some(path) = surface_id_to_path(db, id) {
-                    refs.insert(path);
+            if !locals.contains(&id.value.as_bytes().to_vec()) {
+                if let Ok(path) = surface_id_to_path(db, id) {
+                    if !path.is_empty() {
+                        refs.insert(path);
+                    }
                 }
             }
         }
@@ -74,13 +76,13 @@ fn extract_expr_refs<'db>(
                     hwml_surface::BindingGroup::Typed(tg) => {
                         for binder in &tg.binders {
                             if let Expression::Id(id) = &**binder {
-                                extended_locals.insert(id.value.to_vec());
+                                extended_locals.insert(id.value.as_bytes().to_vec());
                             }
                         }
                     }
                     hwml_surface::BindingGroup::Untyped(ug) => {
                         if let Expression::Id(id) = &*ug.binders {
-                            extended_locals.insert(id.value.to_vec());
+                            extended_locals.insert(id.value.as_bytes().to_vec());
                         }
                     }
                 }
@@ -95,7 +97,7 @@ fn extract_expr_refs<'db>(
             extract_expr_refs(db, &let_in.value, refs, locals);
             // Clone locals and add let-bound name for body elaboration
             let mut extended_locals = locals.clone();
-            extended_locals.insert(let_in.id.value.to_vec());
+            extended_locals.insert(let_in.id.value.as_bytes().to_vec());
             extract_expr_refs(db, &let_in.expr, refs, &mut extended_locals);
         }
         Expression::Match(m) => {
@@ -144,7 +146,7 @@ pub fn extract_statement_deps<'db>(
                     // Add binders to locals for value elaboration
                     for binder in &tg.binders {
                         if let Expression::Id(id) = &**binder {
-                            locals.insert(id.value.to_vec());
+                            locals.insert(id.value.as_bytes().to_vec());
                         }
                     }
                 }
@@ -202,10 +204,18 @@ pub fn statement_declares<'db>(
     stmt: &Statement,
 ) -> Option<Vec<Name<'db>>> {
     match stmt {
-        Statement::Def(def) => surface_id_to_path(db, &def.id),
-        Statement::Inductive(ind) => surface_id_to_path(db, &ind.name),
-        Statement::Prim(prim) => surface_id_to_path(db, &prim.id),
-        Statement::Meta(meta) => surface_id_to_path(db, &meta.id),
+        Statement::Def(def) => surface_id_to_path(db, &def.id)
+            .ok()
+            .filter(|p| !p.is_empty()),
+        Statement::Inductive(ind) => surface_id_to_path(db, &ind.name)
+            .ok()
+            .filter(|p| !p.is_empty()),
+        Statement::Prim(prim) => surface_id_to_path(db, &prim.id)
+            .ok()
+            .filter(|p| !p.is_empty()),
+        Statement::Meta(meta) => surface_id_to_path(db, &meta.id)
+            .ok()
+            .filter(|p| !p.is_empty()),
         Statement::Open(_) | Statement::Namespace(_) => None,
     }
 }
@@ -242,7 +252,7 @@ pub fn validate_scc_annotations<'db>(scc: &Scc, decls: &[DeclInfo<'db>]) -> Resu
             if def.ty.is_none() {
                 return Err(format!(
                     "Mutually recursive definition '{}' requires an explicit type annotation",
-                    String::from_utf8_lossy(&def.id.value)
+                    &def.id.value
                 ));
             }
         }

@@ -433,11 +433,20 @@ fn p_fat_arrow(state: &mut State) -> ParseResult<()> {
     p_token(state, Token::FatArrow, Error::Other)
 }
 
+/// Split a qualified name string by '/' and filter out empty segments.
+/// This handles both "/foo/bar" (with leading slash) and "foo/bar" formats.
+fn split_qname_components(name_str: &str) -> Vec<&str> {
+    name_str.split('/').filter(|s| !s.is_empty()).collect()
+}
+
 fn p_qname<'db>(db: &'db dyn salsa::Database, name_str: &str) -> QualifiedName<'db> {
-    let components: Vec<&str> = name_str.split('/').collect();
+    let components = split_qname_components(name_str);
     let mut qname = None;
     for component in components {
-        let name = hwml_support::FromWithDb::from_with_db(db, component);
+        // Use str_to_name directly to get proper mixfix parsing
+        // If validation fails, this is a parse error (malformed core syntax)
+        let name = crate::str_to_name(db, component)
+            .expect("Core syntax should not contain malformed identifiers");
         qname = Some(QualifiedName::new(db, qname, name));
     }
     qname.unwrap()
@@ -2098,7 +2107,7 @@ mod tests {
         let db = TestDatabase::default();
         let parsed = parse(&db, "@hello");
         let printed = print_syntax_to_string(&db, &parsed);
-        assert_eq!(printed, "@hello");
+        assert_eq!(printed, "@/hello");
     }
 
     #[test]
@@ -2106,18 +2115,19 @@ mod tests {
         let db = TestDatabase::default();
         let parsed = parse(&db, "@42");
         let printed = print_syntax_to_string(&db, &parsed);
-        assert_eq!(printed, "@42");
+        assert_eq!(printed, "@/42");
     }
 
     #[test]
     fn test_string_interning_comprehensive() {
         let db = TestDatabase::default();
         let test_cases = vec!["@hello", "@world", "@foo", "@bar", "@hello"];
+        let expected_outputs = vec!["@/hello", "@/world", "@/foo", "@/bar", "@/hello"];
         let parsed_terms: Vec<_> = test_cases.iter().map(|s| parse(&db, s)).collect();
 
         for (i, term) in parsed_terms.iter().enumerate() {
             let printed = print_syntax_to_string(&db, term);
-            assert_eq!(printed, test_cases[i]);
+            assert_eq!(printed, expected_outputs[i]);
         }
 
         // Check string interning: first and last @hello should have same QualifiedName
@@ -2674,11 +2684,11 @@ tcon @List (%a : U0) : -> U0 where
 ;"#;
         let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
-        assert!(output.contains("prim $Nat : 𝒰0;"));
+        assert!(output.contains("prim $/Nat : 𝒰0;"));
         // Now we print parameters, so List has (%0 : 𝒰0) after the name
-        assert!(output.contains("tcon @List (%0 : 𝒰0) : -> 𝒰0 where"));
-        assert!(output.contains("dcon @Nil"));
-        assert!(output.contains("dcon @Cons"));
+        assert!(output.contains("tcon @/List (%0 : 𝒰0) : -> 𝒰0 where"));
+        assert!(output.contains("dcon @/Nil"));
+        assert!(output.contains("dcon @/Cons"));
     }
 
     // ========== EQUALITY TYPE PARSING TESTS ==========
@@ -2731,5 +2741,34 @@ tcon @List (%a : U0) : -> U0 where
                 input, printed
             );
         }
+    }
+
+    #[test]
+    fn test_parse_rejects_double_underscore() {
+        let db = TestDatabase::default();
+        // Core syntax lexer/parser should reject consecutive underscores
+        // The error happens at lexing/parsing stage before str_to_name validation
+        let result = parse_syntax(&db, "const @__ : Type = Type");
+        assert!(result.is_err(), "Parser should reject '__' in identifiers");
+    }
+
+    #[test]
+    fn test_parse_rejects_triple_underscore() {
+        let db = TestDatabase::default();
+        let result = parse_syntax(&db, "const @___ : Type = Type");
+        assert!(
+            result.is_err(),
+            "Parser should reject '___' in identifiers"
+        );
+    }
+
+    #[test]
+    fn test_parse_rejects_consecutive_underscores_in_name() {
+        let db = TestDatabase::default();
+        let result = parse_syntax(&db, "const @foo__bar : Type = Type");
+        assert!(
+            result.is_err(),
+            "Parser should reject 'foo__bar' (consecutive underscores)"
+        );
     }
 }

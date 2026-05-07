@@ -19,7 +19,7 @@ use crate::{
     ctx::ElabCtx,
     elab::{self, Elaborator},
     error::ElabError,
-    names::bytes_to_simple_qname,
+    names::str_to_simple_qname,
     resolver::{OpenError, Resolver},
     state::SolverState,
     stub_table::StubTable,
@@ -204,9 +204,14 @@ where
         if let Statement::Open(open) = stmt {
             // Convert surface Id to path
             let path = match surface_id_to_path(db, &open.namespace) {
-                Some(p) => p,
-                None => {
-                    // Empty path - this shouldn't happen with valid syntax
+                Ok(p) if !p.is_empty() => p,
+                Ok(_) => continue, // Empty path
+                Err(e) => {
+                    // Report specific error (wildcard, consecutive underscores, etc.)
+                    errors.push(ElabError::NotInScope {
+                        name: format!("Invalid open namespace '{}': {}", open.namespace.value, e),
+                        span: None,
+                    });
                     continue;
                 }
             };
@@ -220,18 +225,23 @@ where
             // Handle alias if present
             if let Some(ref alias_id) = open.as_alias {
                 let alias_path = match surface_id_to_path(db, alias_id) {
-                    Some(p) => p.into_boxed_slice(),
-                    None => continue,
+                    Ok(p) if !p.is_empty() => p,
+                    Ok(_) => continue, // Empty path
+                    Err(e) => {
+                        errors.push(ElabError::NotInScope {
+                            name: format!("Invalid alias '{}': {}", alias_id.value, e),
+                            span: None,
+                        });
+                        continue;
+                    }
                 };
+                let alias_path = alias_path.into_boxed_slice();
                 // Add the alias to the scope
                 block_resolver = match block_resolver.alias_namespace(target_ns, alias_path) {
                     Ok(new_resolver) => new_resolver,
                     Err((OpenError::DuplicateOpen, resolver_back)) => {
                         errors.push(ElabError::NotInScope {
-                            name: format!(
-                                "Duplicate alias: {}",
-                                String::from_utf8_lossy(&alias_id.value)
-                            ),
+                            name: format!("Duplicate alias: {}", &alias_id.value),
                             span: None,
                         });
                         resolver_back
@@ -243,10 +253,7 @@ where
                     Ok(new_resolver) => new_resolver,
                     Err((OpenError::DuplicateOpen, resolver_back)) => {
                         errors.push(ElabError::NotInScope {
-                            name: format!(
-                                "Duplicate open: {}",
-                                String::from_utf8_lossy(&open.namespace.value)
-                            ),
+                            name: format!("Duplicate open: {}", &open.namespace.value),
                             span: None,
                         });
                         resolver_back
@@ -260,7 +267,7 @@ where
                 errors.push(ElabError::NotImplemented {
                     feature: format!(
                         "open modifiers (only/hiding/renaming) for namespace: {}",
-                        String::from_utf8_lossy(&open.namespace.value)
+                        &open.namespace.value
                     ),
                     span: None,
                 });
@@ -284,7 +291,16 @@ fn elab_def_statement<'db, Db>(
 ) where
     Db: salsa::Database,
 {
-    let qname = bytes_to_simple_qname(db, resolver.namespace(), &def.id.value);
+    let qname = match str_to_simple_qname(db, resolver.namespace(), &def.id.value) {
+        Ok(qn) => qn,
+        Err(e) => {
+            errors.push(ElabError::NotInScope {
+                name: format!("Invalid definition name: {}", e),
+                span: None,
+            });
+            return;
+        }
+    };
 
     // Elaborate inside a block so `global` borrow ends before mutation.
     // NOTE: Namespace resolution for the constant is handled inside elab_constant
@@ -320,7 +336,16 @@ fn elab_prim_statement<'db, Db>(
 ) where
     Db: salsa::Database,
 {
-    let qname = bytes_to_simple_qname(db, resolver.namespace(), &prim.id.value);
+    let qname = match str_to_simple_qname(db, resolver.namespace(), &prim.id.value) {
+        Ok(qn) => qn,
+        Err(e) => {
+            errors.push(ElabError::NotInScope {
+                name: format!("Invalid primitive name: {}", e),
+                span: None,
+            });
+            return;
+        }
+    };
 
     let result: Result<PrimitiveInfo<'db>, ElabError<'db>> = {
         let mut state = SolverState::new();
@@ -359,10 +384,17 @@ fn elab_inductive_statement<'db, Db>(
     // The stub table has the canonical QualifiedName that was created during workspace harvesting.
     // Creating a new one via bytes_to_simple_qname will have a different Salsa ID!
     let ind_path = match surface_id_to_path(db, &ind.name) {
-        Some(p) => p,
-        None => {
+        Ok(p) if !p.is_empty() => p,
+        Ok(_) => {
             errors.push(ElabError::NotInScope {
-                name: "Invalid inductive name".to_string(),
+                name: format!("Inductive name '{}' is empty", ind.name.value),
+                span: None,
+            });
+            return;
+        }
+        Err(e) => {
+            errors.push(ElabError::NotInScope {
+                name: format!("Invalid inductive name '{}': {}", ind.name.value, e),
                 span: None,
             });
             return;
@@ -444,17 +476,28 @@ fn elab_inductive_statement<'db, Db>(
             // Build DataConstructorInfo for each constructor
             let mut data_constructors = Vec::new();
             for ctor in &elaborated.constructors {
-                let ctor_path = surface_id_to_path(
+                let ctor_name_str = String::from_utf8_lossy(&ctor.name).into_owned();
+                let ctor_path = match surface_id_to_path(
                     db,
                     &hwml_surface::Id {
-                        value: ctor.name.clone().into_boxed_slice(),
+                        value: ctor_name_str.clone().into(),
                         loc: 0..0,
                     },
-                )
-                .ok_or_else(|| ElabError::NotInScope {
-                    name: "Invalid constructor name".to_string(),
-                    span: None,
-                })?;
+                ) {
+                    Ok(p) if !p.is_empty() => p,
+                    Ok(_) => {
+                        return Err(ElabError::NotInScope {
+                            name: format!("Constructor name '{}' is empty", ctor_name_str),
+                            span: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(ElabError::NotInScope {
+                            name: format!("Invalid constructor name '{}': {}", ctor_name_str, e),
+                            span: None,
+                        });
+                    }
+                };
                 let ctor_qname = QualifiedName::qualify_path(db, Some(qname), &ctor_path)
                     .ok_or_else(|| ElabError::NotInScope {
                         name: "Failed to qualify constructor name".to_string(),
@@ -519,10 +562,17 @@ fn elab_namespace_statement<'db, Db>(
 {
     // Convert the namespace Id to a path
     let ns_path = match surface_id_to_path(db, &ns.name) {
-        Some(p) => p,
-        None => {
+        Ok(p) if !p.is_empty() => p,
+        Ok(_) => {
             errors.push(ElabError::NotInScope {
-                name: "Invalid namespace name".to_string(),
+                name: format!("Namespace name '{}' is empty", ns.name.value),
+                span: None,
+            });
+            return;
+        }
+        Err(e) => {
+            errors.push(ElabError::NotInScope {
+                name: format!("Invalid namespace name '{}': {}", ns.name.value, e),
                 span: None,
             });
             return;
@@ -656,14 +706,16 @@ where
         // (This is simplified - in reality we'd need to track opens as we traverse)
         for stmt in &program.statements {
             if let hwml_surface::Statement::Open(open_stmt) = stmt {
-                if let Some(path) = crate::util::surface_id_to_path(db, &open_stmt.namespace) {
-                    if let Some(qname) = QualifiedName::qualify_path(db, None, &path) {
-                        // Check if it exists in the global stub table
-                        if global_stub_table.get(qname).is_some() {
-                            // Use open_namespace which returns Result<Self, (Error, Self)>
-                            match file_resolver.clone().open_namespace(qname) {
-                                Ok(updated_resolver) => file_resolver = updated_resolver,
-                                Err((_, resolver)) => file_resolver = resolver, // Ignore duplicate opens
+                if let Ok(path) = crate::util::surface_id_to_path(db, &open_stmt.namespace) {
+                    if !path.is_empty() {
+                        if let Some(qname) = QualifiedName::qualify_path(db, None, &path) {
+                            // Check if it exists in the global stub table
+                            if global_stub_table.get(qname).is_some() {
+                                // Use open_namespace which returns Result<Self, (Error, Self)>
+                                match file_resolver.clone().open_namespace(qname) {
+                                    Ok(updated_resolver) => file_resolver = updated_resolver,
+                                    Err((_, resolver)) => file_resolver = resolver, // Ignore duplicate opens
+                                }
                             }
                         }
                     }
@@ -1019,8 +1071,15 @@ fn gather_declarations<'db, Db>(
             Statement::Namespace(ns) => {
                 // Qualify namespace name
                 let path = match surface_id_to_path(db, &ns.name) {
-                    Some(p) => p,
-                    None => continue,
+                    Ok(p) if !p.is_empty() => p,
+                    Ok(_) => continue, // Empty namespace name
+                    Err(e) => {
+                        eprintln!(
+                            "[STUB] Warning: Invalid namespace name '{}': {}",
+                            ns.name.value, e
+                        );
+                        continue;
+                    }
                 };
                 let ns_qname = match QualifiedName::qualify_path(db, current_namespace, &path) {
                     Some(q) => q,
@@ -1040,8 +1099,15 @@ fn gather_declarations<'db, Db>(
                 let qname = match stmt {
                     Statement::Def(def) => {
                         let path = match surface_id_to_path(db, &def.id) {
-                            Some(p) => p,
-                            None => continue,
+                            Ok(p) if !p.is_empty() => p,
+                            Ok(_) => continue, // Empty name
+                            Err(e) => {
+                                eprintln!(
+                                    "[STUB] Warning: Invalid def name '{}': {}",
+                                    def.id.value, e
+                                );
+                                continue;
+                            }
                         };
                         match QualifiedName::qualify_path(db, current_namespace, &path) {
                             Some(q) => q,
@@ -1050,8 +1116,15 @@ fn gather_declarations<'db, Db>(
                     }
                     Statement::Inductive(ind) => {
                         let path = match surface_id_to_path(db, &ind.name) {
-                            Some(p) => p,
-                            None => continue,
+                            Ok(p) if !p.is_empty() => p,
+                            Ok(_) => continue, // Empty name
+                            Err(e) => {
+                                eprintln!(
+                                    "[STUB] Warning: Invalid inductive name '{}': {}",
+                                    ind.name.value, e
+                                );
+                                continue;
+                            }
                         };
                         match QualifiedName::qualify_path(db, current_namespace, &path) {
                             Some(q) => q,
@@ -1060,8 +1133,15 @@ fn gather_declarations<'db, Db>(
                     }
                     Statement::Prim(prim) => {
                         let path = match surface_id_to_path(db, &prim.id) {
-                            Some(p) => p,
-                            None => continue,
+                            Ok(p) if !p.is_empty() => p,
+                            Ok(_) => continue, // Empty name
+                            Err(e) => {
+                                eprintln!(
+                                    "[STUB] Warning: Invalid primitive name '{}': {}",
+                                    prim.id.value, e
+                                );
+                                continue;
+                            }
                         };
                         match QualifiedName::qualify_path(db, current_namespace, &path) {
                             Some(q) => q,

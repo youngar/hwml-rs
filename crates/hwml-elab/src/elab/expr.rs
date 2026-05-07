@@ -10,7 +10,6 @@ use crate::{
     error::ElabError,
     kernel::{extract_binder_name, Checked, Kernel},
     meta::MetaKind,
-    util::bytes_to_path,
 };
 
 use super::Elaborator;
@@ -86,12 +85,12 @@ where
     match expr {
         Expression::Universe(_) => elab.kernel.synth_universe(None),
         Expression::Id(id) => {
-            let name = String::from_utf8_lossy(&id.value).to_string();
+            let name = &*id.value;
 
             eprintln!("[EXPR] Synthesizing identifier: {}", name);
 
             // Try local context first
-            if let Some((idx, _)) = elab.kernel.ctx.lookup(&name) {
+            if let Some((idx, _)) = elab.kernel.ctx.lookup(name) {
                 eprintln!(
                     "[EXPR] Found '{}' in local context at index {:?}",
                     name, idx
@@ -105,43 +104,45 @@ where
             );
 
             // Try global resolution
-            let path = bytes_to_path(db, &id.value);
-            eprintln!(
-                "[EXPR] Converted '{}' to path with {} segments",
-                name,
-                path.len()
-            );
-            match elab.kernel.synth_global_by_path(db, &path) {
-                Ok(result) => {
-                    eprintln!("[EXPR] Successfully resolved '{}' globally", name);
-                    return Ok(result);
+            match crate::util::str_to_path(db, &id.value) {
+                Ok(path) => {
+                    eprintln!(
+                        "[EXPR] Converted '{}' to path with {} segments",
+                        name,
+                        path.len()
+                    );
+                    match elab.kernel.synth_global_by_path(db, &path) {
+                        Ok(result) => {
+                            eprintln!("[EXPR] Successfully resolved '{}' globally", name);
+                            return Ok(result);
+                        }
+                        Err(e) => {
+                            eprintln!("[EXPR] Global resolution failed for '{}': {:?}", name, e);
+                        }
+                    }
                 }
                 Err(e) => {
-                    eprintln!("[EXPR] Global resolution failed for '{}': {:?}", name, e);
+                    eprintln!("[EXPR] Malformed identifier '{}': {:?}", name, e);
                 }
             }
 
             // Check if this is a dotted identifier like "x.foo" or "x.foo.bar"
-            if let Some(dot_pos) = id.value.iter().position(|&b| b == b'.') {
-                let receiver_bytes = &id.value[..dot_pos];
-                let receiver_name = String::from_utf8_lossy(receiver_bytes).to_string();
+            if let Some(dot_pos) = id.value.find('.') {
+                let receiver_name = &id.value[..dot_pos];
 
                 // Check if the first segment is a local variable
-                if let Some((idx, _)) = elab.kernel.ctx.lookup(&receiver_name) {
+                if let Some((idx, _)) = elab.kernel.ctx.lookup(receiver_name) {
                     // Split segments: ["x", "foo", "bar", ...]
-                    let segments: Vec<&[u8]> = id.value.split(|&b| b == b'.').collect();
+                    let segments: Vec<&str> = id.value.split('.').collect();
 
                     // Start with the receiver
                     let (mut current_syn, mut current_ty) =
                         elab.kernel.synth_var(idx)?.into_inner();
 
                     // Chain through all field accesses
-                    for field_bytes in &segments[1..] {
-                        let text = String::from_utf8_lossy(field_bytes);
-                        let word = hwml_core::Word::new(db, text.as_ref());
-                        let atom = hwml_core::Atom::new(word);
-                        let field_name =
-                            Name::new(db, hwml_core::Fixity::Closed, Box::from([atom]));
+                    for field_str in &segments[1..] {
+                        let field_name = hwml_core::str_to_name(db, *field_str)
+                            .expect("Lexer should prevent malformed field names");
                         let result = synth_dot(db, elab, current_syn, current_ty, field_name)?;
                         let (syn, ty) = result.into_inner();
                         current_syn = syn;
@@ -153,7 +154,7 @@ where
             }
 
             // If all resolution attempts fail, return a helpful error
-            if id.value.contains(&b'.') {
+            if id.value.contains('.') {
                 let segments: Vec<&str> = name.split('.').collect();
                 Err(ElabError::NotInScope {
                     name: format!(
@@ -163,15 +164,17 @@ where
                     span: None,
                 })
             } else {
-                Err(ElabError::NotInScope { name, span: None })
+                Err(ElabError::NotInScope {
+                    name: name.to_string(),
+                    span: None,
+                })
             }
         }
         Expression::Dot(dot) => {
             // Elaborate receiver
             let (receiver_syn, receiver_ty) = synth(db, elab, &dot.receiver)?.into_inner();
             // Extract field name
-            let text = String::from_utf8_lossy(&dot.field.value);
-            let word = hwml_core::Word::new(db, text.as_ref());
+            let word = hwml_core::Word::new(db, &*dot.field.value);
             let atom = hwml_core::Atom::new(word);
             let field_name = Name::new(db, hwml_core::Fixity::Closed, Box::from([atom]));
             synth_dot(db, elab, receiver_syn, receiver_ty, field_name)
@@ -366,7 +369,7 @@ fn synth_let_in<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let name = String::from_utf8_lossy(&let_in.id.value).to_string();
+    let name = let_in.id.value.to_string();
 
     // Phase 2: require an explicit type annotation.
     let ty_expr = let_in

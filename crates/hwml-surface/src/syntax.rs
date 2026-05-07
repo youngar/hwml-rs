@@ -1,37 +1,6 @@
 use derive_new::new;
 use std::ops::Range;
 
-/// Source location in Line:Column format (0-based)
-/// This is more convenient for creating hwml_core::Location later
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-pub struct LineColRange {
-    pub start_line: usize,
-    pub start_column: usize,
-    pub end_line: usize,
-    pub end_column: usize,
-}
-
-impl LineColRange {
-    pub fn new(start_line: usize, start_column: usize, end_line: usize, end_column: usize) -> Self {
-        LineColRange {
-            start_line,
-            start_column,
-            end_line,
-            end_column,
-        }
-    }
-
-    /// Create from a byte range using ParserContext
-    pub fn from_byte_range(
-        start: usize,
-        end: usize,
-        ctx: &mut crate::parsing::ParserContext,
-    ) -> Self {
-        let (start_line, start_column, end_line, end_column) = ctx.range_to_line_col(start, end);
-        LineColRange::new(start_line, start_column, end_line, end_column)
-    }
-}
-
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Program {
     pub statements: Vec<Statement>,
@@ -47,36 +16,11 @@ pub enum Statement {
     Open(Open),
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Namespace {
-    pub loc: Range<usize>,      // Old byte range (for backward compat)
-    pub line_col: LineColRange, // New line:column range
+    pub loc: Range<usize>,
     pub name: Id,
     pub statements: Vec<Statement>,
-}
-
-impl Namespace {
-    /// Old constructor using byte range (deprecated but kept for compatibility)
-    pub fn new(loc: Range<usize>, name: Id, statements: Vec<Statement>) -> Self {
-        // Default line_col to zeros - should be replaced with actual conversion
-        Namespace {
-            loc,
-            line_col: LineColRange::new(0, 0, 0, 0),
-            name,
-            statements,
-        }
-    }
-
-    /// New constructor using line:column range
-    pub fn new_with_line_col(line_col: LineColRange, name: Id, statements: Vec<Statement>) -> Self {
-        // Keep old loc as 0..0 for now - can be removed once all code migrated
-        Namespace {
-            loc: 0..0,
-            line_col,
-            name,
-            statements,
-        }
-    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -234,22 +178,22 @@ pub struct App {
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Id {
     pub loc: Range<usize>,
-    pub value: Box<[u8]>,
+    pub value: Box<str>,
 }
 
 impl Id {
     /// Iterator over the segments of a qualified identifier.
     /// For example, "Foo.Bar.Baz" yields ["Foo", "Bar", "Baz"]
     /// A simple identifier like "Foo" yields ["Foo"]
-    pub fn segments(&self) -> impl Iterator<Item = &[u8]> {
-        self.value.split(|&b| b == b'.')
+    pub fn segments(&self) -> impl Iterator<Item = &str> {
+        self.value.split('.')
     }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct Num {
     pub loc: Range<usize>,
-    pub value: Box<[u8]>,
+    pub value: Box<str>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]

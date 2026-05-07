@@ -2,7 +2,7 @@
 ///
 /// Run with `cargo test -p hwml_elab --test snap_tests`.
 /// Accept new snapshots with `cargo insta review` or `INSTA_UPDATE=always cargo test`.
-use hwml_core::{val::GlobalEnv, Database};
+use hwml_core::{val::GlobalEnv, TestDatabase};
 use hwml_elab::{
     ctx::ElabCtx,
     elab::{decl::elab_constant, Elaborator},
@@ -22,7 +22,7 @@ use hwml_surface::syntax::Statement;
 ///   type: <core IR>
 ///   value: <core IR>
 fn elab_str(input: &str) -> String {
-    let db = Database::new();
+    let db = TestDatabase::default();
     let global = GlobalEnv::new();
 
     let program = match hwml_surface::parsing::parse(input.as_bytes()) {
@@ -39,7 +39,7 @@ fn elab_str(input: &str) -> String {
     for stmt in &program.statements {
         match stmt {
             Statement::Def(def) => {
-                let name = String::from_utf8_lossy(&def.id.value).into_owned();
+                let name = def.id.value.to_string();
                 let mut state = SolverState::new();
                 let ctx = ElabCtx::empty();
                 let mut elab = Elaborator::new(&global, ctx, &mut state, &resolver, &stub_table);
@@ -106,11 +106,11 @@ fn snap_return_type_binder() {
 #[test]
 fn snap_identity_function() {
     let src = "def id (A : Type) (a : A) : A := a";
-    insta::assert_snapshot!(elab_str(src), @r#"
--- id
-type:  ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %1
-value: λ %0 %1 → %0
-"#);
+    insta::assert_snapshot!(elab_str(src), @r###"
+    -- id
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0
+    value: λ %0 %1 → %1
+    "###);
 }
 
 // ── Level 2: higher-order ─────────────────────────────────────────────────────
@@ -121,8 +121,8 @@ fn snap_apply() {
     let src = "def apply (A : Type) (B : Type) (f : A -> B) (a : A) : B := f a";
     insta::assert_snapshot!(elab_str(src), @r###"
     -- apply
-    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : ∀ (%2 : %1) → %1) → ∀ (%3 : %2) → %2
-    value: λ %0 %1 %2 %3 → 𝒰0
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : ∀ (%2 : %0) → %1) → ∀ (%3 : %0) → %1
+    value: λ %0 %1 %2 %3 → %2[%3]
     "###);
 }
 
@@ -131,8 +131,8 @@ fn snap_const() {
     let src = "def const (A : Type) (B : Type) (a : A) (b : B) : A := a";
     insta::assert_snapshot!(elab_str(src), @r###"
     -- const
-    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %1) → ∀ (%3 : %1) → %3
-    value: λ %0 %1 %2 %3 → %1
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %0) → ∀ (%3 : %1) → %0
+    value: λ %0 %1 %2 %3 → %2
     "###);
 }
 
@@ -143,9 +143,9 @@ fn snap_compose() {
     let src = "def compose (A : Type) (B : Type) (C : Type) (f : B -> C) (g : A -> B) (a : A) : C := f (g a)";
     insta::assert_snapshot!(elab_str(src), @r###"
     -- compose
-    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %1) → %1) → ∀ (%4 : ∀
-    (%4 : %3) → %3) → ∀ (%5 : %4) → %3
-    value: λ %0 %1 %2 %3 %4 %5 → 𝒰0
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %1) → %2) → ∀ (%4 : ∀
+    (%4 : %0) → %1) → ∀ (%5 : %0) → %2
+    value: λ %0 %1 %2 %3 %4 %5 → %3[%4[%5]]
     "###);
 }
 
@@ -155,12 +155,12 @@ fn snap_compose() {
 fn snap_flip_function() {
     let src =
         "def flip (A : Type) (B : Type) (C : Type) (f : A -> B -> C) (b : B) (a : A) : C := f a b";
-    insta::assert_snapshot!(elab_str(src), @r#"
--- flip
-type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %2) → ∀ (%4 : %2) → %2)
-→ ∀ (%4 : %2) → ∀ (%5 : %4) → %3
-value: λ %0 %1 %2 %3 %4 %5 → 𝒰0
-"#);
+    insta::assert_snapshot!(elab_str(src), @r###"
+    -- flip
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %0) → ∀ (%4 : %1) → %2)
+    → ∀ (%4 : %1) → ∀ (%5 : %0) → %2
+    value: λ %0 %1 %2 %3 %4 %5 → %3[%5, %4]
+    "###);
 }
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
@@ -170,15 +170,15 @@ fn snap_multiple_defs() {
     let src = "\
 def id (A : Type) (a : A) : A := a
 def const (A : Type) (B : Type) (a : A) (b : B) : A := a";
-    insta::assert_snapshot!(elab_str(src), @r#"
--- id
-type:  ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %1
-value: λ %0 %1 → %0
+    insta::assert_snapshot!(elab_str(src), @r###"
+    -- id
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0
+    value: λ %0 %1 → %1
 
--- const
-type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %1) → ∀ (%3 : %1) → %3
-value: λ %0 %1 %2 %3 → %1
-"#);
+    -- const
+    type:  ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %0) → ∀ (%3 : %1) → %0
+    value: λ %0 %1 %2 %3 → %2
+    "###);
 }
 
 #[test]

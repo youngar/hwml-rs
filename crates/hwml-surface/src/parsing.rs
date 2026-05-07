@@ -1,4 +1,3 @@
-use hwml_support::LineInfo;
 use lalrpop_util::lalrpop_mod;
 
 use crate::{lex::Lexer, parsing::grammar::ProgramParser, syntax::Program};
@@ -9,57 +8,10 @@ lalrpop_mod!(
     pub grammar
 );
 
-/// Helper struct to track line information during parsing.
-///
-/// **NEW APPROACH**: Because HWML uses a lossless grammar, the lexer now
-/// tracks line:column natively as it streams tokens (see `LocLexer`).
-/// This ParserContext now uses lazy LineInfo only as a fallback for
-/// byte-offset-based grammar rules during migration.
-pub struct ParserContext {
-    /// Lazy-initialized LineInfo (only created if needed for byte offset conversion)
-    line_info: Option<LineInfo>,
-    /// Source input (for lazy LineInfo construction)
-    input: Vec<u8>,
-}
-
-impl ParserContext {
-    pub fn new(input: &[u8]) -> Self {
-        ParserContext {
-            line_info: None,
-            input: input.to_vec(),
-        }
-    }
-
-    /// Convert a byte offset to (line, column) - both 0-based
-    ///
-    /// **DEPRECATED**: Prefer using `LocLexer` which tracks line:column natively.
-    /// This is only for backward compatibility during migration.
-    pub fn offset_to_line_col(&mut self, offset: usize) -> (usize, usize) {
-        let line_info = self
-            .line_info
-            .get_or_insert_with(|| LineInfo::from_bytes(&self.input));
-        line_info.loc(offset)
-    }
-
-    /// Convert a byte range to (start_line, start_col, end_line, end_col) - all 0-based
-    ///
-    /// **DEPRECATED**: Prefer using `LocLexer` which provides start location directly.
-    /// This is only for backward compatibility during migration.
-    pub fn range_to_line_col(&mut self, start: usize, end: usize) -> (usize, usize, usize, usize) {
-        let line_info = self
-            .line_info
-            .get_or_insert_with(|| LineInfo::from_bytes(&self.input));
-        let (start_line, start_col) = line_info.loc(start);
-        let (end_line, end_col) = line_info.loc(end);
-        (start_line, start_col, end_line, end_col)
-    }
-}
-
 pub fn parse(input: &[u8]) -> Option<Program> {
-    let mut ctx = ParserContext::new(input);
     let lexer = Lexer::new(input);
     let parser = ProgramParser::new();
-    let result = parser.parse(input, &mut ctx, lexer);
+    let result = parser.parse(input, lexer);
     match result {
         Ok(program) => Some(program),
         Err(err) => {
@@ -82,18 +34,12 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Inductive(ind) => {
-                assert_eq!(std::str::from_utf8(&ind.name.value).unwrap(), "Bool");
+                assert_eq!(&*ind.name.value, "Bool");
                 assert_eq!(ind.parameters.groups.len(), 0);
                 assert_eq!(ind.indices.groups.len(), 0);
                 assert_eq!(ind.constructors.len(), 2);
-                assert_eq!(
-                    std::str::from_utf8(&ind.constructors[0].name.value).unwrap(),
-                    "true"
-                );
-                assert_eq!(
-                    std::str::from_utf8(&ind.constructors[1].name.value).unwrap(),
-                    "false"
-                );
+                assert_eq!(&*ind.constructors[0].name.value, "true");
+                assert_eq!(&*ind.constructors[1].name.value, "false");
             }
             _ => panic!("Expected Inductive statement"),
         }
@@ -108,7 +54,7 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Inductive(ind) => {
-                assert_eq!(std::str::from_utf8(&ind.name.value).unwrap(), "List");
+                assert_eq!(&*ind.name.value, "List");
                 assert_eq!(ind.parameters.groups.len(), 1);
                 assert_eq!(ind.indices.groups.len(), 0);
                 assert_eq!(ind.constructors.len(), 2);
@@ -125,7 +71,7 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Inductive(ind) => {
-                assert_eq!(std::str::from_utf8(&ind.name.value).unwrap(), "Vec");
+                assert_eq!(&*ind.name.value, "Vec");
                 assert_eq!(ind.parameters.groups.len(), 1);
                 assert_eq!(ind.indices.groups.len(), 1);
                 assert_eq!(ind.constructors.len(), 2);
@@ -142,14 +88,11 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Inductive(ind) => {
-                assert_eq!(std::str::from_utf8(&ind.name.value).unwrap(), "Eq");
+                assert_eq!(&*ind.name.value, "Eq");
                 assert_eq!(ind.parameters.groups.len(), 2); // (A : Type) (a : A)
                 assert_eq!(ind.indices.groups.len(), 1); // (b : A)
                 assert_eq!(ind.constructors.len(), 1);
-                assert_eq!(
-                    std::str::from_utf8(&ind.constructors[0].name.value).unwrap(),
-                    "refl"
-                );
+                assert_eq!(&*ind.constructors[0].name.value, "refl");
             }
             _ => panic!("Expected Inductive statement"),
         }
@@ -163,10 +106,10 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Namespace(ns) => {
-                assert_eq!(std::str::from_utf8(&ns.name.value).unwrap(), "Foo");
+                assert_eq!(&*ns.name.value, "Foo");
                 let segments: Vec<_> = ns.name.segments().collect();
                 assert_eq!(segments.len(), 1);
-                assert_eq!(segments[0], b"Foo");
+                assert_eq!(segments[0], "Foo");
                 assert_eq!(ns.statements.len(), 1);
             }
             _ => panic!("Expected Namespace statement"),
@@ -181,12 +124,12 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Namespace(ns) => {
-                assert_eq!(std::str::from_utf8(&ns.name.value).unwrap(), "Foo.Bar.Baz");
+                assert_eq!(&*ns.name.value, "Foo.Bar.Baz");
                 let segments: Vec<_> = ns.name.segments().collect();
                 assert_eq!(segments.len(), 3);
-                assert_eq!(segments[0], b"Foo");
-                assert_eq!(segments[1], b"Bar");
-                assert_eq!(segments[2], b"Baz");
+                assert_eq!(segments[0], "Foo");
+                assert_eq!(segments[1], "Bar");
+                assert_eq!(segments[2], "Baz");
                 assert_eq!(ns.statements.len(), 1);
             }
             _ => panic!("Expected Namespace statement"),
@@ -201,18 +144,18 @@ mod tests {
 
         match &program.statements[0] {
             Statement::Namespace(outer) => {
-                assert_eq!(std::str::from_utf8(&outer.name.value).unwrap(), "Outer");
+                assert_eq!(&*outer.name.value, "Outer");
                 let segments: Vec<_> = outer.name.segments().collect();
                 assert_eq!(segments.len(), 1);
-                assert_eq!(segments[0], b"Outer");
+                assert_eq!(segments[0], "Outer");
                 assert_eq!(outer.statements.len(), 1);
 
                 match &outer.statements[0] {
                     Statement::Namespace(inner) => {
-                        assert_eq!(std::str::from_utf8(&inner.name.value).unwrap(), "Inner");
+                        assert_eq!(&*inner.name.value, "Inner");
                         let segments: Vec<_> = inner.name.segments().collect();
                         assert_eq!(segments.len(), 1);
-                        assert_eq!(segments[0], b"Inner");
+                        assert_eq!(segments[0], "Inner");
                         assert_eq!(inner.statements.len(), 1);
                     }
                     _ => panic!("Expected nested Namespace statement"),

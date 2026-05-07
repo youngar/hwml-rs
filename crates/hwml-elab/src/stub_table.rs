@@ -149,7 +149,10 @@ fn harvest_namespace<'db>(
     // Extend the current namespace with the new new namespace, and recurse into
     // the namespace's statements.
     let path =
-        surface_id_to_path(db, &ns.name).ok_or_else(|| "Invalid namespace name".to_string())?;
+        surface_id_to_path(db, &ns.name).map_err(|e| format!("Invalid namespace name: {}", e))?;
+    if path.is_empty() {
+        return Err("Invalid namespace name".to_string());
+    }
     let namespace = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify namespace".to_string())?;
     for statement in &ns.statements {
@@ -166,7 +169,10 @@ fn harvest_def<'db>(
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
     let path =
-        surface_id_to_path(db, &def.id).ok_or_else(|| "Invalid definition name".to_string())?;
+        surface_id_to_path(db, &def.id).map_err(|e| format!("Invalid definition name: {}", e))?;
+    if path.is_empty() {
+        return Err("Invalid definition name".to_string());
+    }
     let name: QualifiedName<'_> = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify definition name".to_string())?;
 
@@ -183,7 +189,10 @@ fn harvest_meta<'db>(
     meta: &surface::Meta,
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
-    let path = surface_id_to_path(db, &meta.id).ok_or_else(|| "Invalid meta name".to_string())?;
+    let path = surface_id_to_path(db, &meta.id).map_err(|e| format!("Invalid meta name: {}", e))?;
+    if path.is_empty() {
+        return Err("Invalid meta name".to_string());
+    }
     let name = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify meta name".to_string())?;
 
@@ -201,7 +210,10 @@ fn harvest_prim<'db>(
     source_range: SourceRange<'db>,
 ) -> Result<(), String> {
     let path =
-        surface_id_to_path(db, &prim.id).ok_or_else(|| "Invalid primitive name".to_string())?;
+        surface_id_to_path(db, &prim.id).map_err(|e| format!("Invalid primitive name: {}", e))?;
+    if path.is_empty() {
+        return Err("Invalid primitive name".to_string());
+    }
     let name = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify primitive name".to_string())?;
 
@@ -220,7 +232,10 @@ fn harvest_inductive<'db>(
 ) -> Result<(), String> {
     // Add the data type definition.
     let path =
-        surface_id_to_path(db, &ind.name).ok_or_else(|| "Invalid inductive name".to_string())?;
+        surface_id_to_path(db, &ind.name).map_err(|e| format!("Invalid inductive name: {}", e))?;
+    if path.is_empty() {
+        return Err("Invalid inductive name".to_string());
+    }
     let name = QualifiedName::qualify_path(db, namespace, &path)
         .ok_or_else(|| "Failed to qualify inductive name".to_string())?;
 
@@ -231,7 +246,10 @@ fn harvest_inductive<'db>(
     // Add all constructors underneath the inductive's namespace.
     for constructor in &ind.constructors {
         let ctor_path = surface_id_to_path(db, &constructor.name)
-            .ok_or_else(|| "Invalid constructor name".to_string())?;
+            .map_err(|e| format!("Invalid constructor name: {}", e))?;
+        if ctor_path.is_empty() {
+            return Err("Invalid constructor name".to_string());
+        }
         let ctor_name = QualifiedName::qualify_path(db, Some(name), &ctor_path)
             .ok_or_else(|| "Failed to qualify constructor name".to_string())?;
         let ctor_source_range = SourceRange::new(source_range.source, constructor.loc.clone());
