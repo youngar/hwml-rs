@@ -1,7 +1,7 @@
 use clap::Parser;
 use hwml_db::CompilerSession;
 use hwml_vfs::{OsVfs, Vfs};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[clap(author = "Andrew Young", version, about)]
@@ -190,10 +190,28 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
 
             // Parse using the Salsa-tracked query - this returns the SAME Program instance
             // that was used during harvesting, with the SAME interned Names!
-            let program = match hwml_db::parse_surface_program(&workspace_db, source_file) {
-                Some(p) => p,
+            let parse_result = hwml_db::parse_surface_program_with_errors(&workspace_db, source_file);
+
+            // Report parse errors using the diagnostic framework
+            if !parse_result.errors.is_empty() {
+                let text = source_file.text(&workspace_db);
+                let file_name = source_path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_else(|| {
+                        eprintln!("Warning: Non-UTF8 filename in path: {:?}", source_path);
+                        "unknown"
+                    });
+
+                for err in &parse_result.errors {
+                    let diagnostic = hwml_elab::diagnostic::parse_error_to_diagnostic(err, &text, file_name);
+                    eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name)));
+                }
+            }
+
+            // Skip this file if parsing failed
+            let program = match &parse_result.program {
+                Some(p) => p.clone(),
                 None => {
-                    eprintln!("    Warning: Failed to parse {}", source_path.display());
                     continue;
                 }
             };
@@ -233,9 +251,51 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
             );
         }
 
-        // Show errors (they already include file paths from the elaborator)
+        // Show errors using the diagnostic system
         for err in &result.errors {
-            eprintln!("    Error: {:?}", err);
+            // Try to find source file and text
+            let (file_name, source_text) = if let Some(source_range) = err.span() {
+                use hwml_core::SourceInfo;
+
+                // Check if this is a real file or synthetic source
+                match source_range.source.info(&workspace_db) {
+                    SourceInfo::File(file_id) => {
+                        // Real source file - lookup using SourceFileId
+                        // Zero-allocation lookup: use Path::new() instead of PathBuf::from()
+                        let canonical_path_str = file_id.path_str(&workspace_db);
+
+                        if let Some(source_file) = source_files.get(Path::new(canonical_path_str)) {
+                            let text = source_file.text(&workspace_db);
+
+                            // Extract just the file name from the canonical path
+                            let fname = if let Some(pos) = canonical_path_str.rfind('/') {
+                                &canonical_path_str[pos + 1..]
+                            } else if let Some(pos) = canonical_path_str.rfind('\\') {
+                                &canonical_path_str[pos + 1..]
+                            } else {
+                                canonical_path_str
+                            };
+
+                            (fname.to_string(), text.to_string())
+                        } else {
+                            // Couldn't find source file in cache (shouldn't happen)
+                            ("unknown".to_string(), String::new())
+                        }
+                    }
+                    SourceInfo::Synthetic(_label) => {
+                        // Synthetic/compiler-generated source - skip displaying this error
+                        // These are internal metavariables that don't correspond to user code
+                        continue;
+                    }
+                }
+            } else {
+                // No span, use placeholder
+                ("unknown".to_string(), String::new())
+            };
+
+            // Always use the diagnostic system for consistent output
+            let diagnostic = hwml_elab::diagnostic::elab_error_to_diagnostic(&workspace_db, &global_env, err, &source_text, &file_name);
+            eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(&file_name)));
         }
     }
 
@@ -273,9 +333,24 @@ fn run_single_file(args: Args, file_path: PathBuf) {
         .expect("Failed to load file");
     let contents = source_file.text(&session.db);
 
-    let parse_result = hwml_surface::parsing::parse(contents.as_bytes());
+    let parse_result = hwml_surface::parsing::parse_with_errors(contents.as_bytes());
 
-    let Some(program) = parse_result else {
+    // Report parse errors using the diagnostic framework
+    if !parse_result.errors.is_empty() {
+        let file_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| {
+                eprintln!("Warning: Non-UTF8 filename in path: {:?}", path);
+                "unknown"
+            });
+
+        for err in &parse_result.errors {
+            let diagnostic = hwml_elab::diagnostic::parse_error_to_diagnostic(err, contents, file_name);
+            eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name)));
+        }
+    }
+
+    let Some(program) = parse_result.program else {
         println!("Failed to parse");
         return;
     };
@@ -283,8 +358,15 @@ fn run_single_file(args: Args, file_path: PathBuf) {
     // Create Salsa database
     let db = hwml_db::HwmlDatabase::new();
 
+    // Create a Source for this file (for better error messages)
+    let lib_name = hwml_core::Word::new(&db, "main");
+    let path_str = hwml_core::Word::new(&db, path.to_string_lossy().as_ref());
+    let source_file_id = hwml_core::SourceFileId::new(&db, lib_name, path_str);
+    let source_info = hwml_core::SourceInfo::File(source_file_id);
+    let source = hwml_core::Source::new(&db, source_info);
+
     let mut global = hwml_core::val::GlobalEnv::new();
-    let result = hwml_elab::program::elab_program(&db, &mut global, &program);
+    let result = hwml_elab::program::elab_program_with_source(&db, &mut global, &program, Some(source));
 
     for decl in &result.decls {
         match decl {
@@ -312,8 +394,18 @@ fn run_single_file(args: Args, file_path: PathBuf) {
         }
     }
 
+    // Render errors using the diagnostic system
     for err in &result.errors {
-        eprintln!("error: {:?}", err);
+        // Extract just the file name for cleaner output
+        let file_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| {
+                eprintln!("Warning: Non-UTF8 filename in path: {:?}", path);
+                "unknown"
+            });
+
+        let diagnostic = hwml_elab::diagnostic::elab_error_to_diagnostic(&db, &global, err, contents, file_name);
+        eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name)));
     }
 }
 
