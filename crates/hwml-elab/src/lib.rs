@@ -1,5 +1,7 @@
 pub mod constraint;
+pub mod context;
 pub mod ctx;
+pub mod diagnostic;
 pub mod elab;
 pub mod error;
 pub mod kernel;
