@@ -78,7 +78,7 @@ impl Vfs for MemoryVfs {
             .clone();
 
         // Create Salsa input
-        let file = SourceFile::new(db, path.to_path_buf(), text);
+        let file = SourceFile::new(db, path.to_path_buf(), text, "memory".to_string());
         self.salsa_files.insert(path.to_path_buf(), file);
 
         Ok(file)
@@ -98,7 +98,7 @@ impl Vfs for MemoryVfs {
             file.set_text(db).to(new_text);
         } else {
             // File not loaded yet, create it
-            let file = SourceFile::new(db, path.to_path_buf(), new_text);
+            let file = SourceFile::new(db, path.to_path_buf(), new_text, "memory".to_string());
             self.salsa_files.insert(path.to_path_buf(), file);
         }
 

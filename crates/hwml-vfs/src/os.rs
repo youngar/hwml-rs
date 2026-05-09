@@ -55,7 +55,7 @@ impl Vfs for OsVfs {
         let text = std::fs::read_to_string(&canonical).map_err(VfsError::Io)?;
 
         // Create Salsa input
-        let file = SourceFile::new(db, canonical.clone(), text);
+        let file = SourceFile::new(db, canonical.clone(), text, "os".to_string());
         self.files.insert(canonical, file);
 
         Ok(file)
@@ -76,7 +76,7 @@ impl Vfs for OsVfs {
             file.set_text(db).to(new_text);
         } else {
             // File not loaded yet, create it
-            let file = SourceFile::new(db, canonical.clone(), new_text);
+            let file = SourceFile::new(db, canonical.clone(), new_text, "os".to_string());
             self.files.insert(canonical, file);
         }
 

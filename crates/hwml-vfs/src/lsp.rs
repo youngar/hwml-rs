@@ -54,7 +54,7 @@ impl LspVfs {
         path: PathBuf,
         content: String,
     ) -> SourceFile {
-        let file = SourceFile::new(db, path.clone(), content);
+        let file = SourceFile::new(db, path.clone(), content, "lsp".to_string());
         self.open_documents.insert(uri, (path, file));
         file
     }
@@ -120,7 +120,7 @@ impl Vfs for LspVfs {
             .canonicalize()
             .map_err(|_| VfsError::Canonicalization(path.to_path_buf()))?;
         
-        Ok(SourceFile::new(db, canonical, text))
+        Ok(SourceFile::new(db, canonical, text, "lsp".to_string()))
     }
 
     fn update_file(
