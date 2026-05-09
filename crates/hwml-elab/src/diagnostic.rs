@@ -54,20 +54,25 @@ where
 }
 
 /// Format a value for display in error messages (used in unification errors)
-fn format_value<'db, Db>(db: &'db Db, _global: &GlobalEnv<'db>, val: &hwml_core::RcValue<'db>) -> String
+///
+/// Uses type-free quotation to convert values back to syntax, then pretty-prints.
+/// This handles DataConstructor and TypeConstructor values with their arguments.
+fn format_value<'db, Db>(db: &'db Db, global: &GlobalEnv<'db>, val: &hwml_core::RcValue<'db>) -> String
 where
     Db: salsa::Database,
 {
-    use hwml_core::Value;
-    match val.as_ref() {
-        Value::UniverseCode(n) => format!("Type{}", n),
-        Value::TypeConstructor(tc) => tc.constructor.to_string(db),
-        Value::DataConstructor(dc) => dc.constructor.to_string(db),
-        Value::PiCode(_, _) => "Π type".to_string(),
-        Value::BitCode => "Bit".to_string(),
-        Value::Flex(flex) => format!("?{}", flex.head.id.local_index),
-        Value::Rigid(r) => format!("%{}", r.head.level.0),
-        _ => format!("{:?}", val), // Fallback to debug for complex cases
+    // Try to quote the value back to syntax using type-free quotation
+    match hwml_core::quote::type_quote(global, 0, val) {
+        Ok(syntax) => hwml_core::syn::print::print_syntax_to_string(db, &syntax),
+        Err(_) => {
+            // If quotation fails, fall back to simple formatting
+            use hwml_core::Value;
+            match val.as_ref() {
+                Value::Flex(flex) => format!("?{}", flex.head.id.local_index),
+                Value::Rigid(r) => format!("%{}", r.head.level.0),
+                _ => format!("{:?}", val), // Last resort: debug format
+            }
+        }
     }
 }
 
