@@ -178,6 +178,11 @@ impl<'a, 'db> Unifier<'a, 'db> {
             return self.unify_rigids(lr, rr, &lhs, &rhs);
         }
 
+        // Both StuckApplication: unify constant heads and spines.
+        if let (Value::StuckApplication(sa1), Value::StuckApplication(sa2)) = (lhs.as_ref(), rhs.as_ref()) {
+            return self.unify_stuck_applications(sa1, sa2, &lhs, &rhs);
+        }
+
         // Structural cases for specific value forms
         match (lhs.as_ref(), rhs.as_ref()) {
             (Value::UniverseCode(n), Value::UniverseCode(m)) => {
@@ -282,6 +287,31 @@ impl<'a, 'db> Unifier<'a, 'db> {
         }
         let sp1 = lr.spine.clone();
         let sp2 = rr.spine.clone();
+        self.unify_spines(&sp1, &sp2)
+    }
+
+    /// Unify two stuck applications with the same constant head.
+    /// StuckApplication(c, sp1) = StuckApplication(c, sp2) requires c1 == c2 && sp1 = sp2.
+    /// This handles applications of opaque constants during mutual recursion.
+    fn unify_stuck_applications(
+        &mut self,
+        sa1: &hwml_core::val::StuckApplication<'db>,
+        sa2: &hwml_core::val::StuckApplication<'db>,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        // Check that both have the same constant head
+        if sa1.head.name != sa2.head.name {
+            return Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            });
+        }
+        // Unify spines
+        let sp1 = sa1.spine.clone();
+        let sp2 = sa2.spine.clone();
         self.unify_spines(&sp1, &sp2)
     }
 
