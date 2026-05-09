@@ -21,6 +21,7 @@ futures.workspace = true
 hwml_core.workspace = true
 hwml_surface.workspace = true
 hwml_support.workspace = true
+hwml-diagnostic = { path = "../hwml-diagnostic" }
 im.workspace = true
 salsa.workspace = true
 slab.workspace = true
