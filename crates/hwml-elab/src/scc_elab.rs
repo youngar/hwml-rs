@@ -19,9 +19,9 @@ use std::rc::Rc;
 use hwml_core::{
     ty::{RcTy, Ty},
     val::{ConstantInfo, DataConstructorInfo, GlobalEnv, TypeConstructorInfo},
-    QualifiedName, RcSyntax, UniverseLevel,
+    QualifiedName, RcSyntax, Source, SourceRange, UniverseLevel,
 };
-use hwml_surface::Statement;
+use hwml_surface::{Def, Inductive, Statement};
 
 use crate::{
     ctx::ElabCtx,
@@ -34,6 +34,23 @@ use crate::{
     stub_table::StubTable,
     zonk::{substitute_metas_in_syntax, zonk},
 };
+
+// ─── Helper functions ─────────────────────────────────────────────────────────
+
+/// Helper to create a SourceRange from a Def statement and its source.
+fn def_span<'db>(source: Source<'db>, def: &Def) -> Option<SourceRange<'db>> {
+    Some(SourceRange::new(source, def.loc.clone()))
+}
+
+/// Helper to create a SourceRange from an Inductive statement and its source.
+fn ind_span<'db>(source: Source<'db>, ind: &Inductive) -> Option<SourceRange<'db>> {
+    Some(SourceRange::new(source, ind.loc.clone()))
+}
+
+/// Helper to create a SourceRange from a Constructor and the inductive's source.
+fn ctor_span<'db>(source: Source<'db>, ctor: &hwml_surface::Constructor) -> Option<SourceRange<'db>> {
+    Some(SourceRange::new(source, ctor.loc.clone()))
+}
 
 /// Header information elaborated in Phase 1.
 ///
@@ -113,13 +130,15 @@ where
                     Ok(_) => {
                         return Err(ElabError::NotInScope {
                             name: format!("Inductive name '{}' is empty", ind.name.value),
-                            span: None,
+                            span: ind_span(decl_info.source, ind),
+                            elab_backtrace: Vec::new(),
                         });
                     }
                     Err(e) => {
                         return Err(ElabError::NotInScope {
                             name: format!("Invalid inductive name '{}': {}", ind.name.value, e),
-                            span: None,
+                            span: ind_span(decl_info.source, ind),
+                            elab_backtrace: Vec::new(),
                         });
                     }
                 };
@@ -127,7 +146,7 @@ where
 
                 // Elaborate just the header: params, indices, universe
                 let mut elab =
-                    Elaborator::new(global, ElabCtx::empty(), state, &ind_resolver, stub_table);
+                    Elaborator::new(global, ElabCtx::empty(), state, &ind_resolver, stub_table, decl_info.source);
 
                 // Elaborate parameters (returns both syntax and extended context)
                 let (params, param_ctx) =
@@ -141,6 +160,7 @@ where
                         state,
                         &ind_resolver,
                         stub_table,
+                        decl_info.source,
                     );
                     elab::decl::elab_telescope(db, &mut inner, &ind.indices.groups)?
                 };
@@ -153,6 +173,7 @@ where
                         state,
                         &ind_resolver,
                         stub_table,
+                        decl_info.source,
                     );
                     elab::expr::check(db, &mut inner, &ind.universe, Rc::new(Ty::UniverseType))?
                         .into_inner()
@@ -190,7 +211,7 @@ where
                 );
 
                 let mut elab =
-                    Elaborator::new(global, ElabCtx::empty(), state, decl_resolver, stub_table);
+                    Elaborator::new(global, ElabCtx::empty(), state, decl_resolver, stub_table, decl_info.source);
 
                 let ty = if !def.bindings.groups.is_empty() {
                     // Has bindings like `def f (x : A) (y : B) : T`
@@ -203,14 +224,20 @@ where
                             elab::expr::check(db, &mut elab, ty_expr, Rc::new(Ty::UniverseType))?
                                 .into_inner()
                         } else {
-                            return Err(ElabError::CannotInfer { span: None });
+                            return Err(ElabError::CannotInfer {
+                                span: def_span(decl_info.source, def),
+                                elab_backtrace: elab.context.snapshot(),
+                            });
                         }
                     } else {
                         // Build Pi type from typed bindings
                         let target = def
                             .ty
                             .as_ref()
-                            .ok_or(ElabError::CannotInfer { span: None })?;
+                            .ok_or(ElabError::CannotInfer {
+                                span: def_span(decl_info.source, def),
+                                elab_backtrace: elab.context.snapshot(),
+                            })?;
                         let pi = elab::decl::build_pi_expr(typed_groups, target);
 
                         elab::expr::check(
@@ -228,11 +255,22 @@ where
                 } else {
                     // No annotation, no bindings: infer type from value in Phase 3
                     let depth = elab.kernel.ctx.depth();
-                    let ty_meta = elab.kernel.state.fresh_meta(
-                        Rc::new(Ty::UniverseType),
-                        depth,
-                        MetaKind::UniverseLevel,
-                    );
+                    let def_loc = def_span(decl_info.source, def);
+                    let ty_meta = if let Some(loc) = def_loc {
+                        elab.kernel.state.fresh_meta_with_provenance(
+                            Rc::new(Ty::UniverseType),
+                            depth,
+                            MetaKind::UniverseLevel,
+                            loc.clone(),
+                            format!("unannotated definition '{:?}' at {:?}", decl_info.qualified_name, loc),
+                        )
+                    } else {
+                        elab.kernel.state.fresh_meta(
+                            Rc::new(Ty::UniverseType),
+                            depth,
+                            MetaKind::UniverseLevel,
+                        )
+                    };
                     elab.kernel.synth_meta(ty_meta)?.into_inner().0
                 };
 
@@ -348,7 +386,7 @@ where
                 // CRITICAL FIX: Use the cached parameter context from Phase 1
                 // This ensures variable IDs match between the signature and the body
                 let mut elab =
-                    Elaborator::new(global, param_ctx.clone(), state, decl_resolver, stub_table);
+                    Elaborator::new(global, param_ctx.clone(), state, decl_resolver, stub_table, decl_info.source);
 
                 // Use lenient solver during mutual recursion
                 let elaborated = elab::decl::elab_inductive_lenient(db, &mut elab, ind)?;
@@ -367,7 +405,8 @@ where
                         Ok(_) => {
                             return Err(ElabError::NotInScope {
                                 name: format!("Constructor name '{}' is empty", ctor_name_str),
-                                span: None,
+                                span: ind_span(decl_info.source, ind),
+                                elab_backtrace: Vec::new(),
                             });
                         }
                         Err(e) => {
@@ -376,7 +415,8 @@ where
                                     "Invalid constructor name '{}': {}",
                                     ctor_name_str, e
                                 ),
-                                span: None,
+                                span: ind_span(decl_info.source, ind),
+                                elab_backtrace: Vec::new(),
                             });
                         }
                     };
@@ -384,7 +424,8 @@ where
                     let ctor_qname = QualifiedName::qualify_path(db, Some(*qname), &ctor_path)
                         .ok_or_else(|| ElabError::NotInScope {
                             name: "Failed to qualify constructor name".to_string(),
-                            span: None,
+                            span: ind_span(decl_info.source, ind),
+                            elab_backtrace: Vec::new(),
                         })?;
 
                     let ctor_ty = substitute_metas_in_syntax(&ctor.result, state);
@@ -397,7 +438,7 @@ where
                 // For most constants this will be empty, but for dependent functions
                 // it contains the parameter bindings
                 let mut elab =
-                    Elaborator::new(global, ty_ctx.clone(), state, decl_resolver, stub_table);
+                    Elaborator::new(global, ty_ctx.clone(), state, decl_resolver, stub_table, decl_info.source);
 
                 // Use lenient solver during mutual recursion
                 let elaborated = elab::decl::elab_constant_lenient(db, &mut elab, def)?;

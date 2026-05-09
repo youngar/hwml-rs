@@ -117,6 +117,7 @@ fn pattern_quote<'db>(
                 None => Err(RenameError::Hard(ElabError::ScopeViolation {
                     meta: meta_id,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 })),
             }
         }
@@ -132,6 +133,7 @@ fn pattern_quote<'db>(
                 None => return Err(RenameError::Hard(ElabError::ScopeViolation {
                     meta: meta_id,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 })),
             };
             let mut result = Syntax::variable_rc(Index(arity - 1 - pos));
@@ -157,6 +159,7 @@ fn pattern_quote<'db>(
                 return Err(RenameError::Hard(ElabError::OccursCheck {
                     meta: meta_id,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 }));
             }
             // If solved: force and recurse.
@@ -325,6 +328,7 @@ fn rename_value<'db>(
                 None => Err(RenameError::Hard(ElabError::ScopeViolation {
                     meta: meta_id,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 })),
             }
         }
@@ -340,6 +344,7 @@ fn rename_value<'db>(
                 None => return Err(RenameError::Hard(ElabError::ScopeViolation {
                     meta: meta_id,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 })),
             };
             let new_ty = rename_value(global, state, &rigid.ty, rename, ambiguous, meta_id)?;
@@ -372,6 +377,7 @@ fn rename_value<'db>(
                 return Err(RenameError::Hard(ElabError::OccursCheck {
                     meta: meta_id,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 }));
             }
             // If solved: force and recurse.

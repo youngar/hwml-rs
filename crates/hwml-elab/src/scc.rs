@@ -226,6 +226,8 @@ pub fn statement_declares<'db>(
 /// While namespaces span files, `open` statements are file-local. This ensures
 /// that declarations from different files with different `open` statements
 /// don't accidentally share resolver state during elaboration.
+///
+/// Additionally, each declaration tracks its source file for accurate error reporting.
 #[derive(Debug, Clone)]
 pub struct DeclInfo<'db> {
     pub index: usize,
@@ -234,6 +236,9 @@ pub struct DeclInfo<'db> {
     /// The resolver state that was active when this declaration was declared.
     /// Captures file-local `open` statements.
     pub resolver: crate::resolver::Resolver<'db>,
+    /// The source file where this declaration was written.
+    /// Used for error reporting to show real file names instead of "synthetic".
+    pub source: hwml_core::Source<'db>,
 }
 
 /// Validate that all mutually recursive definitions have type annotations.

@@ -7,11 +7,12 @@ use hwml_core::{
         Closure, ConstantInfo, DataConstructorInfo, GlobalEnv, LocalEnv, PrimitiveInfo,
         TypeConstructorInfo,
     },
-    Binding, Index, Level, Name, QualifiedName, RcSyntax, RcValue, Syntax, Value,
+    Binding, Index, Level, Name, QualifiedName, RcSyntax, RcValue, Source, SourceInfo, Syntax, Value, Word,
 };
 use hwml_surface::Expression;
 
 use crate::{
+    context::ElabContext,
     ctx::ElabCtx,
     error::ElabError,
     meta::{MetaId, MetaKind},
@@ -99,14 +100,27 @@ impl<'a, 'db> Kernel<'a, 'db> {
     }
 
     /// Synthesize a type constructor reference (zero arguments).
+    /// If the type constructor has parameters/indices, its type is a Pi type.
+    /// For example, `List` has type `(A : Type) → Type`.
     pub fn synth_type_constructor(
         &self,
         name: QualifiedName<'db>,
         info: &TypeConstructorInfo<'db>,
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
         let syn = hwml_core::Syntax::type_constructor_rc(name, vec![]);
-        let universe_syn: RcSyntax<'db> = Rc::new(Syntax::UniverseCode(info.level.into()));
-        let ty_val = self.eval_syn_flex(&universe_syn);
+
+        // Build the type from the telescope
+        // If there are no arguments, the type is just `Type_level`
+        // Otherwise, it's a Pi type: (x1 : A1) -> ... -> (xn : An) -> Type_level
+        let ty_val = if info.arguments.bindings.is_empty() {
+            // No parameters: just a universe type
+            let universe_syn: RcSyntax<'db> = Rc::new(Syntax::UniverseCode(info.level.into()));
+            self.eval_syn_flex(&universe_syn)
+        } else {
+            // Has parameters: build a Pi type from the telescope
+            self.build_pi_type_from_telescope(&info.arguments, info.level.into())
+        };
+
         Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
     }
 
@@ -148,6 +162,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             return Err(ElabError::NotInScope {
                 name: format_path(db, path),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
         }
 
@@ -155,6 +170,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             return Err(ElabError::NotInScope {
                 name: format!("Ambiguous: {}", format_path(db, path)),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
         }
 
@@ -167,6 +183,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             .ok_or_else(|| ElabError::NotInScope {
                 name: format_path(db, path),
                 span: None,
+                elab_backtrace: Vec::new(),
             })?;
 
         // Synthesize based on kind
@@ -178,6 +195,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                     .map_err(|e| ElabError::NotInScope {
                         name: format!("{:?}: {:?}", path, e),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     })?;
                 self.synth_constant(qname, info)
             }
@@ -188,6 +206,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                     .map_err(|e| ElabError::NotInScope {
                         name: format!("{:?}: {:?}", path, e),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     })?;
                 self.synth_primitive(qname, info)
             }
@@ -198,6 +217,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         .map_err(|e| ElabError::NotInScope {
                             name: format!("{:?}: {:?}", path, e),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         })?;
                 self.synth_type_constructor(qname, info)
             }
@@ -208,6 +228,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         .map_err(|e| ElabError::NotInScope {
                             name: format!("{:?}: {:?}", path, e),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         })?;
                 self.synth_data_constructor(qname, info)
             }
@@ -225,14 +246,14 @@ impl<'a, 'db> Kernel<'a, 'db> {
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
         let depth = self.ctx.depth();
         if idx.0 >= depth {
-            return Err(ElabError::CannotInfer { span: None });
+            return Err(ElabError::CannotInfer { span: None, elab_backtrace: Vec::new(), });
         }
         // Convert de Bruijn index to level.
         let level = Level::new(depth - 1 - idx.0);
         let entry = self
             .ctx
             .lookup_level(level)
-            .ok_or(ElabError::CannotInfer { span: None })?;
+            .ok_or(ElabError::CannotInfer { span: None, elab_backtrace: Vec::new(), })?;
         let syn = Syntax::variable_rc(idx);
         Ok(Checked::new((syn, entry.ty.clone())))
     }
@@ -250,6 +271,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let entry = self.state.meta(id).ok_or(ElabError::UnsolvedMeta {
             meta: id,
             span: None,
+            elab_backtrace: Vec::new(),
         })?;
         let ty = entry.ty.clone();
         let depth = self.ctx.depth();
@@ -270,6 +292,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
     pub fn synth_universe(
         &mut self,
         hint: Option<usize>,
+        loc: Option<hwml_core::SourceRange<'db>>,
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
         let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
         match hint {
@@ -278,11 +301,21 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 Ok(Checked::new((syn, universe_ty)))
             }
             None => {
-                let level_meta_id = self.state.fresh_meta(
-                    universe_ty.clone(),
-                    self.ctx.depth(),
-                    MetaKind::UniverseLevel,
-                );
+                let level_meta_id = if let Some(loc) = loc {
+                    self.state.fresh_meta_with_provenance(
+                        universe_ty.clone(),
+                        self.ctx.depth(),
+                        MetaKind::UniverseLevel,
+                        loc.clone(),
+                        format!("Type keyword at {:?}", loc),
+                    )
+                } else {
+                    self.state.fresh_meta(
+                        universe_ty.clone(),
+                        self.ctx.depth(),
+                        MetaKind::UniverseLevel,
+                    )
+                };
                 self.synth_meta(level_meta_id)
             }
         }
@@ -295,11 +328,15 @@ impl<'a, 'db> Kernel<'a, 'db> {
     /// Synthesize an application: function already synthesized, check arg against domain.
     ///
     /// Expects `fun_ty` to be `Ty::El(Value::PiCode(dom_code, cod_clos))` after forcing.
+    ///
+    /// # Arguments
+    /// * `source` - Source file identifier for error messages (inherited from parent elaborator)
     pub fn synth_app<Db>(
         &mut self,
         db: &'db Db,
         fun: Checked<(RcSyntax<'db>, RcTy<'db>)>,
         arg: &Expression,
+        source: Source<'db>,
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>
     where
         Db: salsa::Database,
@@ -312,6 +349,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         // Check argument against the domain.
         let dom_ty: RcTy<'db> = Rc::new(Ty::El(dom_code.clone()));
         let arg_syn = {
+            // Use the source from the parent elaborator, not a synthetic one
             let arg_checked = crate::elab::expr::check(
                 db,
                 // We need a temporary Elaborator view; borrow self's fields.
@@ -324,6 +362,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         resolver: self.resolver,
                         stub_table: self.stub_table,
                     },
+                    context: ElabContext::new(source),
                 },
                 arg,
                 dom_ty,
@@ -350,12 +389,14 @@ impl<'a, 'db> Kernel<'a, 'db> {
     ///
     /// `dom_code` = value-level type code for the domain.
     /// `cod_clos` = codomain closure: `cod_clos.apply(global, &var)` gives the return type code.
+    /// `source` = Source file identifier for error messages (inherited from parent elaborator)
     pub fn check_lambda<Db>(
         &mut self,
         db: &'db Db,
         fun: &hwml_surface::Fun,
         dom_code: RcValue<'db>,
         cod_clos: Closure<'db>,
+        source: Source<'db>,
     ) -> Result<Checked<RcSyntax<'db>>, ElabError<'db>>
     where
         Db: salsa::Database,
@@ -366,6 +407,8 @@ impl<'a, 'db> Kernel<'a, 'db> {
         if names.is_empty() {
             // No binders left: check body directly against the remaining type.
             let body_ty: RcTy<'db> = Rc::new(Ty::El(dom_code));
+            let word = Word::new(db, "check_fun");
+            let source = Source::new(db, SourceInfo::Synthetic(word));
             return crate::elab::expr::check(
                 db,
                 &mut crate::elab::Elaborator {
@@ -376,6 +419,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         resolver: self.resolver,
                         stub_table: self.stub_table,
                     },
+                    context: ElabContext::new(source),
                 },
                 &fun.expr,
                 body_ty,
@@ -409,7 +453,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 let ret_ty_el: RcTy<'db> = Rc::new(Ty::El(ret_code.clone()));
                 match inner_kernel.force_to_pi(ret_ty_el) {
                     Ok((dom2, cod2)) => inner_kernel
-                        .check_lambda(db, &remaining_fun, dom2, cod2)?
+                        .check_lambda(db, &remaining_fun, dom2, cod2, source)?
                         .into_inner(),
                     Err(_) => {
                         // Codomain not yet a Pi (unsolved meta). Mint a fresh meta for
@@ -417,10 +461,12 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         let binder_count = count_binders(&remaining_fun.bindings);
                         if binder_count == 0 {
                             let ret_ty = Rc::new(Ty::El(ret_code));
+                            // Use the source from parent elaborator
                             crate::elab::expr::check(
                                 db,
                                 &mut crate::elab::Elaborator {
                                     kernel: inner_kernel,
+                                    context: ElabContext::new(source),
                                 },
                                 &remaining_fun.expr,
                                 ret_ty,
@@ -440,7 +486,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                             let cod_term = Rc::new(Syntax::UniverseCode(0));
                             let cod_clos2 = Closure::new(inner_kernel.ctx.to_local_env(), cod_term);
                             inner_kernel
-                                .check_lambda(db, &remaining_fun, dom_val, cod_clos2)?
+                                .check_lambda(db, &remaining_fun, dom_val, cod_clos2, source)?
                                 .into_inner()
                         }
                     }
@@ -448,10 +494,12 @@ impl<'a, 'db> Kernel<'a, 'db> {
             } else {
                 // No remaining binders: check body against return type.
                 let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
+                // Use the source from parent elaborator
                 crate::elab::expr::check(
                     db,
                     &mut crate::elab::Elaborator {
                         kernel: inner_kernel,
+                        context: ElabContext::new(source),
                     },
                     &fun.expr,
                     ret_ty,
@@ -483,6 +531,17 @@ impl<'a, 'db> Kernel<'a, 'db> {
         expected_ty: RcTy<'db>,
         rhs: Checked<(RcSyntax<'db>, RcTy<'db>)>,
     ) -> Checked<RcSyntax<'db>> {
+        self.expect_with_loc(expected_ty, rhs, None)
+    }
+
+    /// Check that a value has an expected type, emitting an equality constraint.
+    /// This version accepts an optional location for better error messages.
+    pub fn expect_with_loc(
+        &mut self,
+        expected_ty: RcTy<'db>,
+        rhs: Checked<(RcSyntax<'db>, RcTy<'db>)>,
+        loc: Option<hwml_core::SourceRange<'db>>,
+    ) -> Checked<RcSyntax<'db>> {
         let (rhs_syn, actual_ty) = rhs.into_inner();
 
         // Fast path: pointer equality (same Rc allocation = definitely same type).
@@ -513,7 +572,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
 
         // Emit constraint: actual_code = expected_code : Type
         self.state
-            .emit_eq(actual_code, expected_code, Rc::new(Ty::UniverseType), depth);
+            .emit_eq_with_loc(actual_code, expected_code, Rc::new(Ty::UniverseType), depth, loc);
 
         // Return the original elaborated term.
         // It has type actual_ty, but the constraint ensures actual_ty = expected_ty.
@@ -631,6 +690,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                         )))),
                         actual: ty.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     }),
                 }
             }
@@ -654,8 +714,92 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 expected: Rc::new(Ty::UniverseType), // placeholder
                 actual: ty,
                 span: None,
+                elab_backtrace: Vec::new(),
             }),
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Telescope utilities
+    // -------------------------------------------------------------------------
+
+    /// Build a Pi type from a telescope of types, ending with a universe level.
+    /// For a telescope `(x1 : A1) (x2 : A2) ... (xn : An)` and level `L`,
+    /// returns `(x1 : A1) -> (x2 : A2) -> ... -> (xn : An) -> Type_L`.
+    ///
+    /// This is used to compute the type of a type constructor with parameters.
+    /// For example, `List` with parameter `(A : Type)` gets type `(A : Type) -> Type`.
+    fn build_pi_type_from_telescope(
+        &self,
+        telescope: &hwml_core::syn::Telescope<'db>,
+        result_level: usize,
+    ) -> RcValue<'db> {
+        // Build the result type: UniverseCode(result_level)
+        let result_ty = Rc::new(Value::UniverseCode(result_level));
+
+        // If telescope is empty, just return the result type
+        if telescope.bindings.is_empty() {
+            return result_ty;
+        }
+
+        // Build Pi types from right to left (innermost to outermost)
+        // We need to evaluate each binding in the context of previous bindings
+        let mut result = result_ty;
+
+        // Process bindings in reverse order to build the nested Pi
+        for (idx, binding_syn) in telescope.bindings.iter().enumerate().rev() {
+            // Evaluate this binding's type in the environment with all previous bindings
+            // For simplicity, we create a fresh environment with variables for preceding bindings
+            let mut env = hwml_core::val::Environment {
+                global: self.global,
+                local: hwml_core::val::LocalEnv::new(),
+                transparent: hwml_core::val::TransparentEnv::new(),
+            };
+
+            // Push placeholder variables for all preceding bindings (indices 0..idx)
+            for i in 0..idx {
+                let preceding_binding = &telescope.bindings[i];
+                // Evaluate the preceding binding's type
+                let preceding_ty = match hwml_core::eval::eval(&mut env, preceding_binding) {
+                    Ok(ty) => ty,
+                    Err(_) => {
+                        // Fallback: use UniverseCode(0)
+                        Rc::new(Value::UniverseCode(0))
+                    }
+                };
+                // Push a variable of this type
+                let var = Value::variable_rc(hwml_core::Level::new(i), preceding_ty.clone());
+                env.push_var(preceding_ty);
+            }
+
+            // Now evaluate this binding's type
+            let dom_val = match hwml_core::eval::eval(&mut env, binding_syn) {
+                Ok(val) => val,
+                Err(_) => {
+                    // Fallback: use UniverseCode(0)
+                    Rc::new(Value::UniverseCode(0))
+                }
+            };
+
+            // Build a closure for the codomain
+            // The closure body is the `result` we're building up
+            // But we need it as syntax, so we quote it back
+            let cod_syn = match hwml_core::quote::type_quote(self.global, idx, &result) {
+                Ok(syn) => syn,
+                Err(_) => {
+                    // Fallback: use UniverseCode(result_level)
+                    Rc::new(Syntax::UniverseCode(result_level))
+                }
+            };
+
+            // Create a closure with the current local environment
+            let cod_clos = hwml_core::val::Closure::new(env.local.clone(), cod_syn);
+
+            // Wrap in a PiCode
+            result = Rc::new(Value::PiCode(dom_val, cod_clos));
+        }
+
+        result
     }
 }
 

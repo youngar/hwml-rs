@@ -151,6 +151,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
                     lhs: lhs.clone(),
                     rhs: rhs.clone(),
                     span: None,
+                    elab_backtrace: Vec::new(),
                 });
             }
             let sp1 = lr.spine.clone();
@@ -167,6 +168,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     })
                 }
             }
@@ -194,6 +196,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     });
                 }
                 let i1 = i1.clone();

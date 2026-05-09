@@ -218,6 +218,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     }));
                 }
                 let args1: Vec<_> = dc1.iter().cloned().collect();
@@ -227,6 +228,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     }));
                 }
 
@@ -244,6 +246,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     }));
                 }
                 let args1: Vec<_> = tc1.iter().cloned().collect();
@@ -253,6 +256,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     }));
                 }
 
@@ -384,6 +388,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                                             field_name.to_string(self.db)
                                         ),
                                         span: None,
+                                        elab_backtrace: Vec::new(),
                                     })
                                 })?;
 
@@ -396,6 +401,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                                     field_name.to_string(self.db)
                                 ),
                                 span: None,
+                                elab_backtrace: Vec::new(),
                             })
                         })?;
 
@@ -448,6 +454,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                                 field_name.to_string(self.db)
                             ),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         }))
                     }
                 }
@@ -458,6 +465,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                     expected: Rc::new(Ty::UniverseType),
                     actual: forced_ty,
                     span: None,
+                    elab_backtrace: Vec::new(),
                 }))
             }
         }

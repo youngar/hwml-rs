@@ -27,6 +27,12 @@ use crate::{
     zonk::{substitute_metas_in_syntax, zonk},
 };
 
+/// Helper to create a synthetic source for testing/entry points
+fn synthetic_source<'db>(db: &'db dyn salsa::Database, label: &str) -> Source<'db> {
+    let word = Word::new(db, label);
+    Source::new(db, SourceInfo::Synthetic(word))
+}
+
 /// An elaborated top-level declaration.
 #[derive(Debug, Clone)]
 pub enum ElaboratedDecl<'db> {
@@ -74,6 +80,9 @@ impl<'db> GlobalElabEnv<'db> {
 /// Declarations are processed in two passes:
 /// - First, harvest all declarations into the stub table (for order-independent resolution)
 /// - Then, elaborate each declaration using the populated stub table and resolver
+///
+/// # Arguments
+/// * `source` - Optional source file identifier. If None, uses a synthetic source.
 pub fn elab_program<'db, Db>(
     db: &'db Db,
     global: &mut GlobalEnv<'db>,
@@ -82,17 +91,30 @@ pub fn elab_program<'db, Db>(
 where
     Db: salsa::Database,
 {
+    elab_program_with_source(db, global, program, None)
+}
+
+/// Elaborate a program with an explicit source identifier.
+///
+/// This version allows specifying the source file for better error messages.
+pub fn elab_program_with_source<'db, Db>(
+    db: &'db Db,
+    global: &mut GlobalEnv<'db>,
+    program: &Program,
+    source: Option<Source<'db>>,
+) -> ElabProgramResult<'db>
+where
+    Db: salsa::Database,
+{
     let mut decls = Vec::new();
     let mut errors = Vec::new();
     let mut global_env = GlobalElabEnv::new();
 
-    // Harvest all declarations into the stub table.
-    // This allows order-independent name resolution.
-    // TODO: Replace synthetic source with real SourceFileId when threading through the pipeline
-    let source = {
+    // Use provided source or create synthetic one
+    let source = source.unwrap_or_else(|| {
         let label = Word::new(db, "<synthetic>");
         Source::new(db, SourceInfo::Synthetic(label))
-    };
+    });
 
     // Start at root namespace (None = global root)
     let root_namespace: Option<QualifiedName<'db>> = None;
@@ -108,6 +130,7 @@ where
         errors.push(ElabError::NotInScope {
             name: format!("Harvesting error: {}", harvest_err),
             span: None,
+            elab_backtrace: Vec::new(),
         });
     }
 
@@ -118,6 +141,7 @@ where
         &program.statements,
         &global_env.resolver,
         &global_env.stub_table,
+        source,
         &mut decls,
         &mut errors,
     );
@@ -140,6 +164,7 @@ where
 /// # Arguments
 /// * `global_stub_table` - Pre-built StubTable from `workspace_declarations()`
 ///   containing declarations from all files and dependencies
+/// * `source` - Source file identifier for error messages
 ///
 /// # Example
 /// ```ignore
@@ -152,7 +177,7 @@ where
 ///
 ///     // Elaborate with global stub table
 ///     let result = elab_program_with_global_stubs(
-///         &db, &mut global, &program, &workspace_stubs
+///         &db, &mut global, &program, &workspace_stubs, source
 ///     );
 /// }
 /// ```
@@ -161,6 +186,7 @@ pub fn elab_program_with_global_stubs<'db, Db>(
     global: &mut GlobalEnv<'db>,
     program: &Program,
     global_stub_table: &StubTable<'db>,
+    source: Source<'db>,
 ) -> ElabProgramResult<'db>
 where
     Db: salsa::Database,
@@ -178,6 +204,7 @@ where
         &program.statements,
         &resolver,
         global_stub_table,
+        source,
         &mut decls,
         &mut errors,
     );
@@ -211,6 +238,7 @@ where
                     errors.push(ElabError::NotInScope {
                         name: format!("Invalid open namespace '{}': {}", open.namespace.value, e),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     });
                     continue;
                 }
@@ -231,6 +259,7 @@ where
                         errors.push(ElabError::NotInScope {
                             name: format!("Invalid alias '{}': {}", alias_id.value, e),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         });
                         continue;
                     }
@@ -243,6 +272,7 @@ where
                         errors.push(ElabError::NotInScope {
                             name: format!("Duplicate alias: {}", &alias_id.value),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         });
                         resolver_back
                     }
@@ -255,6 +285,7 @@ where
                         errors.push(ElabError::NotInScope {
                             name: format!("Duplicate open: {}", &open.namespace.value),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         });
                         resolver_back
                     }
@@ -270,6 +301,7 @@ where
                         &open.namespace.value
                     ),
                     span: None,
+                    elab_backtrace: Vec::new(),
                 });
                 continue;
             }
@@ -286,6 +318,7 @@ fn elab_def_statement<'db, Db>(
     def: &hwml_surface::Def,
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
+    source: Source<'db>,
     decls: &mut Vec<ElaboratedDecl<'db>>,
     errors: &mut Vec<ElabError<'db>>,
 ) where
@@ -297,6 +330,7 @@ fn elab_def_statement<'db, Db>(
             errors.push(ElabError::NotInScope {
                 name: format!("Invalid definition name: {}", e),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             return;
         }
@@ -306,7 +340,7 @@ fn elab_def_statement<'db, Db>(
     // NOTE: Namespace resolution for the constant is handled inside elab_constant
     let result: Result<ConstantInfo<'db>, ElabError<'db>> = {
         let mut state = SolverState::new();
-        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table);
+        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
         elab::decl::elab_constant(db, &mut elab, def).and_then(|elaborated| {
             zonk(&mut state)?;
             let ty = substitute_metas_in_syntax(&elaborated.ty, &state);
@@ -331,6 +365,7 @@ fn elab_prim_statement<'db, Db>(
     prim: &hwml_surface::Prim,
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
+    source: Source<'db>,
     decls: &mut Vec<ElaboratedDecl<'db>>,
     errors: &mut Vec<ElabError<'db>>,
 ) where
@@ -342,6 +377,7 @@ fn elab_prim_statement<'db, Db>(
             errors.push(ElabError::NotInScope {
                 name: format!("Invalid primitive name: {}", e),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             return;
         }
@@ -349,7 +385,7 @@ fn elab_prim_statement<'db, Db>(
 
     let result: Result<PrimitiveInfo<'db>, ElabError<'db>> = {
         let mut state = SolverState::new();
-        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table);
+        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
         use hwml_core::ty::Ty;
         elab::expr::check(db, &mut elab, &prim.ty, Rc::new(Ty::UniverseType)).and_then(|checked| {
             zonk(&mut state)?;
@@ -375,6 +411,7 @@ fn elab_inductive_statement<'db, Db>(
     ind: &hwml_surface::Inductive,
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
+    source: Source<'db>,
     decls: &mut Vec<ElaboratedDecl<'db>>,
     errors: &mut Vec<ElabError<'db>>,
 ) where
@@ -389,6 +426,7 @@ fn elab_inductive_statement<'db, Db>(
             errors.push(ElabError::NotInScope {
                 name: format!("Inductive name '{}' is empty", ind.name.value),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             return;
         }
@@ -396,6 +434,7 @@ fn elab_inductive_statement<'db, Db>(
             errors.push(ElabError::NotInScope {
                 name: format!("Invalid inductive name '{}': {}", ind.name.value, e),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             return;
         }
@@ -420,6 +459,7 @@ fn elab_inductive_statement<'db, Db>(
             &mut header_state,
             &ind_resolver, // Use the namespace-pushed resolver
             stub_table,
+            source,
         );
         let (params, _) = elab::decl::elab_telescope(db, &mut elab, &ind.parameters.groups)?;
         let (indices, _) = elab::decl::elab_telescope(db, &mut elab, &ind.indices.groups)?;
@@ -459,7 +499,7 @@ fn elab_inductive_statement<'db, Db>(
         ElabError<'db>,
     > = {
         let mut state = SolverState::new();
-        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table);
+        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
         elab::decl::elab_inductive(db, &mut elab, ind).and_then(|elaborated| {
             zonk(&mut state)?;
             let num_params = elaborated.params.len();
@@ -489,12 +529,14 @@ fn elab_inductive_statement<'db, Db>(
                         return Err(ElabError::NotInScope {
                             name: format!("Constructor name '{}' is empty", ctor_name_str),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         });
                     }
                     Err(e) => {
                         return Err(ElabError::NotInScope {
                             name: format!("Invalid constructor name '{}': {}", ctor_name_str, e),
                             span: None,
+                            elab_backtrace: Vec::new(),
                         });
                     }
                 };
@@ -502,6 +544,7 @@ fn elab_inductive_statement<'db, Db>(
                     .ok_or_else(|| ElabError::NotInScope {
                         name: "Failed to qualify constructor name".to_string(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     })?;
                 let ctor_ty = substitute_metas_in_syntax(&ctor.result, &state);
                 let dcon_info = DataConstructorInfo::new(ctor.params.clone(), ctor_ty);
@@ -555,6 +598,7 @@ fn elab_namespace_statement<'db, Db>(
     ns: &hwml_surface::Namespace,
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
+    source: Source<'db>,
     decls: &mut Vec<ElaboratedDecl<'db>>,
     errors: &mut Vec<ElabError<'db>>,
 ) where
@@ -567,6 +611,7 @@ fn elab_namespace_statement<'db, Db>(
             errors.push(ElabError::NotInScope {
                 name: format!("Namespace name '{}' is empty", ns.name.value),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             return;
         }
@@ -574,6 +619,7 @@ fn elab_namespace_statement<'db, Db>(
             errors.push(ElabError::NotInScope {
                 name: format!("Invalid namespace name '{}': {}", ns.name.value, e),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             return;
         }
@@ -589,6 +635,7 @@ fn elab_namespace_statement<'db, Db>(
         &ns.statements,
         &ns_resolver,
         stub_table,
+        source,
         decls,
         errors,
     );
@@ -602,6 +649,7 @@ fn elab_statements<'db, Db>(
     statements: &[Statement],
     resolver: &Resolver<'db>,
     stub_table: &StubTable<'db>,
+    source: Source<'db>,
     decls: &mut Vec<ElaboratedDecl<'db>>,
     errors: &mut Vec<ElabError<'db>>,
 ) where
@@ -614,10 +662,10 @@ fn elab_statements<'db, Db>(
     for stmt in statements {
         match stmt {
             Statement::Def(def) => {
-                elab_def_statement(db, global, def, &block_resolver, stub_table, decls, errors);
+                elab_def_statement(db, global, def, &block_resolver, stub_table, source, decls, errors);
             }
             Statement::Prim(prim) => {
-                elab_prim_statement(db, global, prim, &block_resolver, stub_table, decls, errors);
+                elab_prim_statement(db, global, prim, &block_resolver, stub_table, source, decls, errors);
             }
             Statement::Inductive(ind) => {
                 elab_inductive_statement(
@@ -626,6 +674,7 @@ fn elab_statements<'db, Db>(
                     ind,
                     &block_resolver,
                     stub_table,
+                    source,
                     decls,
                     errors,
                 );
@@ -637,6 +686,7 @@ fn elab_statements<'db, Db>(
                     ns,
                     &block_resolver,
                     stub_table,
+                    source,
                     decls,
                     errors,
                 );
@@ -728,11 +778,19 @@ where
             source_path.display()
         );
 
+        // Create a Source for this file
+        let library_name = hwml_core::Word::new(db, "library"); // TODO: Get actual library name
+        let path_string = source_path.display().to_string();
+        let canonical_path = hwml_core::Word::new(db, path_string.as_str());
+        let source_file_id = hwml_core::SourceFileId::new(db, library_name, canonical_path);
+        let source = hwml_core::Source::new(db, hwml_core::SourceInfo::File(source_file_id));
+
         gather_declarations(
             db,
             &program.statements,
             None, // Start at root namespace
             &file_resolver,
+            source,
             &mut all_decls,
         );
     }
@@ -764,6 +822,7 @@ where
             errors.push(ElabError::NotImplemented {
                 feature: validation_error,
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             continue;
         }
@@ -822,6 +881,7 @@ where
                     errors.push(ElabError::NotImplemented {
                         feature: format!("Constraint solver made no progress in SCC {}", scc_idx),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     });
                 }
                 SolveError::Elab(elab_err) => {
@@ -918,11 +978,17 @@ where
 
     // Step 1: Gather all declarations into a flat list
     let mut all_decls: Vec<DeclInfo<'db>> = Vec::new();
+
+    // Create a synthetic source for single-program elaboration
+    let source_label = hwml_core::Word::new(db, "program");
+    let source = hwml_core::Source::new(db, hwml_core::SourceInfo::Synthetic(source_label));
+
     gather_declarations(
         db,
         &program.statements,
         None, // Start at root namespace
         &resolver,
+        source,
         &mut all_decls,
     );
 
@@ -949,6 +1015,7 @@ where
             errors.push(ElabError::NotImplemented {
                 feature: validation_error,
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             continue;
         }
@@ -1004,6 +1071,7 @@ where
                 lhs: Rc::new(hwml_core::Value::UniverseCode(0)),
                 rhs: Rc::new(hwml_core::Value::UniverseCode(0)),
                 span: None,
+                elab_backtrace: Vec::new(),
             });
             continue;
         }
@@ -1062,6 +1130,7 @@ fn gather_declarations<'db, Db>(
     statements: &[Statement],
     current_namespace: Option<QualifiedName<'db>>,
     resolver: &Resolver<'db>,
+    source: hwml_core::Source<'db>,
     out: &mut Vec<crate::scc::DeclInfo<'db>>,
 ) where
     Db: salsa::Database,
@@ -1091,7 +1160,7 @@ fn gather_declarations<'db, Db>(
                 let ns_resolver = resolver.push_namespace(db, &path);
 
                 // Recursively gather declarations from nested namespace
-                gather_declarations(db, &ns.statements, Some(ns_qname), &ns_resolver, out);
+                gather_declarations(db, &ns.statements, Some(ns_qname), &ns_resolver, source, out);
             }
             Statement::Def(_) | Statement::Inductive(_) | Statement::Prim(_) => {
                 // CRITICAL: Use surface_id_to_path to handle dotted names like "Std.Bool"
@@ -1170,6 +1239,7 @@ fn gather_declarations<'db, Db>(
                     qualified_name: qname,
                     stmt: stmt.clone(),
                     resolver: resolver.clone(),
+                    source,
                 });
             }
             Statement::Open(_) | Statement::Meta(_) => {

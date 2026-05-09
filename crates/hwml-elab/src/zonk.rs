@@ -55,7 +55,11 @@ pub fn zonk<'db>(state: &mut SolverState<'db>) -> Result<(), ElabError<'db>> {
 
     for (id, entry) in state.iter_metas() {
         if entry.solution.is_none() {
-            return Err(ElabError::UnsolvedMeta { meta: *id, span: None });
+            return Err(ElabError::UnsolvedMeta {
+                meta: *id,
+                span: entry.created_at.clone(),  // Use provenance information if available
+                elab_backtrace: Vec::new(),
+            });
         }
     }
 
