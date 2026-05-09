@@ -97,16 +97,15 @@ fn span_from_offsets(text: &str, start: usize, end: usize) -> Span {
 }
 
 // Convert ElabError to Diagnostic.
-// TODO: Wire this up when elaboration is integrated as a Salsa query.
-#[allow(dead_code)]
-fn elab_error_to_diagnostic<'db>(
-    _db: &'db dyn salsa::Database,
+// Public for use by LSP server.
+pub fn convert_elab_error_to_diagnostic<'db>(
+    db: &'db dyn salsa::Database,
     source: SourceFile,
     error: &hwml_elab::error::ElabError<'db>,
 ) -> Option<Diagnostic> {
     use hwml_elab::error::ElabError;
 
-    let text = source.text(_db);
+    let text = source.text(db);
     let span = if let Some(sr) = error.span() {
         span_from_offsets(text, sr.range.start, sr.range.end)
     } else {
@@ -171,13 +170,14 @@ fn elab_error_to_diagnostic<'db>(
     })
 }
 
-// Collect all diagnostics for a single file (parse errors only for now).
+// Collect all diagnostics for a single file (parse errors + elaboration errors).
 #[salsa::tracked]
 pub fn file_diagnostics(db: &dyn salsa::Database, source: SourceFile) -> Arc<Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let parse_result = crate::workspace::parse_surface_program_with_errors(db, source);
     let text = source.text(db);
 
+    // Collect parse errors
     for error in &parse_result.errors {
         let pos = position_from_offset(text, error.offset);
         diagnostics.push(Diagnostic {
@@ -193,7 +193,16 @@ pub fn file_diagnostics(db: &dyn salsa::Database, source: SourceFile) -> Arc<Vec
         });
     }
 
-    // TODO: Integrate elaboration errors via elab_error_to_diagnostic()
+    // TODO: Collect elaboration errors (type checking errors)
+    // The elaboration system currently requires concrete database types (&HwmlDatabase)
+    // but Salsa queries only provide &dyn salsa::Database. This needs architectural work.
+    // For now, elaboration errors are only available via the CLI, not LSP.
+    //
+    // Potential solutions:
+    // 1. Add ?Sized bounds to all elaboration functions (requires touching many files)
+    // 2. Create a separate elaboration query that runs outside the Salsa query system
+    // 3. Use workspace-level elaboration instead of per-file elaboration
+    let _ = parse_result.program; // Suppress unused warning
 
     Arc::new(diagnostics)
 }

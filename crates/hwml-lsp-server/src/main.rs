@@ -297,9 +297,36 @@ impl Server {
     }
 
     fn compile_file(&self, db: &HwmlDatabase, uri: &Uri, file: hwml_db::db::SourceFile) {
+        // Collect parse errors from Salsa query
         let diagnostics = hwml_db::diagnostics::file_diagnostics(db, file);
+        let mut all_diagnostics: Vec<hwml_diagnostic::Diagnostic> = diagnostics.iter().cloned().collect();
 
-        let lsp_diagnostics: Vec<Diagnostic> = diagnostics
+        // Also collect elaboration errors (type checking)
+        // This is done outside the Salsa query because elaboration requires &HwmlDatabase
+        let parse_result = hwml_db::workspace::parse_surface_program_with_errors(db, file);
+        if let Some(ref program) = parse_result.program {
+            // Create source identifier
+            let library_name_word = hwml_core::Word::new(db, file.library_name(db).as_str());
+            let path_str = file.path(db).to_str().unwrap_or("unknown");
+            let path_word = hwml_core::Word::new(db, path_str);
+            let source_file_id = hwml_core::SourceFileId::new(db, library_name_word, path_word);
+            let source_info = hwml_core::SourceInfo::File(source_file_id);
+            let file_source = hwml_core::Source::new(db, source_info);
+
+            // Run elaboration
+            let mut global = hwml_core::val::GlobalEnv::new();
+            let elab_result = hwml_elab::program::elab_program_with_source(db, &mut global, program, Some(file_source));
+
+            // Convert elaboration errors to diagnostics
+            let text = file.text(db);
+            for elab_error in &elab_result.errors {
+                if let Some(diag) = hwml_db::diagnostics::convert_elab_error_to_diagnostic(db, file, elab_error) {
+                    all_diagnostics.push(diag);
+                }
+            }
+        }
+
+        let lsp_diagnostics: Vec<Diagnostic> = all_diagnostics
             .iter()
             .map(|diag| hwml_diagnostic::lsp::diagnostic_to_lsp(diag, uri, Some("hwml")))
             .collect();
