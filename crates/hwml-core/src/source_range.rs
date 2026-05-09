@@ -64,6 +64,35 @@ impl<'db> SourceRange<'db> {
     pub fn new(source: Source<'db>, range: Range<usize>) -> SourceRange<'db> {
         SourceRange { source, range }
     }
+
+    /// Format this source range for display, including the file name.
+    ///
+    /// Returns a string like "adder.hwml:10..50" or "synthetic:0..10"
+    pub fn display<Db>(&self, db: &'db Db) -> String
+    where
+        Db: salsa::Database,
+    {
+        let full_path = self.source.title(db);
+
+        // Extract just the file name from the path for cleaner display
+        let file_name = if let Some(pos) = full_path.rfind('/') {
+            &full_path[pos + 1..]
+        } else if let Some(pos) = full_path.rfind('\\') {
+            &full_path[pos + 1..]
+        } else {
+            full_path
+        };
+
+        format!("{}:{}..{}", file_name, self.range.start, self.range.end)
+    }
+}
+
+impl<'db> std::fmt::Display for SourceRange<'db> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Note: We can't access db here, so we format as Debug for now.
+        // For proper display with file names, use a helper function that takes db.
+        write!(f, "{:?}", self)
+    }
 }
 
 pub trait HasSourceRange<'db> {
