@@ -360,7 +360,7 @@ fn expect_fast_path_equal_types_no_meta() {
     let mut kernel = Kernel::new(&global, ctx, &mut state, &resolver, &stub_table);
 
     // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
-    let checked = kernel.synth_universe(Some(0)).unwrap();
+    let checked = kernel.synth_universe(Some(0), None).unwrap();
     let meta_count_before = kernel.state.iter_metas().count();
 
     // expect with the same Ty::UniverseType → fast path, no new meta.
@@ -383,7 +383,7 @@ fn expect_slow_path_emits_constraint() {
     let mut kernel = Kernel::new(&global, ctx, &mut state, &resolver, &stub_table);
 
     // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
-    let checked = kernel.synth_universe(Some(0)).unwrap();
+    let checked = kernel.synth_universe(Some(0), None).unwrap();
 
     // Expect at Ty::El(UniverseCode(0)) — different from Ty::UniverseType → slow path.
     let different_ty: hwml_core::ty::RcTy = Rc::new(Ty::El(Rc::new(Value::UniverseCode(0))));

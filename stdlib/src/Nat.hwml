@@ -35,8 +35,6 @@ def pred (n : Nat) : Nat :=
     | succ n' ~> n'
     end
 
-def fart (n : Nat.zero) : Nat := zero
-
 // Subtraction (saturating at zero)
 def sub (m : Nat) (n : Nat) : Nat :=
     match n with

@@ -203,6 +203,29 @@ impl<'a, 'db> Unifier<'a, 'db> {
                 let i2 = i2.clone();
                 self.unify_type_codes(i1, i2)
             }
+
+            // Hard failures: incompatible value forms that should never unify
+            // This catches common user errors like using a data constructor in a type position
+            (Value::TypeConstructor(_), Value::UniverseCode(_))
+            | (Value::UniverseCode(_), Value::TypeConstructor(_))
+            | (Value::DataConstructor(_), Value::UniverseCode(_))
+            | (Value::UniverseCode(_), Value::DataConstructor(_))
+            | (Value::TypeConstructor(_), Value::DataConstructor(_))
+            | (Value::DataConstructor(_), Value::TypeConstructor(_))
+            | (Value::TypeConstructor(_), Value::PiCode(_, _))
+            | (Value::PiCode(_, _), Value::TypeConstructor(_))
+            | (Value::DataConstructor(_), Value::PiCode(_, _))
+            | (Value::PiCode(_, _), Value::DataConstructor(_))
+            | (Value::TypeConstructor(_), Value::BitCode)
+            | (Value::BitCode, Value::TypeConstructor(_))
+            | (Value::DataConstructor(_), Value::BitCode)
+            | (Value::BitCode, Value::DataConstructor(_)) => Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            }),
+
             _ => Ok(UnifyResult::Stuck),
         }
     }

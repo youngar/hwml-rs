@@ -1,0 +1,9 @@
+// Simple example demonstrating workspace aggregation
+
+namespace Example {
+    // This is a concrete definition (will be lowered to Verilog)
+    def MyModule : Bit = i1
+    
+    // Another concrete definition
+    def TopLevel : Bit = i0
+}

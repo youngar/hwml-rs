@@ -1,0 +1,6 @@
+// Utility definitions in the same workspace
+
+namespace Example.Util {
+    // Concrete helper
+    def Helper : Bit = i1
+}
