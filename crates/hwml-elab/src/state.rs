@@ -39,10 +39,29 @@ impl<'db> SolverState<'db> {
         }
     }
 
+    /// Create a fresh metavariable without provenance information (for backward compatibility)
     pub fn fresh_meta(&mut self, ty: RcTy<'db>, arity: usize, kind: MetaKind) -> MetaId {
         let id = MetaId(self.next_meta);
         self.next_meta += 1;
         self.metas.insert(id, MetaEntry::new(id, ty, arity, kind));
+        id
+    }
+
+    /// Create a fresh metavariable with provenance information
+    pub fn fresh_meta_with_provenance(
+        &mut self,
+        ty: RcTy<'db>,
+        arity: usize,
+        kind: MetaKind,
+        created_at: hwml_core::SourceRange<'db>,
+        origin: String,
+    ) -> MetaId {
+        let id = MetaId(self.next_meta);
+        self.next_meta += 1;
+        self.metas.insert(
+            id,
+            MetaEntry::with_provenance(id, ty, arity, kind, created_at, origin),
+        );
         id
     }
 
@@ -69,9 +88,10 @@ impl<'db> SolverState<'db> {
         let entry = self.metas.get_mut(&id).ok_or(ElabError::UnsolvedMeta {
             meta: id,
             span: None,
+            elab_backtrace: Vec::new(),
         })?;
         if entry.solution.is_some() {
-            return Err(ElabError::MetaAlreadySolved { meta: id });
+            return Err(ElabError::MetaAlreadySolved { meta: id, elab_backtrace: Vec::new(), });
         }
         // Kind consistency: UniverseLevel metas must resolve to a universe code or flex.
         if matches!(entry.kind, MetaKind::UniverseLevel) {
@@ -82,6 +102,7 @@ impl<'db> SolverState<'db> {
                         expected: Rc::new(Ty::UniverseType),
                         actual: entry.ty.clone(),
                         span: None,
+                        elab_backtrace: Vec::new(),
                     });
                 }
             }
@@ -126,8 +147,32 @@ impl<'db> SolverState<'db> {
         ty: RcTy<'db>,
         depth: usize,
     ) -> ConstraintId {
+        self.emit_eq_with_loc(lhs, rhs, ty, depth, None)
+    }
+
+    /// Create a homogeneous equality constraint with optional location information.
+    ///
+    /// This is the same as `emit_eq` but accepts an optional location for the witness metavariable.
+    pub fn emit_eq_with_loc(
+        &mut self,
+        lhs: RcValue<'db>,
+        rhs: RcValue<'db>,
+        ty: RcTy<'db>,
+        depth: usize,
+        loc: Option<hwml_core::SourceRange<'db>>,
+    ) -> ConstraintId {
         // Create witness meta internally for anti-unification.
-        let witness = self.fresh_meta(ty.clone(), depth, MetaKind::Term);
+        let witness = if let Some(loc) = loc {
+            self.fresh_meta_with_provenance(
+                ty.clone(),
+                depth,
+                MetaKind::Term,
+                loc.clone(),
+                format!("witness for equality constraint at {:?}", loc),
+            )
+        } else {
+            self.fresh_meta(ty.clone(), depth, MetaKind::Term)
+        };
 
         let cid = ConstraintId(self.next_constraint);
         self.next_constraint += 1;
