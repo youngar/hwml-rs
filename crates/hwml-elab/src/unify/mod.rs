@@ -518,6 +518,8 @@ impl<'a, 'db> Unifier<'a, 'db> {
         Ok(UnifyResult::Solved)
     }
 
+    /// Unify two spines (sequences of eliminators).
+    /// Both spines must have the same length and matching eliminators.
     fn unify_spines(
         &mut self,
         sp1: &Spine<'db>,
@@ -536,9 +538,110 @@ impl<'a, 'db> Unifier<'a, 'db> {
                         UnifyResult::Solved => {}
                     }
                 }
-                _ => return Ok(UnifyResult::Stuck),
+                (Eliminator::Case(c1), Eliminator::Case(c2)) => {
+                    match self.unify_case_eliminators(c1, c2)? {
+                        UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+                        UnifyResult::Solved => {}
+                    }
+                }
+                _ => {
+                    // Mismatched eliminator kinds (Application vs Case)
+                    return Ok(UnifyResult::Stuck);
+                }
             }
         }
+        Ok(UnifyResult::Solved)
+    }
+
+    /// Unify two Case eliminators.
+    /// Case(tc1, params1, branches1) = Case(tc2, params2, branches2) requires:
+    /// 1. tc1 == tc2 (same type constructor)
+    /// 2. params1[i] = params2[i] for all i (parameters unify)
+    /// 3. branches1[i].constructor == branches2[i].constructor for all i
+    /// 4. branches1[i].body(xs) = branches2[i].body(xs) for fresh variables xs
+    fn unify_case_eliminators(
+        &mut self,
+        case1: &hwml_core::val::Case<'db>,
+        case2: &hwml_core::val::Case<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        // 1. Check type constructors match
+        if case1.type_constructor != case2.type_constructor {
+            // Type constructor mismatch is a hard failure
+            return Ok(UnifyResult::Stuck);
+        }
+
+        // 2. Check parameter count matches
+        if case1.parameters.len() != case2.parameters.len() {
+            return Ok(UnifyResult::Stuck);
+        }
+
+        // 3. Unify parameters pairwise (structural unification)
+        for (p1, p2) in case1.parameters.iter().zip(case2.parameters.iter()) {
+            match self.unify_type_codes(p1.clone(), p2.clone())? {
+                UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+                UnifyResult::Solved => {}
+            }
+        }
+
+        // 4. Check branch count and constructors match
+        if case1.branches.len() != case2.branches.len() {
+            return Ok(UnifyResult::Stuck);
+        }
+
+        for (b1, b2) in case1.branches.iter().zip(case2.branches.iter()) {
+            // Check constructor names match
+            if b1.constructor != b2.constructor {
+                // Constructor mismatch is a hard failure
+                return Ok(UnifyResult::Stuck);
+            }
+
+            // Check arities match
+            if b1.arity != b2.arity {
+                return Ok(UnifyResult::Stuck);
+            }
+
+            // Create fresh variables for the constructor arguments
+            let args: Vec<RcValue<'db>> = (0..b1.arity)
+                .map(|i| {
+                    let var: RcValue<'db> = Rc::new(Value::variable(
+                        Level::new(self.depth + i),
+                        Rc::new(Value::UniverseCode(0)), // Use U0 as approximation
+                    ));
+                    var
+                })
+                .collect();
+
+            // Apply closures to fresh variables using run_closure
+            let body1 = eval::run_closure(self.global, &b1.body, args.clone())
+                .map_err(|_| ElabError::UnificationFailure {
+                    lhs: Rc::new(Value::UniverseCode(0)),
+                    rhs: Rc::new(Value::UniverseCode(0)),
+                    span: None,
+                    elab_backtrace: Vec::new(),
+                })?;
+            let body2 = eval::run_closure(self.global, &b2.body, args)
+                .map_err(|_| ElabError::UnificationFailure {
+                    lhs: Rc::new(Value::UniverseCode(0)),
+                    rhs: Rc::new(Value::UniverseCode(0)),
+                    span: None,
+                    elab_backtrace: Vec::new(),
+                })?;
+
+            // Increase depth for the fresh variables
+            self.depth += b1.arity;
+
+            // Unify the branch bodies
+            let result = self.unify_structural(body1, body2)?;
+
+            // Restore depth
+            self.depth -= b1.arity;
+
+            match result {
+                UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+                UnifyResult::Solved => {}
+            }
+        }
+
         Ok(UnifyResult::Solved)
     }
 
