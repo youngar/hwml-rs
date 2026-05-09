@@ -35,6 +35,8 @@ def pred (n : Nat) : Nat :=
     | succ n' ~> n'
     end
 
+def fart (n : Nat.zero) : Nat := zero
+
 // Subtraction (saturating at zero)
 def sub (m : Nat) (n : Nat) : Nat :=
     match n with
@@ -61,7 +63,7 @@ def eq (m : Nat) (n : Nat) : Std.Bool :=
     end
 
 // Less than or equal
-def le (m : Nat) (n : Nat) : Std.Bool :=
+def le (m n : Nat) : Std.Bool :=
     match m with
     | zero ~> Std.true
     | succ m' ~>

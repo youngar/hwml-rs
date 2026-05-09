@@ -246,6 +246,15 @@ Export interface hash:
 Body (zstd-compressed):
   declarations: Vec<Declaration>   -- full elaborated AST, types + values
   source_ranges: HashMap<QualifiedName, SourceRange>  -- for error reporting
+
+  -- LSP enhancements (see lsp-object-file-research.md for details):
+  symbol_table: HashMap<QualifiedName, SymbolInfo>
+    -- SymbolInfo { definition_site, signature, visibility, docs }
+  occurrences: Vec<Occurrence>
+    -- Occurrence { range, symbol, role }  -- for goto-def, find-refs
+  type_pool: Vec<Type>
+    -- Deduplicated type representations (Haskell .hie style)
+    -- Symbol signatures reference pool indices
 ```
 
 **Consistency check on load**: when loading a `.hwmli`, each entry in the
@@ -257,6 +266,35 @@ guarantee survives manual file copies, race conditions, and build system bypasse
 **Compiler hash**: any compiler version change invalidates all cached artifacts
 automatically. No separate version field; the compiler binary content is the
 version.
+
+**LSP Metadata Design** (informed by `lsp-object-file-research.md`):
+
+The `.hwmli` format is designed to support rich LSP features by including
+not just elaboration artifacts for downstream compilation, but also
+symbol tables and occurrence indices for code navigation:
+
+- **Symbol Table + Occurrences** (SemanticDB, GHC .hie pattern):
+  Separate data structures for "what is this symbol" (metadata) vs "where is
+  this symbol used" (occurrences). Enables hover, goto-def, find-refs without
+  re-elaboration.
+
+- **Type Pool Deduplication** (GHC .hie pattern):
+  Store each unique type once, reference by index. Type `Int -> Int` appears
+  once even if used in 100 declarations. Reduces file size, speeds up loading.
+
+- **Lazy Loading Sections**:
+  Symbol table loaded on import (for name resolution), but full elaboration
+  artifacts and type pool loaded only when needed (for downstream elaboration
+  or LSP queries). Memory-mapped files (`memmap2`) enable this.
+
+- **Two-Tier Artifact Strategy** (universal pattern):
+  `.hwmli` serves dual purpose: compilation interface (export types) +
+  IDE interface (full metadata). Single file simplifies dependency management
+  compared to separate `.hi` + `.hie` (Haskell) or `.cmi` + `.cmt` (OCaml).
+
+See `design/lsp-object-file-research.md` for detailed analysis of how
+Rust, Haskell, OCaml, Lean, Agda, Scala, TypeScript, and Java handle
+this problem.
 
 ### Cache Key
 

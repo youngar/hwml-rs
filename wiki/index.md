@@ -1,7 +1,7 @@
 # HWML Design Wiki Index
 
-**Last Updated:** 2026-05-03
-**Total Pages:** 13 (in progress)
+**Last Updated:** 2026-05-08
+**Total Pages:** 21 (in progress)
 **Status:** Bootstrap phase - ingesting key documents
 
 ---
@@ -9,6 +9,49 @@
 ## Overview
 
 - [[overview]] - High-level introduction to HWML for new contributors
+
+---
+
+## Architecture & Big Picture 🎯
+
+**Start here to understand how everything fits together:**
+
+- [[BIG-PICTURE-PIPELINE]] - **Complete pipeline: parsing → elaboration → diagnostics → proof terms → kernel** ⭐ **READ THIS FIRST**
+
+This document shows:
+- How all 8 stages work together (parsing → kernel verification)
+- Trust boundaries (untrusted elaboration vs. trusted kernel)
+- Data flow for happy path, error path, and bug detection
+- 18-month implementation roadmap
+- Success metrics for each phase
+
+---
+
+## Detailed Designs 📐
+
+**Implementation-ready specifications:**
+
+### Diagnostic Framework (2026-05-08) ⭐ **ACTIVE**
+
+**Quick Start:** [[design/DIAGNOSTIC-FRAMEWORK-SUMMARY]] - Navigation hub for all diagnostic docs
+
+**Primary Documents:**
+- [[design/DIAGNOSTIC-IMPLEMENTATION-PLAN-REVISED]] - **✅ ACTIVE** 6-week implementation plan (v2, from Asai source)
+- [[design/UNICODE-RENDERING-ASAI-APPROACH]] - **⚠️ CRITICAL** Why column alignment is impossible
+- [[design/DIAGNOSTIC-VFS-LSP-INTEGRATION]] - **🔄 SUPERSEDED** Original plan (Salsa integration still valid)
+
+**Key Discoveries from Asai (`external/asai/`):**
+- Terminal rendering uses **ANSI underline escapes** (`\x1b[4m`), not column alignment
+- 5 severity levels: Bug/Error/Warning/Info/Hint
+- Position caching: Store byte offset + line info together
+- Backtrace vs. extra remarks separation
+- Block splitting threshold (don't show huge files)
+- LSP deliberately simple (UTF-8 only, NO positionEncoding)
+- GitHub Actions integration available
+
+**Current Status:**
+- Week 1 (Foundation): ✅ Basic types complete, 🔄 needs Position revision
+- Weeks 2-6: 📋 Planned
 
 ---
 
@@ -24,22 +67,32 @@
 - [[decisions/ADR-005-debug-information]] - Dual debug strategy (meta-level + object-level)
 - [[decisions/ADR-006-multi-layer-build-configuration]] - Multi-layer build configuration (manifest + build + lock)
 
-### Approved (Frontend Architecture - 2026-05-03) ⭐ **NEW**
+### Approved (Frontend Architecture - 2026-05-03) ⭐
 - [[decisions/ADR-007-salsa-driven-compilation]] - **Demand-driven compilation via Salsa (no manual topo-sort)**
 - [[decisions/ADR-008-vfs-abstraction]] - **Virtual File System for unified CLI/LSP file access** (CRITICAL FIX: VFS feeds Salsa)
 - [[decisions/ADR-009-rkyv-zero-copy-serialization]] - **Zero-copy `.hwmli` loading with rkyv**
 - [[decisions/ADR-010-metavariable-scoping-constraint-solver]] - **Metavariables local to Salsa queries, worklist constraint solver**
-- [[decisions/ADR-011-module-resolution-file-discovery]] - **FileSet input for pure module resolution** (DRAFT)
+- [[decisions/ADR-011-module-resolution-file-discovery]] - **FileSet input for pure module resolution**
+- [[decisions/ADR-012-inductive-namespace-scoping]] - **Inductive types create namespaces for constructors**
+
+### Approved (String Handling & Location Tracking - 2026-05-06)
+- [[decisions/ADR-013-utf8-internal-representation]] - **UTF-8 validated at lexer, Box<str> in surface syntax**
+- [[decisions/ADR-014-byte-level-location-tracking]] - **Byte ranges in AST, lazy line:column conversion**
+
+### Approved (Diagnostic Framework - 2026-05-08) ⭐ **NEW**
+- [[decisions/ADR-016-no-column-alignment-diagnostics]] - **ANSI underline rendering, NO visual width calculation**
+- [[decisions/ADR-017-position-caching-diagnostics]] - **Cache line info in Position for fast rendering**
+- [[decisions/ADR-018-five-severity-levels]] - **Bug/Error/Warning/Info/Hint severity system**
 
 ### To Create
-- ADR-012: Content-addressed artifacts - Hash-based package storage
-- ADR-013: Persistent Worker Protocol - Long-lived compiler processes for Buck2
+- ADR-015: Elaboration Provenance Architecture - Already exists, need to catalog
+- ADR-019: Content-addressed artifacts - Hash-based package storage
+- ADR-020: Persistent Worker Protocol - Long-lived compiler processes for Buck2
 
 ### To Extract
 - Staged computation / two-level type theory
 - Pattern matching compilation
 - Universe hierarchy design
-- Location information architecture
 - LSP server design
 - CIRCT backend architecture
 
@@ -91,7 +144,13 @@
 - [[research/two-level-type-theory]] - Staged computation for hardware (TO CREATE)
 
 ### Elaboration & Error Messages
+- [[DIAGNOSTIC-FRAMEWORK-QUICKSTART]] - **Quick start guide for implementing diagnostics** (NEW 2026-05-08)
 - [[research/elaboration-error-messages]] - Constraint origins, global diagnosis, metavar provenance
+- [[research/utf8-diagnostics-rendering]] - UTF-8 handling, LSP position encoding, diagnostic rendering
+
+### Implementation Analysis
+- [[analysis/lexer-parser-location-tracking-review]] - **Review of byte-level span usage** (NEW 2026-05-06)
+- [[analysis/location-information-review]] - Historical location tracking design (superseded by ADR-014)
 
 ### Incremental Compilation & Build Systems (2026-05-03)
 - [[research/incremental-compilation-synthesis]] - **Comprehensive synthesis and recommendations for HWML**
@@ -110,6 +169,16 @@
 - [[research/hardware-debug-info]] - Hardware debug info (VCS, Verdi, waveforms, Chisel)
 - [[research/llvm-debug-info-internals]] - LLVM debug info internals (preservation, optimization, consumption)
 - [[research/debug-info-research-modern]] - Modern academic research (2020-2024, PLDI, ASPLOS, Onward!)
+
+### Diagnostics & Error Reporting (2026-05-08) ⭐ **NEW**
+- [[research/DIAGNOSTIC-SYSTEM-SUMMARY]] - **Executive summary of diagnostic system research** (NEW)
+- [[research/diagnostic-framework-design]] - **Complete diagnostic framework design** (NEW)
+- [[research/diagnostic-post-processing]] - **Post-processing, rendering, and output formats** (NEW)
+- [[research/asai-detailed-review]] - Detailed code review of Asai library
+- [[research/asai-vs-hwml-comparison]] - Comparison and improvement recommendations
+
+### Proof Distillation & Elaboration (2026-05-08) ⭐ **NEW**
+- [[research/proof-distillation-survey]] - **Comprehensive survey of proof distillation in modern theorem provers** (NEW)
 
 ### External Systems
 - [[research/go-mvs]] - Go's Minimum Version Selection (referenced)
@@ -139,6 +208,8 @@
 ## Analysis
 
 - [[analysis/ADR-006-vs-package-manager-design-reconciliation]] - Reconciliation between ADR-006 and design/package-manager.md
+- [[analysis/compiler-package-manager-build-system-separation]] - Fetch phase, persistent artifacts, LSP caching
+- [[analysis/lsp-vs-cli-purity-divergence]] - **LSP stateful vs CLI pure, `.hwmli` contents, `--extern` flags** (NEW)
 
 ---
 
@@ -208,19 +279,27 @@
 
 **Created:**
 - Overview: 1
-- ADRs: **8** (of ~10-15 needed) ← **NEW: ADR-007 through ADR-010 (2026-05-03)**
+- ADRs: **16** (of ~15-20 needed) ← **NEW: ADR-016, 017, 018 (2026-05-08)**
   - ADR-001 through ADR-006: Core architecture, packages, build config
   - ADR-007: Salsa-driven compilation (demand-driven, no topo-sort)
   - ADR-008: VFS abstraction for CLI/LSP unification
   - ADR-009: rkyv zero-copy serialization for `.hwmli` files
   - ADR-010: Metavariable scoping & constraint solver integration
+  - ADR-011: Module resolution and file discovery
+  - ADR-012: Inductive namespace scoping
+  - ADR-013: UTF-8 as internal string representation
+  - ADR-014: Byte-level location tracking
+  - ADR-016: No column alignment in diagnostics (ANSI underlines) ← **NEW**
+  - ADR-017: Position caching in diagnostic spans ← **NEW**
+  - ADR-018: Five severity levels (Bug/Error/Warning/Info/Hint) ← **NEW**
 - Components: 0 (of ~6 needed)
 - Entities: 1 (of ~15-20 needed)
-- Research: 13 (of ~15-20 needed) ← **Major update 2026-05-03 (Buck2 integration added)**
+- Research: 15+ (of ~15-20 needed) ← **Diagnostic framework complete (2026-05-08)**
+- Design: 5 (Diagnostic framework: plan, Unicode, VFS, summary, **pretty-printing** ← NEW)
 - Onboarding: 0 (of ~5 needed)
-- Plans: **FRONTEND-IMPLEMENTATION-PLAN.md** (5-7 week roadmap)
+- Plans: **DIAGNOSTIC-IMPLEMENTATION-PLAN-REVISED.md** (6-week roadmap, active)
 
-**Progress:** ~36% complete (Phase 1 complete + Frontend plan + state-of-the-art architecture decisions + constraint solver integration)
+**Progress:** ~50% complete (Phase 1 complete + Diagnostic framework designed + Pretty printing analyzed + 16 ADRs + Week 1 revision done)
 
 **Next Steps:**
 1. Create remaining high-priority ADRs (002, 003, 005, 006)
