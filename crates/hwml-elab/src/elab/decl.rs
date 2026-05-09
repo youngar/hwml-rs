@@ -4,17 +4,36 @@ use hwml_core::{
     eval,
     ty::Ty,
     val::{Environment, GlobalEnv},
-    RcSyntax, Syntax,
+    RcSyntax, Syntax, SourceRange,
 };
 use hwml_surface::{BindingGroup, Def, Inductive, TypedBindingGroup};
 
 use crate::{
+    context::ElabFrameKind,
     elab::{self, Elaborator},
     error::ElabError,
     solver::{SolveError, Solver},
     state::SolverState,
     zonk::zonk,
 };
+
+// ─── Helper functions ─────────────────────────────────────────────────────────
+
+/// Helper to create a SourceRange from a definition and the current elaboration context.
+fn def_span<'db>(elab: &Elaborator<'_, 'db>, def: &Def) -> Option<SourceRange<'db>> {
+    Some(SourceRange::new(
+        elab.context.source(),
+        def.loc.clone(),
+    ))
+}
+
+/// Helper to create a SourceRange from an inductive declaration and the current elaboration context.
+fn ind_span<'db>(elab: &Elaborator<'_, 'db>, ind: &Inductive) -> Option<SourceRange<'db>> {
+    Some(SourceRange::new(
+        elab.context.source(),
+        ind.loc.clone(),
+    ))
+}
 
 // ─── Result types ─────────────────────────────────────────────────────────────
 
@@ -67,7 +86,21 @@ pub fn elab_constant<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    elab_constant_impl(db, elab, def, false)
+    // Push trace frame for definition with actual source location
+    elab.push_trace(
+        format!("checking definition '{}'", def.id.value),
+        def.loc.clone(),
+        ElabFrameKind::CheckingDefinition {
+            name: def.id.value.to_string(),
+        },
+    );
+
+    let result = elab_constant_impl(db, elab, def, false);
+
+    // Pop trace frame
+    elab.pop_trace();
+
+    result
 }
 
 /// Elaborate a constant in lenient mode (for use during mutual recursion).
@@ -81,7 +114,21 @@ pub fn elab_constant_lenient<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    elab_constant_impl(db, elab, def, true)
+    // Push trace frame for definition with actual source location
+    elab.push_trace(
+        format!("checking definition '{}' (lenient)", def.id.value),
+        def.loc.clone(),
+        ElabFrameKind::CheckingDefinition {
+            name: def.id.value.to_string(),
+        },
+    );
+
+    let result = elab_constant_impl(db, elab, def, true);
+
+    // Pop trace frame
+    elab.pop_trace();
+
+    result
 }
 
 /// Internal implementation of constant elaboration.
@@ -94,6 +141,9 @@ fn elab_constant_impl<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
+    // Phase 4.2: Trace frames are captured in the error's elab_backtrace field
+    // TODO: Add RAII trace guards when we solve the borrow checker issue
+
     let name = def.id.value.as_bytes().to_vec();
 
     // CRITICAL: Push the constant's namespace for ALL elaboration (type and value).
@@ -105,12 +155,14 @@ where
     let def_path =
         crate::util::surface_id_to_path(db, &def.id).map_err(|e| ElabError::NotInScope {
             name: format!("Invalid definition name: {}", e),
-            span: None,
+            span: def_span(elab, def),
+            elab_backtrace: elab.context.snapshot(),
         })?;
     if def_path.is_empty() {
         return Err(ElabError::NotInScope {
             name: def.id.value.to_string(),
-            span: None,
+            span: def_span(elab, def),
+            elab_backtrace: elab.context.snapshot(),
         });
     }
 
@@ -127,6 +179,7 @@ where
                 &def_resolver,
                 elab.kernel.stub_table,
             ),
+            context: elab.context.clone(),  // Share the same elaboration context
         };
 
         if def.bindings.groups.is_empty() {
@@ -172,7 +225,10 @@ where
                         .into_inner()
                     }
                 }
-                None => return Err(ElabError::CannotInfer { span: None }),
+                None => return Err(ElabError::CannotInfer {
+                    span: def_span(elab, def),
+                    elab_backtrace: elab.context.snapshot(),
+                }),
             };
 
             let ty_code = inner.kernel.eval_syn_flex(&ty_syn);
@@ -236,6 +292,9 @@ fn elab_inductive_impl<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
+    // Phase 4.2: Trace frames are captured in the error's elab_backtrace field
+    // TODO: Add RAII trace guards when we solve the borrow checker issue
+
     let name = ind.name.value.as_bytes().to_vec();
 
     // CRITICAL: Push the inductive type's namespace for ALL elaboration (params, indices, universe, constructors).
@@ -247,12 +306,14 @@ where
     let ind_path =
         crate::util::surface_id_to_path(db, &ind.name).map_err(|e| ElabError::NotInScope {
             name: format!("Invalid inductive name: {}", e),
-            span: None,
+            span: ind_span(elab, ind),
+            elab_backtrace: elab.context.snapshot(),
         })?;
     if ind_path.is_empty() {
         return Err(ElabError::NotInScope {
             name: ind.name.value.to_string(),
-            span: None,
+            span: ind_span(elab, ind),
+            elab_backtrace: elab.context.snapshot(),
         });
     }
 
@@ -269,6 +330,7 @@ where
                 &ind_resolver,
                 elab.kernel.stub_table,
             ),
+            context: elab.context.clone(),
         };
         elab_telescope(db, &mut inner, &ind.parameters.groups)?
     };
@@ -283,6 +345,7 @@ where
                 &ind_resolver,
                 elab.kernel.stub_table,
             ),
+            context: elab.context.clone(),
         };
         elab_telescope(db, &mut inner, &ind.indices.groups)?
     };
@@ -297,6 +360,7 @@ where
                 &ind_resolver,
                 elab.kernel.stub_table,
             ),
+            context: elab.context.clone(),
         };
         elab::expr::check(db, &mut inner, &ind.universe, Rc::new(Ty::UniverseType))?.into_inner()
     };
@@ -312,6 +376,7 @@ where
                 &ind_resolver,
                 elab.kernel.stub_table,
             ),
+            context: elab.context.clone(),
         };
         ind.constructors
             .iter()
@@ -381,6 +446,7 @@ where
                     elab.kernel.resolver,
                     elab.kernel.stub_table,
                 ),
+                context: elab.context.clone(),
             };
             elab::expr::check(db, &mut inner, &group.ty, Rc::new(Ty::UniverseType))?.into_inner()
         };
@@ -425,7 +491,10 @@ where
     let mut solver = Solver::new(elab.kernel.state, elab.kernel.global, db);
     solver.run().map_err(|e| match e {
         SolveError::Elab(e) => e,
-        SolveError::NoProgress => ElabError::CannotInfer { span: None },
+        SolveError::NoProgress => ElabError::CannotInfer {
+            span: None, // Solver doesn't have a specific location
+            elab_backtrace: elab.context.snapshot(),
+        },
     })
 }
 
@@ -553,7 +622,7 @@ fn quote_type<'a, 'db>(
     use hwml_core::{ty::Ty as CoreTy, Value};
     match ty {
         CoreTy::UniverseType => {
-            let (syn, _) = elab.kernel.synth_universe(None)?.into_inner();
+            let (syn, _) = elab.kernel.synth_universe(None, None)?.into_inner();
             Ok(syn)
         }
         CoreTy::El(code) => {
@@ -561,9 +630,15 @@ fn quote_type<'a, 'db>(
             let universe_val = Value::UniverseCode(0);
             match hwml_core::quote::quote(elab.kernel.global, depth, code, &universe_val) {
                 Ok(syn) => Ok(syn),
-                Err(_) => Err(ElabError::CannotInfer { span: None }),
+                Err(_) => Err(ElabError::CannotInfer {
+                    span: None, // Quote errors don't have a specific location
+                    elab_backtrace: elab.context.snapshot(),
+                }),
             }
         }
-        _ => Err(ElabError::CannotInfer { span: None }),
+        _ => Err(ElabError::CannotInfer {
+            span: None, // Type conversion errors don't have a specific location
+            elab_backtrace: elab.context.snapshot(),
+        }),
     }
 }

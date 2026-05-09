@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{ops::Range, rc::Rc};
 
 use hwml_core::{
     ty::{RcTy, Ty},
@@ -7,12 +7,139 @@ use hwml_core::{
 use hwml_surface::Expression;
 
 use crate::{
+    context::ElabFrameKind,
     error::ElabError,
     kernel::{extract_binder_name, Checked, Kernel},
     meta::MetaKind,
 };
 
 use super::Elaborator;
+
+/// Extract the byte range from an expression.
+///
+/// This is used for source location tracking in elaboration traces.
+fn expr_loc(expr: &Expression) -> Range<usize> {
+    match expr {
+        Expression::Pi(pi) => pi.loc.clone(),
+        Expression::Arrow(arrow) => arrow.loc.clone(),
+        Expression::FatArrow(fat_arrow) => fat_arrow.loc.clone(),
+        Expression::App(app) => app.loc.clone(),
+        Expression::Fun(fun) => fun.loc.clone(),
+        Expression::LetIn(let_in) => let_in.loc.clone(),
+        Expression::Match(m) => {
+            // Match doesn't have a loc field, so use scrutinee's location
+            expr_loc(&m.scrutinee)
+        }
+        Expression::Underscore(underscore) => underscore.loc.clone(),
+        Expression::Paren(paren) => expr_loc(&paren.expr),
+        Expression::Num(num) => num.loc.clone(),
+        Expression::Str(_str) => {
+            // Str doesn't have a loc field, use 0..0 as placeholder
+            0..0
+        }
+        Expression::Id(id) => id.loc.clone(),
+        Expression::Universe(universe) => universe.loc.clone(),
+        Expression::Dot(dot) => dot.loc.clone(),
+    }
+}
+
+/// Get a short description of an expression for diagnostic messages.
+fn expr_description(expr: &Expression) -> String {
+    match expr {
+        Expression::Pi(_) => "function type (Pi)".to_string(),
+        Expression::Arrow(_) => "arrow type".to_string(),
+        Expression::FatArrow(_) => "hardware arrow type".to_string(),
+        Expression::App(app) => {
+            // Try to show the function being applied (first element)
+            if let Some(first) = app.elements.first() {
+                if let Expression::Id(id) = &**first {
+                    format!("application of '{}'", id.value)
+                } else {
+                    "function application".to_string()
+                }
+            } else {
+                "function application".to_string()
+            }
+        }
+        Expression::Fun(_) => "lambda function".to_string(),
+        Expression::LetIn(_) => "let expression".to_string(),
+        Expression::Match(_) => "match expression".to_string(),
+        Expression::Underscore(_) => "underscore placeholder".to_string(),
+        Expression::Paren(paren) => expr_description(&paren.expr),
+        Expression::Num(n) => format!("number literal {}", n.value),
+        Expression::Str(s) => format!("string literal {:?}", s.value),
+        Expression::Id(id) => format!("identifier '{}'", id.value),
+        Expression::Universe(u) => {
+            if let Some(level) = u.level {
+                format!("Type {}", level)
+            } else {
+                "Type".to_string()
+            }
+        }
+        Expression::Dot(_) => "dot expression".to_string(),
+    }
+}
+
+/// Helper to create a SourceRange from an expression and the current elaboration context.
+///
+/// This is used when creating errors to capture the source location.
+fn expr_span<'db>(elab: &Elaborator<'_, 'db>, expr: &Expression) -> Option<hwml_core::SourceRange<'db>> {
+    Some(hwml_core::SourceRange::new(
+        elab.context.source(),
+        expr_loc(expr),
+    ))
+}
+
+/// Helper to enrich an error with span and backtrace information if missing.
+///
+/// This is called when an error bubbles up from the kernel or unification,
+/// which don't have access to surface syntax locations.
+fn enrich_error<'db>(
+    mut err: ElabError<'db>,
+    elab: &Elaborator<'_, 'db>,
+    expr: &Expression,
+) -> ElabError<'db> {
+    use crate::error::ElabError;
+
+    // If the error doesn't have a span, add one from the current expression
+    let needs_span = err.span().is_none();
+    let needs_backtrace = err.backtrace().is_empty();
+
+    if needs_span || needs_backtrace {
+        let span = if needs_span { expr_span(elab, expr) } else { err.span().cloned() };
+        let backtrace = if needs_backtrace { elab.context.snapshot() } else { err.backtrace().to_vec() };
+
+        // Reconstruct the error with populated fields
+        match err {
+            ElabError::TypeMismatch { expected, actual, .. } => ElabError::TypeMismatch {
+                expected,
+                actual,
+                span,
+                elab_backtrace: backtrace,
+            },
+            ElabError::UnificationFailure { lhs, rhs, .. } => ElabError::UnificationFailure {
+                lhs,
+                rhs,
+                span,
+                elab_backtrace: backtrace,
+            },
+            ElabError::OccursCheck { meta, .. } => ElabError::OccursCheck {
+                meta,
+                span,
+                elab_backtrace: backtrace,
+            },
+            ElabError::ScopeViolation { meta, .. } => ElabError::ScopeViolation {
+                meta,
+                span,
+                elab_backtrace: backtrace,
+            },
+            // Other error types already have their spans set or don't need enrichment
+            other => other,
+        }
+    } else {
+        err
+    }
+}
 
 /// Helper function to synthesize a dot expression: `receiver.field_name`
 /// This handles the type-directed resolution logic.
@@ -22,6 +149,7 @@ fn synth_dot<'a, 'db, Db>(
     receiver_syn: RcSyntax<'db>,
     receiver_ty: RcTy<'db>,
     field_name: Name<'db>,
+    dot_loc: Option<hwml_core::SourceRange<'db>>,
 ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>
 where
     Db: salsa::Database,
@@ -29,18 +157,36 @@ where
     let depth = elab.kernel.ctx.depth();
 
     // Create fresh metavariables for the result
-    let result_ty_code_meta =
+    let result_ty_code_meta = if let Some(loc) = dot_loc.clone() {
+        elab.kernel.state.fresh_meta_with_provenance(
+            Rc::new(Ty::UniverseType),
+            depth,
+            MetaKind::UniverseLevel,
+            loc.clone(),
+            format!("dot resolution for field '{}' at {:?}", field_name.to_string(db), loc),
+        )
+    } else {
         elab.kernel
             .state
-            .fresh_meta(Rc::new(Ty::UniverseType), depth, MetaKind::UniverseLevel);
+            .fresh_meta(Rc::new(Ty::UniverseType), depth, MetaKind::UniverseLevel)
+    };
     let (result_ty_code_syn, _) = elab.kernel.synth_meta(result_ty_code_meta)?.into_inner();
     let result_ty_code = elab.kernel.eval_syn_flex(&result_ty_code_syn);
     let result_ty: RcTy<'db> = Rc::new(Ty::El(result_ty_code));
 
-    let result_val_meta = elab
-        .kernel
-        .state
-        .fresh_meta(result_ty.clone(), depth, MetaKind::Term);
+    let result_val_meta = if let Some(loc) = dot_loc.clone() {
+        elab.kernel.state.fresh_meta_with_provenance(
+            result_ty.clone(),
+            depth,
+            MetaKind::Term,
+            loc.clone(),
+            format!("dot resolution for field '{}' at {:?}", field_name.to_string(db), loc),
+        )
+    } else {
+        elab.kernel
+            .state
+            .fresh_meta(result_ty.clone(), depth, MetaKind::Term)
+    };
     let (result_syn, _) = elab.kernel.synth_meta(result_val_meta)?.into_inner();
 
     // Emit the ResolveDot constraint
@@ -82,8 +228,38 @@ pub fn synth<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
+    // Phase 4.3: Push trace frame with actual source location and expression description
+    let desc = expr_description(expr);
+    elab.push_trace(
+        format!("synthesizing type for {}", desc),
+        expr_loc(expr),
+        ElabFrameKind::SynthesizingType,
+    );
+
+    let result = synth_impl(db, elab, expr);
+
+    // Pop trace frame
+    elab.pop_trace();
+
+    // Enrich errors with span and backtrace if missing
+    result.map_err(|err| enrich_error(err, elab, expr))
+}
+
+/// Internal implementation of synth (separated to ensure pop_trace is always called)
+fn synth_impl<'a, 'db, Db>(
+    db: &'db Db,
+    elab: &mut Elaborator<'a, 'db>,
+    expr: &Expression,
+) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>
+where
+    Db: salsa::Database,
+{
     match expr {
-        Expression::Universe(_) => elab.kernel.synth_universe(None),
+        Expression::Universe(u) => {
+            let source = elab.context.source();
+            let loc = hwml_core::SourceRange::new(source, u.loc.clone());
+            elab.kernel.synth_universe(None, Some(loc))
+        }
         Expression::Id(id) => {
             let name = &*id.value;
 
@@ -143,7 +319,8 @@ where
                     for field_str in &segments[1..] {
                         let field_name = hwml_core::str_to_name(db, *field_str)
                             .expect("Lexer should prevent malformed field names");
-                        let result = synth_dot(db, elab, current_syn, current_ty, field_name)?;
+                        // Note: We don't have individual location info for each segment in "x.foo.bar"
+                        let result = synth_dot(db, elab, current_syn, current_ty, field_name, None)?;
                         let (syn, ty) = result.into_inner();
                         current_syn = syn;
                         current_ty = ty;
@@ -161,39 +338,55 @@ where
                         "Unknown identifier '{}'. If you intended this as a field access, the receiver '{}' is not in scope.",
                         name, segments[0]
                     ),
-                    span: None,
+                    span: Some(hwml_core::SourceRange::new(
+                        elab.context.source(),
+                        id.loc.clone(),
+                    )),
+                    elab_backtrace: Vec::new(),
                 })
             } else {
                 Err(ElabError::NotInScope {
                     name: name.to_string(),
-                    span: None,
+                    span: Some(hwml_core::SourceRange::new(
+                        elab.context.source(),
+                        id.loc.clone(),
+                    )),
+                    elab_backtrace: Vec::new(),
                 })
             }
         }
         Expression::Dot(dot) => {
             // Elaborate receiver
-            let (receiver_syn, receiver_ty) = synth(db, elab, &dot.receiver)?.into_inner();
+            let (receiver_syn, receiver_ty) = synth_impl(db, elab, &dot.receiver)?.into_inner();
             // Extract field name
             let word = hwml_core::Word::new(db, &*dot.field.value);
             let atom = hwml_core::Atom::new(word);
             let field_name = Name::new(db, hwml_core::Fixity::Closed, Box::from([atom]));
-            synth_dot(db, elab, receiver_syn, receiver_ty, field_name)
+            let source = elab.context.source();
+            let dot_loc = hwml_core::SourceRange::new(source, dot.loc.clone());
+            synth_dot(db, elab, receiver_syn, receiver_ty, field_name, Some(dot_loc))
         }
         Expression::App(app) => {
             let mut elems = app.elements.iter();
-            let fun_expr = elems.next().ok_or(ElabError::CannotInfer { span: None })?;
-            let mut result = synth(db, elab, fun_expr)?;
+            let fun_expr = elems.next().ok_or(ElabError::CannotInfer {
+                span: expr_span(elab, expr),
+                elab_backtrace: elab.context.snapshot(),
+            })?;
+            let mut result = synth_impl(db, elab, fun_expr)?;
             for arg in elems {
-                result = elab.kernel.synth_app(db, result, arg)?;
+                result = elab.kernel.synth_app(db, result, arg, elab.context.source())?;
             }
             Ok(result)
         }
         Expression::Pi(pi) => synth_pi(db, elab, pi),
         Expression::Arrow(arrow) => synth_arrow(db, elab, arrow),
         Expression::LetIn(let_in) => synth_let_in(db, elab, let_in),
-        Expression::Underscore(_) => synth_underscore(elab),
-        Expression::Paren(p) => synth(db, elab, &p.expr),
-        _ => Err(ElabError::CannotInfer { span: None }),
+        Expression::Underscore(underscore) => synth_underscore(elab, underscore),
+        Expression::Paren(p) => synth_impl(db, elab, &p.expr),
+        _ => Err(ElabError::CannotInfer {
+            span: expr_span(elab, expr),
+            elab_backtrace: elab.context.snapshot(),
+        }),
     }
 }
 
@@ -207,17 +400,66 @@ pub fn check<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
+    // Phase 4.3: Push trace frame with actual source location and expression description
+    let desc = expr_description(expr);
+    elab.push_trace(
+        format!("checking {} against expected type", desc),
+        expr_loc(expr),
+        ElabFrameKind::CheckingExpression,
+    );
+
+    let result = check_impl(db, elab, expr, expected_ty);
+
+    // Pop trace frame
+    elab.pop_trace();
+
+    // Enrich errors with span and backtrace if missing
+    result.map_err(|err| enrich_error(err, elab, expr))
+}
+
+/// Internal implementation of check (separated to ensure pop_trace is always called)
+fn check_impl<'a, 'db, Db>(
+    db: &'db Db,
+    elab: &mut Elaborator<'a, 'db>,
+    expr: &Expression,
+    expected_ty: RcTy<'db>,
+) -> Result<Checked<RcSyntax<'db>>, ElabError<'db>>
+where
+    Db: salsa::Database,
+{
     match expr {
         Expression::Fun(fun) => match elab.kernel.force_to_pi(expected_ty.clone()) {
-            Ok((dom_code, cod_clos)) => elab.kernel.check_lambda(db, fun, dom_code, cod_clos),
+            Ok((dom_code, cod_clos)) => elab.kernel.check_lambda(db, fun, dom_code, cod_clos, elab.context.source()),
             Err(_) => {
-                let s = synth(db, elab, expr)?;
-                Ok(elab.kernel.expect(expected_ty, s))
+                // Switch to synth mode (the "switch rule")
+                let desc = expr_description(expr);
+                elab.push_trace(
+                    format!("switching to synthesis for {}", desc),
+                    expr_loc(expr),
+                    ElabFrameKind::SwitchingToSynth,
+                );
+                let result = synth_impl(db, elab, expr);
+                elab.pop_trace();
+
+                let s = result?;
+                let loc = elab.context.current_location();
+                Ok(elab.kernel.expect_with_loc(expected_ty, s, loc))
             }
         },
         _ => {
-            let s = synth(db, elab, expr)?;
-            Ok(elab.kernel.expect(expected_ty, s))
+            // Switch to synth mode (the "switch rule")
+            let desc = expr_description(expr);
+            elab.push_trace(
+                format!("switching to synthesis for {}", desc),
+                expr_loc(expr),
+                ElabFrameKind::SwitchingToSynth,
+            );
+            let result = synth_impl(db, elab, expr);
+            elab.pop_trace();
+
+            let s = result?;
+            let loc = elab.context.current_location();
+            Ok(elab.kernel.expect_with_loc(expected_ty, s, loc))
         }
     }
 }
@@ -226,22 +468,35 @@ where
 
 fn synth_underscore<'a, 'db>(
     elab: &mut Elaborator<'a, 'db>,
+    underscore: &hwml_surface::Underscore,
 ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
     let depth = elab.kernel.ctx.depth();
-    let level_id =
-        elab.kernel
-            .state
-            .fresh_meta(Rc::new(Ty::UniverseType), depth, MetaKind::UniverseLevel);
+    let source = elab.context.source();
+    let loc = hwml_core::SourceRange::new(source, underscore.loc.clone());
+
+    let level_id = elab.kernel.state.fresh_meta_with_provenance(
+        Rc::new(Ty::UniverseType),
+        depth,
+        MetaKind::UniverseLevel,
+        loc.clone(),
+        format!("underscore placeholder at {:?}", underscore.loc),
+    );
     let (level_syn, _) = elab.kernel.synth_meta(level_id)?.into_inner();
     let level_val = elab
         .kernel
         .eval_syn(&level_syn)
-        .map_err(|_| ElabError::CannotInfer { span: None })?;
+        .map_err(|_| ElabError::CannotInfer {
+            span: Some(loc.clone()),
+            elab_backtrace: elab.context.snapshot(),
+        })?;
     let term_ty: RcTy<'db> = Rc::new(Ty::El(level_val));
-    let term_id = elab
-        .kernel
-        .state
-        .fresh_meta(term_ty.clone(), depth, MetaKind::Term);
+    let term_id = elab.kernel.state.fresh_meta_with_provenance(
+        term_ty.clone(),
+        depth,
+        MetaKind::Term,
+        loc.clone(),
+        format!("underscore placeholder at {:?}", underscore.loc),
+    );
     let (term_syn, _) = elab.kernel.synth_meta(term_id)?.into_inner();
     Ok(Checked::new((term_syn, term_ty)))
 }
@@ -308,6 +563,7 @@ where
                 resolver: elab.kernel.resolver,
                 stub_table: elab.kernel.stub_table,
             },
+            context: elab.context.clone(),
         };
         // Re-check dom_ty_expr in extended ctx for proper de Bruijn shifts.
         synth_pi_binders(
@@ -351,6 +607,7 @@ where
                 resolver: elab.kernel.resolver,
                 stub_table: elab.kernel.stub_table,
             },
+            context: elab.context.clone(),
         };
         check(db, &mut inner, &arrow.target, Rc::new(Ty::UniverseType))?.into_inner()
     };
@@ -375,7 +632,13 @@ where
     let ty_expr = let_in
         .ty
         .as_deref()
-        .ok_or(ElabError::CannotInfer { span: None })?;
+        .ok_or(ElabError::CannotInfer {
+            span: Some(hwml_core::SourceRange::new(
+                elab.context.source(),
+                let_in.loc.clone(),
+            )),
+            elab_backtrace: elab.context.snapshot(),
+        })?;
 
     let ty_syn = check(db, elab, ty_expr, Rc::new(Ty::UniverseType))?.into_inner();
     let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
@@ -395,6 +658,7 @@ where
                 resolver: elab.kernel.resolver,
                 stub_table: elab.kernel.stub_table,
             },
+            context: elab.context.clone(),
         };
         synth(db, &mut inner, &let_in.expr)?.into_inner()
     };
