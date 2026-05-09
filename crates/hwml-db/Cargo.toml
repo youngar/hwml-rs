@@ -13,6 +13,7 @@ license.workspace = true
 
 [dependencies]
 hwml_core.workspace = true
+hwml-diagnostic = { path = "../hwml-diagnostic" }
 hwml_elab.workspace = true
 hwml_support.workspace = true
 hwml_surface.workspace = true
