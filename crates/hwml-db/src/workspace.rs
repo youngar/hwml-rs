@@ -11,14 +11,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Parse surface syntax for a single file.
-///
-/// This is a Salsa query so parsing results are cached per file.
-/// When a file is edited, only that file's parsing is invalidated.
+#[salsa::tracked]
+pub fn parse_surface_program_with_errors(
+    db: &dyn salsa::Database,
+    source_file: SourceFile,
+) -> Arc<hwml_surface::parsing::ParseResult> {
+    Arc::new(hwml_surface::parsing::parse_with_errors(source_file.text(db).as_bytes()))
+}
+
 #[salsa::tracked]
 pub fn parse_surface_program(db: &dyn salsa::Database, source_file: SourceFile) -> Option<Program> {
-    let text = source_file.text(db);
-    hwml_surface::parsing::parse(text.as_bytes())
+    parse_surface_program_with_errors(db, source_file).program.clone()
 }
 
 /// Harvest declarations from a single file.
@@ -48,12 +51,9 @@ pub fn file_declarations<'db>(
         return Arc::new(Vec::new());
     };
 
-    // Create Source for location tracking
-    let path = source_file.path(db);
-    let source = {
-        let label = Word::new(db, path.display().to_string().as_str());
-        Source::new(db, SourceInfo::Synthetic(label))
-    };
+    // Create Source for location tracking using the SourceFileId
+    let file_id = source_file.file_id(db);
+    let source = Source::new(db, SourceInfo::File(file_id));
 
     // Start at root namespace (None = global root)
     let root_namespace: Option<QualifiedName> = None;
@@ -64,7 +64,7 @@ pub fn file_declarations<'db>(
     {
         eprintln!(
             "Warning: Error harvesting declarations from {}: {}",
-            path.display(),
+            source_file.path(db).display(),
             harvest_err
         );
         return Arc::new(Vec::new());
@@ -196,7 +196,9 @@ pub fn workspace_declarations<'db>(
                 }
             };
 
-            let source_file = SourceFile::new(db, source_path.clone(), text);
+            // Create SourceFile with library name (SourceFileId computed on demand)
+            let source_file = SourceFile::new(db, source_path.clone(), text, lib_name.to_string());
+
             files.insert(source_path.clone(), source_file);
             all_files.insert(source_path.clone(), source_file);
         }
@@ -228,6 +230,16 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    // Helper to create a test SourceFile
+    fn create_test_source_file(
+        db: &mut HwmlDatabase,
+        path: PathBuf,
+        text: String,
+    ) -> (PathBuf, SourceFile) {
+        let source_file = SourceFile::new(db, path.clone(), text, "test".to_string());
+        (path, source_file)
+    }
+
     #[test]
     fn test_library_declarations_empty_workspace() {
         let mut db = HwmlDatabase::new();
@@ -247,7 +259,7 @@ mod tests {
         // Create a simple HWML file
         let path = PathBuf::from("/test/foo.hwml");
         let text = "def foo : Bit := i1".to_string();
-        let source_file = SourceFile::new(&mut db, path.clone(), text);
+        let (path, source_file) = create_test_source_file(&mut db, path, text);
 
         // Create VfsFileMap with one file
         let mut files = HashMap::new();
@@ -269,11 +281,11 @@ mod tests {
         // Create two HWML files
         let path1 = PathBuf::from("/test/foo.hwml");
         let text1 = "def foo : Bit := i1".to_string();
-        let source_file1 = SourceFile::new(&mut db, path1.clone(), text1);
+        let (path1, source_file1) = create_test_source_file(&mut db, path1, text1);
 
         let path2 = PathBuf::from("/test/bar.hwml");
         let text2 = "def bar : Bit := i0".to_string();
-        let source_file2 = SourceFile::new(&mut db, path2.clone(), text2);
+        let (path2, source_file2) = create_test_source_file(&mut db, path2, text2);
 
         // Create VfsFileMap with two files
         let mut files = HashMap::new();
@@ -295,7 +307,7 @@ mod tests {
         // Create a simple HWML file
         let path = PathBuf::from("/test/foo.hwml");
         let text = "def foo : Bit := i1".to_string();
-        let source_file = SourceFile::new(&mut db, path, text);
+        let (_path, source_file) = create_test_source_file(&mut db, path, text);
 
         // Harvest declarations from this file only
         let file_decls = file_declarations(&db, source_file);
@@ -311,7 +323,7 @@ mod tests {
         // Create a file
         let path = PathBuf::from("/test/foo.hwml");
         let text = "def foo : Bit := i1".to_string();
-        let source_file = SourceFile::new(&mut db, path, text);
+        let (_path, source_file) = create_test_source_file(&mut db, path, text);
 
         // Call file_declarations twice
         let decls1 = file_declarations(&db, source_file);
@@ -366,11 +378,11 @@ mod tests {
         // Create two HWML files that reference each other
         let path1 = PathBuf::from("/test/a.hwml");
         let text1 = "def foo : Bit := bar".to_string(); // References bar from b.hwml
-        let source_file1 = SourceFile::new(&mut db, path1.clone(), text1);
+        let (path1, source_file1) = create_test_source_file(&mut db, path1, text1);
 
         let path2 = PathBuf::from("/test/b.hwml");
         let text2 = "def bar : Bit := i1".to_string();
-        let source_file2 = SourceFile::new(&mut db, path2.clone(), text2);
+        let (path2, source_file2) = create_test_source_file(&mut db, path2, text2);
 
         // Create VfsFileMap with both files
         let mut files = HashMap::new();
@@ -393,7 +405,7 @@ mod tests {
         // Create initial file
         let path = std::path::PathBuf::from("/test/foo.hwml");
         let text1 = "def foo : Bit := i1".to_string();
-        let source_file1 = SourceFile::new(&mut db, path.clone(), text1);
+        let (_path, source_file1) = create_test_source_file(&mut db, path, text1);
 
         // Harvest first time
         {
@@ -420,12 +432,12 @@ mod tests {
         // File 1: Define namespace Foo with member A
         let path1 = PathBuf::from("/test/foo1.hwml");
         let text1 = "namespace Foo { def A : Bit := i1 }".to_string();
-        let source_file1 = SourceFile::new(&mut db, path1.clone(), text1);
+        let (path1, source_file1) = create_test_source_file(&mut db, path1, text1);
 
         // File 2: Extend namespace Foo with member B
         let path2 = PathBuf::from("/test/foo2.hwml");
         let text2 = "namespace Foo { def B : Bit := i0 }".to_string();
-        let source_file2 = SourceFile::new(&mut db, path2.clone(), text2);
+        let (path2, source_file2) = create_test_source_file(&mut db, path2, text2);
 
         // Create VfsFileMap with both files
         let mut files = HashMap::new();
@@ -451,12 +463,12 @@ mod tests {
         // Note: The actual parsing determines if something is parametric
         // For now, we just test that the harvesting works
         let text1 = "def MyType : Type := Bit".to_string();
-        let source_file1 = SourceFile::new(&mut db, path1.clone(), text1);
+        let (_path1, source_file1) = create_test_source_file(&mut db, path1, text1);
 
         // File with concrete definition (no bindings)
         let path2 = PathBuf::from("/test/concrete.hwml");
         let text2 = "def MyValue : Bit := i1".to_string();
-        let source_file2 = SourceFile::new(&mut db, path2.clone(), text2);
+        let (_path2, source_file2) = create_test_source_file(&mut db, path2, text2);
 
         let decls1 = file_declarations(&db, source_file1);
         let decls2 = file_declarations(&db, source_file2);
