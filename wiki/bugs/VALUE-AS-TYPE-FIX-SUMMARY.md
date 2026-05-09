@@ -22,13 +22,19 @@ help: add more type annotations to help the type checker
 help: check that all function arguments and return types are specified
 ```
 
-**After:**
+**After (Phase 1 - Unifier Fix):**
 ```
 error[E0004]: Unification failure
   -->  unknown:1:1
 ```
 
-While the location is still "unknown:1:1" (a separate issue), the error type is now correct.
+**After (Phase 2 - Diagnostic Improvement):**
+```
+error[E0004]: Type mismatch: expected 'Type0' but found 'Test/Nat'
+  -->  unknown:1:1
+```
+
+While the location is still "unknown:1:1" (a separate issue), the error message now clearly explains what went wrong.
 
 ## Root Cause Analysis
 
@@ -42,31 +48,47 @@ While the location is still "unknown:1:1" (a separate issue), the error type is 
 
 ## Solution Implemented
 
-### Files Modified
+### Phase 1: Unifier Hard Failure Fix
 
-1. **`crates/hwml-elab/src/unify/mod.rs`** (lines 206-227)
-   - Added explicit hard failure cases before the catch-all `_ => Ok(UnifyResult::Stuck)`
-   - Now detects incompatible value forms and returns `UnificationFailure` error
+**File: `crates/hwml-elab/src/unify/mod.rs`** (lines 206-227)
+   - Added explicit hard failure cases for incompatible value forms:
+     - `UniverseCode` vs `TypeConstructor`
+     - `UniverseCode` vs `DataConstructor`
+     - `TypeConstructor` vs `DataConstructor`
+   - These now return `UnificationFailure` error instead of `Stuck`
+   - Kept `DataConstructor` vs `DataConstructor` and `TypeConstructor` vs `TypeConstructor` as `Stuck`
+     (handled by solver's constructor injectivity)
 
-2. **`crates/hwml-elab/tests/elab_tests.rs`** (lines 363, 386)
+**File: `crates/hwml-elab/tests/elab_tests.rs`** (lines 363, 386)
    - Fixed test calls to `synth_universe` to include the new `loc` parameter
 
-3. **`stdlib/src/Nat.hwml`**
+**File: `stdlib/src/Nat.hwml`**
    - Removed test `fart` definition used to reproduce the bug
 
-### Code Changes
+### Phase 2: Diagnostic Message Improvement
 
-Added the following cases to `unify_structural` to detect incompatible value forms:
+**File: `crates/hwml-db/src/diagnostics.rs`**
+   - Added `format_value_brief` helper to format values concisely
+   - Updated `UnificationFailure` case to show "expected X but found Y"
 
-- `TypeConstructor` vs `UniverseCode`
-- `DataConstructor` vs `UniverseCode`
-- `TypeConstructor` vs `DataConstructor`
-- `TypeConstructor` vs `PiCode`
-- `DataConstructor` vs `PiCode`
-- `TypeConstructor` vs `BitCode`
-- `DataConstructor` vs `BitCode`
+**File: `crates/hwml-elab/src/diagnostic.rs`**
+   - Added `format_value` helper for rich diagnostic formatting
+   - Updated `UnificationFailure` case to use value formatting
 
-All of these now produce a hard `UnificationFailure` error instead of returning `Stuck`.
+### Key Implementation Details
+
+**Unifier Strategy:**
+The unifier now distinguishes between three cases:
+1. **Hard failures**: Incompatible value forms (e.g., `UniverseCode` vs `DataConstructor`)
+2. **Stuck**: Cases that might be solvable (e.g., `Flex` vs anything, same-kind constructors)
+3. **Success**: Direct unification (e.g., same rigid variable, eta-equivalence)
+
+**Value Formatting:**
+Both diagnostic converters now format values concisely:
+- `UniverseCode(0)` → `Type0`
+- `TypeConstructor(Nat)` → `Nat` or `Test/Nat`
+- `DataConstructor(zero)` → `zero` or `Std/Nat/zero`
+- `Flex(?0)` → `?0`
 
 ## Test Results
 
@@ -83,12 +105,14 @@ All of these now produce a hard `UnificationFailure` error instead of returning 
 ## Impact
 
 **Positive:**
-- Users now get a "Unification failure" error instead of "Unsolved metavariable" when using values as types
-- The error type correctly indicates a type mismatch rather than insufficient type information
+- ✅ Users now get a clear "Type mismatch: expected X but found Y" error
+- ✅ The error correctly identifies what type was expected and what was found
+- ✅ No more confusing "Unsolved metavariable" errors for this case
+- ✅ All existing tests still pass
 
-**To Do:**
-- Improve the diagnostic message to specifically say "value used as type" (requires custom error variant)
-- Fix location tracking so errors don't show "unknown:1:1" (separate provenance issue)
+**Remaining Issues:**
+- ⚠️ Location tracking still shows "unknown:1:1" instead of actual source location (separate provenance issue)
+- 💡 Could add more specific error message like "cannot use value as type" (optional enhancement)
 
 ## Documentation
 

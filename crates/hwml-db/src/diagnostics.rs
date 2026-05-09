@@ -97,6 +97,21 @@ fn span_from_offsets(text: &str, start: usize, end: usize) -> Span {
 }
 
 // Convert ElabError to Diagnostic.
+/// Format a value for error messages (simple, user-friendly representation)
+fn format_value_for_error<'db>(db: &'db dyn salsa::Database, val: &hwml_core::RcValue<'db>) -> String {
+    use hwml_core::Value;
+    match val.as_ref() {
+        Value::UniverseCode(n) => format!("Type{}", n),
+        Value::TypeConstructor(tc) => format!("{}", tc.constructor.to_string(db)),
+        Value::DataConstructor(dc) => format!("{}", dc.constructor.to_string(db)),
+        Value::PiCode(_, _) => "Π type".to_string(),
+        Value::BitCode => "Bit".to_string(),
+        Value::Flex(flex) => format!("?{}", flex.head.id.local_index),
+        Value::Rigid(r) => format!("%{}", r.head.level.0),
+        _ => format!("{:?}", val), // Fallback to debug for complex cases
+    }
+}
+
 // Public for use by LSP server.
 pub fn convert_elab_error_to_diagnostic<'db>(
     db: &'db dyn salsa::Database,
@@ -132,7 +147,11 @@ pub fn convert_elab_error_to_diagnostic<'db>(
             Some(DiagnosticCode::new("E0004")),
         ),
         ElabError::UnificationFailure { lhs, rhs, .. } => (
-            format!("Unification failure: {:?} ≠ {:?}", lhs, rhs),
+            format!(
+                "Type mismatch: expected '{}' but found '{}'",
+                format_value_for_error(db, rhs),
+                format_value_for_error(db, lhs)
+            ),
             Some(DiagnosticCode::new("E0005")),
         ),
         ElabError::OccursCheck { meta, .. } => (

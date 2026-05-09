@@ -204,28 +204,25 @@ impl<'a, 'db> Unifier<'a, 'db> {
                 self.unify_type_codes(i1, i2)
             }
 
-            // Hard failures: incompatible value forms that should never unify
-            // This catches common user errors like using a data constructor in a type position
-            (Value::TypeConstructor(_), Value::UniverseCode(_))
-            | (Value::UniverseCode(_), Value::TypeConstructor(_))
-            | (Value::DataConstructor(_), Value::UniverseCode(_))
+            // Hard failures for definitely incompatible forms
+            // These are cases where no amount of meta-solving will make them equal
+            (Value::UniverseCode(_), Value::TypeConstructor(_))
+            | (Value::TypeConstructor(_), Value::UniverseCode(_))
             | (Value::UniverseCode(_), Value::DataConstructor(_))
+            | (Value::DataConstructor(_), Value::UniverseCode(_))
             | (Value::TypeConstructor(_), Value::DataConstructor(_))
-            | (Value::DataConstructor(_), Value::TypeConstructor(_))
-            | (Value::TypeConstructor(_), Value::PiCode(_, _))
-            | (Value::PiCode(_, _), Value::TypeConstructor(_))
-            | (Value::DataConstructor(_), Value::PiCode(_, _))
-            | (Value::PiCode(_, _), Value::DataConstructor(_))
-            | (Value::TypeConstructor(_), Value::BitCode)
-            | (Value::BitCode, Value::TypeConstructor(_))
-            | (Value::DataConstructor(_), Value::BitCode)
-            | (Value::BitCode, Value::DataConstructor(_)) => Err(ElabError::UnificationFailure {
-                lhs: lhs.clone(),
-                rhs: rhs.clone(),
-                span: None,
-                elab_backtrace: Vec::new(),
-            }),
+            | (Value::DataConstructor(_), Value::TypeConstructor(_)) => {
+                Err(ElabError::UnificationFailure {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    span: None,
+                    elab_backtrace: Vec::new(),
+                })
+            }
 
+            // Default: return Stuck and let the solver handle it
+            // This includes DataConstructor vs DataConstructor (handled by solver's constructor injectivity)
+            // and TypeConstructor vs TypeConstructor (also handled by solver)
             _ => Ok(UnifyResult::Stuck),
         }
     }

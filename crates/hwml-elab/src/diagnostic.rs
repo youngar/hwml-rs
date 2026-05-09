@@ -53,6 +53,24 @@ where
     }
 }
 
+/// Format a value for display in error messages (used in unification errors)
+fn format_value<'db, Db>(db: &'db Db, _global: &GlobalEnv<'db>, val: &hwml_core::RcValue<'db>) -> String
+where
+    Db: salsa::Database,
+{
+    use hwml_core::Value;
+    match val.as_ref() {
+        Value::UniverseCode(n) => format!("Type{}", n),
+        Value::TypeConstructor(tc) => tc.constructor.to_string(db),
+        Value::DataConstructor(dc) => dc.constructor.to_string(db),
+        Value::PiCode(_, _) => "Π type".to_string(),
+        Value::BitCode => "Bit".to_string(),
+        Value::Flex(flex) => format!("?{}", flex.head.id.local_index),
+        Value::Rigid(r) => format!("%{}", r.head.level.0),
+        _ => format!("{:?}", val), // Fallback to debug for complex cases
+    }
+}
+
 /// Convert an ElabError to a Diagnostic with rich formatting
 ///
 /// This requires:
@@ -125,10 +143,14 @@ where
             "Cannot infer type".to_string(),
             Some("E0003"),
         ),
-        ElabError::UnificationFailure { .. } => (
-            "Unification failure".to_string(),
-            Some("E0004"),
-        ),
+        ElabError::UnificationFailure { lhs, rhs, .. } => {
+            let lhs_str = format_value(db, global, lhs);
+            let rhs_str = format_value(db, global, rhs);
+            (
+                format!("Type mismatch: expected '{}' but found '{}'", rhs_str, lhs_str),
+                Some("E0004"),
+            )
+        },
         ElabError::OccursCheck { meta, .. } => (
             format!("Occurs check failed for {:?}", meta),
             Some("E0005"),
