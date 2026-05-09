@@ -7,7 +7,7 @@ use lsp_server::{
 };
 use lsp_types::{
     notification::*, request::*, Diagnostic, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, InitializeParams, OneOf, Position, PublishDiagnosticsParams, Range,
+    DidOpenTextDocumentParams, InitializeParams, OneOf, PublishDiagnosticsParams,
     SaveOptions, ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, Uri,
 };
@@ -296,35 +296,15 @@ impl Server {
         });
     }
 
-    fn to_position((line, column): (usize, usize)) -> Position {
-        Position {
-            line: line as u32,
-            character: column as u32,
-        }
-    }
-
     fn compile_file(&self, db: &HwmlDatabase, uri: &Uri, file: hwml_db::db::SourceFile) {
-        let _program = hwml_db::db::parse_program(&*db, file);
-        let diagnostics =
-            hwml_db::db::parse_program::accumulated::<hwml_db::db::Diagnostics>(db, file);
-        if diagnostics.len() > 0 {
-            let line_info = hwml_db::db::get_line_info(db, file);
-            let lsp_diagnostics = diagnostics
-                .into_iter()
-                .map(|diagnostic| {
-                    let start = Self::to_position(line_info.loc(diagnostic.0.span.start));
-                    let end = Self::to_position(line_info.loc(diagnostic.0.span.start));
-                    Diagnostic {
-                        range: Range { start, end },
-                        message: diagnostic.0.message,
-                        ..Default::default()
-                    }
-                })
-                .collect::<Vec<_>>();
-            self.send_diagnostics(uri.clone(), lsp_diagnostics);
-        }
-        // If there are no diagnostics, clear them for this file.
-        self.send_diagnostics(uri.clone(), vec![]);
+        let diagnostics = hwml_db::diagnostics::file_diagnostics(db, file);
+
+        let lsp_diagnostics: Vec<Diagnostic> = diagnostics
+            .iter()
+            .map(|diag| hwml_diagnostic::lsp::diagnostic_to_lsp(diag, uri, Some("hwml")))
+            .collect();
+
+        self.send_diagnostics(uri.clone(), lsp_diagnostics);
     }
 
     fn run(&mut self, receiver: Receiver<Message>) -> Result<(), Box<dyn Error + Sync + Send>> {

@@ -2,8 +2,9 @@
 ///
 /// Run with `cargo test -p hwml_elab --test snap_tests`.
 /// Accept new snapshots with `cargo insta review` or `INSTA_UPDATE=always cargo test`.
-use hwml_core::{val::GlobalEnv, TestDatabase};
+use hwml_core::{Source, SourceInfo, Word, val::GlobalEnv, TestDatabase};
 use hwml_elab::{
+    context::ElabContext,
     ctx::ElabCtx,
     elab::{decl::elab_constant, Elaborator},
     resolver::Resolver,
@@ -42,7 +43,9 @@ fn elab_str(input: &str) -> String {
                 let name = def.id.value.to_string();
                 let mut state = SolverState::new();
                 let ctx = ElabCtx::empty();
-                let mut elab = Elaborator::new(&global, ctx, &mut state, &resolver, &stub_table);
+                let word = Word::new(&db, "snap_test");
+                let source = Source::new(&db, SourceInfo::Synthetic(word));
+                let mut elab = Elaborator::new(&global, ctx, &mut state, &resolver, &stub_table, source);
 
                 match elab_constant(&db, &mut elab, def) {
                     Ok(c) => {
@@ -50,7 +53,7 @@ fn elab_str(input: &str) -> String {
                         match zonk(&mut state) {
                             Ok(()) => {}
                             Err(e) => {
-                                out.push_str(&format!("-- {name}\nerror (zonk): {e:?}\n\n"));
+                                out.push_str(&format!("-- {name}\nerror (zonk): {e}\n"));
                                 continue;
                             }
                         }
@@ -62,7 +65,7 @@ fn elab_str(input: &str) -> String {
                         out.push_str(&format!("-- {name}\ntype:  {ty_str}\nvalue: {val_str}\n\n"));
                     }
                     Err(e) => {
-                        out.push_str(&format!("-- {name}\nerror: {e:?}\n\n"));
+                        out.push_str(&format!("-- {name}\nerror: {e}\n"));
                     }
                 }
             }
@@ -196,8 +199,15 @@ fn snap_infer_without_annotation() {
 fn snap_fun_without_annotation_errors() {
     // No annotation + lambda body → CannotInfer (can't synth a Fun).
     let src = "def f := fun a => a";
-    insta::assert_snapshot!(elab_str(src), @r###"
+    insta::assert_snapshot!(elab_str(src), @r#"
     -- f
-    error: CannotInfer { span: None }
-    "###);
+    error: Cannot infer type
+      at SourceRange { source: Source(Id(400)), range: 9..19 }
+
+    Elaboration backtrace:
+      1. checking definition 'f' (CheckingDefinition { name: "f" })
+         at SourceRange { source: Source(Id(400)), range: 0..19 }
+      2. synthesizing type for lambda function (SynthesizingType)
+         at SourceRange { source: Source(Id(400)), range: 9..19 }
+    "#);
 }

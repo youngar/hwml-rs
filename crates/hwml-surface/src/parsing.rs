@@ -1,6 +1,7 @@
 use lalrpop_util::lalrpop_mod;
+use lalrpop_util::ParseError as LalrpopParseError;
 
-use crate::{lex::Lexer, parsing::grammar::ProgramParser, syntax::Program};
+use crate::{lex::Lexer, parsing::grammar::ProgramParser, syntax::Program, lex::Token};
 
 lalrpop_mod!(
     #[allow(clippy::ptr_arg)]
@@ -8,17 +9,86 @@ lalrpop_mod!(
     pub grammar
 );
 
-pub fn parse(input: &[u8]) -> Option<Program> {
-    let lexer = Lexer::new(input);
-    let parser = ProgramParser::new();
-    let result = parser.parse(input, lexer);
-    match result {
-        Ok(program) => Some(program),
-        Err(err) => {
-            eprintln!("Error: {err:?}");
-            None
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseResult {
+    pub program: Option<Program>,
+    pub errors: Vec<ParseErrorInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseErrorInfo {
+    pub offset: usize,
+    pub message: String,
+}
+
+impl ParseErrorInfo {
+    fn from_lalrpop_error(err: &LalrpopParseError<usize, Token, &str>, _input: &[u8]) -> Self {
+        match err {
+            LalrpopParseError::InvalidToken { location } => {
+                ParseErrorInfo {
+                    offset: *location,
+                    message: "Invalid token".to_string(),
+                }
+            }
+            LalrpopParseError::UnrecognizedEof { location, expected } => {
+                let msg = if expected.is_empty() {
+                    "Unexpected end of file".to_string()
+                } else {
+                    format!("Unexpected end of file, expected one of: {}", expected.join(", "))
+                };
+                ParseErrorInfo {
+                    offset: *location,
+                    message: msg,
+                }
+            }
+            LalrpopParseError::UnrecognizedToken { token: (start, token, _end), expected } => {
+                let token_str = format!("{:?}", token);
+                let msg = if expected.is_empty() {
+                    format!("Unexpected token: {}", token_str)
+                } else {
+                    format!("Unexpected token: {}, expected one of: {}", token_str, expected.join(", "))
+                };
+                ParseErrorInfo {
+                    offset: *start,
+                    message: msg,
+                }
+            }
+            LalrpopParseError::ExtraToken { token: (start, token, _end) } => {
+                ParseErrorInfo {
+                    offset: *start,
+                    message: format!("Extra token: {:?}", token),
+                }
+            }
+            LalrpopParseError::User { error } => {
+                ParseErrorInfo {
+                    offset: 0,
+                    message: error.to_string(),
+                }
+            }
         }
     }
+}
+
+pub fn parse_with_errors(input: &[u8]) -> ParseResult {
+    let lexer = Lexer::new(input);
+    let parser = ProgramParser::new();
+    match parser.parse(input, lexer) {
+        Ok(program) => ParseResult {
+            program: Some(program),
+            errors: Vec::new(),
+        },
+        Err(err) => ParseResult {
+            program: None,
+            errors: vec![ParseErrorInfo::from_lalrpop_error(&err, input)],
+        },
+    }
+}
+
+pub fn parse(input: &[u8]) -> Option<Program> {
+    let result = parse_with_errors(input);
+    // Note: Parse errors are now reported by the caller using the diagnostic framework
+    // See hwml/src/main.rs for the rendering logic
+    result.program
 }
 
 #[cfg(test)]

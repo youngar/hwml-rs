@@ -3,9 +3,10 @@ use std::rc::Rc;
 use hwml_core::{
     ty::Ty,
     val::{GlobalEnv, LocalEnv, MetaVariable, Spine},
-    Level, MetaVariableId, Syntax, TestDatabase, Value,
+    Level, MetaVariableId, Source, SourceInfo, Syntax, TestDatabase, Value, Word,
 };
 use hwml_elab::{
+    context::ElabContext,
     ctx::ElabCtx,
     elab::{expr, Elaborator},
     error::ElabError,
@@ -350,6 +351,7 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
 /// `expect` fast path: same Ty::UniverseType on both sides → no new meta.
 #[test]
 fn expect_fast_path_equal_types_no_meta() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
@@ -372,6 +374,7 @@ fn expect_fast_path_equal_types_no_meta() {
 /// `expect` slow path: different types → equality constraint emitted.
 #[test]
 fn expect_slow_path_emits_constraint() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
@@ -415,8 +418,12 @@ fn elaborate_identity_function() {
     // Synth the type first.
     let resolver = Resolver::new();
     let stub_table = StubTable::new();
+    // Create a test source
+    let word = Word::new(&db, "test");
+    let source = Source::new(&db, SourceInfo::Synthetic(word));
     let mut elab = Elaborator {
         kernel: Kernel::new(&global, ctx.clone(), &mut state, &resolver, &stub_table),
+        context: ElabContext::new(source),
     };
     let (ty_syn, ty_kind) = expr::synth(&db, &mut elab, &pi_ty)
         .expect("type synthesis should succeed")
@@ -469,8 +476,12 @@ fn elaborate_identity_verifier_passes() {
 
     let resolver = Resolver::new();
     let stub_table = StubTable::new();
+    // Create a test source
+    let word = Word::new(&db, "test");
+    let source = Source::new(&db, SourceInfo::Synthetic(word));
     let mut elab = Elaborator {
         kernel: Kernel::new(&global, ctx.clone(), &mut state, &resolver, &stub_table),
+        context: ElabContext::new(source),
     };
     let (ty_syn, _) = expr::synth(&db, &mut elab, &pi_ty)
         .expect("type synthesis should succeed")
