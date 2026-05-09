@@ -20,6 +20,26 @@ pub struct SourceFile {
     /// File content as UTF-8 string
     #[return_ref] // Critical: avoid cloning strings on every query
     pub text: String,
+
+    /// Library name for this file (used to create SourceFileId)
+    #[return_ref]
+    pub library_name: String,
+}
+
+impl SourceFile {
+    /// Get the SourceFileId for this file (computed on demand, interned)
+    pub fn file_id<'db>(&self, db: &'db dyn salsa::Database) -> hwml_core::SourceFileId<'db> {
+        let canonical_path_str = self.path(db).to_str().unwrap_or_else(|| {
+            eprintln!(
+                "Warning: Non-UTF8 path encountered: {:?} (using 'unknown' as fallback)",
+                self.path(db)
+            );
+            "unknown"
+        });
+        let canonical_path_word = hwml_core::Word::new(db, canonical_path_str);
+        let library_name_word = hwml_core::Word::new(db, self.library_name(db).as_str());
+        hwml_core::SourceFileId::new(db, library_name_word, canonical_path_word)
+    }
 }
 
 /// VfsFileMap tracks all known files in the workspace.
@@ -27,10 +47,29 @@ pub struct SourceFile {
 /// Module resolution queries use this for pure lookup (no IO).
 #[salsa::input]
 pub struct VfsFileMap {
-    /// Map of canonical path → SourceFile
+    /// Map of canonical PathBuf → SourceFile
     /// Using Arc for cheap cloning when updating
+    /// Note: We use PathBuf keys internally because Salsa input structs can't use
+    /// interned types with lifetimes. Lookups by SourceFileId are supported via helper methods.
     #[return_ref]
     pub files: Arc<HashMap<PathBuf, SourceFile>>,
+}
+
+impl VfsFileMap {
+    /// Lookup a SourceFile by its SourceFileId
+    ///
+    /// Note: This is a convenience method. The VfsFileMap internally uses PathBuf keys,
+    /// so we convert the SourceFileId to a PathBuf for lookup.
+    pub fn get_by_file_id<'db>(
+        &self,
+        db: &'db dyn salsa::Database,
+        file_id: hwml_core::SourceFileId<'db>,
+    ) -> Option<SourceFile> {
+        // Convert SourceFileId to PathBuf
+        let canonical_path_str: &str = file_id.canonical_path(db).text(db);
+        let path_buf = PathBuf::from(canonical_path_str);
+        self.files(db).get(&path_buf).copied()
+    }
 }
 
 /// Manifest path as a Salsa input for workspace loading.
