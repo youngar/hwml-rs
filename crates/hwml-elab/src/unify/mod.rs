@@ -1,3 +1,25 @@
+//! Unification for HWML type codes and values
+//!
+//! This module implements bidirectional pattern unification following the
+//! algorithm described in Abel & Pientka (2011).
+//!
+//! ## Structure
+//!
+//! The unification algorithm is organized into several categories:
+//!
+//! - **Entry points**: `unify`, `unify_at`, `unify_type_codes`
+//! - **Main dispatch**: `unify_structural` - dispatches to specific cases
+//! - **Neutral cases**: `unify_flex_any`, `unify_rigids`, `unify_same_meta_flex`
+//! - **Structural cases**: `unify_universe_codes`, `unify_pi_codes`, `unify_lift_codes`
+//! - **Spine unification**: `unify_spines`
+//! - **Pattern unification**: See `pattern` submodule
+//!
+//! ## Unification Results
+//!
+//! - `Solved`: Values are definitionally equal
+//! - `Stuck`: Cannot proceed without solving metavariables (solver will block)
+//! - `Error`: Hard failure - values are incompatible
+
 pub mod pattern;
 
 use std::rc::Rc;
@@ -118,90 +140,36 @@ impl<'a, 'db> Unifier<'a, 'db> {
         // Flex-flex same meta with empty spines: intersection (Abel-Pientka §3.5).
         if let (Value::Flex(lf), Value::Flex(rf)) = (lhs.as_ref(), rhs.as_ref()) {
             if lf.head.id == rf.head.id && lf.spine.is_empty() && rf.spine.is_empty() {
-                let lf = lf.clone();
-                let rf = rf.clone();
-                return self.unify_same_meta(&lf, &rf, &lhs, &rhs);
+                return self.unify_same_meta_flex(&lf, &rf, &lhs, &rhs);
             }
         }
 
         // Left Flex: try pattern unification.
         if let Value::Flex(flex) = lhs.as_ref() {
-            let flex = flex.clone();
-            let dummy: RcTy<'db> = Rc::new(Ty::UniverseType);
-            if pattern::pattern_unify(self.global, self.state, &flex, rhs, dummy)? {
-                return Ok(UnifyResult::Solved);
-            }
-            return Ok(UnifyResult::Stuck);
+            return self.unify_flex_any(flex, &rhs);
         }
 
-        // Right Flex: try pattern unification.
+        // Right Flex: try pattern unification (symmetric).
         if let Value::Flex(flex) = rhs.as_ref() {
-            let flex = flex.clone();
-            let dummy: RcTy<'db> = Rc::new(Ty::UniverseType);
-            if pattern::pattern_unify(self.global, self.state, &flex, lhs, dummy)? {
-                return Ok(UnifyResult::Solved);
-            }
-            return Ok(UnifyResult::Stuck);
+            return self.unify_flex_any(flex, &lhs);
         }
 
-        // Both Rigid: heads must match (Gap 1: mismatch is a hard failure).
+        // Both Rigid: unify variable heads and spines.
         if let (Value::Rigid(lr), Value::Rigid(rr)) = (lhs.as_ref(), rhs.as_ref()) {
-            if lr.head.level != rr.head.level {
-                return Err(ElabError::UnificationFailure {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    span: None,
-                    elab_backtrace: Vec::new(),
-                });
-            }
-            let sp1 = lr.spine.clone();
-            let sp2 = rr.spine.clone();
-            return self.unify_spines(&sp1, &sp2);
+            return self.unify_rigids(lr, rr, &lhs, &rhs);
         }
 
+        // Structural cases for specific value forms
         match (lhs.as_ref(), rhs.as_ref()) {
             (Value::UniverseCode(n), Value::UniverseCode(m)) => {
-                if n == m {
-                    Ok(UnifyResult::Solved)
-                } else {
-                    Err(ElabError::UnificationFailure {
-                        lhs: lhs.clone(),
-                        rhs: rhs.clone(),
-                        span: None,
-                        elab_backtrace: Vec::new(),
-                    })
-                }
+                self.unify_universe_codes(*n, *m, &lhs, &rhs)
             }
             (Value::BitCode, Value::BitCode) => Ok(UnifyResult::Solved),
             (Value::PiCode(d1, c1), Value::PiCode(d2, c2)) => {
-                let d1 = d1.clone();
-                let d2 = d2.clone();
-                let c1 = c1.clone();
-                let c2 = c2.clone();
-                match self.unify_type_codes(d1.clone(), d2)? {
-                    UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
-                    UnifyResult::Solved => {}
-                }
-                let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), d1));
-                let ret1 = c1.apply(self.global, &var);
-                let ret2 = c2.apply(self.global, &var);
-                self.depth += 1;
-                let result = self.unify_type_codes(ret1, ret2);
-                self.depth -= 1;
-                result
+                self.unify_pi_codes(d1.clone(), c1.clone(), d2.clone(), c2.clone())
             }
             (Value::LiftCode(n, i1), Value::LiftCode(m, i2)) => {
-                if n != m {
-                    return Err(ElabError::UnificationFailure {
-                        lhs: lhs.clone(),
-                        rhs: rhs.clone(),
-                        span: None,
-                        elab_backtrace: Vec::new(),
-                    });
-                }
-                let i1 = i1.clone();
-                let i2 = i2.clone();
-                self.unify_type_codes(i1, i2)
+                self.unify_lift_codes(*n, i1.clone(), *m, i2.clone(), &lhs, &rhs)
             }
 
             // Hard failures for definitely incompatible forms
@@ -212,12 +180,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
             | (Value::DataConstructor(_), Value::UniverseCode(_))
             | (Value::TypeConstructor(_), Value::DataConstructor(_))
             | (Value::DataConstructor(_), Value::TypeConstructor(_)) => {
-                Err(ElabError::UnificationFailure {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    span: None,
-                    elab_backtrace: Vec::new(),
-                })
+                self.unify_incompatible(&lhs, &rhs)
             }
 
             // Default: return Stuck and let the solver handle it
@@ -225,6 +188,148 @@ impl<'a, 'db> Unifier<'a, 'db> {
             // and TypeConstructor vs TypeConstructor (also handled by solver)
             _ => Ok(UnifyResult::Stuck),
         }
+    }
+
+    // ─── Neutral Unification Cases ────────────────────────────────────────────
+
+    /// Unify a flex (metavariable) with any value using pattern unification.
+    fn unify_flex_any(
+        &mut self,
+        flex: &Flex<'db>,
+        other: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        let flex = flex.clone();
+        let dummy: RcTy<'db> = Rc::new(Ty::UniverseType);
+        if pattern::pattern_unify(self.global, self.state, &flex, other.clone(), dummy)? {
+            return Ok(UnifyResult::Solved);
+        }
+        Ok(UnifyResult::Stuck)
+    }
+
+    /// Unify two rigid neutrals with the same variable head.
+    /// Rigid(x, sp1) = Rigid(x, sp2) requires sp1 = sp2 (unify spines).
+    fn unify_rigids(
+        &mut self,
+        lr: &hwml_core::val::Rigid<'db>,
+        rr: &hwml_core::val::Rigid<'db>,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        if lr.head.level != rr.head.level {
+            return Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            });
+        }
+        let sp1 = lr.spine.clone();
+        let sp2 = rr.spine.clone();
+        self.unify_spines(&sp1, &sp2)
+    }
+
+    /// Unify the same metavariable with different local environments.
+    /// ?m[ρ] = ?m[ξ] (both have empty spines).
+    /// Uses Abel-Pientka intersection algorithm (§3.5).
+    fn unify_same_meta_flex(
+        &mut self,
+        lf: &Flex<'db>,
+        rf: &Flex<'db>,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        self.unify_same_meta(lf, rf, lhs, rhs)
+    }
+
+    // ─── Structural Unification Cases ─────────────────────────────────────────
+
+    /// Unify two universe codes.
+    /// UniverseCode(n) = UniverseCode(m) succeeds iff n == m.
+    fn unify_universe_codes(
+        &mut self,
+        n: usize,
+        m: usize,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        if n == m {
+            Ok(UnifyResult::Solved)
+        } else {
+            Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            })
+        }
+    }
+
+    /// Unify two Pi type codes.
+    /// PiCode(d1, c1) = PiCode(d2, c2) requires:
+    /// 1. d1 = d2 (domain types unify)
+    /// 2. c1(x) = c2(x) for fresh variable x (codomain closures unify)
+    fn unify_pi_codes(
+        &mut self,
+        d1: RcValue<'db>,
+        c1: hwml_core::val::Closure<'db>,
+        d2: RcValue<'db>,
+        c2: hwml_core::val::Closure<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        // First unify the domains
+        match self.unify_type_codes(d1.clone(), d2)? {
+            UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+            UnifyResult::Solved => {}
+        }
+
+        // Create a fresh variable and unify the codomains
+        let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), d1));
+        let ret1 = c1.apply(self.global, &var);
+        let ret2 = c2.apply(self.global, &var);
+
+        self.depth += 1;
+        let result = self.unify_type_codes(ret1, ret2);
+        self.depth -= 1;
+
+        result
+    }
+
+    /// Unify two LiftCode values.
+    /// LiftCode(n, i1) = LiftCode(m, i2) requires:
+    /// 1. n == m (lift levels must match)
+    /// 2. i1 = i2 (inner types unify)
+    fn unify_lift_codes(
+        &mut self,
+        n: usize,
+        i1: RcValue<'db>,
+        m: usize,
+        i2: RcValue<'db>,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        if n != m {
+            return Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            });
+        }
+        self.unify_type_codes(i1, i2)
+    }
+
+    /// Handle definitively incompatible value forms.
+    /// These are hard failures where no amount of meta-solving will help.
+    fn unify_incompatible(
+        &mut self,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        Err(ElabError::UnificationFailure {
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+            span: None,
+            elab_backtrace: Vec::new(),
+        })
     }
 
     /// Same-meta intersection (Abel-Pientka §3.5).
