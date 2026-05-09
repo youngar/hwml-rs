@@ -1,0 +1,33 @@
+[package]
+name = "hwml-diagnostic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core dependencies
+# Note: hwml-diagnostic is a foundational crate and should NOT depend on hwml_db
+# to avoid circular dependencies. hwml_db depends on hwml-diagnostic instead.
+hwml_support = { path = "../hwml-support" }
+
+# LSP integration
+lsp-types = "0.97"
+url = "2.5"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Terminal output
+termcolor = "1.4"
+
+# NOTE: We do NOT use unicode-width or wcwidth!
+# Following Asai's design principle: "No Column Numbers"
+# Visual width is ill-defined for Unicode (emoji, CJK, etc.)
+# We use byte offsets and line-based rendering instead.
+
+# Error handling
+thiserror = "2.0"
+
+[dev-dependencies]
+# Testing
+pretty_assertions = "1.4"
