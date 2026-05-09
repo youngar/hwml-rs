@@ -107,20 +107,39 @@ impl<'a, 'db> Unifier<'a, 'db> {
         }
 
         // Pi eta: at El(PiCode), eta-expand both sides under a fresh variable.
+        // HArrow eta: at El(HArrow), eta-expand both sides under a fresh variable.
         if let Ty::El(code) = ty.as_ref() {
-            if let Value::PiCode(dom, cod) = code.as_ref() {
-                let dom = dom.clone();
-                let cod = cod.clone();
-                let var: RcValue<'db> =
-                    Rc::new(Value::variable(Level::new(self.depth), dom.clone()));
-                let lhs_app = self.apply_val(lhs, var.clone(), dom.clone());
-                let rhs_app = self.apply_val(rhs, var.clone(), dom.clone());
-                let ret_code = cod.apply(self.global, &var);
-                let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
-                self.depth += 1;
-                let result = self.unify_at(lhs_app, rhs_app, ret_ty);
-                self.depth -= 1;
-                return result;
+            match code.as_ref() {
+                Value::PiCode(dom, cod) => {
+                    let dom = dom.clone();
+                    let cod = cod.clone();
+                    let var: RcValue<'db> =
+                        Rc::new(Value::variable(Level::new(self.depth), dom.clone()));
+                    let lhs_app = self.apply_val(lhs, var.clone(), dom.clone());
+                    let rhs_app = self.apply_val(rhs, var.clone(), dom.clone());
+                    let ret_code = cod.apply(self.global, &var);
+                    let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
+                    self.depth += 1;
+                    let result = self.unify_at(lhs_app, rhs_app, ret_ty);
+                    self.depth -= 1;
+                    return result;
+                }
+                Value::HArrow(harrow) => {
+                    // Hardware arrow eta-expansion (for Module values)
+                    let source = harrow.source.clone();
+                    let target_closure = harrow.target.clone();
+                    let var: RcValue<'db> =
+                        Rc::new(Value::variable(Level::new(self.depth), source.clone()));
+                    let lhs_app = self.apply_val(lhs, var.clone(), source.clone());
+                    let rhs_app = self.apply_val(rhs, var.clone(), source.clone());
+                    let ret_code = target_closure.apply(self.global, &var);
+                    let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
+                    self.depth += 1;
+                    let result = self.unify_at(lhs_app, rhs_app, ret_ty);
+                    self.depth -= 1;
+                    return result;
+                }
+                _ => {}
             }
         }
 
@@ -170,6 +189,44 @@ impl<'a, 'db> Unifier<'a, 'db> {
             }
             (Value::LiftCode(n, i1), Value::LiftCode(m, i2)) => {
                 self.unify_lift_codes(*n, i1.clone(), *m, i2.clone(), &lhs, &rhs)
+            }
+
+            // Name-based structural equality
+            (Value::Prim(p1), Value::Prim(p2)) => {
+                self.unify_prims(p1, p2, &lhs, &rhs)
+            }
+            (Value::Constant(c1), Value::Constant(c2)) => {
+                self.unify_constants(c1, c2, &lhs, &rhs)
+            }
+
+            // Unit types (always equal)
+            (Value::Zero(_), Value::Zero(_)) => Ok(UnifyResult::Solved),
+            (Value::One(_), Value::One(_)) => Ok(UnifyResult::Solved),
+            (Value::Bit(_), Value::Bit(_)) => Ok(UnifyResult::Solved),
+            (Value::Refl(_), Value::Refl(_)) => Ok(UnifyResult::Solved),
+            (Value::HardwareUniverse(_), Value::HardwareUniverse(_)) => Ok(UnifyResult::Solved),
+            (Value::SignalUniverse(_), Value::SignalUniverse(_)) => Ok(UnifyResult::Solved),
+            (Value::ModuleUniverse(_), Value::ModuleUniverse(_)) => Ok(UnifyResult::Solved),
+
+            // Hardware lift types (structural injectivity on inner type)
+            (Value::SLift(s1), Value::SLift(s2)) => {
+                // Both are signal lifts, unify their inner types
+                // Note: This is structural unification at universe level
+                self.unify_type_codes(s1.ty.clone(), s2.ty.clone())
+            }
+            (Value::MLift(m1), Value::MLift(m2)) => {
+                // Both are module lifts, unify their inner types
+                self.unify_type_codes(m1.ty.clone(), m2.ty.clone())
+            }
+
+            // Hardware arrow types (injectivity on source and target)
+            (Value::HArrow(ha1), Value::HArrow(ha2)) => {
+                self.unify_harrows(ha1, ha2)
+            }
+
+            // Hardware applications (structural equality)
+            (Value::HApplication(happ1), Value::HApplication(happ2)) => {
+                self.unify_happlications(happ1, happ2)
             }
 
             // Hard failures for definitely incompatible forms
@@ -315,6 +372,98 @@ impl<'a, 'db> Unifier<'a, 'db> {
             });
         }
         self.unify_type_codes(i1, i2)
+    }
+
+    /// Unify two primitives by checking name equality.
+    /// Prim(name1) = Prim(name2) succeeds iff name1 == name2.
+    fn unify_prims(
+        &mut self,
+        p1: &hwml_core::val::Prim<'db>,
+        p2: &hwml_core::val::Prim<'db>,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        if p1.name == p2.name {
+            Ok(UnifyResult::Solved)
+        } else {
+            Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            })
+        }
+    }
+
+    /// Unify two constants by checking name equality.
+    /// Constant(name1) = Constant(name2) succeeds iff name1 == name2.
+    fn unify_constants(
+        &mut self,
+        c1: &hwml_core::val::Constant<'db>,
+        c2: &hwml_core::val::Constant<'db>,
+        lhs: &RcValue<'db>,
+        rhs: &RcValue<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        if c1.name == c2.name {
+            Ok(UnifyResult::Solved)
+        } else {
+            Err(ElabError::UnificationFailure {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: None,
+                elab_backtrace: Vec::new(),
+            })
+        }
+    }
+
+    /// Unify two hardware arrow types.
+    /// HArrow(src1, tgt1) = HArrow(src2, tgt2) requires:
+    /// 1. src1 = src2 (source types unify)
+    /// 2. tgt1(x) = tgt2(x) for fresh variable x (target closures unify)
+    fn unify_harrows(
+        &mut self,
+        ha1: &hwml_core::val::HArrow<'db>,
+        ha2: &hwml_core::val::HArrow<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        // First unify the source types
+        match self.unify_type_codes(ha1.source.clone(), ha2.source.clone())? {
+            UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+            UnifyResult::Solved => {}
+        }
+
+        // Create a fresh variable and unify the target closures
+        let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), ha1.source.clone()));
+        let tgt1 = ha1.target.apply(self.global, &var);
+        let tgt2 = ha2.target.apply(self.global, &var);
+
+        self.depth += 1;
+        let result = self.unify_type_codes(tgt1, tgt2);
+        self.depth -= 1;
+
+        result
+    }
+
+    /// Unify two hardware applications.
+    /// HApplication requires unifying the module, module type, and argument.
+    fn unify_happlications(
+        &mut self,
+        happ1: &hwml_core::val::HApplication<'db>,
+        happ2: &hwml_core::val::HApplication<'db>,
+    ) -> Result<UnifyResult, ElabError<'db>> {
+        // Unify the module values
+        match self.unify_structural(happ1.module.clone(), happ2.module.clone())? {
+            UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+            UnifyResult::Solved => {}
+        }
+
+        // Unify the module types
+        match self.unify_type_codes(happ1.module_ty.clone(), happ2.module_ty.clone())? {
+            UnifyResult::Stuck => return Ok(UnifyResult::Stuck),
+            UnifyResult::Solved => {}
+        }
+
+        // Unify the arguments
+        self.unify_structural(happ1.argument.clone(), happ2.argument.clone())
     }
 
     /// Handle definitively incompatible value forms.
