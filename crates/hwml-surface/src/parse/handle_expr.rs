@@ -34,6 +34,19 @@ impl<'input> Context<'input> {
         } else if self.at_token(Token::Underscore) {
             self.consume(Token::Underscore);
             Box::new(Expression::Hole(ExpressionHole::new(loc, None)))
+        } else if self.at_token(Token::Type) {
+            self.consume(Token::Type);
+            // Type or Type n - check for optional number
+            let level = if self.at_token(Token::Number) {
+                let num_loc = self.current_location();
+                let text = std::str::from_utf8(&self.input[num_loc.clone()])
+                    .unwrap_or("0");
+                self.advance();
+                text.parse::<u32>().ok()
+            } else {
+                None
+            };
+            Box::new(Expression::Universe(crate::syntax::Universe::new(loc.clone(), level)))
         } else {
             self.emit_error(format!("Expected expression, found {:?}", self.peek()));
             Box::new(Expression::Error(ExpressionError::new(loc, "Expected expression".to_string())))
