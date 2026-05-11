@@ -184,40 +184,37 @@ impl<'input> Context<'input> {
 
     pub(super) fn handle_meta_after_name(&mut self, loc: Range<usize>, name: Id) {
         let bindings = self.parse_bindings();
-
-        let ty = if self.at_token(Token::Colon) {
-            self.consume(Token::Colon);
-            self.parse_expression(crate::parse::state::Precedence::Lowest);
-            Some(self.pop_expr())
-        } else {
-            None
-        };
-
-        if self.at_token(Token::ColonEqual) {
-            self.consume(Token::ColonEqual);
-            self.parse_expression(crate::parse::state::Precedence::Lowest);
-            let value = self.pop_expr();
-            let meta = Meta::new(loc, name, bindings, ty, value);
-            self.push_statement(Statement::Meta(meta));
-        } else {
-            self.emit_error("Expected ':=' after meta signature");
-            let stmt = self.make_error_statement("Invalid meta");
-            self.push_statement(stmt);
-        }
+        self.push_state(State::MetaAfterBindings { loc, name, bindings });
     }
 
     pub(super) fn handle_meta_after_bindings(&mut self, loc: Range<usize>, name: Id, bindings: Bindings) {
         if self.at_token(Token::Colon) {
             self.consume(Token::Colon);
+
+            // Push continuation (will pop type from expr_stack)
+            let dummy_ty = Box::new(Expression::Hole(crate::syntax::ExpressionHole::new(0..0, None)));
+            self.push_state(State::MetaAfterType {
+                loc,
+                name,
+                bindings,
+                ty: dummy_ty // Ignored - handler will pop from stack
+            });
+
+            // Push expression parser (runs first)
             self.parse_expression(crate::parse::state::Precedence::Lowest);
-            let ty = self.pop_expr();
-            self.push_state(State::MetaAfterType { loc, name, bindings, ty });
         } else if self.at_token(Token::ColonEqual) {
             self.consume(Token::ColonEqual);
+
+            // Push continuation
+            self.push_state(State::MetaAfterValue {
+                loc,
+                name,
+                bindings,
+                ty: None,
+            });
+
+            // Push expression parser
             self.parse_expression(crate::parse::state::Precedence::Lowest);
-            let value = self.pop_expr();
-            let meta = Meta::new(loc, name, bindings, None, value);
-            self.push_statement(Statement::Meta(meta));
         } else {
             self.emit_error("Expected ':' or ':=' after meta bindings");
             let stmt = self.make_error_statement("Invalid meta");
@@ -225,13 +222,23 @@ impl<'input> Context<'input> {
         }
     }
 
-    pub(super) fn handle_meta_after_type(&mut self, loc: Range<usize>, name: Id, bindings: Bindings, ty: Box<Expression>) {
+    pub(super) fn handle_meta_after_type(&mut self, loc: Range<usize>, name: Id, bindings: Bindings, _ty: Box<Expression>) {
+        // Pop the ACTUAL type from the expression stack
+        let ty = self.pop_expr();
+
         if self.at_token(Token::ColonEqual) {
             self.consume(Token::ColonEqual);
+
+            // Push continuation
+            self.push_state(State::MetaAfterValue {
+                loc,
+                name,
+                bindings,
+                ty: Some(ty),
+            });
+
+            // Push expression parser
             self.parse_expression(crate::parse::state::Precedence::Lowest);
-            let value = self.pop_expr();
-            let meta = Meta::new(loc, name, bindings, Some(ty), value);
-            self.push_statement(Statement::Meta(meta));
         } else {
             self.emit_error("Expected ':=' after meta type");
             let stmt = self.make_error_statement("Invalid meta");
@@ -261,8 +268,12 @@ impl<'input> Context<'input> {
     pub(super) fn handle_prim_after_name(&mut self, loc: Range<usize>, name: Id) {
         if self.at_token(Token::Colon) {
             self.consume(Token::Colon);
-            self.parse_expression(crate::parse::state::Precedence::Lowest);
+
+            // Push continuation FIRST (will pop type from expr_stack)
             self.push_state(State::PrimAfterType { loc, name });
+
+            // Push expression parser SECOND (runs first)
+            self.parse_expression(crate::parse::state::Precedence::Lowest);
         } else {
             self.emit_error("Expected ':' after prim name");
             let stmt = self.make_error_statement("Invalid prim");
@@ -279,9 +290,70 @@ impl<'input> Context<'input> {
     // ===== Open Statement Handler =====
 
     pub(super) fn handle_open_start(&mut self, loc: Range<usize>) {
+        use crate::syntax::OpenModifier;
+
         let namespace = self.pop_id();
-        // No modifiers or aliases for now
-        let open = Open::new(loc, namespace, vec![], None);
+        let mut modifiers = vec![];
+        let mut as_alias = None;
+
+        // Parse optional modifiers
+        loop {
+            if self.at_token(Token::Hiding) {
+                self.consume(Token::Hiding);
+                // Parse (id1, id2, ...)
+                if self.at_token(Token::LParen) {
+                    self.consume(Token::LParen);
+                    let mut names = vec![];
+                    while self.at_token(Token::Identifier) {
+                        names.push(self.parse_id());
+                        if self.at_token(Token::Comma) {
+                            self.consume(Token::Comma);
+                        }
+                    }
+                    if self.at_token(Token::RParen) {
+                        self.consume(Token::RParen);
+                    }
+                    modifiers.push(OpenModifier::Hiding(loc.clone(), names));
+                }
+            } else if self.at_token(Token::Only) {
+                self.consume(Token::Only);
+                // Parse (id1, id2, ...)
+                if self.at_token(Token::LParen) {
+                    self.consume(Token::LParen);
+                    let mut names = vec![];
+                    while self.at_token(Token::Identifier) {
+                        names.push(self.parse_id());
+                        if self.at_token(Token::Comma) {
+                            self.consume(Token::Comma);
+                        }
+                    }
+                    if self.at_token(Token::RParen) {
+                        self.consume(Token::RParen);
+                    }
+                    modifiers.push(OpenModifier::Only(loc.clone(), names));
+                }
+            } else if self.at_token(Token::Renaming) {
+                self.consume(Token::Renaming);
+                // Parse (from to)
+                if self.at_token(Token::LParen) {
+                    self.consume(Token::LParen);
+                    if self.at_token(Token::Identifier) {
+                        let from = self.parse_id();
+                        if self.at_token(Token::Identifier) {
+                            let to = self.parse_id();
+                            modifiers.push(OpenModifier::Renaming(loc.clone(), from, to));
+                        }
+                    }
+                    if self.at_token(Token::RParen) {
+                        self.consume(Token::RParen);
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        let open = Open::new(loc, namespace, modifiers, as_alias);
         self.push_statement(Statement::Open(open));
     }
 }

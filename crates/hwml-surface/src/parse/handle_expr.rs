@@ -17,6 +17,13 @@ impl<'input> Context<'input> {
         let expr = if self.at_token(Token::Identifier) {
             let id = self.parse_id();
             Box::new(Expression::Id(id))
+        } else if self.at_token(Token::Number) {
+            // Parse number literal
+            let text = std::str::from_utf8(&self.input[loc.clone()])
+                .unwrap_or("0")
+                .to_string();
+            self.advance();
+            Box::new(Expression::Num(crate::syntax::Num::new(loc.clone(), text.into())))
         } else if self.at_token(Token::LParen) {
             self.consume(Token::LParen);
             self.parse_expression(Precedence::Lowest);
