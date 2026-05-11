@@ -244,6 +244,78 @@ impl<'input> Context<'input> {
         self.id_stack.pop().expect("Id stack underflow")
     }
 
+    // ===== High-level Parsing Helpers =====
+
+    /// Parse bindings (parameters) - returns empty if none present
+    pub fn parse_bindings(&mut self) -> Bindings {
+        use crate::syntax::{BindingGroup, UntypedBindingGroup, Binder, Pattern};
+
+        let mut binders = vec![];
+
+        // Check if we have bindings (starts with '(' or identifier)
+        while self.at_token(Token::LParen) || (self.at_token(Token::Identifier) && !self.at_token(Token::Colon) && !self.at_token(Token::ColonEqual)) {
+            if self.at_token(Token::LParen) {
+                self.consume(Token::LParen);
+                // Parse names inside parens
+                while self.at_token(Token::Identifier) {
+                    let id = self.parse_id();
+                    let loc = id.loc.clone();
+                    binders.push(Binder::new(loc, Pattern::Id(id)));
+                    if !self.at_token(Token::RParen) {
+                        // Could have more names
+                    }
+                }
+                if self.at_token(Token::RParen) {
+                    self.consume(Token::RParen);
+                }
+            } else if self.at_token(Token::Identifier) {
+                let id = self.parse_id();
+                let loc = id.loc.clone();
+                binders.push(Binder::new(loc, Pattern::Id(id)));
+            }
+        }
+
+        // Create a single untyped binding group
+        let groups = if binders.is_empty() {
+            vec![]
+        } else {
+            vec![BindingGroup::Untyped(UntypedBindingGroup::new(binders))]
+        };
+
+        Bindings::new(groups)
+    }
+
+    /// Parse an expression - pushes result to expr_stack
+    pub fn parse_expression(&mut self, min_prec: crate::parse::state::Precedence) {
+        self.push_state(crate::parse::state::State::ExprStart { min_prec });
+    }
+
+    /// Check if we're at a synchronization point for error recovery
+    pub fn at_sync_point(&self) -> bool {
+        matches!(self.peek(),
+            Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim) |
+            Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) |
+            Some(Token::RBrace) | None
+        )
+    }
+
+    /// Helper: Parse an identifier from token stream
+    pub fn parse_id(&mut self) -> Id {
+        if self.at_token(Token::Identifier) {
+            let loc = self.current_location();
+            let text = std::str::from_utf8(&self.input[loc.clone()])
+                .unwrap_or("<invalid utf8>")
+                .to_string();
+            self.advance();
+            Id::new(loc, text.into())
+        } else {
+            let loc = self.current_location();
+            Id::new(loc, "<error>".into())
+        }
+    }
+
+
+
     // ===== Block Depth Tracking =====
 
     pub fn enter_block(&mut self, kind: BlockKind) {

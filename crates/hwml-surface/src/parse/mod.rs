@@ -174,6 +174,14 @@ impl<'input> Parser<'input> {
                 self.context.handle_open_start(loc)
             }
 
+            // Expression parsing
+            State::ExprStart { min_prec } => {
+                self.context.handle_expr_start(min_prec)
+            }
+            State::ExprFinish { partial, min_prec } => {
+                self.context.handle_expr_finish(partial, min_prec)
+            }
+
             // TODO: Add remaining states (match, etc.)
             _ => {
                 self.context.emit_error(format!("Unimplemented state: {:?}", state));
