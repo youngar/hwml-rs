@@ -177,6 +177,12 @@ pub enum State {
         min_prec: Precedence,
     },
 
+    /// After opening paren, before parsing inner expression
+    ParenAfterLParen {
+        loc: Range<usize>,
+        min_prec: Precedence,  // Original precedence context
+    },
+
     /// After parsing Pi bindings
     PiAfterBindings {
         loc: Range<usize>,
@@ -331,6 +337,7 @@ impl State {
             | State::Constructor { .. }
             | State::ExprStart { .. }
             | State::ExprFinish { .. }
+            | State::ParenAfterLParen { .. }
             | State::FunAfterKeyword { .. }
             | State::LetAfterKeyword { .. }
             | State::LetAfterName { .. }
