@@ -48,8 +48,6 @@ insta = { version = "1.43.1", features = ["yaml"] }
 indexmap = "2"
 itertools = "0.13"
 la-arena = "0.3.1"
-lalrpop = { version = "0.22.1", features = ["unicode"] }
-lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
 logos = "0.15.1"
 lsp-server = "0.7.9"
 lsp-types = "0.97.0"

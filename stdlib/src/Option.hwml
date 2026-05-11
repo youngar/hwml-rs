@@ -2,63 +2,65 @@
 // Represents a value that may or may not be present
 
 // The Option type itself lives in Std namespace
-inductive Std.Option (A : Type) : Type where
+inductive Std.Option (A : Type) : Type :=
     | none : Option A
     | some : A -> Option A
 
 // Option operations live in Std.Option namespace
+end
+
 namespace Std.Option {
 
 // Check if an option is None
 def is_none (A : Type) (opt : Option A) : Bool :=
     match opt with
-    | none ~> true
-    | some _ ~> false
+    | none => true
+    | some _ => false
     end
 
 // Check if an option is Some
 def is_some (A : Type) (opt : Option A) : Bool :=
     match opt with
-    | none ~> false
-    | some _ ~> true
+    | none => false
+    | some _ => true
     end
 
 // Map a function over an option
 def map (A : Type) (B : Type) (f : A -> B) (opt : Option A) : Option B :=
     match opt with
-    | none ~> none
-    | some x ~> some (f x)
+    | none => none
+    | some x => some (f x)
     end
 
 // Get the value from Some, or return a default for None
 def get_or_else (A : Type) (default : A) (opt : Option A) : A :=
     match opt with
-    | none ~> default
-    | some x ~> x
+    | none => default
+    | some x => x
     end
 
 // Bind operation (monadic bind)
 def bind (A : Type) (B : Type) (opt : Option A) (f : A -> Option B) : Option B :=
     match opt with
-    | none ~> none
-    | some x ~> f x
+    | none => none
+    | some x => f x
     end
 
 // Flatten a nested option
 def flatten (A : Type) (opt : Option (Option A)) : Option A :=
     match opt with
-    | none ~> none
-    | some inner ~> inner
+    | none => none
+    | some inner => inner
     end
 
 // Filter: returns None if predicate is false
 def filter (A : Type) (p : A -> Bool) (opt : Option A) : Option A :=
     match opt with
-    | none ~> none
-    | some x ~>
+    | none => none
+    | some x =>
         match p x with
-        | true ~> some x
-        | false ~> none
+        | true => some x
+        | false => none
         end
     end
 

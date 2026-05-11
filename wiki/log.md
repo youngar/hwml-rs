@@ -4,6 +4,276 @@ Chronological record of wiki updates.
 
 ---
 
+## [2026-05-10] design | Top-Down Parser Migration + Critical Revisions + Provenance
+
+**Status:** NEW - Design document for parser rewrite + critical fixes + provenance tracking
+**Impact:** **MAJOR** - Complete parser replacement, minimal lexer/AST changes
+**Files:**
+- `wiki/design/TOP-DOWN-PARSER-MIGRATION.md` (NEW - 907 lines)
+- `wiki/design/TOP-DOWN-PARSER-REVISION-TYPE-SAFETY.md` (NEW - 150 lines) ⚠️ **CRITICAL**
+- `wiki/design/PARSER-PROVENANCE-TRACKING.md` (NEW - 150 lines) 📍 **PROVENANCE**
+
+**Motivation:** Replace LALRPOP with Carbon-style top-down recursive descent parser for:
+- ✅ Better error recovery (multiple errors per parse)
+- ✅ Better diagnostics (context-aware messages)
+- ✅ Easier debugging (explicit control flow, not codegen)
+- ✅ Faster iteration (no build.rs step)
+- ✅ Foundation for mixfix operators, layout sensitivity
+
+**⚠️ CRITICAL REVISION (TOP-DOWN-PARSER-REVISION-TYPE-SAFETY.md):**
+
+Fixed **two critical design flaws** that would cause compiler crashes:
+
+1. **Type-Safety Trap** (PartialNode)
+   - **Problem:** `node_stack: Vec<PartialNode>` requires runtime downcasting
+   - **Symptom:** `pop_expr()` panics if stack has wrong type (especially during error recovery)
+   - **Fix:** Typed stacks (`expr_stack: Vec<Box<Expression>>`, `bindings_stack: Vec<Bindings>`, etc.)
+   - **Benefit:** Compile-time type safety, no runtime panics
+
+2. **Naive Error Recovery** (File Swallowing)
+   - **Problem:** `skip_to_recovery_point(&[Token::Def])` blindly skips tokens, can swallow 1000+ lines
+   - **Example:** Error in nested namespace jumps out to top-level, skips half the file
+   - **Fix:** Block-depth-aware recovery - track brace/block depth, stop at block boundaries
+   - **Benefit:** Errors confined to local scope, predictable recovery
+
+**Revised Architecture:**
+
+```rust
+pub struct Context<'input> {
+    // NO generic PartialNode stack!
+    expr_stack: Vec<Box<Expression>>,          // Type-safe
+    bindings_stack: Vec<Bindings>,             // Type-safe
+    statement_stack: Vec<Statement>,           // Type-safe
+
+    // Block depth tracking for scoped recovery
+    block_depth: Vec<BlockContext>,
+    brace_stack: Vec<Range<usize>>,
+}
+
+#[derive(Clone, Debug)]
+pub enum State {
+    // States carry their own data (no downcasting needed!)
+    DefAfterName { loc: Range<usize>, name: Id },
+    DefAfterType { loc: Range<usize>, name: Id, bindings: Bindings, ty: Box<Expression> },
+    // ...
+}
+```
+
+**Minimal AST Changes:**
+```rust
+pub enum Expression {
+    // ... existing variants
+    Error(Range<usize>),  // NEW: Error placeholder for recovery
+    Hole(Range<usize>),   // NEW: Missing expression
+}
+```
+
+**📍 PROVENANCE TRACKING (PARSER-PROVENANCE-TRACKING.md):**
+
+Added **parsing context tracking** similar to elaborator provenance:
+
+**Motivation:** When parser creates error nodes, capture **what we were doing**:
+```
+Error: Expected '=>' after function bindings
+  at line 15, column 10
+  while parsing function lambda          ← Provenance!
+    in let binding 'compute_norm'        ← Provenance!
+      in definition 'normalize'          ← Provenance!
+        in namespace 'Math.Vector'       ← Provenance!
+```
+
+**Implementation:**
+
+```rust
+pub struct Context<'input> {
+    // NEW: Track parsing operations
+    provenance_stack: Vec<ParseContext>,
+}
+
+pub enum ParseContext {
+    File { path: String },
+    Namespace { name: String, loc: Range<usize> },
+    Def { name: String, loc: Range<usize> },
+    FunLambda { loc: Range<usize> },
+    MatchExpression { loc: Range<usize> },
+    // ... all parsing operations
+}
+
+pub struct ParseProvenance {
+    contexts: Vec<ParseContext>,  // Stack of operations
+    error_loc: Range<usize>,
+    expected: Option<Vec<Token>>,
+    found: Option<Token>,
+}
+
+// Updated AST:
+pub enum Expression {
+    Error {
+        loc: Range<usize>,
+        provenance: ParseProvenance,  // Capture context!
+    },
+    Hole {
+        loc: Range<usize>,
+        provenance: ParseProvenance,
+    },
+}
+```
+
+**Usage in Handlers:**
+```rust
+fn handle_def_start(ctx: &mut Context) {
+    ctx.enter_context(ParseContext::Def {
+        name: name.value.to_string(),
+        loc: loc_start..ctx.current_location(),
+    });
+
+    // Parse def body...
+    // If error occurs, provenance stack shows we're in def
+
+    ctx.exit_context();  // Or use RAII ProvenanceGuard
+}
+```
+
+**Benefits:**
+- ✅ Rich error context (like elaborator provenance)
+- ✅ Elaborator sees full parse path when hitting error nodes
+- ✅ Better IDE hover messages
+- ✅ Easier debugging (print provenance stack)
+
+**Cost:** +1 day (+0.25 weeks) → Total: **4 weeks**
+
+**Architecture Changes:**
+
+1. **New File Structure**
+   ```
+   crates/hwml-surface/src/parse/
+   ├── mod.rs              ← Main parse loop, public API
+   ├── context.rs          ← Parser context (state stack, errors)
+   ├── state.rs            ← State enum (~50 variants)
+   ├── handle_stmt.rs      ← Statement handlers
+   ├── handle_expr.rs      ← Expression handlers
+   ├── handle_bindings.rs  ← Binding group handlers
+   └── handle_inductive.rs ← Inductive-specific handlers
+   ```
+
+2. **No Changes To:**
+   - `lex.rs` (Logos lexer unchanged)
+   - `syntax.rs` (AST unchanged)
+   - Parser outputs identical AST structures
+
+3. **Core Pattern: State Machine + Handler Dispatch**
+   ```rust
+   while let Some(state) = context.pop_state() {
+       match state {
+           State::Statement => handle_statement(ctx),
+           State::DefAfterName => handle_def_after_name(ctx),
+           State::Expr => handle_expr(ctx),
+           // ... ~50 states total
+       }
+   }
+   ```
+
+4. **Precedence Climbing for Expressions**
+   - Not Carbon's operator-in-stack approach (too complex)
+   - Use classic precedence climbing (simpler, well-understood)
+   - Levels: Pi/Arrow < App < Dot < Atomic
+
+5. **Error Recovery Strategy**
+   - Skip to recovery points (next statement, closing brace)
+   - Add `InvalidParse` nodes to keep tree valid
+   - Continue parsing after errors (collect multiple!)
+
+**Implementation Plan (3 weeks):**
+
+- Week 1: Foundation + simple statements + expressions
+- Week 2: Bindings + inductive + namespace + error recovery
+- Week 3: Match expressions + migration + testing
+
+**Success Metrics:**
+- Parses all existing test cases
+- Produces identical AST
+- Collects multiple errors (vs 1 with LALRPOP)
+- Within 2x speed of LALRPOP
+- No build.rs dependency
+
+**Future Enables:**
+- Mixfix operators (SPPF + type-directed disambiguation)
+- Layout-sensitive parsing (Python/Haskell-style)
+- Incremental parsing (Salsa integration)
+- Better IDE support (partial parse trees)
+
+**References:**
+- Directly inspired by [[carbon-parsing-ast-infrastructure]]
+- Carbon `toolchain/parse/` implementation
+- Future integration with [[benes-flow-variational-overloading]]
+
+---
+
+## [2026-05-10] research | Carbon Language Parsing & AST Infrastructure Survey
+
+**Status:** NEW - Technical survey of Carbon compiler architecture
+**Impact:** INFORMATIVE - Informs HWML parser and CST design decisions
+**Files:**
+- `wiki/research/carbon-parsing-ast-infrastructure.md` (NEW - 567 lines)
+- `wiki/research/README.md` (UPDATED - added Carbon survey section)
+
+**Key Topics:**
+
+1. **Postorder CST Architecture**
+   - Flat storage in depth-first postorder for cache efficiency
+   - Bracketing nodes for variable-length subtrees
+   - 1:1 node-to-token correspondence on valid input
+
+2. **Lexer-Level Bracket Matching**
+   - `()`, `[]`, `{}` matched at lex phase with recovery tokens
+   - Simplifies parser, always produces matched brackets
+
+3. **Parser State Machine**
+   - Stack-based with ~200 states defined in `.def` file
+   - Handlers in separate `handle_*.cpp` files (~100 files)
+   - Tokens consumed out-of-order, emitted as parents in postorder
+
+4. **Simple Token-Based Autoformatter**
+   - No parse tree required for basic formatting
+   - ~100 LOC, works on invalid code
+   - Future rewrite planned for semantic-aware formatting
+
+5. **Immutable CST + Separate Fixits**
+   - Parse tree never modified after construction
+   - Fixits as diagnostic metadata, not tree mutations
+   - Enables caching and safe sharing
+
+6. **X-Macro Infrastructure**
+   - `.def` files for node kinds, tokens, semantic IR instructions, diagnostics
+   - Single source of truth, generates dispatch tables
+   - Ensures consistency across ~400 diagnostics
+
+7. **Semantic IR Separation**
+   - Parse Tree → Semantic IR (SemIR) → LLVM IR
+   - Check phase walks postorder, emits flat instruction stream
+   - No visitor pattern - direct postorder iteration + stacks
+
+8. **Diagnostic System**
+   - Context-stealing: first Context becomes primary diagnostic
+   - SortingConsumer buffers and sorts by `last_byte_offset`
+   - Balances causal order with file-order presentation
+
+**HWML Implications:**
+- Adopt flat postorder CST storage (not tree-of-trees)
+- Move bracket matching to lexer
+- Implement X-macro infrastructure for consistency
+- Design fixits compatible with immutable CST
+- Consider two-tier formatting (fast token + optional semantic)
+
+**References:**
+- `external/carbon-lang/toolchain/docs/` - Architecture documentation
+- `external/carbon-lang/toolchain/parse/` - Parser implementation
+- `external/carbon-lang/toolchain/lex/` - Lexer implementation
+- `external/carbon-lang/toolchain/check/` - Semantic analysis (~100 handlers)
+- `external/carbon-lang/toolchain/format/` - Autoformatter
+
+---
+
 ## [2026-05-08] design | Diagnostic Implementation Plan Revised (from Asai Source)
 
 **Status:** REVISION - Implementation plan updated after studying Asai codebase

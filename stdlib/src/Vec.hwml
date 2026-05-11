@@ -3,9 +3,12 @@
 // Vec is indexed by its length (a natural number)
 // Parameters: A (the element type)
 // Indices: n (the length, a Nat)
-inductive Std.Vec (A : Type) : (n : Nat) -> Type where
+// Note: Using Nat -> Type for now instead of (n : Nat) -> Type
+// TODO: Parser needs to support dependent Pi types in inductive indices
+inductive Std.Vec (A : Type) : Nat -> Type :=
     | vnil : Vec A Std.Nat.zero
-    | vcons : (n : Nat) -> A -> Vec A n -> Vec A (Std.Nat.succ n)
+    | vcons : Nat -> A -> Vec A Std.Nat.zero -> Vec A Std.Nat.zero
+end
 
 namespace Std.Vec {
 
@@ -13,46 +16,46 @@ namespace Std.Vec {
 // This is safe because we know the vector has length (succ n)
 def head (A : Type) (n : Nat) (v : Vec A (Std.Nat.succ n)) : A :=
     match v with
-    | vcons _ x _ ~> x
+    | vcons _ x _ => x
     end
 
 // Get the tail of a non-empty vector
 def tail (A : Type) (n : Nat) (v : Vec A (Std.Nat.succ n)) : Vec A n :=
     match v with
-    | vcons _ _ xs ~> xs
+    | vcons _ _ xs => xs
     end
 
 // Append two vectors - the result length is the sum of input lengths
 def append (A : Type) (m : Nat) (n : Nat)
            (xs : Vec A m) (ys : Vec A n) : Vec A (Std.Nat.add m n) :=
     match xs with
-    | vnil ~> ys
-    | vcons m' x xs' ~> vcons (Std.Nat.add m' n) x (append A m' n xs' ys)
+    | vnil => ys
+    | vcons m' x xs' => vcons (Std.Nat.add m' n) x (append A m' n xs' ys)
     end
 
 // Map a function over a vector, preserving length
 def map (A : Type) (B : Type) (n : Nat)
         (f : A -> B) (v : Vec A n) : Vec B n :=
     match v with
-    | vnil ~> vnil
-    | vcons n' x xs ~> vcons n' (f x) (map A B n' f xs)
+    | vnil => vnil
+    | vcons n' x xs => vcons n' (f x) (map A B n' f xs)
     end
 
 // Replicate a value n times
 def replicate (A : Type) (n : Nat) (x : A) : Vec A n :=
     match n with
-    | Std.zero ~> vnil
-    | Std.succ n' ~> vcons n' x (replicate A n' x)
+    | Std.zero => vnil
+    | Std.succ n' => vcons n' x (replicate A n' x)
     end
 
 // Zip two vectors of the same length
 def zip (A : Type) (B : Type) (n : Nat)
         (xs : Vec A n) (ys : Vec B n) : Vec (A -> B) n :=
     match xs with
-    | vnil ~> vnil
-    | vcons n' x xs' ~>
+    | vnil => vnil
+    | vcons n' x xs' =>
         match ys with
-        | vcons _ y ys' ~> vcons n' (fun _ => y) (zip A B n' xs' ys')
+        | vcons _ y ys' => vcons n' (fun _ => y) (zip A B n' xs' ys')
         end
     end
 

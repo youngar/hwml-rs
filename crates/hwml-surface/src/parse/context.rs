@@ -1,0 +1,363 @@
+//! Parser context
+//!
+//! Holds all the state for the parser: tokens, stacks, errors.
+//! Context is tracked via the state_stack itself (parent states are continuations).
+
+use crate::lex::Token;
+use crate::syntax::{
+    Expression, Id, Bindings, TypedBindings, Statement, Program,
+    ExpressionError, ExpressionHole, StatementError,
+};
+use crate::parse::state::State;
+use std::ops::Range;
+
+// Import for backwards compatibility (stubbed methods)
+#[allow(unused_imports)]
+use crate::parse::provenance;
+
+/// Block kind for tracking nested structures
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlockKind {
+    Namespace,
+    Match,
+    Inductive,
+    Function,
+}
+
+/// Parser context - holds all mutable state
+pub struct Context<'input> {
+    // ===== Input =====
+
+    /// Source input (for byte ranges)
+    pub(super) input: &'input [u8],
+
+    /// Source file path (for provenance)
+    file_path: Option<String>,
+
+    /// Token stream (from lexer)
+    tokens: Vec<(Token, Range<usize>)>,
+
+    /// Current position in token stream
+    pub(super) position: usize,
+
+    // ===== State Machine =====
+
+    /// Parser state stack (states carry their own data!)
+    state_stack: Vec<State>,
+
+    // ===== Typed Result Stacks (NO generic PartialNode!) =====
+
+    /// Expression results being built
+    expr_stack: Vec<Box<Expression>>,
+
+    /// Binding groups being built
+    bindings_stack: Vec<Bindings>,
+
+    /// Typed binding groups being built
+    typed_bindings_stack: Vec<TypedBindings>,
+
+    /// Statement results being built
+    statement_stack: Vec<Statement>,
+
+    /// Identifiers being collected
+    id_stack: Vec<Id>,
+
+    // ===== Error Handling =====
+
+    /// Collected parse errors
+    errors: Vec<ParseError>,
+
+    // ===== Block Depth Tracking (for error recovery) =====
+
+    /// Block context stack (namespace, match, function, etc.)
+    block_depth: Vec<BlockContext>,
+
+    /// Brace matching stack
+    brace_stack: Vec<Range<usize>>,
+
+    /// Paren matching stack
+    paren_stack: Vec<Range<usize>>,
+}
+
+/// Block context for error recovery
+#[derive(Clone, Debug)]
+struct BlockContext {
+    kind: BlockKind,
+    start: Range<usize>,
+}
+
+/// Parse error
+#[derive(Clone, Debug)]
+pub struct ParseError {
+    pub message: String,
+    pub location: Range<usize>,
+}
+
+/// Result of parsing
+pub struct ParseResult {
+    pub program: Program,
+    pub errors: Vec<ParseError>,
+}
+
+impl<'input> Context<'input> {
+    /// Create a new parser context
+    pub fn new(input: &'input [u8], tokens: Vec<(Token, Range<usize>)>) -> Self {
+        Self {
+            input,
+            file_path: None,
+            tokens,
+            position: 0,
+            state_stack: vec![],
+            expr_stack: vec![],
+            bindings_stack: vec![],
+            typed_bindings_stack: vec![],
+            statement_stack: vec![],
+            id_stack: vec![],
+            errors: vec![],
+            block_depth: vec![],
+            brace_stack: vec![],
+            paren_stack: vec![],
+        }
+    }
+
+    /// Set the file path for provenance
+    pub fn with_file_path(mut self, path: String) -> Self {
+        self.file_path = Some(path);
+        self
+    }
+
+    /// Get current location
+    pub fn current_location(&self) -> Range<usize> {
+        if self.position < self.tokens.len() {
+            self.tokens[self.position].1.clone()
+        } else if let Some((_, loc)) = self.tokens.last() {
+            loc.end..loc.end
+        } else {
+            0..0
+        }
+    }
+
+    /// Check if we're at end of input
+    pub fn at_end(&self) -> bool {
+        self.position >= self.tokens.len()
+    }
+
+    /// Peek at current token
+    pub fn peek(&self) -> Option<&Token> {
+        if self.position < self.tokens.len() {
+            Some(&self.tokens[self.position].0)
+        } else {
+            None
+        }
+    }
+
+    /// Check if current token matches
+    pub fn at_token(&self, tok: Token) -> bool {
+        self.peek() == Some(&tok)
+    }
+
+    // ===== Token Consumption =====
+
+    /// Consume a token, return its location
+    /// Panics if token doesn't match (caller should check with at_token first)
+    pub fn consume(&mut self, tok: Token) -> Range<usize> {
+        assert!(self.at_token(tok), "Expected {:?}, found {:?}", tok, self.peek());
+        let loc = self.tokens[self.position].1.clone();
+        self.position += 1;
+        loc
+    }
+
+    /// Try to consume a token, return location if successful
+    pub fn consume_if(&mut self, tok: Token) -> Option<Range<usize>> {
+        if self.at_token(tok) {
+            Some(self.consume(tok))
+        } else {
+            None
+        }
+    }
+
+    /// Advance to next token without checking what it is
+    /// Used for error recovery
+    pub fn advance(&mut self) {
+        if !self.at_end() {
+            self.position += 1;
+        }
+    }
+
+    // ===== State Stack Operations =====
+
+    pub fn push_state(&mut self, state: State) {
+        self.state_stack.push(state);
+    }
+
+    pub fn pop_state(&mut self) -> Option<State> {
+        self.state_stack.pop()
+    }
+
+    // ===== Typed Stack Operations (Type-Safe!) =====
+
+    pub fn push_expr(&mut self, expr: Box<Expression>) {
+        self.expr_stack.push(expr);
+    }
+
+    pub fn pop_expr(&mut self) -> Box<Expression> {
+        self.expr_stack.pop().expect("Expression stack underflow")
+    }
+
+    pub fn pop_optional_expr(&mut self) -> Option<Box<Expression>> {
+        self.expr_stack.pop()
+    }
+
+    pub fn push_bindings(&mut self, bindings: Bindings) {
+        self.bindings_stack.push(bindings);
+    }
+
+    pub fn pop_bindings(&mut self) -> Bindings {
+        self.bindings_stack.pop().expect("Bindings stack underflow")
+    }
+
+    pub fn push_typed_bindings(&mut self, bindings: TypedBindings) {
+        self.typed_bindings_stack.push(bindings);
+    }
+
+    pub fn pop_typed_bindings(&mut self) -> TypedBindings {
+        self.typed_bindings_stack.pop().expect("TypedBindings stack underflow")
+    }
+
+    pub fn push_statement(&mut self, stmt: Statement) {
+        self.statement_stack.push(stmt);
+    }
+
+    pub fn pop_statement(&mut self) -> Statement {
+        self.statement_stack.pop().expect("Statement stack underflow")
+    }
+
+    pub fn statement_stack_len(&self) -> usize {
+        self.statement_stack.len()
+    }
+
+    pub fn push_id(&mut self, id: Id) {
+        self.id_stack.push(id);
+    }
+
+    pub fn pop_id(&mut self) -> Id {
+        self.id_stack.pop().expect("Id stack underflow")
+    }
+
+    // ===== Block Depth Tracking =====
+
+    pub fn enter_block(&mut self, kind: BlockKind) {
+        let start = self.current_location();
+        self.block_depth.push(BlockContext { kind, start });
+    }
+
+    pub fn exit_block(&mut self) {
+        self.block_depth.pop();
+    }
+
+    pub fn current_block_depth(&self) -> usize {
+        self.block_depth.len()
+    }
+
+    pub fn current_block_kind(&self) -> Option<&BlockKind> {
+        self.block_depth.last().map(|ctx| &ctx.kind)
+    }
+
+    pub fn current_brace_depth(&self) -> usize {
+        self.brace_stack.len()
+    }
+
+    // ===== Brace/Paren Tracking =====
+
+    // ===== Deprecated Provenance Methods (for backwards compatibility) =====
+    // These are no-ops now - context is tracked via state_stack
+
+    #[allow(dead_code)]
+    pub fn enter_context(&mut self, _ctx: crate::parse::provenance::ParseContext) {
+        // No-op: Context is now tracked via state_stack continuations
+    }
+
+    #[allow(dead_code)]
+    pub fn exit_context(&mut self) {
+        // No-op: Context is now tracked via state_stack continuations
+    }
+
+
+    pub fn push_brace(&mut self, loc: Range<usize>) {
+        self.brace_stack.push(loc);
+    }
+
+    pub fn pop_brace(&mut self) -> Option<Range<usize>> {
+        self.brace_stack.pop()
+    }
+
+    pub fn push_paren(&mut self, loc: Range<usize>) {
+        self.paren_stack.push(loc);
+    }
+
+    pub fn pop_paren(&mut self) -> Option<Range<usize>> {
+        self.paren_stack.pop()
+    }
+
+    // ===== Error Handling =====
+
+    pub fn emit_error(&mut self, msg: impl Into<String>) {
+        let mut error_msg = msg.into();
+
+        // Scan the state stack backwards for context
+        // Parent states are continuations that remain on the stack while children execute
+        for state in self.state_stack.iter().rev() {
+            if let Some(context) = state.diagnostic_context() {
+                error_msg.push_str(&format!("\n  while {}", context));
+            }
+        }
+
+        let error = ParseError {
+            message: error_msg,
+            location: self.current_location(),
+        };
+        self.errors.push(error);
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.errors.len()
+    }
+
+    // ===== Error Node Creation =====
+
+    /// Create an error expression node
+    pub fn make_error_expr(&self, msg: impl Into<String>) -> Box<Expression> {
+        Box::new(Expression::Error(ExpressionError::new(
+            self.current_location(),
+            msg.into(),
+        )))
+    }
+
+    /// Create a hole expression node
+    pub fn make_hole_expr(&self, name: Option<String>) -> Box<Expression> {
+        Box::new(Expression::Hole(ExpressionHole::new(
+            self.current_location(),
+            name,
+        )))
+    }
+
+    /// Create an error statement node
+    pub fn make_error_statement(&self, msg: impl Into<String>) -> Statement {
+        Statement::Invalid(StatementError::new(
+            self.current_location(),
+            msg.into(),
+        ))
+    }
+
+    // ===== Finalization =====
+
+    pub fn finalize(self) -> ParseResult {
+        // Collect all statements
+        let statements = self.statement_stack;
+
+        ParseResult {
+            program: Program::new(statements),
+            errors: self.errors,
+        }
+    }
+}

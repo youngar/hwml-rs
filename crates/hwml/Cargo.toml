@@ -22,7 +22,6 @@ hwml_support.workspace = true
 hwml_workspace.workspace = true
 hwml-diagnostic = { path = "../hwml-diagnostic" }
 la-arena.workspace = true
-lalrpop-util.workspace = true
 salsa.workspace = true
 
 # Optional CIRCT backend

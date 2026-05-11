@@ -76,6 +76,8 @@ pub enum Token {
     Type,
     #[token("open", priority = 4)]
     Open,
+    #[token("only", priority = 4)]
+    Only,
     #[token("hiding", priority = 4)]
     Hiding,
     #[token("renaming", priority = 4)]
@@ -162,7 +164,7 @@ impl fmt::Display for Token {
 
 /// Standard lexer for HWML surface syntax.
 ///
-/// Returns byte-based spans (start_offset, Token, end_offset) suitable for LALRPOP.
+/// Returns byte-based spans (start_offset, Token, end_offset).
 /// Location tracking uses line and column internally for error reporting, but the
 /// public API only exposes byte offsets. Convert to line:column lazily using
 /// LineInfo when formatting diagnostics.
@@ -182,8 +184,8 @@ impl<'input> Lexer<'input> {
     }
 }
 
-/// LALRPOP expects: (start_offset, Token, end_offset)
-/// We keep this interface for compatibility, but we also track line:column internally
+/// Returns: (start_offset, Token, end_offset)
+/// We track line:column internally for error reporting
 impl<'input> Iterator for Lexer<'input> {
     type Item = (usize, Token, usize);
 
@@ -221,12 +223,12 @@ impl<'input> Iterator for Lexer<'input> {
                     // Using byte count (not char count) - fine for MLIR FileLineColLoc
                     self.column += slice.len();
 
-                    // Skip trivia tokens (whitespace, comments) for LALRPOP
+                    // Skip trivia tokens (whitespace, comments)
                     if token.is_trivia() {
                         continue;
                     }
 
-                    // Return non-trivia token to LALRPOP
+                    // Return non-trivia token
                     return Some((span.start, token, span.end));
                 }
                 Err(_err) => {

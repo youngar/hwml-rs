@@ -15,11 +15,7 @@ license.workspace = true
 clap.workspace = true
 derive-new.workspace = true
 hwml_support = { path = "../hwml-support" }
-lalrpop-util.workspace = true
 logos.workspace = true
-
-[build-dependencies]
-lalrpop.workspace = true
 
 [lints]
 workspace = true

@@ -1,48 +1,50 @@
 // Prod: Product type (pairs)
 
-inductive Std.Prod (A : Type) (B : Type) : Type where
+inductive Std.Prod (A : Type) (B : Type) : Type :=
     | pair : A -> B -> Prod A B
 
 // Prod operations live in Std.Prod namespace
+end
+
 namespace Std.Prod {
 
 // First projection
 def fst (A : Type) (B : Type) (p : Prod A B) : A :=
     match p with
-    | pair a _ ~> a
+    | pair a _ => a
     end
 
 // Second projection
 def snd (A : Type) (B : Type) (p : Prod A B) : B :=
     match p with
-    | pair _ b ~> b
+    | pair _ b => b
     end
 
 // Swap the components of a pair
 def swap (A : Type) (B : Type) (p : Prod A B) : Prod B A :=
     match p with
-    | pair a b ~> pair b a
+    | pair a b => pair b a
     end
 
 // Map over both components
 def map (A : Type) (B : Type) (C : Type) (D : Type)
         (f : A -> C) (g : B -> D) (p : Prod A B) : Prod C D :=
     match p with
-    | pair a b ~> pair (f a) (g b)
+    | pair a b => pair (f a) (g b)
     end
 
 // Map over the first component
 def map_fst (A : Type) (B : Type) (C : Type)
             (f : A -> C) (p : Prod A B) : Prod C B :=
     match p with
-    | pair a b ~> pair (f a) b
+    | pair a b => pair (f a) b
     end
 
 // Map over the second component
 def map_snd (A : Type) (B : Type) (D : Type)
             (g : B -> D) (p : Prod A B) : Prod A D :=
     match p with
-    | pair a b ~> pair a (g b)
+    | pair a b => pair a (g b)
     end
 
 // Curry: convert a function on pairs to a curried function
@@ -55,7 +57,7 @@ def uncurry (A : Type) (B : Type) (C : Type)
             (f : A -> B -> C) : Prod A B -> C :=
     fun p =>
         match p with
-        | pair a b ~> f a b
+        | pair a b => f a b
         end
 
 }

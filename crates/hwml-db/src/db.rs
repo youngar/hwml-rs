@@ -1,8 +1,5 @@
 #![allow(unreachable_patterns)]
 
-use lalrpop_util::lexer::Token;
-use lalrpop_util::ParseError;
-use lalrpop_util::ParseError::*;
 use std::collections::HashMap;
 use std::convert::From;
 use std::path::PathBuf;
@@ -154,40 +151,8 @@ pub fn compile(db: &dyn salsa::Database, text_doc: SourceFile) {
     let _program = parse_program(db, text_doc);
 }
 
-impl From<&ParseError<usize, Token<'_>, &str>> for Diagnostic {
-    fn from(error: &ParseError<usize, Token<'_>, &str>) -> Self {
-        match error {
-            User { ref error } => Diagnostic {
-                message: error.to_string(),
-                span: 0..0,
-            },
-            InvalidToken { ref location } => Diagnostic {
-                message: "invalid token".to_string(),
-                span: *location..*location,
-            },
-            UnrecognizedEof {
-                ref location,
-                expected: _,
-            } => Diagnostic {
-                message: "unrecognized end of file".to_string(),
-                span: *location..*location,
-            },
-            UnrecognizedToken {
-                token: (ref start, ref token, ref end),
-                expected: _,
-            } => Diagnostic {
-                message: format!("unrecognized token: {token:?}"),
-                span: *start..*end,
-            },
-            ExtraToken {
-                token: (ref start, ref token, ref end),
-            } => Diagnostic {
-                message: format!("extra token: {token:?}"),
-                span: *start..*end,
-            },
-        }
-    }
-}
+// NOTE: LALRPOP ParseError conversion removed - we now use our hand-written parser
+// which produces hwml_surface::parse::context::ParseError directly
 
 #[salsa::tracked]
 pub fn get_line_info(db: &dyn salsa::Database, source_program: SourceFile) -> LineInfo {

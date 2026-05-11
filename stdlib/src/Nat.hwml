@@ -1,10 +1,12 @@
 // Nat: Natural numbers using Peano encoding
 
-inductive Std.Nat : Type where
+inductive Std.Nat : Type :=
     | zero : Nat
     | succ : Nat -> Nat
 
 // Nat operations live in Std.Nat namespace
+end
+
 namespace Std.Nat {
 
 // Convenient aliases for small numbers
@@ -17,57 +19,57 @@ def five : Nat := succ four
 // Addition
 def add (m : Nat) (n : Nat) : Nat :=
     match m with
-    | zero ~> n
-    | succ m' ~> succ (add m' n)
+    | zero => n
+    | succ m' => succ (add m' n)
     end
 
 // Multiplication
 def mul (m : Nat) (n : Nat) : Nat :=
     match m with
-    | zero ~> zero
-    | succ m' ~> add n (mul m' n)
+    | zero => zero
+    | succ m' => add n (mul m' n)
     end
 
 // Predecessor (returns zero for zero)
 def pred (n : Nat) : Nat :=
     match n with
-    | zero ~> zero
-    | succ n' ~> n'
+    | zero => zero
+    | succ n' => n'
     end
 
 // Subtraction (saturating at zero)
 def sub (m : Nat) (n : Nat) : Nat :=
     match n with
-    | zero ~> m
-    | succ n' ~> sub (pred m) n'
+    | zero => m
+    | succ n' => sub (pred m) n'
     end
 
 // Check if a number is zero
 def is_zero (n : Nat) : Std.Bool :=
     match n with
-    | zero ~> Std.true
-    | succ _ ~> Std.false
+    | zero => Std.true
+    | succ _ => Std.false
     end
 
 // Equality test
 def eq (m : Nat) (n : Nat) : Std.Bool :=
     match m with
-    | zero ~> is_zero n
-    | succ m' ~>
+    | zero => is_zero n
+    | succ m' =>
         match n with
-        | zero ~> Std.false
-        | succ n' ~> eq m' n'
+        | zero => Std.false
+        | succ n' => eq m' n'
         end
     end
 
 // Less than or equal
 def le (m n : Nat) : Std.Bool :=
     match m with
-    | zero ~> Std.true
-    | succ m' ~>
+    | zero => Std.true
+    | succ m' =>
         match n with
-        | zero ~> Std.false
-        | succ n' ~> le m' n'
+        | zero => Std.false
+        | succ n' => le m' n'
         end
     end
 
@@ -94,8 +96,8 @@ def max (m : Nat) (n : Nat) : Nat :=
 // Power (exponentiation)
 def pow (base : Nat) (exp : Nat) : Nat :=
     match exp with
-    | zero ~> one
-    | succ exp' ~> mul base (pow base exp')
+    | zero => one
+    | succ exp' => mul base (pow base exp')
     end
 
 }

@@ -6,7 +6,7 @@ pub struct Program {
     pub statements: Vec<Statement>,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Statement {
     Namespace(Namespace),
     Def(Def),
@@ -14,6 +14,9 @@ pub enum Statement {
     Prim(Prim),
     Inductive(Inductive),
     Open(Open),
+
+    /// Invalid statement (parse error)
+    Invalid(StatementError),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -63,7 +66,7 @@ pub struct Prim {
     pub ty: Box<Expression>,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Expression {
     Pi(Pi),
     Arrow(Arrow),
@@ -79,6 +82,12 @@ pub enum Expression {
     Id(Id),
     Universe(Universe),
     Dot(Dot),
+
+    /// Error node (parse error occurred)
+    Error(ExpressionError),
+
+    /// Hole (user-written '?hole' or '_')
+    Hole(ExpressionHole),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -160,13 +169,13 @@ pub struct TypedBindings {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct TypedBindingGroup {
-    pub binders: Vec<Box<Expression>>,
+    pub binders: Vec<Binder>,
     pub ty: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct UntypedBindingGroup {
-    pub binders: Box<Expression>,
+    pub binders: Vec<Binder>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -209,7 +218,7 @@ pub struct Match {
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct MatchClause {
-    pub pattern: Box<Expression>,
+    pub pattern: Pattern,
     pub body: Box<Expression>,
 }
 
@@ -228,4 +237,96 @@ pub struct Constructor {
     pub loc: Range<usize>,
     pub name: Id,
     pub ty: Box<Expression>,
+}
+
+// ===== Pattern AST (for surface syntax, unresolved) =====
+
+/// Pattern - represents unresolved patterns in surface syntax
+/// These will be resolved during scope checking to determine:
+/// - Which identifiers are constructors vs variables
+/// - How to structure mixfix operators
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+pub enum Pattern {
+    /// Identifier (could be constructor or variable - resolved in scope checker)
+    /// Example: `x`, `Just`, `Cons`
+    Id(Id),
+
+    /// Application sequence (flat, not structured by precedence)
+    /// Example: `Just x` parses as AppSeq([Id(Just), Id(x)])
+    /// Example: `if x then y else z` parses as AppSeq([Id(if), Id(x), Id(then), Id(y), Id(else), Id(z)])
+    AppSeq(AppSeq),
+
+    /// As-pattern: name @ pattern
+    /// Example: `xs @ (Cons x rest)`
+    As(AsPattern),
+
+    /// Wildcard underscore
+    Underscore(Underscore),
+
+    /// Parenthesized pattern
+    Paren(ParenPattern),
+
+    /// Literal number
+    Num(Num),
+
+    /// Literal string
+    Str(Str),
+
+    /// Error pattern (parse error)
+    Error(PatternError),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct AppSeq {
+    pub loc: Range<usize>,
+    /// Sequence of identifiers/atoms that make up this pattern
+    /// The scope checker will resolve this into structured patterns
+    pub items: Vec<Pattern>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct AsPattern {
+    pub loc: Range<usize>,
+    pub name: Id,
+    pub pattern: Box<Pattern>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct ParenPattern {
+    pub loc: Range<usize>,
+    pub inner: Box<Pattern>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct PatternError {
+    pub loc: Range<usize>,
+    pub message: String,
+}
+
+// ===== Binder (replaces Expression in binding positions) =====
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct Binder {
+    pub loc: Range<usize>,
+    pub pattern: Pattern,
+}
+
+// ===== Error and Hole Nodes =====
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct ExpressionError {
+    pub loc: Range<usize>,
+    pub message: String,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct ExpressionHole {
+    pub loc: Range<usize>,
+    pub name: Option<String>,  // Named hole like '?goal'
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct StatementError {
+    pub loc: Range<usize>,
+    pub message: String,
 }

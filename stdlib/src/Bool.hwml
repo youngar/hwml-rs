@@ -1,38 +1,40 @@
 // Bool: The boolean type
 // Represents truth values with two constructors: true and false
 
-inductive Std.Bool : Type where
+inductive Std.Bool : Type :=
     | true : Bool
     | false : Bool
+
+end
 
 namespace Std.Bool {
 
 // Boolean negation
 def not (b : Bool) : Bool :=
     match b with
-    | true ~> false
-    | false ~> true
+    | true => false
+    | false => true
     end
 
 // Boolean AND
 def and (a : Bool) (b : Bool) : Bool :=
     match a with
-    | true ~> b
-    | false ~> false
+    | true => b
+    | false => false
     end
 
 // Boolean OR
 def or (a : Bool) (b : Bool) : Bool :=
     match a with
-    | true ~> true
-    | false ~> b
+    | true => true
+    | false => b
     end
 
 // Boolean XOR
 def xor (a : Bool) (b : Bool) : Bool :=
     match a with
-    | true ~> not b
-    | false ~> b
+    | true => not b
+    | false => b
     end
 
 // Boolean NAND
@@ -46,15 +48,15 @@ def nor (a : Bool) (b : Bool) : Bool :=
 // Boolean equality
 def eq (a : Bool) (b : Bool) : Bool :=
     match a with
-    | true ~> b
-    | false ~> not b
+    | true => b
+    | false => not b
     end
 
 // Conditional/if-then-else
 // Given a boolean and two values, return the first if true, second if false
 def ite (A : Type) (cond : Bool) (then_branch : A) (else_branch : A) : A :=
     match cond with
-    | true ~> then_branch
-    | false ~> else_branch
+    | true => then_branch
+    | false => else_branch
     end
 }

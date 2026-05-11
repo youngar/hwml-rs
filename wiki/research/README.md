@@ -55,7 +55,39 @@ This directory contains research pages documenting external systems, academic pa
 
 ---
 
+### Parsing & AST Infrastructure Research (2026-05-10)
+
+**🎯 START HERE:** [[carbon-parsing-ast-infrastructure]] - **NEWEST (2026-05-10):** Carbon's parsing & AST design
+
+**🔑 Key Insights:**
+1. **Postorder CST Storage** - Flat storage in depth-first postorder for efficient checking
+2. **Immutable Parse Tree** - Never modified after construction; fixits as diagnostic metadata
+3. **Lexer Bracket Matching** - Bracket matching with recovery at lex phase
+4. **X-Macro Infrastructure** - `.def` files for node kinds, tokens, diagnostics (single source of truth)
+5. **Simple Token-Based Formatter** - No parse tree required for basic autoformatting (~100 LOC!)
+
+**📋 Main Document:**
+- **[[carbon-parsing-ast-infrastructure]]** - Comprehensive survey of Carbon's Lex → Parse → Check → Lower pipeline
+  - Postorder parse tree architecture
+  - State-machine parser with ~200 states
+  - Semantic IR separation (Parse Tree ≠ SemIR)
+  - Diagnostic infrastructure (context-stealing, sorting consumer)
+  - Fixit handling with immutable CST
+  - Syntax tree walking patterns (no visitor pattern!)
+
+**💡 HWML Applications:**
+- Adopt flat postorder CST storage
+- Implement X-macro infrastructure for consistency
+- Design fixit system compatible with immutable trees
+- Consider two-tier formatting (fast token + optional semantic)
+
+---
+
 ## All Research Pages
+
+### Parsing & AST Infrastructure
+
+- [[carbon-parsing-ast-infrastructure]] - **NEWEST (2026-05-10):** Carbon Language parsing, CST, autoformatting, elaboration architecture
 
 ### Type Theory & Elaboration
 

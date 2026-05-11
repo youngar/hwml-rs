@@ -25,13 +25,9 @@ dashmap.workspace = true
 derive-new.workspace = true
 eyre.workspace = true
 la-arena.workspace = true
-lalrpop-util.workspace = true
 logos.workspace = true
 salsa.workspace = true
 walkdir.workspace = true
-
-[build-dependencies]
-lalrpop.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,7 +1,8 @@
 // Void: The empty type (False proposition in the Curry-Howard correspondence)
+// No constructors, so this type is uninhabited
 
-inductive Std.Void : Type where
-    -- No constructors, so this type is uninhabited
+inductive Std.Void : Type :=
+end
 
 namespace Std.Void {
 

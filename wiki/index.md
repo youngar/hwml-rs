@@ -1,7 +1,7 @@
 # HWML Design Wiki Index
 
-**Last Updated:** 2026-05-08
-**Total Pages:** 21 (in progress)
+**Last Updated:** 2026-05-10
+**Total Pages:** 25 (in progress)
 **Status:** Bootstrap phase - ingesting key documents
 
 ---
@@ -30,6 +30,52 @@ This document shows:
 ## Detailed Designs 📐
 
 **Implementation-ready specifications:**
+
+### Top-Down Parser Migration (2026-05-10) ⭐ **NEWEST** + ⚠️ **CRITICAL REVISION** + 📍 **PROVENANCE**
+
+**Primary Documents:**
+- [[design/TOP-DOWN-PARSER-MIGRATION]] - **📋 DESIGN** Complete specification for LALRPOP → Carbon-style parser
+- [[design/TOP-DOWN-PARSER-REVISION-TYPE-SAFETY]] - **⚠️ CRITICAL** Fixes type-safety trap + naive error recovery
+- [[design/PARSER-PROVENANCE-TRACKING]] - **📍 NEW** Capture parsing context for better error messages
+
+**Goal:** Replace LALRPOP with top-down recursive descent parser (state machine + handler dispatch)
+
+**Key Points:**
+- ✅ **No lexer changes** - Keep Logos-based lexer
+- ✅ **Minimal AST changes** - Add Error/Hole variants with provenance
+- ✅ **Better error recovery** - Multiple errors per parse, block-scoped
+- ✅ **No build.rs** - Pure Rust, faster iteration
+- ✅ **Type-safe stacks** - No runtime panics from downcasting
+- ✅ **Provenance tracking** - Capture "what we were parsing" for rich error context
+- ✅ **Foundation for mixfix** - Enables SPPF + type-directed disambiguation
+
+**Architecture:**
+- State stack with ~50 states (states carry their own data!)
+- Typed result stacks (expr_stack, bindings_stack, etc.)
+- Provenance stack (tracks parsing context)
+- Handler dispatch (one function per state)
+- Precedence climbing for expressions
+- Block-depth-aware error recovery
+
+**Critical Additions:**
+1. **Type-Safety:** `PartialNode` → Typed stacks (compile-time safety)
+2. **Error Recovery:** Flat token skip → Block-depth-aware (scoped recovery)
+3. **Provenance:** Error nodes capture parsing context stack
+
+**Error Messages (Before vs After):**
+```
+Before: Expected '=>' at line 15
+After:  Expected '=>' after function bindings
+        at line 15
+        while parsing function lambda
+          in let binding 'compute_norm'
+            in definition 'normalize'
+              in namespace 'Math.Vector'
+```
+
+**Timeline:** 4 weeks (9 phases + 0.5 weeks block depth + 0.5 weeks provenance)
+
+---
 
 ### Diagnostic Framework (2026-05-08) ⭐ **ACTIVE**
 
@@ -179,6 +225,17 @@ This document shows:
 
 ### Proof Distillation & Elaboration (2026-05-08) ⭐ **NEW**
 - [[research/proof-distillation-survey]] - **Comprehensive survey of proof distillation in modern theorem provers** (NEW)
+
+### Parsing & AST Infrastructure (2026-05-10) ⭐ **NEWEST**
+- [[research/carbon-parsing-ast-infrastructure]] - **Carbon Language: Lex→Parse→Check→Lower pipeline analysis** (NEW)
+  - Postorder CST storage architecture
+  - Lexer bracket matching with recovery
+  - State-machine parser (~200 states)
+  - Token-based autoformatter (~100 LOC)
+  - Immutable CST + fixit patterns
+  - X-macro infrastructure (.def files)
+  - Semantic IR separation (Parse Tree ≠ SemIR)
+  - Diagnostic system (context-stealing, sorting)
 
 ### External Systems
 - [[research/go-mvs]] - Go's Minimum Version Selection (referenced)
