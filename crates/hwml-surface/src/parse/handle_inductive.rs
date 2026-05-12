@@ -17,18 +17,23 @@ impl<'input> Context<'input> {
         }
         
         let name = self.parse_id();
-        
+
         // Parse optional parameters: (x : T) (y : U)
         let params = self.parse_typed_bindings_groups();
-        
-        // Parse optional indices: : (i : I) -> Type
-        let indices = if self.at_token(Token::Colon) {
+
+        // Parse optional universe: : Type or : (i : Nat) -> Type
+        // For now, simplified: just expect : Type and ignore it
+        let universe = if self.at_token(Token::Colon) {
             self.consume(Token::Colon);
-            self.parse_typed_bindings_from_type()
+            // Parse the type expression (could be "Type" or "(i : Nat) -> Type")
+            self.parse_constructor_type()
         } else {
-            TypedBindings::new(vec![])
+            Box::new(Expression::Universe(crate::syntax::Universe::new(loc.clone(), None)))
         };
-        
+
+        // Indices are not parsed yet (TODO)
+        let indices = TypedBindings::new(vec![]);
+
         // Expect :=
         if !self.at_token(Token::ColonEqual) {
             self.emit_error("Expected ':=' after inductive signature");
@@ -69,9 +74,11 @@ impl<'input> Context<'input> {
             let ctor_name = self.parse_id();
 
             // Parse constructor type (after ':')
+            // For now, use parse_simple_type() which handles identifiers and applications
+            // TODO: Convert to async pattern and use full expression parser for arrows
             let ctor_ty = if self.at_token(Token::Colon) {
                 self.consume(Token::Colon);
-                self.parse_simple_type()
+                self.parse_constructor_type()
             } else {
                 // Constructor with no explicit type
                 Box::new(Expression::Hole(ExpressionHole::new(self.current_location(), None)))
@@ -80,10 +87,8 @@ impl<'input> Context<'input> {
             let constructor = Constructor::new(ctor_loc, ctor_name, ctor_ty);
             constructors.push(constructor);
         }
-        
-        // Universe is always Type for now
-        let universe = Box::new(Expression::Universe(crate::syntax::Universe::new(loc.clone(), None)));
 
+        // Use the parsed universe
         let inductive = Inductive::new(loc, name, params, indices, universe, constructors);
         self.push_statement(Statement::Inductive(inductive));
     }
@@ -133,7 +138,22 @@ impl<'input> Context<'input> {
     
     /// Helper: Parse a simple type expression (very basic for now)
     fn parse_simple_type(&mut self) -> Box<Expression> {
-        if self.at_token(Token::Identifier) {
+        let loc = self.current_location();
+
+        if self.at_token(Token::Type) {
+            // Parse Type or Type n
+            self.consume(Token::Type);
+            let level = if self.at_token(Token::Number) {
+                let num_loc = self.current_location();
+                let text = std::str::from_utf8(&self.input[num_loc.clone()])
+                    .unwrap_or("0");
+                self.advance();
+                text.parse::<u32>().ok()
+            } else {
+                None
+            };
+            Box::new(Expression::Universe(crate::syntax::Universe::new(loc, level)))
+        } else if self.at_token(Token::Identifier) {
             let id = self.parse_id();
             let mut elements = vec![Box::new(Expression::Id(id))];
 
@@ -152,5 +172,25 @@ impl<'input> Context<'input> {
         } else {
             Box::new(Expression::Hole(ExpressionHole::new(self.current_location(), None)))
         }
+    }
+
+    /// Helper: Parse a constructor type (with arrow support)
+    fn parse_constructor_type(&mut self) -> Box<Expression> {
+        use crate::syntax::Arrow;
+
+        let start_loc = self.current_location();
+
+        // Parse first element (id or application)
+        let mut left = self.parse_simple_type();
+
+        // Handle right-associative arrows: A -> B -> C  means  A -> (B -> C)
+        while self.at_token(Token::Arrow) {
+            self.consume(Token::Arrow);
+            let right = self.parse_constructor_type(); // Recursive for right-associativity
+            let end_loc = self.current_location();
+            left = Box::new(Expression::Arrow(Arrow::new(start_loc.start..end_loc.end, left, right)));
+        }
+
+        left
     }
 }
