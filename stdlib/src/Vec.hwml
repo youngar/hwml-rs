@@ -9,7 +9,6 @@ inductive Std.Vec (A : Type) : Nat -> Type := {
     | vnil : Vec A Std.Nat.zero
     | vcons : Nat -> A -> Vec A Std.Nat.zero -> Vec A Std.Nat.zero
 }
-}
 
 namespace Std.Vec {
 

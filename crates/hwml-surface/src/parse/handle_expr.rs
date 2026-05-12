@@ -159,7 +159,14 @@ impl<'input> Context<'input> {
             let start = elements[0].loc();
             let end = elements.last().unwrap().loc();
             let app = Box::new(Expression::App(App::new(start.start..end.end, elements)));
-            self.push_expr(app);
+
+            // IMPORTANT: Go back through ExprFinish to check for arrows!
+            // This handles cases like "X Y -> Z" where the app "X Y" is
+            // the LHS of an arrow type.
+            self.push_state(State::ExprFinish {
+                partial: app,
+                min_prec,
+            });
         }
     }
 
