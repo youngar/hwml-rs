@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple_inductive() {
-        let input = b"inductive Bool : Type := | true : Bool | false : Bool end";
+        let input = b"inductive Bool : Type := { | true : Bool | false : Bool }";
         let program = parse(input);
         assert_eq!(program.statements.len(), 1);
 
@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn test_parse_parameterized_inductive() {
         let input =
-            b"inductive List (A : Type) : Type := | nil : List A | cons : A -> List A -> List A end";
+            b"inductive List (A : Type) : Type := { | nil : List A | cons : A -> List A -> List A }";
         let program = parse(input);
         assert_eq!(program.statements.len(), 1);
 

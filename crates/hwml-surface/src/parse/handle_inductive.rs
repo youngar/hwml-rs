@@ -42,22 +42,31 @@ impl<'input> Context<'input> {
             return;
         }
         self.consume(Token::ColonEqual);
-        
+
+        // Expect opening brace
+        if !self.at_token(Token::LBrace) {
+            self.emit_error("Expected '{' after ':=' in inductive declaration");
+            let stmt = self.make_error_statement("Invalid inductive");
+            self.push_statement(stmt);
+            return;
+        }
+        self.consume(Token::LBrace);
+
         // Parse constructors
         let mut constructors = vec![];
-        
+
         loop {
-            // Expect '|' or 'end'
-            if self.at_token(Token::End) {
-                self.consume(Token::End);
+            // Expect '|' or '}'
+            if self.at_token(Token::RBrace) {
+                self.consume(Token::RBrace);
                 break;
             }
-            
+
             if !self.at_token(Token::Pipe) {
                 if constructors.is_empty() {
                     // First constructor might not have |
                 } else {
-                    self.emit_error("Expected '|' before constructor or 'end'");
+                    self.emit_error("Expected '|' before constructor or '}'");
                     break;
                 }
             } else {

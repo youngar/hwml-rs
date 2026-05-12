@@ -1,14 +1,14 @@
 // Void: The empty type (False proposition in the Curry-Howard correspondence)
 // No constructors, so this type is uninhabited
 
-inductive Std.Void : Type :=
-end
+inductive Std.Void : Type := {
+}
 
 namespace Std.Void {
 
 // The principle of explosion: from falsehood, anything follows.
 def absurd (A : Type) (v : Void) : A :=
-    match v with
-    end
+    match v {
+    }
 
 }

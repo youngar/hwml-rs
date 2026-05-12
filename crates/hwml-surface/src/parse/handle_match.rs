@@ -1,7 +1,7 @@
 //! Match expression parsing handlers
 //!
 //! Implements parsing for match expressions:
-//! match <scrutinee> with | <pattern> => <expr> | ... end
+//! match <scrutinee> { | <pattern> => <expr> | ... }
 
 use crate::lex::Token;
 use crate::parse::context::Context;
@@ -19,21 +19,21 @@ impl<'input> Context<'input> {
         self.parse_expression(crate::parse::state::Precedence::Lowest);
     }
 
-    /// Handle after scrutinee - expect 'with' and start parsing clauses
+    /// Handle after scrutinee - expect '{' and start parsing clauses
     pub(super) fn handle_match_after_scrutinee(&mut self, loc: Range<usize>) {
         // Pop scrutinee from expr_stack
         let scrutinee = self.pop_expr();
 
-        // Expect 'with' keyword
-        if !self.at_token(Token::With) {
-            self.emit_error("Expected 'with' after match scrutinee");
+        // Expect '{' to start clauses
+        if !self.at_token(Token::LBrace) {
+            self.emit_error("Expected '{' after match scrutinee");
             let error_expr = Box::new(Expression::Error(
                 crate::syntax::ExpressionError::new(loc, "Invalid match".to_string())
             ));
             self.push_expr(error_expr);
             return;
         }
-        self.consume(Token::With);
+        self.consume(Token::LBrace);
 
         // Start parsing clauses
         self.push_state(State::MatchClauses {
@@ -43,16 +43,16 @@ impl<'input> Context<'input> {
         });
     }
 
-    /// Handle match clauses - loop parsing clauses until 'end'
+    /// Handle match clauses - loop parsing clauses until '}'
     pub(super) fn handle_match_clauses(
         &mut self,
         loc: Range<usize>,
         scrutinee: Box<Expression>,
         mut clauses: Vec<MatchClause>,
     ) {
-        // Check if we're done (at 'end' keyword)
-        if self.at_token(Token::End) {
-            self.consume(Token::End);
+        // Check if we're done (at '}' closing brace)
+        if self.at_token(Token::RBrace) {
+            self.consume(Token::RBrace);
 
             // Create match expression and push to expr_stack
             let match_expr = Box::new(Expression::Match(Match::new(scrutinee, clauses)));
@@ -62,7 +62,7 @@ impl<'input> Context<'input> {
 
         // Check for EOF or unexpected tokens (error recovery)
         if self.at_end() || self.at_sync_point() {
-            self.emit_error("Expected 'end' to close match expression");
+            self.emit_error("Expected '}' to close match expression");
             // Create partial match with clauses we have so far
             let match_expr = Box::new(Expression::Match(Match::new(scrutinee, clauses)));
             self.push_expr(match_expr);

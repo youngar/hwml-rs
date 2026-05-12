@@ -7,8 +7,8 @@ mod tests {
     
     #[test]
     fn test_simple_match() {
-        // Test: match x with | zero => 0 | succ n => n end
-        let input = b"def f := match x with | zero => 0 | succ n => n end";
+        // Test: match x { | zero => 0 | succ n => n end
+        let input = b"def f := match x { | zero => 0 | succ n => n }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -60,8 +60,8 @@ mod tests {
     
     #[test]
     fn test_match_with_wildcard() {
-        // Test: match x with | _ => 0 end
-        let input = b"def f := match x with | _ => 0 end";
+        // Test: match x { | _ => 0 end
+        let input = b"def f := match x { | _ => 0 }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -90,8 +90,8 @@ mod tests {
     
     #[test]
     fn test_match_with_complex_body() {
-        // Test: match x with | zero => succ zero end
-        let input = b"def f := match x with | zero => succ zero end";
+        // Test: match x { | zero => succ zero end
+        let input = b"def f := match x { | zero => succ zero }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -122,8 +122,8 @@ mod tests {
     
     #[test]
     fn test_nested_match() {
-        // Test: match x with | zero => match y with | zero => 0 end end
-        let input = b"def f := match x with | zero => match y with | zero => 0 end end";
+        // Test: match x { | zero => match y { | zero => 0 end end
+        let input = b"def f := match x { | zero => match y { | zero => 0 end }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -152,9 +152,9 @@ mod tests {
     
     #[test]
     fn test_empty_match() {
-        // Test: match x with end
+        // Test: match x { end
         // This is valid for uninhabited types
-        let input = b"def f := match x with end";
+        let input = b"def f := match x { }";
         let parser = Parser::new(input);
         let result = parser.parse();
         

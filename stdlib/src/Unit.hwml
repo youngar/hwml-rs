@@ -1,8 +1,8 @@
 // Unit: The unit type (True proposition in the Curry-Howard correspondence)
 
-inductive Std.Unit : Type :=
+inductive Std.Unit : Type := {
     | tt : Unit
-end
+}
 
 // Unit operations live in Std.Unit namespace
 namespace Std.Unit {

@@ -66,8 +66,6 @@ pub enum Token {
     Match,
     #[token("with", priority = 4)]
     With,
-    #[token("end", priority = 4)]
-    End,
     #[token("inductive", priority = 4)]
     Inductive,
     #[token("where", priority = 4)]

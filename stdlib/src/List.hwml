@@ -1,40 +1,39 @@
 // List: Polymorphic lists (cons lists)
 
-inductive Std.List (A : Type) : Type :=
+inductive Std.List (A : Type) : Type := {
     | nil : List A
     | cons : A -> List A -> List A
-
-end
+}
 
 namespace Std.List {
 
 // Length of a list
 def length (A : Type) (xs : List A) : Nat :=
-    match xs with
+    match xs {
     | nil => Std.zero
     | cons _ xs' => Std.succ (length A xs')
-    end
+    }
 
 // Append two lists
 def append (A : Type) (xs : List A) (ys : List A) : List A :=
-    match xs with
+    match xs {
     | nil => ys
     | cons x xs' => cons x (append A xs' ys)
-    end
+    }
 
 // Map a function over a list
 def map (A : Type) (B : Type) (f : A -> B) (xs : List A) : List B :=
-    match xs with
+    match xs {
     | nil => nil
     | cons x xs' => cons (f x) (map A B f xs')
-    end
+    }
 
 // Reverse a list
 def reverse_helper (A : Type) (xs : List A) (acc : List A) : List A :=
-    match xs with
+    match xs {
     | nil => acc
     | cons x xs' => reverse_helper A xs' (cons x acc)
-    end
+    }
 
 def reverse (A : Type) (xs : List A) : List A :=
     reverse_helper A xs nil
@@ -44,73 +43,73 @@ def reverse (A : Type) (xs : List A) : List A :=
 
 // Tail of a list
 def tail (A : Type) (xs : List A) : List A :=
-    match xs with
+    match xs {
     | nil => nil
     | cons _ xs' => xs'
-    end
+    }
 
 // Check if list is empty
 def is_empty (A : Type) (xs : List A) : Std.Bool :=
-    match xs with
+    match xs {
     | nil => Std.true
     | cons _ _ => Std.false
-    end
+    }
 
 // Fold right
 def foldr (A : Type) (B : Type) (f : A -> B -> B) (init : B) (xs : List A) : B :=
-    match xs with
+    match xs {
     | nil => init
     | cons x xs' => f x (foldr A B f init xs')
-    end
+    }
 
 // Fold left
 def foldl (A : Type) (B : Type) (f : B -> A -> B) (init : B) (xs : List A) : B :=
-    match xs with
+    match xs {
     | nil => init
     | cons x xs' => foldl A B f (f init x) xs'
-    end
+    }
 
 // Filter elements that satisfy a predicate
 def filter (A : Type) (p : A -> Std.Bool) (xs : List A) : List A :=
-    match xs with
+    match xs {
     | nil => nil
     | cons x xs' =>
         Std.Bool.ite (List A)
             (p x)
             (cons x (filter A p xs'))
             (filter A p xs')
-    end
+    }
 
 // Take first n elements
 def take (A : Type) (n : Nat) (xs : List A) : List A :=
-    match n with
+    match n {
     | Std.zero => nil
     | Std.succ n' =>
-        match xs with
+        match xs {
         | nil => nil
         | cons x xs' => cons x (take A n' xs')
-        end
-    end
+        }
+    }
 
 // Drop first n elements
 def drop (A : Type) (n : Nat) (xs : List A) : List A :=
-    match n with
+    match n {
     | Std.zero => xs
     | Std.succ n' =>
-        match xs with
+        match xs {
         | nil => nil
         | cons _ xs' => drop A n' xs'
-        end
-    end
+        }
+    }
 
 // Zip two lists together
 def zip (A : Type) (B : Type) (xs : List A) (ys : List B) : List (A -> B) :=
-    match xs with
+    match xs {
     | nil => nil
     | cons x xs' =>
-        match ys with
+        match ys {
         | nil => nil
         | cons y ys' => cons (fun _ => y) (zip A B xs' ys')
-        end
-    end
+        }
+    }
 }

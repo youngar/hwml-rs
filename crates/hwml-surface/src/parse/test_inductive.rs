@@ -7,8 +7,8 @@ mod tests {
     
     #[test]
     fn test_simple_inductive() {
-        // Test: inductive Nat : Type := | zero : Nat | succ : Nat -> Nat end
-        let input = b"inductive Nat : Type := | zero : Nat | succ : Nat -> Nat end";
+        // Test: inductive Nat : Type := { | zero : Nat | succ : Nat -> Nat }
+        let input = b"inductive Nat : Type := { | zero : Nat | succ : Nat -> Nat }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -57,8 +57,8 @@ mod tests {
     
     #[test]
     fn test_parameterized_inductive() {
-        // Test: inductive List (A : Type) : Type := | nil : List A | cons : A -> List A -> List A end
-        let input = b"inductive List (A : Type) : Type := | nil : List A | cons : A -> List A -> List A end";
+        // Test: inductive List (A : Type) : Type := { | nil : List A | cons : A -> List A -> List A }
+        let input = b"inductive List (A : Type) : Type := { | nil : List A | cons : A -> List A -> List A }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -93,8 +93,8 @@ mod tests {
     
     #[test]
     fn test_empty_inductive() {
-        // Test: inductive Empty : Type := end
-        let input = b"inductive Empty : Type := end";
+        // Test: inductive Empty : Type := { }
+        let input = b"inductive Empty : Type := { }";
         let parser = Parser::new(input);
         let result = parser.parse();
         
@@ -113,8 +113,8 @@ mod tests {
     
     #[test]
     fn test_multiple_parameters() {
-        // Test: inductive Pair (A : Type) (B : Type) : Type := | pair : A -> B -> Pair A B end
-        let input = b"inductive Pair (A : Type) (B : Type) : Type := | pair : A -> B -> Pair A B end";
+        // Test: inductive Pair (A : Type) (B : Type) : Type := { | pair : A -> B -> Pair A B }
+        let input = b"inductive Pair (A : Type) (B : Type) : Type := { | pair : A -> B -> Pair A B }";
         let parser = Parser::new(input);
         let result = parser.parse();
         

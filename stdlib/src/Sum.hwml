@@ -1,65 +1,63 @@
 // Sum: Sum type (disjoint union / Either)
 
-inductive Std.Sum (A : Type) (B : Type) : Type :=
+inductive Std.Sum (A : Type) (B : Type) : Type := {
     | inl : A -> Sum A B
     | inr : B -> Sum A B
-
-// Sum operations live in Std.Sum namespace
-end
+}
 
 namespace Std.Sum {
 
 // Check if sum is left
 def is_left (A : Type) (B : Type) (s : Sum A B) : Bool :=
-    match s with
+    match s {
     | inl _ => true
     | inr _ => false
-    end
+    }
 
 // Check if sum is right
 def is_right (A : Type) (B : Type) (s : Sum A B) : Bool :=
-    match s with
+    match s {
     | inl _ => false
     | inr _ => true
-    end
+    }
 
 // Case analysis / elimination
 def elim (A : Type) (B : Type) (C : Type)
          (f : A -> C) (g : B -> C) (s : Sum A B) : C :=
-    match s with
+    match s {
     | inl a => f a
     | inr b => g b
-    end
+    }
 
 // Map over the left type
 def map_left (A : Type) (B : Type) (C : Type)
              (f : A -> C) (s : Sum A B) : Sum C B :=
-    match s with
+    match s {
     | inl a => inl (f a)
     | inr b => inr b
-    end
+    }
 
 // Map over the right type
 def map_right (A : Type) (B : Type) (D : Type)
               (g : B -> D) (s : Sum A B) : Sum A D :=
-    match s with
+    match s {
     | inl a => inl a
     | inr b => inr (g b)
-    end
+    }
 
 // Map over both types
 def bimap (A : Type) (B : Type) (C : Type) (D : Type)
           (f : A -> C) (g : B -> D) (s : Sum A B) : Sum C D :=
-    match s with
+    match s {
     | inl a => inl (f a)
     | inr b => inr (g b)
-    end
+    }
 
 // Swap left and right
 def swap (A : Type) (B : Type) (s : Sum A B) : Sum B A :=
-    match s with
+    match s {
     | inl a => inr a
     | inr b => inl b
-    end
+    }
 
 }
