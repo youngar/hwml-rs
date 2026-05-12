@@ -279,8 +279,8 @@ impl<'input> Context<'input> {
                 if self.at_token(Token::Colon) {
                     self.consume(Token::Colon);
 
-                    // Parse the type synchronously (simple version)
-                    let ty = self.parse_simple_type_sync();
+                    // Parse the type as an expression (types are just expressions in dependent types!)
+                    let ty = self.parse_type_expression_sync();
 
                     // Expect )
                     if !self.at_token(Token::RParen) {
@@ -319,30 +319,43 @@ impl<'input> Context<'input> {
         Bindings::new(groups)
     }
 
-    /// Parse a simple type expression synchronously
-    /// This is a temporary helper until we make all type parsing async
-    fn parse_simple_type_sync(&mut self) -> Box<Expression> {
+    /// Parse an expression synchronously (for use in bindings)
+    /// In dependent types, types are just expressions!
+    /// This handles common patterns: identifiers, applications, arrows, Type
+    fn parse_type_expression_sync(&mut self) -> Box<Expression> {
         let loc = self.current_location();
 
         if self.at_token(Token::Identifier) {
+            let start_loc = self.current_location();
             let id = self.parse_id();
-            let expr = Box::new(Expression::Id(id));
+            let mut expr = Box::new(Expression::Id(id));
+
+            // Check for application: List A, List A B, etc.
+            let mut app_elements = vec![expr];
+            while self.at_token(Token::Identifier) && !self.at_token(Token::Arrow) && !self.at_token(Token::RParen) {
+                let id = self.parse_id();
+                app_elements.push(Box::new(Expression::Id(id)));
+            }
+
+            // If we collected multiple elements, create an App
+            if app_elements.len() > 1 {
+                let end_loc = app_elements.last().unwrap().loc();
+                expr = Box::new(Expression::App(crate::syntax::App::new(
+                    start_loc.start..end_loc.end,
+                    app_elements
+                )));
+            } else {
+                expr = app_elements.into_iter().next().unwrap();
+            }
 
             // Check for arrow types: A -> B
             if self.at_token(Token::Arrow) {
                 let mut types = vec![expr];
                 while self.at_token(Token::Arrow) {
                     self.consume(Token::Arrow);
-                    if self.at_token(Token::Identifier) {
-                        let id = self.parse_id();
-                        types.push(Box::new(Expression::Id(id)));
-                    } else if self.at_token(Token::Type) {
-                        self.consume(Token::Type);
-                        types.push(Box::new(Expression::Universe(crate::syntax::Universe::new(self.current_location(), None))));
-                    } else {
-                        self.emit_error("Expected type after '->'");
-                        break;
-                    }
+                    // Parse the right-hand side recursively (types are expressions!)
+                    let rhs = self.parse_type_expression_sync();
+                    types.push(rhs);
                 }
 
                 // Build right-associative arrow chain: A -> B -> C = A -> (B -> C)
