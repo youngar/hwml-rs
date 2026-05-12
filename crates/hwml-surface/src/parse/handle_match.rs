@@ -60,6 +60,15 @@ impl<'input> Context<'input> {
             return;
         }
 
+        // Check for EOF or unexpected tokens (error recovery)
+        if self.at_end() || self.at_sync_point() {
+            self.emit_error("Expected 'end' to close match expression");
+            // Create partial match with clauses we have so far
+            let match_expr = Box::new(Expression::Match(Match::new(scrutinee, clauses)));
+            self.push_expr(match_expr);
+            return;
+        }
+
         // Parse next clause: | <pattern> => <expr>
 
         // Optional '|' before clause (first clause may omit it)
@@ -75,7 +84,9 @@ impl<'input> Context<'input> {
         // Expect '=>'
         if !self.at_token(Token::FatArrow) {
             self.emit_error("Expected '=>' after match pattern");
-            // Skip to next clause or end
+            // Error recovery: push error expression and finish
+            let match_expr = Box::new(Expression::Match(Match::new(scrutinee, clauses)));
+            self.push_expr(match_expr);
             return;
         }
         self.consume(Token::FatArrow);
@@ -129,24 +140,36 @@ impl<'input> Context<'input> {
             let id = self.parse_id();
             let mut end_loc = id.loc.clone();
 
-            // Check if followed by more identifiers (constructor application)
-            let mut elements = vec![id.clone()];
-            while self.at_token(Token::Identifier) && !self.at_token(Token::FatArrow) {
-                let next_id = self.parse_id();
-                end_loc = next_id.loc.clone();
-                elements.push(next_id);
+            // Check if followed by more patterns (constructor application)
+            // e.g., `Cons x xs` or `Just _` or `succ _`
+            let mut elements = vec![Pattern::Id(id)];
+            while (self.at_token(Token::Identifier) || self.at_token(Token::Underscore))
+                   && !self.at_token(Token::FatArrow) {
+                let pattern = if self.at_token(Token::Underscore) {
+                    let loc = self.current_location();
+                    self.consume(Token::Underscore);
+                    end_loc = loc.clone();
+                    Pattern::Underscore(crate::syntax::Underscore::new(loc))
+                } else {
+                    let next_id = self.parse_id();
+                    end_loc = next_id.loc.clone();
+                    Pattern::Id(next_id)
+                };
+                elements.push(pattern);
             }
 
             if elements.len() == 1 {
-                Pattern::Id(id)
+                // Just a single identifier
+                if let Pattern::Id(id) = elements.into_iter().next().unwrap() {
+                    Pattern::Id(id)
+                } else {
+                    unreachable!()
+                }
             } else {
-                // Application pattern: Cons x xs
+                // Application pattern: Cons x xs, or Just _, or succ _
                 use crate::syntax::AppSeq;
                 let loc = start_loc.start..end_loc.end;
-                Pattern::AppSeq(AppSeq::new(
-                    loc,
-                    elements.into_iter().map(Pattern::Id).collect()
-                ))
+                Pattern::AppSeq(AppSeq::new(loc, elements))
             }
         } else if self.at_token(Token::Number) {
             let loc = self.current_location();

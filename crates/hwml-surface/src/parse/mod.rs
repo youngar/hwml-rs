@@ -186,6 +186,9 @@ impl<'input> Parser<'input> {
             State::ExprApp { elements, min_prec } => {
                 self.context.handle_expr_app(elements, min_prec)
             }
+            State::ArrowAfterRhs { lhs } => {
+                self.context.handle_arrow_after_rhs(lhs)
+            }
             State::ParenAfterLParen { loc, min_prec } => {
                 self.context.handle_paren_after_lparen(loc, min_prec)
             }

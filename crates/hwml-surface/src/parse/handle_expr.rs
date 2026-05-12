@@ -79,8 +79,25 @@ impl<'input> Context<'input> {
     }
 
     /// Handle ExprFinish - finish parsing expression with precedence climbing
-    /// This is the entry point - checks if we can start building an application
+    /// This is the entry point - checks if we can continue parsing
     pub(super) fn handle_expr_finish(&mut self, partial: Box<Expression>, min_prec: Precedence) {
+        // Check for arrow (function type) - lowest precedence
+        if min_prec <= Precedence::Lowest && self.at_token(Token::Arrow) {
+            self.consume(Token::Arrow);
+
+            // Build arrow type (right-associative)
+            // A -> B -> C parses as A -> (B -> C)
+
+            // Push continuation (builds arrow after parsing RHS)
+            self.push_state(State::ArrowAfterRhs {
+                lhs: partial,
+            });
+
+            // Parse RHS at same precedence (right-associative)
+            self.parse_expression(Precedence::Lowest);
+            return;
+        }
+
         // Check if we should continue with application
         if min_prec <= Precedence::App && self.can_parse_app_argument() {
             // Start building application
@@ -97,6 +114,24 @@ impl<'input> Context<'input> {
             self.push_expr(partial);
         }
     }
+
+
+    /// Handle arrow after parsing RHS - build the arrow type
+    pub(super) fn handle_arrow_after_rhs(&mut self, lhs: Box<Expression>) {
+        let rhs = self.pop_expr();
+
+        // Build arrow expression: A -> B
+        let start = lhs.loc();
+        let end = rhs.loc();
+        let arrow = Box::new(Expression::Arrow(crate::syntax::Arrow::new(
+            start.start..end.end,
+            lhs,
+            rhs,
+        )));
+
+        self.push_expr(arrow);
+    }
+
 
     /// Handle ExprApp - accumulate application arguments
     /// Called after parsing each argument to check for more

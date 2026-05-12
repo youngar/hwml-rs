@@ -196,6 +196,12 @@ pub enum State {
         bindings: TypedBindings,
     },
 
+    /// After parsing LHS of arrow type (A -> ...)
+    ArrowAfterRhs {
+        lhs: Box<Expression>,
+        // rhs is on expr_stack
+    },
+
     /// After 'fun' keyword
     FunAfterKeyword {
         loc: Range<usize>,
@@ -353,6 +359,7 @@ impl State {
             | State::ExprStart { .. }
             | State::ExprFinish { .. }
             | State::ExprApp { .. }
+            | State::ArrowAfterRhs { .. }
             | State::ParenAfterLParen { .. }
             | State::FunAfterKeyword { .. }
             | State::LetAfterKeyword { .. }
