@@ -98,11 +98,18 @@ impl<'input> Context<'input> {
     }
 
     pub(super) fn handle_def_after_name(&mut self, loc: Range<usize>, name: Id) {
-        let bindings = self.parse_bindings();
-        self.push_state(State::DefAfterBindings { loc, name, bindings });
+        // Parse bindings asynchronously - they'll be pushed to bindings_stack
+        let continuation = State::DefAfterBindings {
+            loc,
+            name,
+            bindings: crate::syntax::Bindings::new(vec![]), // dummy, will pop from stack
+        };
+        self.parse_bindings_async(continuation);
     }
 
-    pub(super) fn handle_def_after_bindings(&mut self, loc: Range<usize>, name: Id, bindings: Bindings) {
+    pub(super) fn handle_def_after_bindings(&mut self, loc: Range<usize>, name: Id, _bindings: Bindings) {
+        // Pop the ACTUAL bindings from bindings_stack (ignore dummy passed in state)
+        let bindings = self.pop_bindings();
         if self.at_token(Token::Colon) {
             self.consume(Token::Colon);
 

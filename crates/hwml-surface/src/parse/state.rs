@@ -212,8 +212,13 @@ pub enum State {
         loc: Range<usize>,
     },
 
-    /// After parsing fun bindings
-    FunAfterBindings {
+    /// After parsing fun bindings - need to check for '=>' and parse body
+    FunAfterBindingsParsed {
+        loc: Range<usize>,
+    },
+
+    /// After parsing fun body - build Fun node
+    FunAfterBody {
         loc: Range<usize>,
         bindings: Bindings,
     },
@@ -276,14 +281,23 @@ pub enum State {
 
     // ===== Bindings =====
 
-    /// Parsing bindings (untyped or typed groups)
-    Bindings,
+    /// Start/continue parsing binding groups
+    /// Accumulates groups until no more bindings found, then pushes to bindings_stack
+    ParseBindingsStart {
+        /// Accumulated binding groups parsed so far
+        groups: Vec<crate::syntax::BindingGroup>,
+    },
 
-    /// Parsing a single binding group
-    BindingGroup,
-
-    /// Parsing a typed binding group
-    TypedBindingGroup,
+    /// After parsing type annotation in a typed binding group
+    /// Builds the typed binding group and continues parsing bindings
+    BindingGroupAfterType {
+        /// The binders we collected (x, y, z in (x y z : Type))
+        binders: Vec<crate::syntax::Binder>,
+        /// Accumulated binding groups parsed so far
+        groups: Vec<crate::syntax::BindingGroup>,
+        /// Continuation state to return to after all bindings are parsed
+        continuation: Box<State>,
+    },
 
     // ===== Open Statement =====
 
@@ -345,7 +359,7 @@ impl State {
             State::MatchClauses { .. } => {
                 Some("in match expression".to_string())
             }
-            State::FunAfterBindings { .. } => {
+            State::FunAfterBody { .. } => {
                 Some("in lambda function".to_string())
             }
             State::LetAfterValue { name, .. } => {
@@ -385,14 +399,14 @@ impl State {
             | State::ArrowAfterRhs { .. }
             | State::ParenAfterLParen { .. }
             | State::FunAfterKeyword { .. }
+            | State::FunAfterBindingsParsed { .. }
             | State::LetAfterKeyword { .. }
             | State::LetAfterName { .. }
             | State::MatchStart { .. }
             | State::MatchAfterScrutinee { .. }
             | State::MatchClauseAfterBody { .. }
-            | State::Bindings
-            | State::BindingGroup
-            | State::TypedBindingGroup
+            | State::ParseBindingsStart { .. }
+            | State::BindingGroupAfterType { .. }
             | State::OpenStart { .. }
             | State::OpenAfterName { .. } => None,
         }

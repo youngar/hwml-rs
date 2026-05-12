@@ -18,6 +18,7 @@ mod handle_match;
 mod handle_fun;
 mod handle_pi;
 mod handle_let;
+mod handle_bindings;
 
 #[cfg(test)]
 mod tests;
@@ -214,8 +215,11 @@ impl<'input> Parser<'input> {
             State::FunAfterKeyword { loc } => {
                 self.context.handle_fun_after_keyword(loc)
             }
-            State::FunAfterBindings { loc, bindings } => {
-                self.context.handle_fun_after_bindings(loc, bindings)
+            State::FunAfterBindingsParsed { loc } => {
+                self.context.handle_fun_after_bindings_parsed(loc)
+            }
+            State::FunAfterBody { loc, bindings } => {
+                self.context.handle_fun_after_body(loc, bindings)
             }
 
             // Pi types (dependent function types)
@@ -238,6 +242,14 @@ impl<'input> Parser<'input> {
             }
             State::LetAfterBody { loc, name, bindings, ty, value } => {
                 self.context.handle_let_after_body(loc, name, bindings, ty, value)
+            }
+
+            // Bindings (async parsing)
+            State::ParseBindingsStart { groups } => {
+                self.context.handle_parse_bindings_start(groups)
+            }
+            State::BindingGroupAfterType { binders, groups, .. } => {
+                self.context.handle_binding_group_after_type(binders, groups)
             }
 
             // TODO: Add remaining states
