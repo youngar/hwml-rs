@@ -190,6 +190,11 @@ pub enum State {
         min_prec: Precedence,  // Original precedence context
     },
 
+    /// After 'Pi' keyword
+    PiAfterKeyword {
+        loc: Range<usize>,
+    },
+
     /// After parsing Pi bindings
     PiAfterBindings {
         loc: Range<usize>,
@@ -333,6 +338,9 @@ impl State {
             }
             State::LetAfterValue { name, .. } => {
                 Some(format!("in let binding '{}'", name.value))
+            }
+            State::PiAfterKeyword { .. } => {
+                Some("in Pi type".to_string())
             }
             State::PiAfterBindings { .. } => {
                 Some("in Pi type".to_string())

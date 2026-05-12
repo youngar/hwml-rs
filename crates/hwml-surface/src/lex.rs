@@ -62,6 +62,8 @@ pub enum Token {
     In,
     #[token("fun", priority = 4)]
     Fun,
+    #[token("Pi", priority = 4)]
+    Pi,
     #[token("match", priority = 4)]
     Match,
     #[token("with", priority = 4)]

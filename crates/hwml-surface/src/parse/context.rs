@@ -320,7 +320,7 @@ impl<'input> Context<'input> {
     /// Parse an expression synchronously (for use in bindings)
     /// In dependent types, types are just expressions!
     /// This handles common patterns: identifiers, applications, arrows, Type
-    fn parse_type_expression_sync(&mut self) -> Box<Expression> {
+    pub(super) fn parse_type_expression_sync(&mut self) -> Box<Expression> {
         let loc = self.current_location();
 
         // First, parse the atomic/application part

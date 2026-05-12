@@ -16,6 +16,7 @@ mod handle_namespace;
 mod handle_recovery;
 mod handle_match;
 mod handle_fun;
+mod handle_pi;
 
 #[cfg(test)]
 mod tests;
@@ -214,6 +215,14 @@ impl<'input> Parser<'input> {
             }
             State::FunAfterBindings { loc, bindings } => {
                 self.context.handle_fun_after_bindings(loc, bindings)
+            }
+
+            // Pi types (dependent function types)
+            State::PiAfterKeyword { loc } => {
+                self.context.handle_pi_after_keyword(loc)
+            }
+            State::PiAfterBindings { loc, bindings } => {
+                self.context.handle_pi_after_bindings(loc, bindings)
             }
 
             // TODO: Add remaining states

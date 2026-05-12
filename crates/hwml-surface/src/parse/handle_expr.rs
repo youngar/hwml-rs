@@ -72,6 +72,11 @@ impl<'input> Context<'input> {
             // ASYNC: Lambda expression
             self.consume(Token::Fun);
             self.push_state(State::FunAfterKeyword { loc });
+        } else if self.at_token(Token::Pi) {
+            // ASYNC: Pi type - dependent function type
+            // Syntax: Pi (x : A) -> B  or  Pi (x y : A) (z : B) -> C
+            self.consume(Token::Pi);
+            self.push_state(State::PiAfterKeyword { loc });
         } else {
             self.emit_error(format!("Expected expression, found {:?}", self.peek()));
             let expr = Box::new(Expression::Error(ExpressionError::new(loc, "Expected expression".to_string())));
