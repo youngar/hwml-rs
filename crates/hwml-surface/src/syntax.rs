@@ -75,6 +75,7 @@ pub enum Expression {
     Fun(Fun),
     LetIn(LetIn),
     Match(Match),
+    TypeAscription(TypeAscription),
     Underscore(Underscore),
     Paren(Paren),
     Num(Num),
@@ -115,6 +116,13 @@ pub struct FatArrow {
     pub loc: Range<usize>,
     pub source: Box<Expression>,
     pub target: Box<Expression>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+pub struct TypeAscription {
+    pub loc: Range<usize>,
+    pub expr: Box<Expression>,
+    pub ty: Box<Expression>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -346,6 +354,7 @@ impl Expression {
                 // Match doesn't have a loc field - use scrutinee loc
                 m.scrutinee.loc()
             }
+            Expression::TypeAscription(asc) => asc.loc.clone(),
             Expression::Underscore(u) => u.loc.clone(),
             Expression::Paren(p) => p.expr.loc(),
             Expression::Num(n) => n.loc.clone(),
@@ -358,6 +367,22 @@ impl Expression {
             Expression::Dot(d) => d.loc.clone(),
             Expression::Error(e) => e.loc.clone(),
             Expression::Hole(h) => h.loc.clone(),
+        }
+    }
+}
+
+impl Pattern {
+    /// Get the location range of this pattern
+    pub fn loc(&self) -> Range<usize> {
+        match self {
+            Pattern::Id(id) => id.loc.clone(),
+            Pattern::AppSeq(seq) => seq.loc.clone(),
+            Pattern::As(as_pat) => as_pat.loc.clone(),
+            Pattern::Underscore(u) => u.loc.clone(),
+            Pattern::Paren(p) => p.loc.clone(),
+            Pattern::Num(n) => n.loc.clone(),
+            Pattern::Str(_) => 0..0, // Str doesn't have loc
+            Pattern::Error(e) => e.loc.clone(),
         }
     }
 }

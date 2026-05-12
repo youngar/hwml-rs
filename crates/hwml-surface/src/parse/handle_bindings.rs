@@ -128,12 +128,14 @@ impl Context<'_> {
 
     /// Parse telescope bindings for dependent arrows: (a : A) (b : B) -> C
     /// Only typed bindings in parentheses are valid
+    /// DEPRECATED: This will be removed in favor of parse-then-reinterpret
     pub(super) fn handle_parse_telescope_bindings(
         &mut self,
         mut groups: Vec<crate::syntax::TypedBindingGroup>,
     ) {
+        // TEMPORARILY DISABLED - will be replaced with parse-then-reinterpret
         // Check if we have another telescope binding: ( Identifier :
-        if self.at_telescope_binding() {
+        if false && self.at_token(Token::LParen) {
             self.consume(Token::LParen);
 
             // Parse binders

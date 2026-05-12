@@ -208,6 +208,13 @@ pub enum State {
         // rhs is on expr_stack
     },
 
+    /// After parsing expression in type ascription (expr : ...)
+    /// Used for type ascriptions parsed in handle_expr_finish
+    TypeAscriptionAfterType {
+        expr: Box<Expression>,
+        // type is on expr_stack
+    },
+
     /// After parsing bindings for dependent arrow: (a : A) (b : B) -> ...
     /// Stack checkpoint: Save expr/bindings stack state to restore later
     DependentArrowAfterBindingsParsed {
@@ -355,19 +362,22 @@ pub enum State {
 }
 
 /// Precedence levels for expression parsing
+/// Lower number = lower precedence (binds less tightly)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
-    Lowest = 0,   // Pi, Arrow, FatArrow
-    App = 1,      // Application (juxtaposition)
-    Dot = 2,      // Field access a.b
-    Atomic = 3,   // Literals, ids, parens
+    Lowest = 0,         // Pi, Arrow, FatArrow
+    TypeAscription = 1, // Type ascription: expr : Type
+    App = 2,            // Application (juxtaposition)
+    Dot = 3,            // Field access a.b
+    Atomic = 4,         // Literals, ids, parens
 }
 
 impl Precedence {
     /// Get the next higher precedence level
     pub fn next(self) -> Self {
         match self {
-            Precedence::Lowest => Precedence::App,
+            Precedence::Lowest => Precedence::TypeAscription,
+            Precedence::TypeAscription => Precedence::App,
             Precedence::App => Precedence::Dot,
             Precedence::Dot => Precedence::Atomic,
             Precedence::Atomic => Precedence::Atomic,
@@ -440,6 +450,7 @@ impl State {
             | State::ExprFinish { .. }
             | State::ExprApp { .. }
             | State::ArrowAfterRhs { .. }
+            | State::TypeAscriptionAfterType { .. }
             | State::DependentArrowAfterBindingsParsed { .. }
             | State::DependentArrowAfterBody { .. }
             | State::ParenAfterLParen { .. }

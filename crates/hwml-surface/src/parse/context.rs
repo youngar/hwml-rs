@@ -154,24 +154,6 @@ impl<'input> Context<'input> {
         self.peek() == Some(&tok)
     }
 
-    /// Peek ahead by N tokens (0 = current, 1 = next, etc.)
-    pub fn peek_ahead(&self, n: usize) -> Option<&Token> {
-        let pos = self.position + n;
-        if pos < self.tokens.len() {
-            Some(&self.tokens[pos].0)
-        } else {
-            None
-        }
-    }
-
-    /// Check if we're at a telescope binding: ( Identifier :
-    /// This is used to distinguish dependent arrows from parenthesized expressions
-    pub fn at_telescope_binding(&self) -> bool {
-        self.at_token(Token::LParen)
-            && self.peek_ahead(1) == Some(&Token::Identifier)
-            && self.peek_ahead(2) == Some(&Token::Colon)
-    }
-
     // ===== Token Consumption =====
 
     /// Consume a token, return its location

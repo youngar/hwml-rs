@@ -33,32 +33,6 @@ impl<'input> Context<'input> {
                 partial: expr,
                 min_prec,
             });
-        } else if self.at_telescope_binding() {
-            // ASYNC: Dependent arrow type - telescope notation: (a : A) (b : B) -> C
-            // Use lookahead to distinguish from parenthesized expressions
-
-            // Save stack checkpoints to ensure we only use bindings we parse
-            let expr_checkpoint = self.expr_stack_checkpoint();
-            let bindings_checkpoint = self.bindings_stack_checkpoint();
-
-            // Push continuation (runs AFTER body is parsed)
-            self.push_state(State::DependentArrowAfterBody {
-                loc: loc.clone(),
-                bindings: crate::syntax::TypedBindings::new(vec![]), // dummy, will be updated
-            });
-
-            // Push continuation (runs AFTER bindings are parsed)
-            self.push_state(State::DependentArrowAfterBindingsParsed {
-                loc: loc.clone(),
-                expr_stack_checkpoint: expr_checkpoint,
-                bindings_stack_checkpoint: bindings_checkpoint,
-            });
-
-            // Parse telescope bindings: (a : A) (b : B) ...
-            // This will parse ALL consecutive typed binding groups
-            self.push_state(State::ParseTelescopeBindings {
-                groups: vec![],
-            });
         } else if self.at_token(Token::LParen) {
             // ASYNC: Parenthesized expression
             self.consume(Token::LParen);
@@ -138,6 +112,23 @@ impl<'input> Context<'input> {
             return;
         }
 
+        // Check for type ascription: expr : Type
+        if min_prec <= Precedence::TypeAscription && self.at_token(Token::Colon) {
+            self.consume(Token::Colon);
+
+            // Build type ascription (right-associative)
+            // a : A : B parses as a : (A : B) - though this is unusual
+
+            // Push continuation (builds ascription after parsing type)
+            self.push_state(State::TypeAscriptionAfterType {
+                expr: partial,
+            });
+
+            // Parse type at same precedence (right-associative)
+            self.parse_expression(Precedence::TypeAscription);
+            return;
+        }
+
         // Check if we should continue with application
         if min_prec <= Precedence::App && self.can_parse_app_argument() {
             // Start building application
@@ -156,20 +147,51 @@ impl<'input> Context<'input> {
     }
 
 
-    /// Handle arrow after parsing RHS - build the arrow type
+    /// Handle arrow after parsing RHS - build the arrow type or dependent Pi type
+    /// This implements the "Parse-then-Reinterpret" pattern:
+    /// - If LHS is (a : A) or an AppSeq of parenthesized ascriptions, convert to Pi
+    /// - Otherwise, create a simple Arrow
     pub(super) fn handle_arrow_after_rhs(&mut self, lhs: Box<Expression>) {
         let rhs = self.pop_expr();
 
-        // Build arrow expression: A -> B
-        let start = lhs.loc();
-        let end = rhs.loc();
-        let arrow = Box::new(Expression::Arrow(crate::syntax::Arrow::new(
+        // Check if LHS can be reinterpreted as telescope bindings
+        if let Some(bindings) = self.try_convert_to_telescope_bindings(&lhs) {
+            // Build Pi type: (a : A) (b : B) -> C
+            let start = lhs.loc();
+            let end = rhs.loc();
+            let pi = Box::new(Expression::Pi(crate::syntax::Pi::new(
+                start.start..end.end,
+                bindings,
+                rhs,
+            )));
+            self.push_expr(pi);
+        } else {
+            // Build simple arrow: A -> B
+            let start = lhs.loc();
+            let end = rhs.loc();
+            let arrow = Box::new(Expression::Arrow(crate::syntax::Arrow::new(
+                start.start..end.end,
+                lhs,
+                rhs,
+            )));
+            self.push_expr(arrow);
+        }
+    }
+
+    /// Handle type ascription after parsing type - build the TypeAscription node
+    pub(super) fn handle_type_ascription_after_type(&mut self, expr: Box<Expression>) {
+        let ty = self.pop_expr();
+
+        // Build type ascription: expr : Type
+        let start = expr.loc();
+        let end = ty.loc();
+        let ascription = Box::new(Expression::TypeAscription(crate::syntax::TypeAscription::new(
             start.start..end.end,
-            lhs,
-            rhs,
+            expr,
+            ty,
         )));
 
-        self.push_expr(arrow);
+        self.push_expr(ascription);
     }
 
 
@@ -317,6 +339,77 @@ impl<'input> Context<'input> {
             Expression::Hole(hole) => hole.loc.clone(),
             Expression::Underscore(u) => u.loc.clone(),
             _ => 0..0,
+        }
+    }
+
+    /// Try to convert an expression to telescope bindings (Parse-then-Reinterpret pattern)
+    /// Returns Some(TypedBindings) if the expression is:
+    /// - A single parenthesized TypeAscription: (a : A)
+    /// - An AppSeq of parenthesized TypeAscriptions: (a : A) (b : B)
+    /// Returns None otherwise (use simple Arrow instead)
+    fn try_convert_to_telescope_bindings(&self, expr: &Expression) -> Option<crate::syntax::TypedBindings> {
+        use crate::syntax::{Pattern, Binder, TypedBindingGroup};
+
+        // Helper: Extract (name, type) from a parenthesized type ascription
+        let extract_binding = |e: &Expression| -> Option<(Pattern, Box<Expression>)> {
+            match e {
+                Expression::Paren(paren) => {
+                    match &*paren.expr {
+                        Expression::TypeAscription(asc) => {
+                            // Extract the pattern from the LHS
+                            let pattern = match &*asc.expr {
+                                Expression::Id(id) => Pattern::Id(id.clone()),
+                                Expression::Underscore(u) => Pattern::Underscore(u.clone()),
+                                _ => return None, // Complex LHS not supported in telescopes
+                            };
+                            Some((pattern, asc.ty.clone()))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+
+        // Try to convert based on expression type
+        match expr {
+            // Single parenthesized ascription: (a : A)
+            Expression::Paren(_) => {
+                if let Some((pattern, ty)) = extract_binding(expr) {
+                    let loc = pattern.loc();
+                    let binder = Binder::new(loc, pattern);
+                    let group = TypedBindingGroup::new(vec![binder], ty);
+                    Some(crate::syntax::TypedBindings::new(vec![group]))
+                } else {
+                    None
+                }
+            }
+
+            // Application sequence: (a : A) (b : B) ...
+            Expression::App(app) => {
+                let mut groups = vec![];
+
+                // Try to convert each element
+                for elem in &app.elements {
+                    if let Some((pattern, ty)) = extract_binding(elem) {
+                        let loc = pattern.loc();
+                        let binder = Binder::new(loc, pattern);
+                        groups.push(TypedBindingGroup::new(vec![binder], ty));
+                    } else {
+                        // If any element isn't a telescope binding, fail
+                        return None;
+                    }
+                }
+
+                if groups.is_empty() {
+                    None
+                } else {
+                    Some(crate::syntax::TypedBindings::new(groups))
+                }
+            }
+
+            // Any other expression type -> not a telescope
+            _ => None,
         }
     }
 }
