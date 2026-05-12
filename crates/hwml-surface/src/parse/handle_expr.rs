@@ -1,6 +1,28 @@
 //! Expression parsing handlers
 //!
 //! Handles expression parsing with precedence climbing.
+//!
+//! # Error Recovery Pattern
+//!
+//! **CRITICAL INVARIANT:** All expression parsing functions MUST push an ErrorExpr
+//! sentinel on failure! This ensures parent states can safely `pop_expr()` without
+//! panicking, maintaining structural completeness of the AST.
+//!
+//! **Pattern:**
+//! ```rust,ignore
+//! if error_condition {
+//!     self.emit_error("...");
+//!     let error = Box::new(Expression::Error(ExpressionError::new(loc, "...")));
+//!     self.push_expr(error);  // ✅ REQUIRED! Ensures AST completeness
+//!     return;
+//! }
+//! ```
+//!
+//! **Why this matters:**
+//! - Parent states expect children on `expr_stack`
+//! - Without ErrorExpr, `pop_expr()` panics on underflow
+//! - With ErrorExpr, `def foo := <EOF>` → `Def { value: Error(...) }`
+//! - Language Server sees partial AST, can provide completions
 
 use crate::lex::Token;
 use crate::parse::context::Context;

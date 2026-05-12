@@ -199,6 +199,11 @@ impl<'input> Context<'input> {
     }
 
     pub fn pop_expr(&mut self) -> Box<Expression> {
+        debug_assert!(
+            !self.expr_stack.is_empty(),
+            "expr_stack underflow! Current state: {:?}",
+            self.state_stack.last()
+        );
         self.expr_stack.pop().expect("Expression stack underflow")
     }
 
@@ -211,6 +216,11 @@ impl<'input> Context<'input> {
     }
 
     pub fn pop_bindings(&mut self) -> Bindings {
+        debug_assert!(
+            !self.bindings_stack.is_empty(),
+            "bindings_stack underflow! Current state: {:?}",
+            self.state_stack.last()
+        );
         self.bindings_stack.pop().expect("Bindings stack underflow")
     }
 
@@ -229,6 +239,11 @@ impl<'input> Context<'input> {
     }
 
     pub fn pop_typed_bindings(&mut self) -> TypedBindings {
+        debug_assert!(
+            !self.typed_bindings_stack.is_empty(),
+            "typed_bindings_stack underflow! Current state: {:?}",
+            self.state_stack.last()
+        );
         self.typed_bindings_stack.pop().expect("TypedBindings stack underflow")
     }
 
