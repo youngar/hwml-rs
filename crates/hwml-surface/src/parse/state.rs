@@ -233,7 +233,19 @@ pub enum State {
     LetAfterValue {
         loc: Range<usize>,
         name: Id,
+        bindings: Bindings,
+        ty: Option<Box<Expression>>,
         // value is on expr_stack
+    },
+
+    /// After parsing let body (in expression)
+    LetAfterBody {
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        ty: Option<Box<Expression>>,
+        value: Box<Expression>,
+        // body is on expr_stack
     },
 
     /// After 'match' keyword
@@ -337,6 +349,9 @@ impl State {
                 Some("in lambda function".to_string())
             }
             State::LetAfterValue { name, .. } => {
+                Some(format!("in let binding '{}'", name.value))
+            }
+            State::LetAfterBody { name, .. } => {
                 Some(format!("in let binding '{}'", name.value))
             }
             State::PiAfterKeyword { .. } => {

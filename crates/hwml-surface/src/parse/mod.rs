@@ -17,6 +17,7 @@ mod handle_recovery;
 mod handle_match;
 mod handle_fun;
 mod handle_pi;
+mod handle_let;
 
 #[cfg(test)]
 mod tests;
@@ -223,6 +224,20 @@ impl<'input> Parser<'input> {
             }
             State::PiAfterBindings { loc, bindings } => {
                 self.context.handle_pi_after_bindings(loc, bindings)
+            }
+
+            // Let expressions
+            State::LetAfterKeyword { loc } => {
+                self.context.handle_let_after_keyword(loc)
+            }
+            State::LetAfterName { loc, name } => {
+                self.context.handle_let_after_name(loc, name)
+            }
+            State::LetAfterValue { loc, name, bindings, ty } => {
+                self.context.handle_let_after_value(loc, name, bindings, ty)
+            }
+            State::LetAfterBody { loc, name, bindings, ty, value } => {
+                self.context.handle_let_after_body(loc, name, bindings, ty, value)
             }
 
             // TODO: Add remaining states

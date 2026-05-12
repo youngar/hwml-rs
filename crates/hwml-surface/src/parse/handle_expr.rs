@@ -77,6 +77,11 @@ impl<'input> Context<'input> {
             // Syntax: Pi (x : A) -> B  or  Pi (x y : A) (z : B) -> C
             self.consume(Token::Pi);
             self.push_state(State::PiAfterKeyword { loc });
+        } else if self.at_token(Token::Let) {
+            // ASYNC: Let expression
+            // Syntax: let x := value in expr
+            self.consume(Token::Let);
+            self.push_state(State::LetAfterKeyword { loc });
         } else {
             self.emit_error(format!("Expected expression, found {:?}", self.peek()));
             let expr = Box::new(Expression::Error(ExpressionError::new(loc, "Expected expression".to_string())));
