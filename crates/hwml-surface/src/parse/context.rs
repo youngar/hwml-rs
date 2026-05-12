@@ -371,6 +371,29 @@ impl<'input> Context<'input> {
                 None
             };
             Box::new(Expression::Universe(crate::syntax::Universe::new(loc, level)))
+        } else if self.at_token(Token::Pi) {
+            // Pi type: Pi (x : A) -> B
+            self.consume(Token::Pi);
+
+            // Parse typed bindings
+            let bindings = self.parse_pi_typed_bindings_sync();
+
+            // Expect '->'
+            if !self.at_token(Token::Arrow) {
+                self.emit_error("Expected '->' after Pi bindings");
+                return Box::new(Expression::Error(crate::syntax::ExpressionError::new(loc, "Expected '->' after Pi bindings".to_string())));
+            }
+            self.consume(Token::Arrow);
+
+            // Parse target type recursively
+            let target = self.parse_type_expression_sync();
+            let end_loc = target.loc().end;
+
+            Box::new(Expression::Pi(crate::syntax::Pi::new(
+                loc.start..end_loc,
+                bindings,
+                target,
+            )))
         } else if self.at_token(Token::LParen) {
             // Parenthesized type expression: (A -> B), (Option A), etc.
             self.consume(Token::LParen);
@@ -517,6 +540,59 @@ impl<'input> Context<'input> {
             self.current_location(),
             msg.into(),
         )))
+    }
+
+    /// Parse typed bindings for Pi types (synchronous version)
+    /// Pi requires ALL bindings to be typed: Pi (x : A) (y : B) -> C
+    fn parse_pi_typed_bindings_sync(&mut self) -> TypedBindings {
+        use crate::syntax::{Binder, Pattern, TypedBindingGroup};
+
+        let mut groups = vec![];
+
+        // Expect at least one typed binding group: (x : A) or (x y : A)
+        while self.at_token(Token::LParen) {
+            self.consume(Token::LParen);
+
+            // Parse binders (identifiers or underscores)
+            let mut binders = vec![];
+            while self.at_token(Token::Identifier) || self.at_token(Token::Underscore) {
+                if self.at_token(Token::Identifier) {
+                    let id = self.parse_id();
+                    let loc = id.loc.clone();
+                    binders.push(Binder::new(loc, Pattern::Id(id)));
+                } else {
+                    // Underscore pattern
+                    let loc = self.current_location();
+                    self.consume(Token::Underscore);
+                    binders.push(Binder::new(
+                        loc.clone(),
+                        Pattern::Underscore(crate::syntax::Underscore::new(loc)),
+                    ));
+                }
+            }
+
+            // Expect ':' and type
+            if !self.at_token(Token::Colon) {
+                self.emit_error("Pi bindings must be typed: expected ':'");
+                break;
+            }
+            self.consume(Token::Colon);
+
+            // Parse the type
+            let ty = self.parse_type_expression_sync();
+
+            // Expect ')'
+            if !self.at_token(Token::RParen) {
+                self.emit_error("Expected ')' after typed binding");
+            } else {
+                self.consume(Token::RParen);
+            }
+
+            // Add typed binding group
+            groups.push(TypedBindingGroup::new(binders, ty));
+        }
+
+        TypedBindings::new(groups)
     }
 
     /// Create a hole expression node
