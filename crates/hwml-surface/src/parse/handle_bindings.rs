@@ -125,4 +125,77 @@ impl Context<'_> {
         // Continue parsing more binding groups
         self.push_state(State::ParseBindingsStart { groups });
     }
+
+    /// Parse telescope bindings for dependent arrows: (a : A) (b : B) -> C
+    /// Only typed bindings in parentheses are valid
+    pub(super) fn handle_parse_telescope_bindings(
+        &mut self,
+        mut groups: Vec<crate::syntax::TypedBindingGroup>,
+    ) {
+        // Check if we have another telescope binding: ( Identifier :
+        if self.at_telescope_binding() {
+            self.consume(Token::LParen);
+
+            // Parse binders
+            let mut binders = vec![];
+            while self.at_token(Token::Identifier) || self.at_token(Token::Underscore) {
+                if self.at_token(Token::Identifier) {
+                    let id = self.parse_id();
+                    let loc = id.loc.clone();
+                    binders.push(Binder::new(loc, Pattern::Id(id)));
+                } else {
+                    let loc = self.current_location();
+                    self.consume(Token::Underscore);
+                    binders.push(Binder::new(
+                        loc.clone(),
+                        Pattern::Underscore(crate::syntax::Underscore::new(loc)),
+                    ));
+                }
+            }
+
+            // Expect ':'
+            if !self.at_token(Token::Colon) {
+                self.emit_error("Expected ':' in telescope binding");
+                // Push empty typed bindings and return
+                self.push_typed_bindings(crate::syntax::TypedBindings::new(groups));
+                return;
+            }
+            self.consume(Token::Colon);
+
+            // Push continuation (runs AFTER type is parsed)
+            self.push_state(State::TelescopeBindingAfterType {
+                binders,
+                groups,
+            });
+
+            // Parse type expression asynchronously
+            self.parse_expression(crate::parse::state::Precedence::Lowest);
+        } else {
+            // No more telescope bindings - push accumulated groups to typed_bindings_stack
+            self.push_typed_bindings(crate::syntax::TypedBindings::new(groups));
+        }
+    }
+
+    /// Handle after parsing type in a telescope binding
+    pub(super) fn handle_telescope_binding_after_type(
+        &mut self,
+        binders: Vec<Binder>,
+        mut groups: Vec<crate::syntax::TypedBindingGroup>,
+    ) {
+        // Pop type from expr_stack
+        let ty = self.pop_expr();
+
+        // Expect ')'
+        if !self.at_token(Token::RParen) {
+            self.emit_error("Expected ')' after telescope binding");
+        } else {
+            self.consume(Token::RParen);
+        }
+
+        // Add this group
+        groups.push(crate::syntax::TypedBindingGroup::new(binders, ty));
+
+        // Continue parsing more telescope bindings
+        self.push_state(State::ParseTelescopeBindings { groups });
+    }
 }

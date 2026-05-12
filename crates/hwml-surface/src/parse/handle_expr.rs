@@ -33,6 +33,32 @@ impl<'input> Context<'input> {
                 partial: expr,
                 min_prec,
             });
+        } else if self.at_telescope_binding() {
+            // ASYNC: Dependent arrow type - telescope notation: (a : A) (b : B) -> C
+            // Use lookahead to distinguish from parenthesized expressions
+
+            // Save stack checkpoints to ensure we only use bindings we parse
+            let expr_checkpoint = self.expr_stack_checkpoint();
+            let bindings_checkpoint = self.bindings_stack_checkpoint();
+
+            // Push continuation (runs AFTER body is parsed)
+            self.push_state(State::DependentArrowAfterBody {
+                loc: loc.clone(),
+                bindings: crate::syntax::TypedBindings::new(vec![]), // dummy, will be updated
+            });
+
+            // Push continuation (runs AFTER bindings are parsed)
+            self.push_state(State::DependentArrowAfterBindingsParsed {
+                loc: loc.clone(),
+                expr_stack_checkpoint: expr_checkpoint,
+                bindings_stack_checkpoint: bindings_checkpoint,
+            });
+
+            // Parse telescope bindings: (a : A) (b : B) ...
+            // This will parse ALL consecutive typed binding groups
+            self.push_state(State::ParseTelescopeBindings {
+                groups: vec![],
+            });
         } else if self.at_token(Token::LParen) {
             // ASYNC: Parenthesized expression
             self.consume(Token::LParen);
@@ -215,6 +241,72 @@ impl<'input> Context<'input> {
             min_prec,
         });
     }
+
+    /// Handle after parsing telescope bindings for dependent arrow
+    /// Expect '->' and parse body
+    pub(super) fn handle_dependent_arrow_after_bindings_parsed(
+        &mut self,
+        loc: Range<usize>,
+        _expr_stack_checkpoint: usize,
+        _bindings_stack_checkpoint: usize,
+    ) {
+        // Pop typed bindings from typed_bindings_stack
+        let bindings = self.pop_typed_bindings();
+
+        // Expect '->'
+        if !self.at_token(Token::Arrow) {
+            self.emit_error("Expected '->' after telescope bindings");
+            // Push error expression
+            let error = Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                loc.clone(),
+                "Expected '->' after telescope bindings".to_string(),
+            )));
+            self.push_expr(error);
+            return;
+        }
+        self.consume(Token::Arrow);
+
+        // Update the DependentArrowAfterBody state on the stack with the bindings
+        // Pop it, update it, and push it back
+        let next_state = self.pop_state().expect("Expected DependentArrowAfterBody on stack");
+        if let State::DependentArrowAfterBody { loc: body_loc, bindings: _ } = next_state {
+            self.push_state(State::DependentArrowAfterBody {
+                loc: body_loc,
+                bindings,
+            });
+        } else {
+            panic!("Expected DependentArrowAfterBody state, found {:?}", next_state);
+        }
+
+        // Parse the body expression
+        self.parse_expression(Precedence::Lowest);
+    }
+
+    /// Handle after parsing body of dependent arrow
+    /// Build Pi node with the typed bindings
+    pub(super) fn handle_dependent_arrow_after_body(
+        &mut self,
+        loc: Range<usize>,
+        bindings: crate::syntax::TypedBindings,
+    ) {
+        // Pop body from expr_stack
+        let body = self.pop_expr();
+
+        // Build Pi node with the typed bindings
+        let end_loc = body.loc().end;
+        let pi = Box::new(Expression::Pi(crate::syntax::Pi::new(
+            loc.start..end_loc,
+            bindings,
+            body,
+        )));
+
+        // Push result through ExprFinish for precedence climbing
+        self.push_state(State::ExprFinish {
+            partial: pi,
+            min_prec: Precedence::Lowest,
+        });
+    }
+
 
     /// Helper: Get location from expression
     fn expr_loc(&self, expr: &Expression) -> Range<usize> {

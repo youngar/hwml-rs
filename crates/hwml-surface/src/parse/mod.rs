@@ -258,6 +258,22 @@ impl<'input> Parser<'input> {
                 self.context.handle_binding_group_after_type(binders, groups)
             }
 
+            // Telescope bindings (for dependent arrows)
+            State::ParseTelescopeBindings { groups } => {
+                self.context.handle_parse_telescope_bindings(groups)
+            }
+            State::TelescopeBindingAfterType { binders, groups } => {
+                self.context.handle_telescope_binding_after_type(binders, groups)
+            }
+
+            // Dependent arrows (telescope notation)
+            State::DependentArrowAfterBindingsParsed { loc, expr_stack_checkpoint, bindings_stack_checkpoint } => {
+                self.context.handle_dependent_arrow_after_bindings_parsed(loc, expr_stack_checkpoint, bindings_stack_checkpoint)
+            }
+            State::DependentArrowAfterBody { loc, bindings } => {
+                self.context.handle_dependent_arrow_after_body(loc, bindings)
+            }
+
             // TODO: Add remaining states
             _ => {
                 self.context.emit_error(format!("Unimplemented state: {:?}", state));

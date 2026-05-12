@@ -202,9 +202,25 @@ pub enum State {
     },
 
     /// After parsing LHS of arrow type (A -> ...)
+    /// Used for simple arrows parsed in handle_expr_finish
     ArrowAfterRhs {
         lhs: Box<Expression>,
         // rhs is on expr_stack
+    },
+
+    /// After parsing bindings for dependent arrow: (a : A) (b : B) -> ...
+    /// Stack checkpoint: Save expr/bindings stack state to restore later
+    DependentArrowAfterBindingsParsed {
+        loc: Range<usize>,
+        expr_stack_checkpoint: usize,
+        bindings_stack_checkpoint: usize,
+    },
+
+    /// After parsing body of dependent arrow
+    /// Build Arrow or Pi node from bindings and body
+    DependentArrowAfterBody {
+        loc: Range<usize>,
+        bindings: TypedBindings,
     },
 
     /// After 'fun' keyword
@@ -300,6 +316,19 @@ pub enum State {
     ParseBindingsStart {
         /// Accumulated binding groups parsed so far
         groups: Vec<crate::syntax::BindingGroup>,
+    },
+
+    /// Parse telescope bindings for dependent arrows: (a : A) (b : B) ...
+    /// Only parses typed bindings in parentheses
+    ParseTelescopeBindings {
+        /// Accumulated typed binding groups
+        groups: Vec<crate::syntax::TypedBindingGroup>,
+    },
+
+    /// After parsing type in a telescope binding
+    TelescopeBindingAfterType {
+        binders: Vec<crate::syntax::Binder>,
+        groups: Vec<crate::syntax::TypedBindingGroup>,
     },
 
     /// After parsing type annotation in a typed binding group
@@ -411,6 +440,8 @@ impl State {
             | State::ExprFinish { .. }
             | State::ExprApp { .. }
             | State::ArrowAfterRhs { .. }
+            | State::DependentArrowAfterBindingsParsed { .. }
+            | State::DependentArrowAfterBody { .. }
             | State::ParenAfterLParen { .. }
             | State::FunAfterKeyword { .. }
             | State::FunAfterBindingsParsed { .. }
@@ -422,6 +453,8 @@ impl State {
             | State::MatchAfterScrutinee { .. }
             | State::MatchClauseAfterBody { .. }
             | State::ParseBindingsStart { .. }
+            | State::ParseTelescopeBindings { .. }
+            | State::TelescopeBindingAfterType { .. }
             | State::BindingGroupAfterType { .. }
             | State::OpenStart { .. }
             | State::OpenAfterName { .. } => None,
