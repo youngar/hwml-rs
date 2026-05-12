@@ -247,42 +247,115 @@ impl<'input> Context<'input> {
     // ===== High-level Parsing Helpers =====
 
     /// Parse bindings (parameters) - returns empty if none present
+    /// Handles both typed bindings (x : Type) and untyped bindings (x)
     pub fn parse_bindings(&mut self) -> Bindings {
-        use crate::syntax::{BindingGroup, UntypedBindingGroup, Binder, Pattern};
+        use crate::syntax::{BindingGroup, UntypedBindingGroup, TypedBindingGroup, Binder, Pattern};
 
-        let mut binders = vec![];
+        let mut groups = vec![];
 
-        // Check if we have bindings (starts with '(' or identifier)
+        // Check if we have bindings (starts with '(' or bare identifier)
         while self.at_token(Token::LParen) || (self.at_token(Token::Identifier) && !self.at_token(Token::Colon) && !self.at_token(Token::ColonEqual)) {
             if self.at_token(Token::LParen) {
                 self.consume(Token::LParen);
-                // Parse names inside parens
+
+                // Parse binders
+                let mut binders = vec![];
                 while self.at_token(Token::Identifier) {
                     let id = self.parse_id();
                     let loc = id.loc.clone();
                     binders.push(Binder::new(loc, Pattern::Id(id)));
-                    if !self.at_token(Token::RParen) {
-                        // Could have more names
-                    }
                 }
-                if self.at_token(Token::RParen) {
-                    self.consume(Token::RParen);
+
+                // Check if this is a typed binding group (has : Type)
+                if self.at_token(Token::Colon) {
+                    self.consume(Token::Colon);
+
+                    // Parse the type synchronously (simple version)
+                    let ty = self.parse_simple_type_sync();
+
+                    // Expect )
+                    if !self.at_token(Token::RParen) {
+                        self.emit_error("Expected ')' after typed binding");
+                    } else {
+                        self.consume(Token::RParen);
+                    }
+
+                    // Add typed binding group
+                    groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty)));
+                } else {
+                    // Untyped binding group
+                    if !self.at_token(Token::RParen) {
+                        self.emit_error("Expected ')' or ':' after binders");
+                    } else {
+                        self.consume(Token::RParen);
+                    }
+
+                    groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(binders)));
                 }
             } else if self.at_token(Token::Identifier) {
+                // Bare identifier (untyped)
                 let id = self.parse_id();
                 let loc = id.loc.clone();
-                binders.push(Binder::new(loc, Pattern::Id(id)));
+                let binder = Binder::new(loc, Pattern::Id(id));
+                groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
             }
         }
 
-        // Create a single untyped binding group
-        let groups = if binders.is_empty() {
-            vec![]
-        } else {
-            vec![BindingGroup::Untyped(UntypedBindingGroup::new(binders))]
-        };
-
         Bindings::new(groups)
+    }
+
+    /// Parse a simple type expression synchronously
+    /// This is a temporary helper until we make all type parsing async
+    fn parse_simple_type_sync(&mut self) -> Box<Expression> {
+        let loc = self.current_location();
+
+        if self.at_token(Token::Identifier) {
+            let id = self.parse_id();
+            let expr = Box::new(Expression::Id(id));
+
+            // Check for arrow types: A -> B
+            if self.at_token(Token::Arrow) {
+                let mut types = vec![expr];
+                while self.at_token(Token::Arrow) {
+                    self.consume(Token::Arrow);
+                    if self.at_token(Token::Identifier) {
+                        let id = self.parse_id();
+                        types.push(Box::new(Expression::Id(id)));
+                    } else if self.at_token(Token::Type) {
+                        self.consume(Token::Type);
+                        types.push(Box::new(Expression::Universe(crate::syntax::Universe::new(self.current_location(), None))));
+                    } else {
+                        self.emit_error("Expected type after '->'");
+                        break;
+                    }
+                }
+
+                // Build right-associative arrow chain: A -> B -> C = A -> (B -> C)
+                let mut result = types.pop().unwrap();
+                while let Some(left) = types.pop() {
+                    let arrow_loc = left.loc().start..result.loc().end;
+                    result = Box::new(Expression::Arrow(crate::syntax::Arrow::new(arrow_loc, left, result)));
+                }
+                result
+            } else {
+                expr
+            }
+        } else if self.at_token(Token::Type) {
+            self.consume(Token::Type);
+            let level = if self.at_token(Token::Number) {
+                let num_loc = self.current_location();
+                let text = std::str::from_utf8(&self.input[num_loc.clone()])
+                    .unwrap_or("0");
+                self.advance();
+                text.parse::<u32>().ok()
+            } else {
+                None
+            };
+            Box::new(Expression::Universe(crate::syntax::Universe::new(loc, level)))
+        } else {
+            self.emit_error("Expected type expression");
+            Box::new(Expression::Error(crate::syntax::ExpressionError::new(loc, "Expected type".to_string())))
+        }
     }
 
     /// Parse an expression - pushes result to expr_stack

@@ -330,3 +330,34 @@ pub struct StatementError {
     pub loc: Range<usize>,
     pub message: String,
 }
+
+
+impl Expression {
+    /// Get the location range of this expression
+    pub fn loc(&self) -> Range<usize> {
+        match self {
+            Expression::Pi(pi) => pi.loc.clone(),
+            Expression::Arrow(arrow) => arrow.loc.clone(),
+            Expression::FatArrow(fa) => fa.loc.clone(),
+            Expression::App(app) => app.loc.clone(),
+            Expression::Fun(fun) => fun.loc.clone(),
+            Expression::LetIn(let_in) => let_in.loc.clone(),
+            Expression::Match(m) => {
+                // Match doesn't have a loc field - use scrutinee loc
+                m.scrutinee.loc()
+            }
+            Expression::Underscore(u) => u.loc.clone(),
+            Expression::Paren(p) => p.expr.loc(),
+            Expression::Num(n) => n.loc.clone(),
+            Expression::Str(_) => {
+                // Str doesn't have loc - return dummy range
+                0..0
+            }
+            Expression::Id(id) => id.loc.clone(),
+            Expression::Universe(u) => u.loc.clone(),
+            Expression::Dot(d) => d.loc.clone(),
+            Expression::Error(e) => e.loc.clone(),
+            Expression::Hole(h) => h.loc.clone(),
+        }
+    }
+}
