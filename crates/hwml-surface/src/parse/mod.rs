@@ -15,6 +15,7 @@ mod handle_inductive;
 mod handle_namespace;
 mod handle_recovery;
 mod handle_match;
+mod handle_fun;
 
 #[cfg(test)]
 mod tests;
@@ -205,6 +206,14 @@ impl<'input> Parser<'input> {
             }
             State::MatchClauseAfterBody { loc, scrutinee, clauses, pattern } => {
                 self.context.handle_match_clause_after_body(loc, scrutinee, clauses, pattern)
+            }
+
+            // Lambda expressions
+            State::FunAfterKeyword { loc } => {
+                self.context.handle_fun_after_keyword(loc)
+            }
+            State::FunAfterBindings { loc, bindings } => {
+                self.context.handle_fun_after_bindings(loc, bindings)
             }
 
             // TODO: Add remaining states

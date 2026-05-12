@@ -323,48 +323,41 @@ impl<'input> Context<'input> {
     fn parse_type_expression_sync(&mut self) -> Box<Expression> {
         let loc = self.current_location();
 
-        if self.at_token(Token::Identifier) {
+        // First, parse the atomic/application part
+        let expr = if self.at_token(Token::Identifier) {
             let start_loc = self.current_location();
             let id = self.parse_id();
-            let mut expr = Box::new(Expression::Id(id));
+            let first_expr = Box::new(Expression::Id(id));
 
-            // Check for application: List A, List A B, etc.
-            let mut app_elements = vec![expr];
-            while self.at_token(Token::Identifier) && !self.at_token(Token::Arrow) && !self.at_token(Token::RParen) {
-                let id = self.parse_id();
-                app_elements.push(Box::new(Expression::Id(id)));
+            // Check for application: List A, List A B, List (Option A), etc.
+            let mut app_elements = vec![first_expr];
+            while (self.at_token(Token::Identifier) || self.at_token(Token::LParen))
+                  && !self.at_token(Token::Arrow) && !self.at_token(Token::RParen) {
+                if self.at_token(Token::Identifier) {
+                    let id = self.parse_id();
+                    app_elements.push(Box::new(Expression::Id(id)));
+                } else if self.at_token(Token::LParen) {
+                    // Parenthesized sub-expression: (Option A), (A -> B), etc.
+                    self.consume(Token::LParen);
+                    let sub_expr = self.parse_type_expression_sync();
+                    if !self.at_token(Token::RParen) {
+                        self.emit_error("Expected ')' after parenthesized type");
+                    } else {
+                        self.consume(Token::RParen);
+                    }
+                    app_elements.push(sub_expr);
+                }
             }
 
             // If we collected multiple elements, create an App
             if app_elements.len() > 1 {
                 let end_loc = app_elements.last().unwrap().loc();
-                expr = Box::new(Expression::App(crate::syntax::App::new(
+                Box::new(Expression::App(crate::syntax::App::new(
                     start_loc.start..end_loc.end,
                     app_elements
-                )));
+                )))
             } else {
-                expr = app_elements.into_iter().next().unwrap();
-            }
-
-            // Check for arrow types: A -> B
-            if self.at_token(Token::Arrow) {
-                let mut types = vec![expr];
-                while self.at_token(Token::Arrow) {
-                    self.consume(Token::Arrow);
-                    // Parse the right-hand side recursively (types are expressions!)
-                    let rhs = self.parse_type_expression_sync();
-                    types.push(rhs);
-                }
-
-                // Build right-associative arrow chain: A -> B -> C = A -> (B -> C)
-                let mut result = types.pop().unwrap();
-                while let Some(left) = types.pop() {
-                    let arrow_loc = left.loc().start..result.loc().end;
-                    result = Box::new(Expression::Arrow(crate::syntax::Arrow::new(arrow_loc, left, result)));
-                }
-                result
-            } else {
-                expr
+                app_elements.into_iter().next().unwrap()
             }
         } else if self.at_token(Token::Type) {
             self.consume(Token::Type);
@@ -378,9 +371,41 @@ impl<'input> Context<'input> {
                 None
             };
             Box::new(Expression::Universe(crate::syntax::Universe::new(loc, level)))
+        } else if self.at_token(Token::LParen) {
+            // Parenthesized type expression: (A -> B), (Option A), etc.
+            self.consume(Token::LParen);
+            let expr = self.parse_type_expression_sync();
+            if !self.at_token(Token::RParen) {
+                self.emit_error("Expected ')' after parenthesized type");
+            } else {
+                self.consume(Token::RParen);
+            }
+            expr
         } else {
             self.emit_error("Expected type expression");
             Box::new(Expression::Error(crate::syntax::ExpressionError::new(loc, "Expected type".to_string())))
+        };
+
+        // Now check for arrow types: A -> B, (Prod A B) -> C, etc.
+        // This applies to ALL atomic expressions, not just identifiers
+        if self.at_token(Token::Arrow) {
+            let mut types = vec![expr];
+            while self.at_token(Token::Arrow) {
+                self.consume(Token::Arrow);
+                // Parse the right-hand side recursively (types are expressions!)
+                let rhs = self.parse_type_expression_sync();
+                types.push(rhs);
+            }
+
+            // Build right-associative arrow chain: A -> B -> C = A -> (B -> C)
+            let mut result = types.pop().unwrap();
+            while let Some(left) = types.pop() {
+                let arrow_loc = left.loc().start..result.loc().end;
+                result = Box::new(Expression::Arrow(crate::syntax::Arrow::new(arrow_loc, left, result)));
+            }
+            result
+        } else {
+            expr
         }
     }
 

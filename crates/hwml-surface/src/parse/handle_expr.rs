@@ -68,6 +68,10 @@ impl<'input> Context<'input> {
             // ASYNC: Match expression
             self.consume(Token::Match);
             self.push_state(State::MatchStart { loc });
+        } else if self.at_token(Token::Fun) {
+            // ASYNC: Lambda expression
+            self.consume(Token::Fun);
+            self.push_state(State::FunAfterKeyword { loc });
         } else {
             self.emit_error(format!("Expected expression, found {:?}", self.peek()));
             let expr = Box::new(Expression::Error(ExpressionError::new(loc, "Expected expression".to_string())));
