@@ -236,6 +236,14 @@ pub enum State {
         clauses: Vec<crate::syntax::MatchClause>,
     },
 
+    /// After parsing a match clause body
+    MatchClauseAfterBody {
+        loc: Range<usize>,
+        scrutinee: Box<Expression>,
+        clauses: Vec<crate::syntax::MatchClause>,
+        pattern: crate::syntax::Pattern,
+    },
+
     // ===== Bindings =====
 
     /// Parsing bindings (untyped or typed groups)
@@ -343,6 +351,7 @@ impl State {
             | State::LetAfterName { .. }
             | State::MatchStart { .. }
             | State::MatchAfterScrutinee { .. }
+            | State::MatchClauseAfterBody { .. }
             | State::Bindings
             | State::BindingGroup
             | State::TypedBindingGroup

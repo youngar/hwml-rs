@@ -64,6 +64,10 @@ impl<'input> Context<'input> {
                 partial: expr,
                 min_prec,
             });
+        } else if self.at_token(Token::Match) {
+            // ASYNC: Match expression
+            self.consume(Token::Match);
+            self.push_state(State::MatchStart { loc });
         } else {
             self.emit_error(format!("Expected expression, found {:?}", self.peek()));
             let expr = Box::new(Expression::Error(ExpressionError::new(loc, "Expected expression".to_string())));

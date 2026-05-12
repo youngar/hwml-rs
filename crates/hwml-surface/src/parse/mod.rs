@@ -185,7 +185,21 @@ impl<'input> Parser<'input> {
                 self.context.handle_paren_after_lparen(loc, min_prec)
             }
 
-            // TODO: Add remaining states (match, etc.)
+            // Match expressions
+            State::MatchStart { loc } => {
+                self.context.handle_match_start(loc)
+            }
+            State::MatchAfterScrutinee { loc } => {
+                self.context.handle_match_after_scrutinee(loc)
+            }
+            State::MatchClauses { loc, scrutinee, clauses } => {
+                self.context.handle_match_clauses(loc, scrutinee, clauses)
+            }
+            State::MatchClauseAfterBody { loc, scrutinee, clauses, pattern } => {
+                self.context.handle_match_clause_after_body(loc, scrutinee, clauses, pattern)
+            }
+
+            // TODO: Add remaining states
             _ => {
                 self.context.emit_error(format!("Unimplemented state: {:?}", state));
             }
