@@ -177,6 +177,13 @@ pub enum State {
         min_prec: Precedence,
     },
 
+    /// Building application - accumulating arguments
+    /// After parsing one argument, check for more
+    ExprApp {
+        elements: Vec<Box<Expression>>,  // Accumulated app elements
+        min_prec: Precedence,
+    },
+
     /// After opening paren, before parsing inner expression
     ParenAfterLParen {
         loc: Range<usize>,
@@ -345,6 +352,7 @@ impl State {
             | State::Constructor { .. }
             | State::ExprStart { .. }
             | State::ExprFinish { .. }
+            | State::ExprApp { .. }
             | State::ParenAfterLParen { .. }
             | State::FunAfterKeyword { .. }
             | State::LetAfterKeyword { .. }

@@ -79,31 +79,62 @@ impl<'input> Context<'input> {
     }
 
     /// Handle ExprFinish - finish parsing expression with precedence climbing
-    pub(super) fn handle_expr_finish(&mut self, mut partial: Box<Expression>, min_prec: Precedence) {
-        // Build application sequence if we see more identifiers
-        let mut elements = vec![partial];
+    /// This is the entry point - checks if we can start building an application
+    pub(super) fn handle_expr_finish(&mut self, partial: Box<Expression>, min_prec: Precedence) {
+        // Check if we should continue with application
+        if min_prec <= Precedence::App && self.can_parse_app_argument() {
+            // Start building application
+            // Push continuation (runs AFTER next arg is parsed)
+            self.push_state(State::ExprApp {
+                elements: vec![partial],
+                min_prec,
+            });
 
-        loop {
-            match self.peek() {
-                Some(Token::Identifier) if min_prec <= Precedence::App => {
-                    // Application
-                    let arg_id = self.parse_id();
-                    elements.push(Box::new(Expression::Id(arg_id)));
-                }
-                _ => break,
-            }
-        }
-
-        // If we collected multiple elements, create an App
-        let result = if elements.len() > 1 {
-            let start = self.expr_loc(&elements[0]);
-            let end = self.expr_loc(elements.last().unwrap());
-            Box::new(Expression::App(App::new(start.start..end.end, elements)))
+            // Parse next argument (runs FIRST, pushes to expr_stack)
+            self.parse_app_argument();
         } else {
-            elements.into_iter().next().unwrap()
-        };
+            // No application, just push the result
+            self.push_expr(partial);
+        }
+    }
 
-        self.push_expr(result);
+    /// Handle ExprApp - accumulate application arguments
+    /// Called after parsing each argument to check for more
+    pub(super) fn handle_expr_app(&mut self, mut elements: Vec<Box<Expression>>, min_prec: Precedence) {
+        // Pop the latest argument from expr_stack
+        let arg = self.pop_expr();
+        elements.push(arg);
+
+        // Check if we can parse another argument
+        if self.can_parse_app_argument() {
+            // Push continuation to accumulate more
+            self.push_state(State::ExprApp {
+                elements,
+                min_prec,
+            });
+
+            // Parse next argument
+            self.parse_app_argument();
+        } else {
+            // Done with application - build the App node
+            let start = elements[0].loc();
+            let end = elements.last().unwrap().loc();
+            let app = Box::new(Expression::App(App::new(start.start..end.end, elements)));
+            self.push_expr(app);
+        }
+    }
+
+    /// Check if we can parse an application argument
+    fn can_parse_app_argument(&self) -> bool {
+        matches!(self.peek(),
+            Some(Token::Identifier) | Some(Token::LParen) | Some(Token::Underscore) |
+            Some(Token::Number) | Some(Token::Type)
+        )
+    }
+
+    /// Parse an application argument (async - pushes to expr_stack)
+    fn parse_app_argument(&mut self) {
+        self.parse_expression(Precedence::Atomic);
     }
 
     /// Handle ParenAfterLParen - wrap expression in Paren and consume closing paren

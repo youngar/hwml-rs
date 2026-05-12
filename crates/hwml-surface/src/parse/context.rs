@@ -253,17 +253,26 @@ impl<'input> Context<'input> {
 
         let mut groups = vec![];
 
-        // Check if we have bindings (starts with '(' or bare identifier)
-        while self.at_token(Token::LParen) || (self.at_token(Token::Identifier) && !self.at_token(Token::Colon) && !self.at_token(Token::ColonEqual)) {
+        // Check if we have bindings (starts with '(', bare identifier, or underscore)
+        while self.at_token(Token::LParen) ||
+              self.at_token(Token::Underscore) ||
+              (self.at_token(Token::Identifier) && !self.at_token(Token::Colon) && !self.at_token(Token::ColonEqual)) {
             if self.at_token(Token::LParen) {
                 self.consume(Token::LParen);
 
-                // Parse binders
+                // Parse binders (identifiers or underscores)
                 let mut binders = vec![];
-                while self.at_token(Token::Identifier) {
-                    let id = self.parse_id();
-                    let loc = id.loc.clone();
-                    binders.push(Binder::new(loc, Pattern::Id(id)));
+                while self.at_token(Token::Identifier) || self.at_token(Token::Underscore) {
+                    if self.at_token(Token::Identifier) {
+                        let id = self.parse_id();
+                        let loc = id.loc.clone();
+                        binders.push(Binder::new(loc, Pattern::Id(id)));
+                    } else {
+                        // Underscore pattern
+                        let loc = self.current_location();
+                        self.consume(Token::Underscore);
+                        binders.push(Binder::new(loc.clone(), Pattern::Underscore(crate::syntax::Underscore::new(loc))));
+                    }
                 }
 
                 // Check if this is a typed binding group (has : Type)
@@ -297,6 +306,12 @@ impl<'input> Context<'input> {
                 let id = self.parse_id();
                 let loc = id.loc.clone();
                 let binder = Binder::new(loc, Pattern::Id(id));
+                groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
+            } else if self.at_token(Token::Underscore) {
+                // Bare underscore (untyped)
+                let loc = self.current_location();
+                self.consume(Token::Underscore);
+                let binder = Binder::new(loc.clone(), Pattern::Underscore(crate::syntax::Underscore::new(loc)));
                 groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
             }
         }

@@ -181,6 +181,9 @@ impl<'input> Parser<'input> {
             State::ExprFinish { partial, min_prec } => {
                 self.context.handle_expr_finish(partial, min_prec)
             }
+            State::ExprApp { elements, min_prec } => {
+                self.context.handle_expr_app(elements, min_prec)
+            }
             State::ParenAfterLParen { loc, min_prec } => {
                 self.context.handle_paren_after_lparen(loc, min_prec)
             }
