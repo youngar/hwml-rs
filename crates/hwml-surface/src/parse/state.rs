@@ -234,6 +234,20 @@ pub enum State {
         name: Id,
     },
 
+    /// After parsing let bindings - check for type annotation
+    LetAfterBindingsParsed {
+        loc: Range<usize>,
+        name: Id,
+    },
+
+    /// After parsing optional type annotation - parse value
+    LetAfterType {
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        ty: Option<Box<Expression>>,
+    },
+
     /// After parsing let value
     LetAfterValue {
         loc: Range<usize>,
@@ -402,6 +416,8 @@ impl State {
             | State::FunAfterBindingsParsed { .. }
             | State::LetAfterKeyword { .. }
             | State::LetAfterName { .. }
+            | State::LetAfterBindingsParsed { .. }
+            | State::LetAfterType { .. }
             | State::MatchStart { .. }
             | State::MatchAfterScrutinee { .. }
             | State::MatchClauseAfterBody { .. }

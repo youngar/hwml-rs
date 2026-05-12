@@ -31,22 +31,51 @@ impl Context<'_> {
         self.push_state(State::LetAfterName { loc, name });
     }
 
-    /// Handle after parsing let name - parse optional bindings and type
-    /// Syntax: let f [x y] [: Type] := ...
+    /// Handle after parsing let name - parse bindings asynchronously
     pub(super) fn handle_let_after_name(&mut self, loc: Range<usize>, name: Id) {
-        // Parse optional bindings (parameters)
-        // Examples:
-        //   let x := ...           (no bindings)
-        //   let f x := ...         (untyped bindings)
-        //   let f (x : A) := ...   (typed bindings)
-        let bindings = self.parse_bindings();
+        let continuation = State::LetAfterBindingsParsed { loc, name };
+        self.parse_bindings_async(continuation);
+    }
 
-        // Parse optional type annotation
-        let ty = if self.at_token(Token::Colon) {
+    /// Handle after parsing let bindings - check for optional type annotation
+    pub(super) fn handle_let_after_bindings_parsed(&mut self, loc: Range<usize>, name: Id) {
+        let bindings = self.pop_bindings();
+
+        // Check for optional type annotation
+        if self.at_token(Token::Colon) {
             self.consume(Token::Colon);
-            Some(self.parse_type_expression_sync())
+
+            // Push continuation (runs AFTER type is parsed)
+            self.push_state(State::LetAfterType {
+                loc,
+                name,
+                bindings,
+                ty: None, // dummy, will pop from expr_stack
+            });
+
+            // Parse type expression asynchronously
+            self.parse_expression(Precedence::Lowest);
         } else {
+            // No type annotation - continue to parsing value
+            self.handle_let_after_type(loc, name, bindings, None);
+        }
+    }
+
+    /// Handle after parsing optional type - parse value
+    pub(super) fn handle_let_after_type(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        _ty: Option<Box<Expression>>,
+    ) {
+        // Pop type from expr_stack if we had one
+        let ty = if _ty.is_none() && self.at_token(Token::ColonEqual) {
+            // No type was parsed (we came from the else branch)
             None
+        } else {
+            // Type was parsed, pop it
+            Some(self.pop_expr())
         };
 
         // Expect ':='

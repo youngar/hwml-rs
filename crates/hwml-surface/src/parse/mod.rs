@@ -237,6 +237,12 @@ impl<'input> Parser<'input> {
             State::LetAfterName { loc, name } => {
                 self.context.handle_let_after_name(loc, name)
             }
+            State::LetAfterBindingsParsed { loc, name } => {
+                self.context.handle_let_after_bindings_parsed(loc, name)
+            }
+            State::LetAfterType { loc, name, bindings, ty } => {
+                self.context.handle_let_after_type(loc, name, bindings, ty)
+            }
             State::LetAfterValue { loc, name, bindings, ty } => {
                 self.context.handle_let_after_value(loc, name, bindings, ty)
             }
