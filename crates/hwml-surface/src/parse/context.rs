@@ -1,7 +1,9 @@
 //! Parser context
 //!
 //! Holds all the state for the parser: tokens, stacks, errors.
-//! Context is tracked via the state_stack itself (parent states are continuations).
+//!
+//! Diagnostic context is tracked via the state_stack itself - parent states
+//! are continuations that remain on the stack, providing context for error messages.
 
 use crate::lex::Token;
 use crate::syntax::{
@@ -10,10 +12,6 @@ use crate::syntax::{
 };
 use crate::parse::state::State;
 use std::ops::Range;
-
-// Import for backwards compatibility (stubbed methods)
-#[allow(unused_imports)]
-use crate::parse::provenance;
 
 /// Block kind for tracking nested structures
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,7 +29,7 @@ pub struct Context<'input> {
     /// Source input (for byte ranges)
     pub(super) input: &'input [u8],
 
-    /// Source file path (for provenance)
+    /// Source file path (for error messages)
     file_path: Option<String>,
 
     /// Token stream (from lexer)
@@ -120,7 +118,7 @@ impl<'input> Context<'input> {
         }
     }
 
-    /// Set the file path for provenance
+    /// Set the file path for error messages
     pub fn with_file_path(mut self, path: String) -> Self {
         self.file_path = Some(path);
         self
@@ -442,18 +440,8 @@ impl<'input> Context<'input> {
 
     // ===== Brace/Paren Tracking =====
 
-    // ===== Deprecated Provenance Methods (for backwards compatibility) =====
-    // These are no-ops now - context is tracked via state_stack
-
-    #[allow(dead_code)]
-    pub fn enter_context(&mut self, _ctx: crate::parse::provenance::ParseContext) {
-        // No-op: Context is now tracked via state_stack continuations
-    }
-
-    #[allow(dead_code)]
-    pub fn exit_context(&mut self) {
-        // No-op: Context is now tracked via state_stack continuations
-    }
+    // Note: Diagnostic context is tracked via state_stack.
+    // See State::diagnostic_context() in state.rs
 
 
     pub fn push_brace(&mut self, loc: Range<usize>) {

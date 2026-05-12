@@ -2,8 +2,10 @@
 //!
 //! Replaces LALRPOP with a hand-written parser for better error recovery,
 //! error messages, and control over parsing.
+//!
+//! Diagnostic context is tracked via the state stack - parent states remain
+//! as continuations, providing rich context for error messages.
 
-pub mod provenance;
 pub mod state;
 pub mod context;
 mod handle_stmt;
