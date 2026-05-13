@@ -46,11 +46,20 @@ impl<'input> Context<'input> {
         // Expect opening brace
         if !self.at_token(Token::LBrace) {
             self.emit_error("Expected '{' after ':=' in inductive declaration");
+
+            // Try to recover: skip to next brace if we can find one
+            if !self.at_expr_sync_point() {
+                self.skip_to_expr_boundary();
+            }
+
             let stmt = self.make_error_statement("Invalid inductive");
             self.push_statement(stmt);
             return;
         }
+
+        let brace_loc = self.current_location();
         self.consume(Token::LBrace);
+        self.push_brace(brace_loc);
 
         // Parse constructors
         let mut constructors = vec![];
@@ -59,6 +68,7 @@ impl<'input> Context<'input> {
             // Expect '|' or '}'
             if self.at_token(Token::RBrace) {
                 self.consume(Token::RBrace);
+                self.pop_brace();
                 break;
             }
 
@@ -67,15 +77,27 @@ impl<'input> Context<'input> {
                     // First constructor might not have |
                 } else {
                     self.emit_error("Expected '|' before constructor or '}'");
+                    // Try to recover: skip to closing brace or next pipe
+                    if !self.at_token(Token::RBrace) && !self.at_end() {
+                        self.skip_to_matching_brace();
+                    }
                     break;
                 }
             } else {
                 self.consume(Token::Pipe);
             }
-            
+
             // Parse constructor name
             if !self.at_token(Token::Identifier) {
                 self.emit_error("Expected constructor name");
+                // Try to recover: skip to closing brace or next pipe
+                while !self.at_end() && !self.at_token(Token::RBrace) && !self.at_token(Token::Pipe) {
+                    self.advance();
+                }
+                if self.at_token(Token::RBrace) {
+                    self.consume(Token::RBrace);
+                    self.pop_brace();
+                }
                 break;
             }
             

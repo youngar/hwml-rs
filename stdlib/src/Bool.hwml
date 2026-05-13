@@ -10,28 +10,28 @@ namespace Std.Bool {
 
 // Boolean negation
 def not (b : Bool) : Bool :=
-    match b {
+    b match {
     | true => false
     | false => true
     }
 
 // Boolean AND
 def and (a : Bool) (b : Bool) : Bool :=
-    match a {
+    a match {
     | true => b
     | false => false
     }
 
 // Boolean OR
 def or (a : Bool) (b : Bool) : Bool :=
-    match a {
+    a match {
     | true => true
     | false => b
     }
 
 // Boolean XOR
 def xor (a : Bool) (b : Bool) : Bool :=
-    match a {
+    a match {
     | true => not b
     | false => b
     }
@@ -46,7 +46,7 @@ def nor (a : Bool) (b : Bool) : Bool :=
 
 // Boolean equality
 def eq (a : Bool) (b : Bool) : Bool :=
-    match a {
+    a match {
     | true => b
     | false => not b
     }
@@ -54,7 +54,7 @@ def eq (a : Bool) (b : Bool) : Bool :=
 // Conditional/if-then-else
 // Given a boolean and two values, return the first if true, second if false
 def ite (A : Type) (cond : Bool) (then_branch : A) (else_branch : A) : A :=
-    match cond {
+    cond match {
     | true => then_branch
     | false => else_branch
     }

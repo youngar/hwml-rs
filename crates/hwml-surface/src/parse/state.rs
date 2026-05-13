@@ -3,22 +3,20 @@
 //! Each state carries all the data it needs to continue parsing.
 //! This eliminates the need for a generic "PartialNode" stack.
 
-use crate::syntax::{Expression, Id, Bindings, TypedBindings, Statement, Constructor};
+use crate::syntax::{Bindings, Constructor, Expression, Id, Statement, TypedBindings};
 use std::ops::Range;
 
 /// Parser state - each variant carries the data accumulated so far
 #[derive(Clone, Debug)]
 pub enum State {
     // ===== Top-level =====
-    
     /// Start parsing a program
     Program,
-    
+
     /// Parse a statement
     Statement,
-    
-    // ===== Namespace =====
 
+    // ===== Namespace =====
     /// Start parsing namespace - consumes tokens and sets up body parsing
     NamespaceStart {
         loc: Range<usize>,
@@ -29,36 +27,35 @@ pub enum State {
     NamespaceBody {
         loc: Range<usize>,
         name: Id,
-        statement_stack_depth: usize,  // Track stack depth when we started
+        statement_stack_depth: usize, // Track stack depth when we started
     },
 
     /// End parsing namespace - consumes RBrace and constructs Namespace statement
     NamespaceEnd {
         loc: Range<usize>,
         name: Id,
-        statement_stack_depth: usize,  // Stack depth when namespace started
+        statement_stack_depth: usize, // Stack depth when namespace started
     },
-    
+
     // ===== Def Statement =====
-    
     /// Start parsing def
     DefStart {
         loc: Range<usize>,
     },
-    
+
     /// After parsing def name
     DefAfterName {
         loc: Range<usize>,
         name: Id,
     },
-    
+
     /// After parsing bindings (optional)
     DefAfterBindings {
         loc: Range<usize>,
         name: Id,
         bindings: Bindings,
     },
-    
+
     /// After parsing type annotation (optional)
     DefAfterType {
         loc: Range<usize>,
@@ -66,7 +63,7 @@ pub enum State {
         bindings: Bindings,
         ty: Box<Expression>,
     },
-    
+
     /// After parsing value - ready to construct Def
     DefAfterValue {
         loc: Range<usize>,
@@ -75,31 +72,30 @@ pub enum State {
         ty: Option<Box<Expression>>,
         // value is on expr_stack
     },
-    
+
     // ===== Meta Statement (similar to Def) =====
-    
     MetaStart {
         loc: Range<usize>,
     },
-    
+
     MetaAfterName {
         loc: Range<usize>,
         name: Id,
     },
-    
+
     MetaAfterBindings {
         loc: Range<usize>,
         name: Id,
         bindings: Bindings,
     },
-    
+
     MetaAfterType {
         loc: Range<usize>,
         name: Id,
         bindings: Bindings,
         ty: Box<Expression>,
     },
-    
+
     MetaAfterValue {
         loc: Range<usize>,
         name: Id,
@@ -107,49 +103,47 @@ pub enum State {
         ty: Option<Box<Expression>>,
         // value is on expr_stack
     },
-    
+
     // ===== Prim Statement =====
-    
     PrimStart {
         loc: Range<usize>,
     },
-    
+
     PrimAfterName {
         loc: Range<usize>,
         name: Id,
     },
-    
+
     // After parsing type - ready to construct Prim
     PrimAfterType {
         loc: Range<usize>,
         name: Id,
         // ty is on expr_stack
     },
-    
+
     // ===== Inductive =====
-    
     InductiveStart {
         loc: Range<usize>,
     },
-    
+
     InductiveAfterName {
         loc: Range<usize>,
         name: Id,
     },
-    
+
     InductiveAfterParams {
         loc: Range<usize>,
         name: Id,
         params: TypedBindings,
     },
-    
+
     InductiveAfterIndices {
         loc: Range<usize>,
         name: Id,
         params: TypedBindings,
         indices: TypedBindings,
     },
-    
+
     InductiveConstructors {
         loc: Range<usize>,
         name: Id,
@@ -158,14 +152,13 @@ pub enum State {
         universe: Box<Expression>,
         constructors: Vec<Constructor>,
     },
-    
+
     // Parsing a constructor
     Constructor {
         inductive_name: String,
     },
 
     // ===== Expressions =====
-
     /// Start parsing expression
     ExprStart {
         min_prec: Precedence,
@@ -180,14 +173,14 @@ pub enum State {
     /// Building application - accumulating arguments
     /// After parsing one argument, check for more
     ExprApp {
-        elements: Vec<Box<Expression>>,  // Accumulated app elements
+        elements: Vec<Box<Expression>>, // Accumulated app elements
         min_prec: Precedence,
     },
 
     /// After opening paren, before parsing inner expression
     ParenAfterLParen {
         loc: Range<usize>,
-        min_prec: Precedence,  // Original precedence context
+        min_prec: Precedence, // Original precedence context
     },
 
     /// After 'Pi' keyword
@@ -290,17 +283,6 @@ pub enum State {
         // body is on expr_stack
     },
 
-    /// After 'match' keyword
-    MatchStart {
-        loc: Range<usize>,
-    },
-
-    /// After parsing match scrutinee
-    MatchAfterScrutinee {
-        loc: Range<usize>,
-        // scrutinee is on expr_stack
-    },
-
     /// Parsing match clauses
     MatchClauses {
         loc: Range<usize>,
@@ -317,7 +299,6 @@ pub enum State {
     },
 
     // ===== Bindings =====
-
     /// Start/continue parsing binding groups
     /// Accumulates groups until no more bindings found, then pushes to bindings_stack
     ParseBindingsStart {
@@ -350,7 +331,6 @@ pub enum State {
     },
 
     // ===== Open Statement =====
-
     OpenStart {
         loc: Range<usize>,
     },
@@ -392,41 +372,25 @@ impl State {
     pub fn diagnostic_context(&self) -> Option<String> {
         match self {
             // Statement-level contexts (continuations)
-            State::NamespaceEnd { name, .. } => {
-                Some(format!("in namespace '{}'", name.value))
-            }
+            State::NamespaceEnd { name, .. } => Some(format!("in namespace '{}'", name.value)),
             State::DefAfterValue { name, .. } | State::DefAfterType { name, .. } => {
                 Some(format!("in definition '{}'", name.value))
             }
             State::MetaAfterValue { name, .. } | State::MetaAfterType { name, .. } => {
                 Some(format!("in meta '{}'", name.value))
             }
-            State::PrimAfterType { name, .. } => {
-                Some(format!("in primitive '{}'", name.value))
-            }
+            State::PrimAfterType { name, .. } => Some(format!("in primitive '{}'", name.value)),
             State::InductiveConstructors { name, .. } => {
                 Some(format!("in inductive type '{}'", name.value))
             }
 
             // Expression-level contexts
-            State::MatchClauses { .. } => {
-                Some("in match expression".to_string())
-            }
-            State::FunAfterBody { .. } => {
-                Some("in lambda function".to_string())
-            }
-            State::LetAfterValue { name, .. } => {
-                Some(format!("in let binding '{}'", name.value))
-            }
-            State::LetAfterBody { name, .. } => {
-                Some(format!("in let binding '{}'", name.value))
-            }
-            State::PiAfterKeyword { .. } => {
-                Some("in Pi type".to_string())
-            }
-            State::PiAfterBindings { .. } => {
-                Some("in Pi type".to_string())
-            }
+            State::MatchClauses { .. } => Some("in match expression".to_string()),
+            State::FunAfterBody { .. } => Some("in lambda function".to_string()),
+            State::LetAfterValue { name, .. } => Some(format!("in let binding '{}'", name.value)),
+            State::LetAfterBody { name, .. } => Some(format!("in let binding '{}'", name.value)),
+            State::PiAfterKeyword { .. } => Some("in Pi type".to_string()),
+            State::PiAfterBindings { .. } => Some("in Pi type".to_string()),
 
             // Micro-states - ignore for diagnostics
             State::Program
@@ -460,8 +424,6 @@ impl State {
             | State::LetAfterName { .. }
             | State::LetAfterBindingsParsed { .. }
             | State::LetAfterType { .. }
-            | State::MatchStart { .. }
-            | State::MatchAfterScrutinee { .. }
             | State::MatchClauseAfterBody { .. }
             | State::ParseBindingsStart { .. }
             | State::ParseTelescopeBindings { .. }

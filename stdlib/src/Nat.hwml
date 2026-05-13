@@ -16,45 +16,45 @@ def five : Nat := succ four
 
 // Addition
 def add (m : Nat) (n : Nat) : Nat :=
-    match m {
+    m match {
     | zero => n
     | succ m' => succ (add m' n)
     }
 
 // Multiplication
 def mul (m : Nat) (n : Nat) : Nat :=
-    match m {
+    m match {
     | zero => zero
     | succ m' => add n (mul m' n)
     }
 
 // Predecessor (returns zero for zero)
 def pred (n : Nat) : Nat :=
-    match n {
+    n match {
     | zero => zero
     | succ n' => n'
     }
 
 // Subtraction (saturating at zero)
 def sub (m : Nat) (n : Nat) : Nat :=
-    match n {
+    n match {
     | zero => m
     | succ n' => sub (pred m) n'
     }
 
 // Check if a number is zero
 def is_zero (n : Nat) : Std.Bool :=
-    match n {
+    n match {
     | zero => Std.true
     | succ _ => Std.false
     }
 
 // Equality test
 def eq (m : Nat) (n : Nat) : Std.Bool :=
-    match m {
+    m match {
     | zero => is_zero n
     | succ m' =>
-        match n {
+        n match {
         | zero => Std.false
         | succ n' => eq m' n'
         }
@@ -62,10 +62,10 @@ def eq (m : Nat) (n : Nat) : Std.Bool :=
 
 // Less than or equal
 def le (m n : Nat) : Std.Bool :=
-    match m {
+    m match {
     | zero => Std.true
     | succ m' =>
-        match n {
+        n match {
         | zero => Std.false
         | succ n' => le m' n'
         }
@@ -93,7 +93,7 @@ def max (m : Nat) (n : Nat) : Nat :=
 
 // Power (exponentiation)
 def pow (base : Nat) (exp : Nat) : Nat :=
-    match exp {
+    exp match {
     | zero => one
     | succ exp' => mul base (pow base exp')
     }

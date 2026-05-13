@@ -9,14 +9,14 @@ namespace Std.Sum {
 
 // Check if sum is left
 def is_left (A : Type) (B : Type) (s : Sum A B) : Bool :=
-    match s {
+    s match {
     | inl _ => true
     | inr _ => false
     }
 
 // Check if sum is right
 def is_right (A : Type) (B : Type) (s : Sum A B) : Bool :=
-    match s {
+    s match {
     | inl _ => false
     | inr _ => true
     }
@@ -24,7 +24,7 @@ def is_right (A : Type) (B : Type) (s : Sum A B) : Bool :=
 // Case analysis / elimination
 def elim (A : Type) (B : Type) (C : Type)
          (f : A -> C) (g : B -> C) (s : Sum A B) : C :=
-    match s {
+    s match {
     | inl a => f a
     | inr b => g b
     }
@@ -32,7 +32,7 @@ def elim (A : Type) (B : Type) (C : Type)
 // Map over the left type
 def map_left (A : Type) (B : Type) (C : Type)
              (f : A -> C) (s : Sum A B) : Sum C B :=
-    match s {
+    s match {
     | inl a => inl (f a)
     | inr b => inr b
     }
@@ -40,7 +40,7 @@ def map_left (A : Type) (B : Type) (C : Type)
 // Map over the right type
 def map_right (A : Type) (B : Type) (D : Type)
               (g : B -> D) (s : Sum A B) : Sum A D :=
-    match s {
+    s match {
     | inl a => inl a
     | inr b => inr (g b)
     }
@@ -48,14 +48,14 @@ def map_right (A : Type) (B : Type) (D : Type)
 // Map over both types
 def bimap (A : Type) (B : Type) (C : Type) (D : Type)
           (f : A -> C) (g : B -> D) (s : Sum A B) : Sum C D :=
-    match s {
+    s match {
     | inl a => inl (f a)
     | inr b => inr (g b)
     }
 
 // Swap left and right
 def swap (A : Type) (B : Type) (s : Sum A B) : Sum B A :=
-    match s {
+    s match {
     | inl a => inr a
     | inr b => inl b
     }

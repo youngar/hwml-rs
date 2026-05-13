@@ -8,7 +8,7 @@ namespace Std.Void {
 
 // The principle of explosion: from falsehood, anything follows.
 def absurd (A : Type) (v : Void) : A :=
-    match v {
+    v match {
     }
 
 }

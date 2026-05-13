@@ -462,13 +462,108 @@ impl<'input> Context<'input> {
         self.push_state(crate::parse::state::State::ExprStart { min_prec });
     }
 
-    /// Check if we're at a synchronization point for error recovery
+    /// Check if we're at a synchronization point for error recovery (statement level)
     pub fn at_sync_point(&self) -> bool {
         matches!(self.peek(),
             Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim) |
             Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) |
             Some(Token::RBrace) | None
         )
+    }
+
+    /// Check if we're at an expression-level synchronization point.
+    ///
+    /// These are tokens that typically delimit expressions and are safe places
+    /// to resume parsing after an error within an expression.
+    ///
+    /// Expression sync points include:
+    /// - Delimiters: comma, closing paren, closing brace
+    /// - Expression terminators: pipe (for match), fat arrow (for match/lambda)
+    /// - Statement keywords (also sync expressions)
+    /// - EOF
+    pub fn at_expr_sync_point(&self) -> bool {
+        matches!(self.peek(),
+            // Expression delimiters
+            Some(Token::Comma) | Some(Token::RParen) | Some(Token::RBrace) |
+            // Match/lambda terminators
+            Some(Token::Pipe) | Some(Token::FatArrow) |
+            // Statement keywords (always sync)
+            Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim) |
+            Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) |
+            // EOF
+            None
+        )
+    }
+
+    /// Check if current token is a pattern-level sync point.
+    ///
+    /// Pattern sync points include:
+    /// - Match clause separators: pipe (|), fat arrow (=>)
+    /// - Delimiters: comma, closing paren, closing brace
+    /// - Statement keywords
+    /// - EOF
+    pub fn at_pattern_sync_point(&self) -> bool {
+        matches!(self.peek(),
+            // Pattern-specific: match clause separators
+            Some(Token::Pipe) | Some(Token::FatArrow) |
+            // Delimiters
+            Some(Token::Comma) | Some(Token::RParen) | Some(Token::RBrace) |
+            // Statement keywords (always sync)
+            Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim) |
+            Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) |
+            // EOF
+            None
+        )
+    }
+
+
+    /// Skip to the next expression boundary for error recovery.
+    ///
+    /// This is more fine-grained than skip_to_statement_boundary and allows us to
+    /// recover within an expression (e.g., skip a malformed subexpression but continue
+    /// parsing other parts of a tuple or application).
+    ///
+    /// Stops at: comma, closing paren, closing brace, pipe, fat arrow, statement keywords, or EOF.
+    pub(super) fn skip_to_expr_boundary(&mut self) {
+        while !self.at_end() && !self.at_expr_sync_point() {
+            // Track brackets as we skip (important for correct sync)
+            match self.peek() {
+                Some(Token::LBrace) => {
+                    let loc = self.consume(Token::LBrace);
+                    self.push_brace(loc);
+                }
+                Some(Token::LParen) => {
+                    let loc = self.consume(Token::LParen);
+                    self.push_paren(loc);
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Skip to the next pattern boundary for error recovery.
+    ///
+    /// Used when pattern parsing fails to recover at the next safe point.
+    /// Stops at: pipe, fat arrow, comma, closing delimiters, statement keywords, or EOF.
+    pub(super) fn skip_to_pattern_boundary(&mut self) {
+        while !self.at_end() && !self.at_pattern_sync_point() {
+            // Track brackets as we skip (important for correct sync)
+            match self.peek() {
+                Some(Token::LBrace) => {
+                    let loc = self.consume(Token::LBrace);
+                    self.push_brace(loc);
+                }
+                Some(Token::LParen) => {
+                    let loc = self.consume(Token::LParen);
+                    self.push_paren(loc);
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
     }
 
     /// Helper: Parse an identifier from token stream
@@ -525,12 +620,20 @@ impl<'input> Context<'input> {
         self.brace_stack.pop()
     }
 
+    pub fn brace_depth(&self) -> usize {
+        self.brace_stack.len()
+    }
+
     pub fn push_paren(&mut self, loc: Range<usize>) {
         self.paren_stack.push(loc);
     }
 
     pub fn pop_paren(&mut self) -> Option<Range<usize>> {
         self.paren_stack.pop()
+    }
+
+    pub fn paren_depth(&self) -> usize {
+        self.paren_stack.len()
     }
 
     // ===== Error Handling =====
@@ -642,8 +745,15 @@ impl<'input> Context<'input> {
         // Collect all statements
         let statements = self.statement_stack;
 
+        let program = Program::new(statements);
+
+        // Validate AST structure in debug builds
+        // This catches parser bugs by verifying structural invariants
+        #[cfg(debug_assertions)]
+        crate::syntax::validation::verify_program(&program);
+
         ParseResult {
-            program: Program::new(statements),
+            program,
             errors: self.errors,
         }
     }

@@ -61,16 +61,23 @@ impl<'input> Context<'input> {
             return;
         }
 
+        // Track error count before parsing statement
+        let error_count_before = self.error_count();
+
         // Re-queue the loop state so it runs AGAIN after parsing the next statement
         self.push_state(State::NamespaceBody {
             loc: loc.clone(),
             name: name.clone(),
             statement_stack_depth,  // Pass through unchanged
         });
-        
+
         // Queue the statement parser (will run before NamespaceBody runs again)
         self.push_state(State::Statement);
-        
+
+        // Note: Error recovery happens in the main parse loop for top-level statements.
+        // For namespace bodies, we rely on the statement parser's own error recovery.
+        // If we got an error and didn't advance, the main loop's recovery will kick in.
+
         // Return immediately - the dispatcher will:
         // 1. Pop and process State::Statement (pushes a statement to statement_stack)
         // 2. Pop and process State::NamespaceBody again (loops or exits)

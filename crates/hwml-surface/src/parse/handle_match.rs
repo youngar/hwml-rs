@@ -1,7 +1,7 @@
 //! Match expression parsing handlers
 //!
 //! Implements parsing for match expressions:
-//! match <scrutinee> { | <pattern> => <expr> | ... }
+//! <scrutinee> match { | <pattern> => <expr> | ... }
 
 use crate::lex::Token;
 use crate::parse::context::Context;
@@ -10,39 +10,6 @@ use crate::syntax::{Expression, Match, MatchClause, Pattern};
 use std::ops::Range;
 
 impl<'input> Context<'input> {
-    /// Handle match start - parse scrutinee
-    pub(super) fn handle_match_start(&mut self, loc: Range<usize>) {
-        // Push continuation (runs after scrutinee is parsed)
-        self.push_state(State::MatchAfterScrutinee { loc });
-
-        // Parse scrutinee expression
-        self.parse_expression(crate::parse::state::Precedence::Lowest);
-    }
-
-    /// Handle after scrutinee - expect '{' and start parsing clauses
-    pub(super) fn handle_match_after_scrutinee(&mut self, loc: Range<usize>) {
-        // Pop scrutinee from expr_stack
-        let scrutinee = self.pop_expr();
-
-        // Expect '{' to start clauses
-        if !self.at_token(Token::LBrace) {
-            self.emit_error("Expected '{' after match scrutinee");
-            let error_expr = Box::new(Expression::Error(
-                crate::syntax::ExpressionError::new(loc, "Invalid match".to_string())
-            ));
-            self.push_expr(error_expr);
-            return;
-        }
-        self.consume(Token::LBrace);
-
-        // Start parsing clauses
-        self.push_state(State::MatchClauses {
-            loc,
-            scrutinee,
-            clauses: vec![],
-        });
-    }
-
     /// Handle match clauses - loop parsing clauses until '}'
     pub(super) fn handle_match_clauses(
         &mut self,
@@ -84,9 +51,26 @@ impl<'input> Context<'input> {
         // Expect '=>'
         if !self.at_token(Token::FatArrow) {
             self.emit_error("Expected '=>' after match pattern");
-            // Error recovery: push error expression and finish
-            let match_expr = Box::new(Expression::Match(Match::new(scrutinee, clauses)));
-            self.push_expr(match_expr);
+
+            // Smart recovery: skip to next pattern boundary (pipe or closing brace)
+            // This uses pattern-level sync points for better recovery
+            self.skip_to_pattern_boundary();
+
+            // If we found a pipe, continue parsing more clauses
+            // If we found a closing brace, finish the match
+            if self.at_token(Token::RBrace) || self.at_end() {
+                let match_expr = Box::new(Expression::Match(Match::new(scrutinee, clauses)));
+                self.push_expr(match_expr);
+                return;
+            }
+
+            // Otherwise, loop back to parse next clause
+            // (we're probably at a pipe now)
+            self.push_state(State::MatchClauses {
+                loc,
+                scrutinee,
+                clauses,
+            });
             return;
         }
         self.consume(Token::FatArrow);
@@ -131,6 +115,16 @@ impl<'input> Context<'input> {
 
     /// Parse a pattern - simple version for now
     fn parse_pattern(&mut self) -> Pattern {
+        // Check if we're at EOF or a sync point before trying to parse
+        if self.at_end() || self.at_pattern_sync_point() {
+            self.emit_error("Expected pattern");
+            let loc = self.current_location();
+            return Pattern::Error(crate::syntax::PatternError::new(
+                loc,
+                "Missing pattern".to_string(),
+            ));
+        }
+
         if self.at_token(Token::Underscore) {
             let loc = self.current_location();
             self.consume(Token::Underscore);
@@ -144,7 +138,8 @@ impl<'input> Context<'input> {
             // e.g., `Cons x xs` or `Just _` or `succ _`
             let mut elements = vec![Pattern::Id(id)];
             while (self.at_token(Token::Identifier) || self.at_token(Token::Underscore))
-                   && !self.at_token(Token::FatArrow) {
+                && !self.at_pattern_sync_point()
+            {
                 let pattern = if self.at_token(Token::Underscore) {
                     let loc = self.current_location();
                     self.consume(Token::Underscore);
@@ -179,10 +174,17 @@ impl<'input> Context<'input> {
             self.advance();
             Pattern::Num(crate::syntax::Num::new(loc, text.into()))
         } else {
-            // Error pattern
-            self.emit_error("Expected pattern");
+            // Error pattern - emit error and skip to pattern boundary
+            self.emit_error("Expected pattern (identifier, underscore, or number)");
             let loc = self.current_location();
-            Pattern::Error(crate::syntax::PatternError::new(loc, "Invalid pattern".to_string()))
+
+            // Skip to next safe point
+            self.skip_to_pattern_boundary();
+
+            Pattern::Error(crate::syntax::PatternError::new(
+                loc,
+                "Invalid pattern".to_string(),
+            ))
         }
     }
 }

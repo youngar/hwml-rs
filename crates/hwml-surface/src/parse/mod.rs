@@ -92,8 +92,9 @@ impl<'input> Parser<'input> {
             if error_count_after > error_count_before && !self.context.at_end() {
                 // Check if we're stuck at the same position
                 if !self.context.at_sync_point() {
-                    // Skip to next statement boundary
-                    self.context.skip_to_statement_boundary();
+                    // Use smart bracket-aware recovery
+                    // This respects bracket depth and won't skip past parent blocks
+                    self.context.skip_to_statement_boundary_smart();
                 }
             }
         }
@@ -200,13 +201,7 @@ impl<'input> Parser<'input> {
                 self.context.handle_paren_after_lparen(loc, min_prec)
             }
 
-            // Match expressions
-            State::MatchStart { loc } => {
-                self.context.handle_match_start(loc)
-            }
-            State::MatchAfterScrutinee { loc } => {
-                self.context.handle_match_after_scrutinee(loc)
-            }
+            // Match expressions - now handled as postfix in handle_expr_finish
             State::MatchClauses { loc, scrutinee, clauses } => {
                 self.context.handle_match_clauses(loc, scrutinee, clauses)
             }

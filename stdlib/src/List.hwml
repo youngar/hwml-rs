@@ -9,28 +9,28 @@ namespace Std.List {
 
 // Length of a list
 def length (A : Type) (xs : List A) : Nat :=
-    match xs {
+    xs match {
     | nil => Std.zero
     | cons _ xs' => Std.succ (length A xs')
     }
 
 // Append two lists
 def append (A : Type) (xs : List A) (ys : List A) : List A :=
-    match xs {
+    xs match {
     | nil => ys
     | cons x xs' => cons x (append A xs' ys)
     }
 
 // Map a function over a list
 def map (A : Type) (B : Type) (f : A -> B) (xs : List A) : List B :=
-    match xs {
+    xs match {
     | nil => nil
     | cons x xs' => cons (f x) (map A B f xs')
     }
 
 // Reverse a list
 def reverse_helper (A : Type) (xs : List A) (acc : List A) : List A :=
-    match xs {
+    xs match {
     | nil => acc
     | cons x xs' => reverse_helper A xs' (cons x acc)
     }
@@ -43,35 +43,35 @@ def reverse (A : Type) (xs : List A) : List A :=
 
 // Tail of a list
 def tail (A : Type) (xs : List A) : List A :=
-    match xs {
+    xs match {
     | nil => nil
     | cons _ xs' => xs'
     }
 
 // Check if list is empty
 def is_empty (A : Type) (xs : List A) : Std.Bool :=
-    match xs {
+    xs match {
     | nil => Std.true
     | cons _ _ => Std.false
     }
 
 // Fold right
 def foldr (A : Type) (B : Type) (f : A -> B -> B) (init : B) (xs : List A) : B :=
-    match xs {
+    xs match {
     | nil => init
     | cons x xs' => f x (foldr A B f init xs')
     }
 
 // Fold left
 def foldl (A : Type) (B : Type) (f : B -> A -> B) (init : B) (xs : List A) : B :=
-    match xs {
+    xs match {
     | nil => init
     | cons x xs' => foldl A B f (f init x) xs'
     }
 
 // Filter elements that satisfy a predicate
 def filter (A : Type) (p : A -> Std.Bool) (xs : List A) : List A :=
-    match xs {
+    xs match {
     | nil => nil
     | cons x xs' =>
         Std.Bool.ite (List A)
@@ -82,10 +82,10 @@ def filter (A : Type) (p : A -> Std.Bool) (xs : List A) : List A :=
 
 // Take first n elements
 def take (A : Type) (n : Nat) (xs : List A) : List A :=
-    match n {
+    n match {
     | Std.zero => nil
     | Std.succ n' =>
-        match xs {
+        xs match {
         | nil => nil
         | cons x xs' => cons x (take A n' xs')
         }
@@ -93,10 +93,10 @@ def take (A : Type) (n : Nat) (xs : List A) : List A :=
 
 // Drop first n elements
 def drop (A : Type) (n : Nat) (xs : List A) : List A :=
-    match n {
+    n match {
     | Std.zero => xs
     | Std.succ n' =>
-        match xs {
+        xs match {
         | nil => nil
         | cons _ xs' => drop A n' xs'
         }
@@ -104,10 +104,10 @@ def drop (A : Type) (n : Nat) (xs : List A) : List A :=
 
 // Zip two lists together
 def zip (A : Type) (B : Type) (xs : List A) (ys : List B) : List (A -> B) :=
-    match xs {
+    xs match {
     | nil => nil
     | cons x xs' =>
-        match ys {
+        ys match {
         | nil => nil
         | cons y ys' => cons (fun _ => y) (zip A B xs' ys')
         }

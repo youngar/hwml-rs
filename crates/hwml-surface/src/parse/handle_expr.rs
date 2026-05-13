@@ -26,8 +26,8 @@
 
 use crate::lex::Token;
 use crate::parse::context::Context;
-use crate::parse::state::{State, Precedence};
-use crate::syntax::{Expression, ExpressionError, ExpressionHole, App, Underscore, Paren};
+use crate::parse::state::{Precedence, State};
+use crate::syntax::{App, Expression, ExpressionError, ExpressionHole, Paren, Underscore};
 use std::ops::Range;
 
 impl<'input> Context<'input> {
@@ -50,7 +50,10 @@ impl<'input> Context<'input> {
                 .unwrap_or("0")
                 .to_string();
             self.advance();
-            let expr = Box::new(Expression::Num(crate::syntax::Num::new(loc.clone(), text.into())));
+            let expr = Box::new(Expression::Num(crate::syntax::Num::new(
+                loc.clone(),
+                text.into(),
+            )));
             self.push_state(State::ExprFinish {
                 partial: expr,
                 min_prec,
@@ -59,9 +62,14 @@ impl<'input> Context<'input> {
             // ASYNC: Parenthesized expression
             self.consume(Token::LParen);
             // Push paren wrapper (runs LAST) - will pop from expr_stack and push wrapped version
-            self.push_state(State::ParenAfterLParen { loc: loc.clone(), min_prec });
+            self.push_state(State::ParenAfterLParen {
+                loc: loc.clone(),
+                min_prec,
+            });
             // Push expression parsing (runs FIRST) - will push to expr_stack
-            self.push_state(State::ExprStart { min_prec: Precedence::Lowest });
+            self.push_state(State::ExprStart {
+                min_prec: Precedence::Lowest,
+            });
         } else if self.at_token(Token::Underscore) {
             self.consume(Token::Underscore);
             let expr = Box::new(Expression::Underscore(Underscore::new(loc.clone())));
@@ -74,22 +82,20 @@ impl<'input> Context<'input> {
             // Type or Type n - check for optional number
             let level = if self.at_token(Token::Number) {
                 let num_loc = self.current_location();
-                let text = std::str::from_utf8(&self.input[num_loc.clone()])
-                    .unwrap_or("0");
+                let text = std::str::from_utf8(&self.input[num_loc.clone()]).unwrap_or("0");
                 self.advance();
                 text.parse::<u32>().ok()
             } else {
                 None
             };
-            let expr = Box::new(Expression::Universe(crate::syntax::Universe::new(loc.clone(), level)));
+            let expr = Box::new(Expression::Universe(crate::syntax::Universe::new(
+                loc.clone(),
+                level,
+            )));
             self.push_state(State::ExprFinish {
                 partial: expr,
                 min_prec,
             });
-        } else if self.at_token(Token::Match) {
-            // ASYNC: Match expression
-            self.consume(Token::Match);
-            self.push_state(State::MatchStart { loc });
         } else if self.at_token(Token::Fun) {
             // ASYNC: Lambda expression
             self.consume(Token::Fun);
@@ -106,7 +112,17 @@ impl<'input> Context<'input> {
             self.push_state(State::LetAfterKeyword { loc });
         } else {
             self.emit_error(format!("Expected expression, found {:?}", self.peek()));
-            let expr = Box::new(Expression::Error(ExpressionError::new(loc, "Expected expression".to_string())));
+
+            // Use expression-level recovery: skip to next expression boundary
+            // This allows us to recover and continue parsing (e.g., in tuples, applications)
+            if !self.at_expr_sync_point() {
+                self.skip_to_expr_boundary();
+            }
+
+            let expr = Box::new(Expression::Error(ExpressionError::new(
+                loc,
+                "Expected expression".to_string(),
+            )));
             self.push_state(State::ExprFinish {
                 partial: expr,
                 min_prec,
@@ -125,9 +141,7 @@ impl<'input> Context<'input> {
             // A -> B -> C parses as A -> (B -> C)
 
             // Push continuation (builds arrow after parsing RHS)
-            self.push_state(State::ArrowAfterRhs {
-                lhs: partial,
-            });
+            self.push_state(State::ArrowAfterRhs { lhs: partial });
 
             // Parse RHS at same precedence (right-associative)
             self.parse_expression(Precedence::Lowest);
@@ -142,12 +156,39 @@ impl<'input> Context<'input> {
             // a : A : B parses as a : (A : B) - though this is unusual
 
             // Push continuation (builds ascription after parsing type)
-            self.push_state(State::TypeAscriptionAfterType {
-                expr: partial,
-            });
+            self.push_state(State::TypeAscriptionAfterType { expr: partial });
 
             // Parse type at same precedence (right-associative)
             self.parse_expression(Precedence::TypeAscription);
+            return;
+        }
+
+        // Check for postfix match: expr match { ... }
+        if min_prec <= Precedence::Lowest && self.at_token(Token::Match) {
+            self.consume(Token::Match);
+
+            // The scrutinee is already parsed (it's `partial`)
+            // Now expect '{' and parse clauses
+            if !self.at_token(Token::LBrace) {
+                self.emit_error("Expected '{' after 'match' keyword");
+
+                // Try to recover: if we see '{' soon, we can continue
+                // Otherwise, return the scrutinee as-is (match keyword is lost)
+                if !self.at_expr_sync_point() {
+                    self.skip_to_expr_boundary();
+                }
+
+                self.push_expr(partial);
+                return;
+            }
+            self.consume(Token::LBrace);
+
+            // Start parsing match clauses with the scrutinee we already have
+            self.push_state(State::MatchClauses {
+                loc: partial.loc(),
+                scrutinee: partial,
+                clauses: vec![],
+            });
             return;
         }
 
@@ -167,7 +208,6 @@ impl<'input> Context<'input> {
             self.push_expr(partial);
         }
     }
-
 
     /// Handle arrow after parsing RHS - build the arrow type or dependent Pi type
     /// This implements the "Parse-then-Reinterpret" pattern:
@@ -207,19 +247,20 @@ impl<'input> Context<'input> {
         // Build type ascription: expr : Type
         let start = expr.loc();
         let end = ty.loc();
-        let ascription = Box::new(Expression::TypeAscription(crate::syntax::TypeAscription::new(
-            start.start..end.end,
-            expr,
-            ty,
-        )));
+        let ascription = Box::new(Expression::TypeAscription(
+            crate::syntax::TypeAscription::new(start.start..end.end, expr, ty),
+        ));
 
         self.push_expr(ascription);
     }
 
-
     /// Handle ExprApp - accumulate application arguments
     /// Called after parsing each argument to check for more
-    pub(super) fn handle_expr_app(&mut self, mut elements: Vec<Box<Expression>>, min_prec: Precedence) {
+    pub(super) fn handle_expr_app(
+        &mut self,
+        mut elements: Vec<Box<Expression>>,
+        min_prec: Precedence,
+    ) {
         // Pop the latest argument from expr_stack
         let arg = self.pop_expr();
         elements.push(arg);
@@ -227,10 +268,7 @@ impl<'input> Context<'input> {
         // Check if we can parse another argument
         if self.can_parse_app_argument() {
             // Push continuation to accumulate more
-            self.push_state(State::ExprApp {
-                elements,
-                min_prec,
-            });
+            self.push_state(State::ExprApp { elements, min_prec });
 
             // Parse next argument
             self.parse_app_argument();
@@ -252,9 +290,13 @@ impl<'input> Context<'input> {
 
     /// Check if we can parse an application argument
     fn can_parse_app_argument(&self) -> bool {
-        matches!(self.peek(),
-            Some(Token::Identifier) | Some(Token::LParen) | Some(Token::Underscore) |
-            Some(Token::Number) | Some(Token::Type)
+        matches!(
+            self.peek(),
+            Some(Token::Identifier)
+                | Some(Token::LParen)
+                | Some(Token::Underscore)
+                | Some(Token::Number)
+                | Some(Token::Type)
         )
     }
 
@@ -312,14 +354,23 @@ impl<'input> Context<'input> {
 
         // Update the DependentArrowAfterBody state on the stack with the bindings
         // Pop it, update it, and push it back
-        let next_state = self.pop_state().expect("Expected DependentArrowAfterBody on stack");
-        if let State::DependentArrowAfterBody { loc: body_loc, bindings: _ } = next_state {
+        let next_state = self
+            .pop_state()
+            .expect("Expected DependentArrowAfterBody on stack");
+        if let State::DependentArrowAfterBody {
+            loc: body_loc,
+            bindings: _,
+        } = next_state
+        {
             self.push_state(State::DependentArrowAfterBody {
                 loc: body_loc,
                 bindings,
             });
         } else {
-            panic!("Expected DependentArrowAfterBody state, found {:?}", next_state);
+            panic!(
+                "Expected DependentArrowAfterBody state, found {:?}",
+                next_state
+            );
         }
 
         // Parse the body expression
@@ -351,7 +402,6 @@ impl<'input> Context<'input> {
         });
     }
 
-
     /// Helper: Get location from expression
     fn expr_loc(&self, expr: &Expression) -> Range<usize> {
         match expr {
@@ -369,8 +419,11 @@ impl<'input> Context<'input> {
     /// - A single parenthesized TypeAscription: (a : A)
     /// - An AppSeq of parenthesized TypeAscriptions: (a : A) (b : B)
     /// Returns None otherwise (use simple Arrow instead)
-    fn try_convert_to_telescope_bindings(&self, expr: &Expression) -> Option<crate::syntax::TypedBindings> {
-        use crate::syntax::{Pattern, Binder, TypedBindingGroup};
+    fn try_convert_to_telescope_bindings(
+        &self,
+        expr: &Expression,
+    ) -> Option<crate::syntax::TypedBindings> {
+        use crate::syntax::{Binder, Pattern, TypedBindingGroup};
 
         // Helper: Extract (name, type) from a parenthesized type ascription
         let extract_binding = |e: &Expression| -> Option<(Pattern, Box<Expression>)> {

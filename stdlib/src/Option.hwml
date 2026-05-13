@@ -11,52 +11,52 @@ namespace Std.Option {
 
 // Check if an option is None
 def is_none (A : Type) (opt : Option A) : Bool :=
-    match opt {
+    opt match {
     | none => true
     | some _ => false
     }
 
 // Check if an option is Some
 def is_some (A : Type) (opt : Option A) : Bool :=
-    match opt {
+    opt match {
     | none => false
     | some _ => true
     }
 
 // Map a function over an option
 def map (A : Type) (B : Type) (f : A -> B) (opt : Option A) : Option B :=
-    match opt {
+    opt match {
     | none => none
     | some x => some (f x)
     }
 
 // Get the value from Some, or return a default for None
 def get_or_else (A : Type) (default : A) (opt : Option A) : A :=
-    match opt {
+    opt match {
     | none => default
     | some x => x
     }
 
 // Bind operation (monadic bind)
 def bind (A : Type) (B : Type) (opt : Option A) (f : A -> Option B) : Option B :=
-    match opt {
+    opt match {
     | none => none
     | some x => f x
     }
 
 // Flatten a nested option
 def flatten (A : Type) (opt : Option (Option A)) : Option A :=
-    match opt {
+    opt match {
     | none => none
     | some inner => inner
     }
 
 // Filter: returns None if predicate is false
 def filter (A : Type) (p : A -> Bool) (opt : Option A) : Option A :=
-    match opt {
+    opt match {
     | none => none
     | some x =>
-        match p x {
+        (p x) match {
         | true => some x
         | false => none
         }
