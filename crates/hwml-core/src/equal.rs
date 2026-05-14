@@ -608,7 +608,7 @@ fn equate_type_constructors<'db>(
     // Compare each argument.
     for (larg, rarg, syn_ty_binder) in izip!(lhs.iter(), rhs.iter(), type_info.arguments.iter()) {
         // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty_binder.value)?;
+        let sem_ty = eval::eval(&mut env, &syn_ty_binder.ty)?;
 
         // Check that the arguments are convertible at the evaluated type.
         equate(global, transparent, depth, &larg, &rarg, &sem_ty)?;
@@ -662,7 +662,7 @@ fn equate_data_constructors<'db>(
 
     for (larg, rarg, syn_ty_binder) in izip!(lhs.iter(), rhs.iter(), data_info.arguments.iter()) {
         // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty_binder.value).map_err(Error::EvalError)?;
+        let sem_ty = eval::eval(&mut env, &syn_ty_binder.ty).map_err(Error::EvalError)?;
 
         // Check that the arguments are convertible at the evaluated type.
         equate(global, transparent, depth, &larg, &rarg, &sem_ty)?;

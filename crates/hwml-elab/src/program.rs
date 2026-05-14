@@ -1,11 +1,13 @@
 use std::rc::Rc;
 
 use hwml_core::{
+    name::Name,
     syn::Telescope,
     ty::Ty,
     val::{ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo},
     QualifiedName, RcSyntax, Source, SourceInfo, UniverseLevel, Word,
 };
+use hwml_support::FromWithDb;
 use hwml_surface::{Program, Statement};
 
 // TODO(critical): This module needs several major features before production:
@@ -344,8 +346,8 @@ fn elab_def_statement<'db, Db>(
         let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
         elab::decl::elab_constant(db, &mut elab, def).and_then(|elaborated| {
             zonk(&mut state)?;
-            let ty = substitute_metas_in_syntax(&elaborated.ty, &state);
-            let val = substitute_metas_in_syntax(&elaborated.value, &state);
+            let ty = substitute_metas_in_syntax(db, &elaborated.ty, &state);
+            let val = substitute_metas_in_syntax(db, &elaborated.value, &state);
             Ok(ConstantInfo::new(ty, val))
         })
     };
@@ -390,7 +392,7 @@ fn elab_prim_statement<'db, Db>(
         use hwml_core::ty::Ty;
         elab::expr::check(db, &mut elab, &prim.ty, Rc::new(Ty::UniverseType)).and_then(|checked| {
             zonk(&mut state)?;
-            let ty = substitute_metas_in_syntax(&checked.into_inner(), &state);
+            let ty = substitute_metas_in_syntax(db, &checked.into_inner(), &state);
             Ok(PrimitiveInfo::new(ty))
         })
     };
@@ -479,7 +481,7 @@ fn elab_inductive_statement<'db, Db>(
             let args_telescope = Telescope::from_pairs(
                 args.into_iter()
                     .enumerate()
-                    .map(|(i, ty)| (format!("{}", i), ty))
+                    .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
             );
             let level = extract_universe_level(&universe);
             let stub_info = TypeConstructorInfo::new(args_telescope, params.len(), UniverseLevel::new(level));
@@ -514,15 +516,15 @@ fn elab_inductive_statement<'db, Db>(
                 .params
                 .iter()
                 .chain(elaborated.indices.iter())
-                .map(|s| substitute_metas_in_syntax(s, &state))
+                .map(|s| substitute_metas_in_syntax(db, s, &state))
                 .collect();
             // Convert Vec<RcSyntax> to Telescope with numbered names
             let args_telescope = Telescope::from_pairs(
                 args.into_iter()
                     .enumerate()
-                    .map(|(i, ty)| (format!("{}", i), ty))
+                    .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
             );
-            let universe_syn = substitute_metas_in_syntax(&elaborated.universe, &state);
+            let universe_syn = substitute_metas_in_syntax(db, &elaborated.universe, &state);
             let level = extract_universe_level(&universe_syn);
             let tcon_info = TypeConstructorInfo::new(args_telescope, num_params, UniverseLevel::new(level));
 
@@ -559,12 +561,12 @@ fn elab_inductive_statement<'db, Db>(
                         span: None,
                         elab_backtrace: Vec::new(),
                     })?;
-                let ctor_ty = substitute_metas_in_syntax(&ctor.result, &state);
+                let ctor_ty = substitute_metas_in_syntax(db, &ctor.result, &state);
                 // Convert Vec<RcSyntax> to Telescope with numbered names
                 let params_telescope = Telescope::from_pairs(
                     ctor.params.iter().cloned()
                         .enumerate()
-                        .map(|(i, ty)| (format!("{}", i), ty))
+                        .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
                 );
                 let dcon_info = DataConstructorInfo::new(params_telescope, ctor_ty);
                 data_constructors.push((ctor_qname, dcon_info));

@@ -29,7 +29,7 @@ use hwml_core::{
     eval,
     ty::{RcTy, Ty},
     val::{Eliminator, Flex, GlobalEnv, LocalEnv, MetaVariable, Normal, Spine},
-    Binding, Index, Level, MetaVariableId, RcSyntax, RcValue, Syntax, Value,
+    Binding, Index, Level, MetaVariableId, Name, RcSyntax, RcValue, Syntax, Value,
 };
 
 use crate::{
@@ -47,14 +47,16 @@ pub enum UnifyResult {
 pub struct Unifier<'a, 'db> {
     pub global: &'a GlobalEnv<'db>,
     pub state: &'a mut SolverState<'db>,
+    pub db: &'db dyn salsa::Database,
     pub depth: usize,
 }
 
 impl<'a, 'db> Unifier<'a, 'db> {
-    pub fn new(global: &'a GlobalEnv<'db>, state: &'a mut SolverState<'db>, depth: usize) -> Self {
+    pub fn new(db: &'db dyn salsa::Database, global: &'a GlobalEnv<'db>, state: &'a mut SolverState<'db>, depth: usize) -> Self {
         Unifier {
             global,
             state,
+            db,
             depth,
         }
     }
@@ -263,7 +265,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
     ) -> Result<UnifyResult, ElabError<'db>> {
         let flex = flex.clone();
         let dummy: RcTy<'db> = Rc::new(Ty::UniverseType);
-        if pattern::pattern_unify(self.global, self.state, &flex, other.clone(), dummy)? {
+        if pattern::pattern_unify(self.db, self.global, self.state, &flex, other.clone(), dummy)? {
             return Ok(UnifyResult::Solved);
         }
         Ok(UnifyResult::Stuck)
@@ -542,7 +544,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
         let dummy_ty = Rc::new(hwml_core::ty::Ty::UniverseType);
         let new_meta_id = self.state.fresh_meta(dummy_ty, kept.len(), MetaKind::Term);
 
-        let syn = intersection_syntax_solution(new_meta_id, old_arity, &kept);
+        let syn = intersection_syntax_solution(self.db, new_meta_id, old_arity, &kept);
         let val = intersection_value_solution(new_meta_id, &kept);
 
         self.state.solve_meta(old_meta_id, syn, val)?;
@@ -715,6 +717,7 @@ fn compute_intersection<'db>(lhs: &LocalEnv<'db>, rhs: &LocalEnv<'db>, arity: us
 /// Build the syntax solution for `?m`:
 /// `λ(old_arity). Metavariable(m', [Index(old_arity-1-kept[0]), ..., Index(old_arity-1-kept[j])])`
 pub(crate) fn intersection_syntax_solution<'db>(
+    db: &'db dyn salsa::Database,
     new_meta_id: MetaId,
     old_arity: usize,
     kept: &[usize],
@@ -726,7 +729,7 @@ pub(crate) fn intersection_syntax_solution<'db>(
         .collect();
     let mut body: RcSyntax<'db> = Syntax::metavariable_rc(meta_vid, subst);
     for _ in 0..old_arity {
-        body = Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(body));
+        body = Syntax::lambda_rc(Icit::Explicit, Binding::new(Name::anonymous(db), body));
     }
     body
 }

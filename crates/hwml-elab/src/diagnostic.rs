@@ -21,19 +21,19 @@ where
         Ty::ModuleUniverseType => "Module".to_string(),
         Ty::El(code) => {
             // Quote the type code to syntax and print it
-            match hwml_core::quote::type_quote(global, 0, code) {
+            match hwml_core::quote::type_quote(db, global, 0, code) {
                 Ok(syntax) => hwml_core::syn::print::print_syntax_to_string(db, &syntax),
                 Err(_) => format!("{:?}", code), // Fallback to debug format
             }
         }
         Ty::SignalEl(code) => {
-            match hwml_core::quote::type_quote(global, 0, code) {
+            match hwml_core::quote::type_quote(db, global, 0, code) {
                 Ok(syntax) => format!("Signal[{}]", hwml_core::syn::print::print_syntax_to_string(db, &syntax)),
                 Err(_) => format!("Signal[{:?}]", code),
             }
         }
         Ty::ModuleEl(code) => {
-            match hwml_core::quote::type_quote(global, 0, code) {
+            match hwml_core::quote::type_quote(db, global, 0, code) {
                 Ok(syntax) => format!("Module[{}]", hwml_core::syn::print::print_syntax_to_string(db, &syntax)),
                 Err(_) => format!("Module[{:?}]", code),
             }
@@ -62,7 +62,7 @@ where
     Db: salsa::Database,
 {
     // Try to quote the value back to syntax using type-free quotation
-    match hwml_core::quote::type_quote(global, 0, val) {
+    match hwml_core::quote::type_quote(db, global, 0, val) {
         Ok(syntax) => hwml_core::syn::print::print_syntax_to_string(db, &syntax),
         Err(_) => {
             // If quotation fails, fall back to simple formatting

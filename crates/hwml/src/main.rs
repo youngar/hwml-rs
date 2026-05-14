@@ -190,12 +190,14 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
 
             // Parse using the Salsa-tracked query - this returns the SAME Program instance
             // that was used during harvesting, with the SAME interned Names!
-            let parse_result = hwml_db::parse_surface_program_with_errors(&workspace_db, source_file);
+            let parse_result =
+                hwml_db::parse_surface_program_with_errors(&workspace_db, source_file);
 
             // Report parse errors using the diagnostic framework
             if !parse_result.errors.is_empty() {
                 let text = source_file.text(&workspace_db);
-                let file_name = source_path.file_name()
+                let file_name = source_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or_else(|| {
                         eprintln!("Warning: Non-UTF8 filename in path: {:?}", source_path);
@@ -203,14 +205,21 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
                     });
 
                 for err in &parse_result.errors {
-                    let diagnostic = hwml_elab::diagnostic::parse_error_to_diagnostic(err, &text, file_name);
-                    eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name)));
+                    let diagnostic =
+                        hwml_elab::diagnostic::parse_error_to_diagnostic(err, &text, file_name);
+                    eprintln!(
+                        "{}",
+                        hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name))
+                    );
                 }
             }
 
             // Skip this file if parsing had errors
             if !parse_result.errors.is_empty() {
-                eprintln!("[ERROR] Parsing errors in {}, skipping", source_path.display());
+                eprintln!(
+                    "[ERROR] Parsing errors in {}, skipping",
+                    source_path.display()
+                );
                 continue;
             }
 
@@ -294,8 +303,17 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
             };
 
             // Always use the diagnostic system for consistent output
-            let diagnostic = hwml_elab::diagnostic::elab_error_to_diagnostic(&workspace_db, &global_env, err, &source_text, &file_name);
-            eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(&file_name)));
+            let diagnostic = hwml_elab::diagnostic::elab_error_to_diagnostic(
+                &workspace_db,
+                &global_env,
+                err,
+                &source_text,
+                &file_name,
+            );
+            eprintln!(
+                "{}",
+                hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(&file_name))
+            );
         }
     }
 
@@ -337,7 +355,8 @@ fn run_single_file(args: Args, file_path: PathBuf) {
 
     // Report parse errors using the diagnostic framework
     if !parse_result.errors.is_empty() {
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_else(|| {
                 eprintln!("Warning: Non-UTF8 filename in path: {:?}", path);
@@ -345,8 +364,12 @@ fn run_single_file(args: Args, file_path: PathBuf) {
             });
 
         for err in &parse_result.errors {
-            let diagnostic = hwml_elab::diagnostic::parse_error_to_diagnostic(err, contents, file_name);
-            eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name)));
+            let diagnostic =
+                hwml_elab::diagnostic::parse_error_to_diagnostic(err, contents, file_name);
+            eprintln!(
+                "{}",
+                hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name))
+            );
         }
     }
 
@@ -368,7 +391,8 @@ fn run_single_file(args: Args, file_path: PathBuf) {
     let source = hwml_core::Source::new(&db, source_info);
 
     let mut global = hwml_core::val::GlobalEnv::new();
-    let result = hwml_elab::program::elab_program_with_source(&db, &mut global, &program, Some(source));
+    let result =
+        hwml_elab::program::elab_program_with_source(&db, &mut global, &program, Some(source));
 
     for decl in &result.decls {
         match decl {
@@ -399,15 +423,20 @@ fn run_single_file(args: Args, file_path: PathBuf) {
     // Render errors using the diagnostic system
     for err in &result.errors {
         // Extract just the file name for cleaner output
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_else(|| {
                 eprintln!("Warning: Non-UTF8 filename in path: {:?}", path);
                 "unknown"
             });
 
-        let diagnostic = hwml_elab::diagnostic::elab_error_to_diagnostic(&db, &global, err, contents, file_name);
-        eprintln!("{}", hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name)));
+        let diagnostic =
+            hwml_elab::diagnostic::elab_error_to_diagnostic(&db, &global, err, contents, file_name);
+        eprintln!(
+            "{}",
+            hwml_diagnostic::terminal::render_diagnostic(&diagnostic, Some(file_name))
+        );
     }
 }
 
@@ -488,7 +517,7 @@ fn run_core(args: Args) {
                 // Print data constructors
                 for dcon in &tc.data_constructors {
                     print!("    dcon @{} : ", dcon.name.name(&db).to_string(&db));
-                    hwml_core::syn::dump_syntax(&db, &dcon.full_type());
+                    hwml_core::syn::dump_syntax(&db, &dcon.full_type(&db));
                 }
             }
             hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {

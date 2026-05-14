@@ -30,6 +30,7 @@ pub use syn::declaration::{
     TypeConstructorDecl,
 };
 pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
+pub use syn::telescope::Cell;
 pub use typed::*;
 pub use val::{GlobalEnv, RcValue, Value};
 

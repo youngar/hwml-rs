@@ -20,6 +20,7 @@ use crate::{
     },
     QualifiedName, UniverseLevel, Value,
 };
+use hwml_support::FromWithDb;
 use std::rc::Rc;
 
 /// A quotation error.
@@ -90,24 +91,24 @@ pub fn quote<'db>(
         Value::SLift(slift) => quote_slift_instances(db, global, depth, value, slift),
         Value::MLift(mlift) => quote_mlift_instances(db, global, depth, value, mlift),
         Value::Bit(bit) => quote_bit_instances(db, global, depth, value, bit),
-        Value::HArrow(harrow) => quote_harrow_instances(global, depth, value, harrow),
+        Value::HArrow(harrow) => quote_harrow_instances(db, global, depth, value, harrow),
         // Neutral types
-        Value::Prim(prim) => quote_prim_instances(global, depth, value, prim),
-        Value::Constant(constant) => quote_constant_instances(global, depth, value, constant),
-        Value::Rigid(rigid) => quote_rigid_instances(global, depth, value, rigid),
-        Value::Flex(flex) => quote_flex_instances(global, depth, value, flex),
+        Value::Prim(prim) => quote_prim_instances(db, global, depth, value, prim),
+        Value::Constant(constant) => quote_constant_instances(db, global, depth, value, constant),
+        Value::Rigid(rigid) => quote_rigid_instances(db, global, depth, value, rigid),
+        Value::Flex(flex) => quote_flex_instances(db, global, depth, value, flex),
         // Equality types
-        Value::EqType(eq) => quote_eq_instances(global, depth, value, eq),
+        Value::EqType(eq) => quote_eq_instances(db, global, depth, value, eq),
 
         // NEW: Type codes (types as first-class terms)
         // When the type is a type code, we need to distinguish:
         // - If the value is also a type code, quote it as a type
         // - If the value is a term of that type, quote it as an instance
-        Value::UniverseCode(_level) => type_quote(global, depth, value),
+        Value::UniverseCode(_level) => type_quote(db, global, depth, value),
         Value::PiCode(source, icit, target) => {
-            quote_pi_code_instances(global, depth, value, source, *icit, target)
+            quote_pi_code_instances(db, global, depth, value, source, *icit, target)
         }
-        Value::BitCode => type_quote(global, depth, value),
+        Value::BitCode => type_quote(db, global, depth, value),
 
         _ => Err(Error::IllTyped(Rc::new(ty.clone()))),
     }
@@ -156,6 +157,7 @@ pub fn quote_hwuniverse_instances<'db>(
 
 /// Quote an instance of an SLift type (lifted signal type).
 pub fn quote_slift_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
@@ -163,13 +165,14 @@ pub fn quote_slift_instances<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     // SLift's ty should be a signal type (like Bit)
     match slift.ty.as_ref() {
-        Value::Bit(bit) => quote_bit_instances(global, depth, value, bit),
+        Value::Bit(bit) => quote_bit_instances(db, global, depth, value, bit),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of an MLift type (lifted module type).
 pub fn quote_mlift_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
@@ -177,30 +180,32 @@ pub fn quote_mlift_instances<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     // MLift's ty should be a module type (like HArrow)
     match mlift.ty.as_ref() {
-        Value::HArrow(harrow) => quote_harrow_instances(global, depth, value, harrow),
+        Value::HArrow(harrow) => quote_harrow_instances(db, global, depth, value, harrow),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of an HArrow type (hardware function type).
 pub fn quote_harrow_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     harrow: &HArrow<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::Module(module) => quote_module(global, depth, module, harrow),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Module(module) => quote_module(db, global, depth, module, harrow),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of Bit type.
 pub fn quote_bit_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
@@ -209,11 +214,11 @@ pub fn quote_bit_instances<'db>(
     match value {
         Value::Zero(_) => Ok(Syntax::zero_rc()),
         Value::One(_) => Ok(Syntax::one_rc()),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
-        Value::HApplication(happ) => quote_happlication(global, depth, happ),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::HApplication(happ) => quote_happlication(db, global, depth, happ),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
@@ -221,16 +226,18 @@ pub fn quote_bit_instances<'db>(
 /// Quote an HApplication (hardware application).
 /// An HApplication is `m<T>(x)` where m is a module, T is its domain type, and x is the argument.
 pub fn quote_happlication<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     happ: &val::HApplication<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let module = quote(global, depth, &happ.module, &happ.module_ty)?;
+    let module = quote(db, global, depth, &happ.module, &happ.module_ty)?;
     let domain_ty = match happ.module_ty.as_ref() {
-        Value::HArrow(harrow) => type_quote(global, depth, &harrow.source)?,
+        Value::HArrow(harrow) => type_quote(db, global, depth, &harrow.source)?,
         _ => return Err(Error::IllTyped(happ.module_ty.clone())),
     };
     let argument = quote(
+        db,
         global,
         depth,
         &happ.argument,
@@ -244,98 +251,104 @@ pub fn quote_happlication<'db>(
 
 /// Quote an instance of SignalUniverse (a signal type).
 pub fn quote_signal_universe_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _signal_universe: &val::SignalUniverse<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::Bit(bit) => quote_bit(global, depth, bit),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Bit(bit) => quote_bit(db, global, depth, bit),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of ModuleUniverse (a module type).
 pub fn quote_module_universe_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _module_universe: &val::ModuleUniverse<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::HArrow(harrow) => quote_harrow(global, depth, harrow),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::HArrow(harrow) => quote_harrow(db, global, depth, harrow),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of a Prim type.
 pub fn quote_prim_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _prim: &val::Prim<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of a Constant type.
 pub fn quote_constant_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _constant: &val::Constant<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of a Rigid type.
 pub fn quote_rigid_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _rigid: &Rigid<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an instance of a Flex type.
 pub fn quote_flex_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _flex: &Flex<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
@@ -343,6 +356,7 @@ pub fn quote_flex_instances<'db>(
 /// Quote an instance of PiCode.
 /// Lambdas quote directly; neutrals eta-expand.
 pub fn quote_pi_code_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
@@ -352,12 +366,12 @@ pub fn quote_pi_code_instances<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         // If the value is a Lambda, quote it directly
-        Value::Lambda(lambda) => quote_lambda(global, depth, lambda, source, target),
+        Value::Lambda(lambda) => quote_lambda(db, global, depth, lambda, source, target),
         // If the value is a PiCode, it's a type code, so quote it as a type
-        Value::PiCode(_, _, _) => type_quote(global, depth, value),
+        Value::PiCode(_, _, _) => type_quote(db, global, depth, value),
         // Neutrals with spines (variables, metavariables) get eta-expanded
-        Value::Rigid(rigid) => quote_pi_eta_expand(global, depth, rigid, source, icit, target),
-        Value::Flex(flex) => quote_pi_eta_expand(global, depth, flex, source, icit, target),
+        Value::Rigid(rigid) => quote_pi_eta_expand(db, global, depth, rigid, source, icit, target),
+        Value::Flex(flex) => quote_pi_eta_expand(db, global, depth, flex, source, icit, target),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
@@ -365,6 +379,7 @@ pub fn quote_pi_code_instances<'db>(
 /// Eta-expand a neutral value at a Pi type.
 /// Given a neutral `f : PiCode(source, icit, target)`, produce `λ {icit} x. f x`.
 fn quote_pi_eta_expand<'db, V>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     neutral: &V,
@@ -385,10 +400,12 @@ where
     let app_val = neutral.apply(arg, source.clone(), result_ty.clone(), icit);
 
     // Quote the application at the result type
-    let body = quote(global, depth + 1, &app_val, &result_ty)?;
+    let body = quote(db, global, depth + 1, &app_val, &result_ty)?;
 
     // PRESERVE Icit when creating lambda
-    Ok(Syntax::lambda_rc(icit, Binding::anonymous(body)))
+    let name_str = format!("{}", depth);
+    let name = Name::from_with_db(db, name_str);
+    Ok(Syntax::lambda_rc(icit, Binding::new(name, body)))
 }
 
 /// Trait for values that can be eta-expanded (neutrals with spines).
@@ -442,43 +459,48 @@ impl<'db> QuoteNeutral<'db> for Flex<'db> {
 /// This is TYPE-FREE structural quotation: we quote values without needing their types.
 /// This handles both types and terms (like DataConstructor values).
 pub fn type_quote<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::TypeConstructor(tcon) => quote_type_constructor(global, depth, tcon),
+        Value::TypeConstructor(tcon) => quote_type_constructor(db, global, depth, tcon),
         Value::DataConstructor(dcon) => {
             let dummy_tcon = TypeConstructor {
                 constructor: dcon.constructor,
                 arguments: vec![],
             };
-            quote_data_constructor(global, depth, dcon, &dummy_tcon)
+            quote_data_constructor(db, global, depth, dcon, &dummy_tcon)
         }
-        Value::HardwareUniverse(hwuniverse) => quote_hardware_universe(global, depth, hwuniverse),
-        Value::SLift(slift) => quote_slift(global, depth, slift),
-        Value::MLift(mlift) => quote_mlift(global, depth, mlift),
+        Value::HardwareUniverse(hwuniverse) => {
+            quote_hardware_universe(db, global, depth, hwuniverse)
+        }
+        Value::SLift(slift) => quote_slift(db, global, depth, slift),
+        Value::MLift(mlift) => quote_mlift(db, global, depth, mlift),
         Value::SignalUniverse(signal_universe) => {
-            quote_signal_universe(global, depth, signal_universe)
+            quote_signal_universe(db, global, depth, signal_universe)
         }
         Value::ModuleUniverse(module_universe) => {
-            quote_module_universe(global, depth, module_universe)
+            quote_module_universe(db, global, depth, module_universe)
         }
-        Value::Bit(bit) => quote_bit(global, depth, bit),
-        Value::HArrow(harrow) => quote_harrow(global, depth, harrow),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
-        Value::EqType(eq) => quote_eq_type(global, depth, eq),
+        Value::Bit(bit) => quote_bit(db, global, depth, bit),
+        Value::HArrow(harrow) => quote_harrow(db, global, depth, harrow),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
+        Value::EqType(eq) => quote_eq_type(db, global, depth, eq),
 
-        Value::UniverseCode(level) => quote_universe_code(global, depth, *level),
-        Value::PiCode(source, icit, target) => quote_pi_code(global, depth, source, *icit, target),
+        Value::UniverseCode(level) => quote_universe_code(db, global, depth, *level),
+        Value::PiCode(source, icit, target) => {
+            quote_pi_code(db, global, depth, source, *icit, target)
+        }
         Value::LiftCode(shift, inner_val) => {
-            let quoted_inner = type_quote(global, depth, inner_val)?;
+            let quoted_inner = type_quote(db, global, depth, inner_val)?;
             Ok(Rc::new(Syntax::LiftCode(*shift, quoted_inner)))
         }
-        Value::BitCode => quote_bit_code(global, depth),
+        Value::BitCode => quote_bit_code(db, global, depth),
 
         Value::Zero(_) => Ok(Syntax::zero_rc()),
         Value::One(_) => Ok(Syntax::one_rc()),
@@ -488,6 +510,7 @@ pub fn type_quote<'db>(
 }
 
 pub fn quote_universe_code<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     level: usize,
@@ -496,57 +519,73 @@ pub fn quote_universe_code<'db>(
 }
 
 pub fn quote_pi_code<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     source: &RcValue<'db>,
     icit: crate::common::Icit,
     target: &Closure<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let syn_source = type_quote(global, depth, source)?;
+    let syn_source = type_quote(db, global, depth, source)?;
 
     let arg = Value::variable_rc(Level::new(depth), source.clone());
     let sem_target = run_closure(global, target, [arg])?;
-    let syn_target = type_quote(global, depth + 1, &sem_target)?;
+    let syn_target = type_quote(db, global, depth + 1, &sem_target)?;
 
     let name_str = format!("{}", depth);
-    let name = Name::from_with_db(global.db, &name_str);
-    Ok(Rc::new(Syntax::PiCode(syn_source, icit, Binding::new(name, syn_target))))
+    let name = Name::from_with_db(db, name_str);
+    Ok(Rc::new(Syntax::PiCode(
+        syn_source,
+        icit,
+        Binding::new(name, syn_target),
+    )))
 }
 
-pub fn quote_bit_code<'db>(_global: &GlobalEnv<'db>, _depth: usize) -> Result<'db, RcSyntax<'db>> {
+pub fn quote_bit_code<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _depth: usize,
+) -> Result<'db, RcSyntax<'db>> {
     Ok(Rc::new(Syntax::BitCode))
 }
 
 pub fn quote_let<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     let_val: &val::Let<'db>,
     _expected_ty: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let syn_ty = quote_at_unknown_type(global, depth, &let_val.ty)?;
-    let syn_value = quote(global, depth, &let_val.value, &let_val.ty)?;
-    let syn_body = quote(global, depth + 1, &let_val.body, _expected_ty)?;
+    let syn_ty = quote_at_unknown_type(db, global, depth, &let_val.ty)?;
+    let syn_value = quote(db, global, depth, &let_val.value, &let_val.ty)?;
+    let syn_body = quote(db, global, depth + 1, &let_val.body, _expected_ty)?;
     let name_str = format!("{}", depth);
-    let name = Name::from_with_db(global.db, &name_str);
-    Ok(Syntax::let_rc(syn_ty, syn_value, Binding::new(name, syn_body)))
+    let name = Name::from_with_db(db, name_str);
+    Ok(Syntax::let_rc(
+        syn_ty,
+        syn_value,
+        Binding::new(name, syn_body),
+    ))
 }
 
 fn quote_at_unknown_type<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    type_quote(global, depth, value)
+    type_quote(db, global, depth, value)
 }
 
 pub fn quote_type_constructor<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     tcon: &TypeConstructor<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     let mut arguments = Vec::new();
     for sem_arg in tcon.iter() {
-        let syn_arg = type_quote(global, depth, sem_arg)?;
+        let syn_arg = type_quote(db, global, depth, sem_arg)?;
         arguments.push(syn_arg);
     }
 
@@ -554,6 +593,7 @@ pub fn quote_type_constructor<'db>(
 }
 
 pub fn quote_data_constructor<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     dcon: &val::DataConstructor<'db>,
@@ -561,7 +601,7 @@ pub fn quote_data_constructor<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     let mut arguments = Vec::new();
     for sem_arg in dcon.iter() {
-        let syn_arg = type_quote(global, depth, sem_arg)?;
+        let syn_arg = type_quote(db, global, depth, sem_arg)?;
         arguments.push(syn_arg);
     }
 
@@ -570,6 +610,7 @@ pub fn quote_data_constructor<'db>(
 
 /// Quote HardwareUniverse to syntax.
 pub fn quote_hardware_universe<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     _hwuniverse: &val::HardwareUniverse<'db>,
@@ -579,26 +620,29 @@ pub fn quote_hardware_universe<'db>(
 
 /// Quote SLift to syntax.
 pub fn quote_slift<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     slift: &val::SLift<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let ty = type_quote(global, depth, &slift.ty)?;
+    let ty = type_quote(db, global, depth, &slift.ty)?;
     Ok(Syntax::slift_rc(ty))
 }
 
 /// Quote MLift to syntax.
 pub fn quote_mlift<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     mlift: &val::MLift<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let ty = type_quote(global, depth, &mlift.ty)?;
+    let ty = type_quote(db, global, depth, &mlift.ty)?;
     Ok(Syntax::mlift_rc(ty))
 }
 
 /// Quote SignalUniverse to syntax.
 pub fn quote_signal_universe<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     _signal_universe: &val::SignalUniverse<'db>,
@@ -608,6 +652,7 @@ pub fn quote_signal_universe<'db>(
 
 /// Quote ModuleUniverse to syntax.
 pub fn quote_module_universe<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     _module_universe: &val::ModuleUniverse<'db>,
@@ -617,6 +662,7 @@ pub fn quote_module_universe<'db>(
 
 /// Quote Bit type to syntax.
 pub fn quote_bit<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     _bit: &val::Bit<'db>,
@@ -626,23 +672,25 @@ pub fn quote_bit<'db>(
 
 /// Quote HArrow to syntax.
 pub fn quote_harrow<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     harrow: &HArrow<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Quote the source type
-    let syn_source = type_quote(global, depth, &harrow.source)?;
+    let syn_source = type_quote(db, global, depth, &harrow.source)?;
 
     // Create a fresh variable for the binder
     let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
     let sem_target = run_closure(global, &harrow.target, [arg])?;
-    let syn_target = type_quote(global, depth + 1, &sem_target)?;
+    let syn_target = type_quote(db, global, depth + 1, &sem_target)?;
 
     Ok(Syntax::harrow_rc(syn_source, syn_target))
 }
 
 /// Quote a Lambda to syntax, using its PiCode type.
 pub fn quote_lambda<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     lambda: &val::Lambda<'db>,
@@ -657,16 +705,17 @@ pub fn quote_lambda<'db>(
     let body_val = run_closure(global, &lambda.body, [arg])?;
 
     // Quote the body at the result type
-    let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
+    let syn_body = quote(db, global, depth + 1, &body_val, &result_ty)?;
 
     // Generate a name based on depth for quoted lambdas (values don't have names)
     let name_str = format!("{}", depth);
-    let name = Name::from_with_db(global.db, &name_str);
+    let name = Name::from_with_db(db, name_str);
     Ok(Syntax::lambda_rc(lambda.icit, Binding::new(name, syn_body)))
 }
 
 /// Quote a Module to syntax, using its HArrow type.
 pub fn quote_module<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     module: &Module<'db>,
@@ -680,11 +729,11 @@ pub fn quote_module<'db>(
     let body_val = run_closure(global, &module.body, [arg])?;
 
     // Quote the body at the result type
-    let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
+    let syn_body = quote(db, global, depth + 1, &body_val, &result_ty)?;
 
     // Generate a name based on depth for quoted modules (values don't have names)
     let name_str = format!("{}", depth);
-    let name = Name::from_with_db(global.db, &name_str);
+    let name = Name::from_with_db(db, name_str);
     Ok(Syntax::module_rc(Binding::new(name, syn_body)))
 }
 // ============================================================================
@@ -693,6 +742,7 @@ pub fn quote_module<'db>(
 
 /// Quote a Prim to syntax.
 pub fn quote_prim<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     prim: &val::Prim<'db>,
@@ -702,6 +752,7 @@ pub fn quote_prim<'db>(
 
 /// Quote a Constant to syntax.
 pub fn quote_constant<'db>(
+    _db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     _depth: usize,
     constant: &val::Constant<'db>,
@@ -711,6 +762,7 @@ pub fn quote_constant<'db>(
 
 /// Quote a Rigid neutral to syntax.
 pub fn quote_rigid<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     rigid: &Rigid<'db>,
@@ -720,7 +772,7 @@ pub fn quote_rigid<'db>(
 
     // Apply each eliminator in the spine
     for eliminator in rigid.spine.iter() {
-        result = quote_eliminator(global, depth, result, eliminator)?;
+        result = quote_eliminator(db, global, depth, result, eliminator)?;
     }
 
     Ok(result)
@@ -728,16 +780,17 @@ pub fn quote_rigid<'db>(
 
 /// Quote a Flex neutral to syntax.
 pub fn quote_flex<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     flex: &Flex<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Start with the metavariable head
-    let mut result = quote_metavariable(global, depth, &flex.head)?;
+    let mut result = quote_metavariable(db, global, depth, &flex.head)?;
 
     // Apply each eliminator in the spine
     for eliminator in flex.spine.iter() {
-        result = quote_eliminator(global, depth, result, eliminator)?;
+        result = quote_eliminator(db, global, depth, result, eliminator)?;
     }
 
     Ok(result)
@@ -760,6 +813,7 @@ fn quote_variable<'db>(depth: usize, var: &val::Variable) -> RcSyntax<'db> {
 
 /// Quote a metavariable to syntax.
 fn quote_metavariable<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     meta: &val::MetaVariable<'db>,
@@ -777,8 +831,8 @@ fn quote_metavariable<'db>(
     // Quote each value in the local environment
     let mut substitution = Vec::new();
     for (value, syn_ty_binder) in meta.local.iter().zip(meta_info.arguments.iter()) {
-        let sem_ty = eval::eval(&mut env, &syn_ty_binder.value)?;
-        let quoted = quote(global, depth, value.as_ref(), &sem_ty)?;
+        let sem_ty = eval::eval(&mut env, &syn_ty_binder.ty)?;
+        let quoted = quote(db, global, depth, value.as_ref(), &sem_ty)?;
         substitution.push(quoted);
         env.push(value.clone());
     }
@@ -788,6 +842,7 @@ fn quote_metavariable<'db>(
 
 /// Quote an eliminator applied to a head term.
 fn quote_eliminator<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     head: RcSyntax<'db>,
@@ -795,11 +850,11 @@ fn quote_eliminator<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     match eliminator {
         Eliminator::Application(app) => {
-            let syn_arg = quote_normal(global, depth, &app.argument)?;
+            let syn_arg = quote_normal(db, global, depth, &app.argument)?;
             // PRESERVE Icit from eliminator
             Ok(Syntax::application_rc(head, syn_arg, app.icit))
         }
-        Eliminator::Case(case) => quote_case_eliminator(global, depth, head, case),
+        Eliminator::Case(case) => quote_case_eliminator(db, global, depth, head, case),
     }
 }
 // ============================================================================
@@ -811,6 +866,7 @@ fn quote_eliminator<'db>(
 /// Since we use a simple return type (not a motive), the return type is the same
 /// for all branches and doesn't depend on the scrutinee.
 fn quote_case_eliminator<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     syn_scrutinee: RcSyntax<'db>,
@@ -846,10 +902,16 @@ fn quote_case_eliminator<'db>(
 
         // Evaluate the branch body closure
         let branch_val = run_closure(global, &branch.body, dcon_args)?;
-        let branch_syn = quote(global, depth + branch.arity, &branch_val, &placeholder_ty)?;
+        let branch_syn = quote(
+            db,
+            global,
+            depth + branch.arity,
+            &branch_val,
+            &placeholder_ty,
+        )?;
         branches.push(CaseBranch::new(
             branch.constructor,
-            DynBinding::new(branch.arity, branch_syn),
+            DynBinding::new(db, branch.arity, branch_syn),
         ));
     }
 
@@ -864,6 +926,7 @@ fn quote_case_eliminator<'db>(
 /// Quote an instance of an equality type.
 /// At type `Eq A x y`, the instance is a proof of equality.
 pub fn quote_eq_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
@@ -871,29 +934,31 @@ pub fn quote_eq_instances<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         Value::Refl(_) => Ok(Syntax::refl_rc()),
-        Value::Transport(transport) => quote_transport(global, depth, transport, eq),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::Transport(transport) => quote_transport(db, global, depth, transport, eq),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Quote an equality type to syntax.
 pub fn quote_eq_type<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     eq: &val::EqType<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let ty = type_quote(global, depth, &eq.ty)?;
-    let lhs = quote(global, depth, &eq.lhs, &eq.ty)?;
-    let rhs = quote(global, depth, &eq.rhs, &eq.ty)?;
+    let ty = type_quote(db, global, depth, &eq.ty)?;
+    let lhs = quote(db, global, depth, &eq.lhs, &eq.ty)?;
+    let rhs = quote(db, global, depth, &eq.rhs, &eq.ty)?;
     Ok(Syntax::eq_rc(ty, lhs, rhs))
 }
 
 /// Quote a transport term to syntax.
 fn quote_transport<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     transport: &val::Transport<'db>,
@@ -903,16 +968,18 @@ fn quote_transport<'db>(
     // The motive is a closure with arity 1, so we quote it as a lambda
     let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
-    let motive_body = type_quote(global, depth + 1, &motive_result)?;
-    let motive = Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(motive_body));
+    let motive_body = type_quote(db, global, depth + 1, &motive_result)?;
+    let name_str = format!("{}", depth);
+    let name = Name::from_with_db(db, name_str);
+    let motive = Syntax::lambda_rc(Icit::Explicit, Binding::new(name, motive_body));
 
     // Quote the proof at the equality type
     let eq_ty = Value::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone());
-    let proof = quote(global, depth, &transport.proof, &eq_ty)?;
+    let proof = quote(db, global, depth, &transport.proof, &eq_ty)?;
 
     // Quote the value at the motive applied to lhs
     let lhs_ty = run_closure(global, &transport.motive, vec![eq.lhs.clone()])?;
-    let value = quote(global, depth, &transport.value, &lhs_ty)?;
+    let value = quote(db, global, depth, &transport.value, &lhs_ty)?;
 
     Ok(Syntax::transport_rc(motive, proof, value))
 }
@@ -966,38 +1033,38 @@ mod tests {
         fn quote_at(&self, term: &'db str, ty: &'db str) -> String {
             let term_val = self.eval(term);
             let ty_val = self.eval(ty);
-            let syntax = quote(&self.global, 0, &term_val, &ty_val).expect("quote failed");
+            let syntax = quote(self.db, &self.global, 0, &term_val, &ty_val).expect("quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
         /// Parse, evaluate a type, and type-quote, returning a string
         fn quote_type(&self, term: &'db str) -> String {
             let val = self.eval(term);
-            let syntax = type_quote(&self.global, 0, &val).expect("type_quote failed");
+            let syntax = type_quote(self.db, &self.global, 0, &val).expect("type_quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
         /// Quote a value at a type and return the printed string
         fn q(&self, value: &Value<'db>, ty: &Value<'db>) -> String {
-            let syntax = quote(&self.global, 0, value, ty).expect("quote failed");
+            let syntax = quote(self.db, &self.global, 0, value, ty).expect("quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
         /// Quote a value at a type at a specific depth and return the printed string
         fn q_depth(&self, depth: usize, value: &Value<'db>, ty: &Value<'db>) -> String {
-            let syntax = quote(&self.global, depth, value, ty).expect("quote failed");
+            let syntax = quote(self.db, &self.global, depth, value, ty).expect("quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
         /// Quote a type and return the printed string
         fn tq(&self, ty: &Value<'db>) -> String {
-            let syntax = type_quote(&self.global, 0, ty).expect("type_quote failed");
+            let syntax = type_quote(self.db, &self.global, 0, ty).expect("type_quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
         /// Quote a type at a specific depth and return the printed string
         fn tq_depth(&self, depth: usize, ty: &Value<'db>) -> String {
-            let syntax = type_quote(&self.global, depth, ty).expect("type_quote failed");
+            let syntax = type_quote(self.db, &self.global, depth, ty).expect("type_quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
@@ -1017,7 +1084,11 @@ mod tests {
         /// Create ∀ (x : U0) → U0 Pi type
         fn pi_u0_u0(&self) -> Value<'db> {
             let u0_stx: RcSyntax = Syntax::UniverseCode(0).into();
-            Value::PiCode(self.u0(), Icit::Explicit, Closure::new(LocalEnv::new(), u0_stx))
+            Value::PiCode(
+                self.u0(),
+                Icit::Explicit,
+                Closure::new(LocalEnv::new(), u0_stx),
+            )
         }
 
         /// Create identity closure (returns variable at index 0)
@@ -1192,8 +1263,8 @@ mod tests {
         // Pi types eta-expand neutrals: f : A → B becomes λx. f x
         let pi_ty = c.pi_u0_u0();
         let var = Value::variable(Level::new(0), Rc::new(pi_ty.clone()));
-        // λ %_ → %_[%_] (function applied to its argument, values use "_" names)
-        assert_eq!(c.q(&var, &pi_ty), "λ %_ → %_[%_]");
+        // λ %0 → %0[%0] (function applied to its argument, using depth-based names)
+        assert_eq!(c.q(&var, &pi_ty), "λ %0 → %0[%0]");
 
         // HArrow types do NOT eta-expand neutrals
         let harrow_ty = c.harrow_bit_bit();
@@ -1217,12 +1288,12 @@ mod tests {
 
         let nat_id = "Nat".into_with_db(&db);
         let nat = Value::type_constructor(nat_id, vec![]);
-        let syntax = quote(&global, 0, &nat, &u0).expect("quote");
+        let syntax = quote(&db, &global, 0, &nat, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "#[@/Nat]");
 
         let vec_id = "Vec".into_with_db(&db);
         let vec_bit = Value::type_constructor(vec_id, vec![Value::bit_rc()]);
-        let syntax = quote(&global, 0, &vec_bit, &u0).expect("quote");
+        let syntax = quote(&db, &global, 0, &vec_bit, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "#[@/Vec Bit]");
     }
 
@@ -1243,6 +1314,7 @@ mod tests {
         let unit_tcon = crate::val::TypeConstructor::new(unit_id, vec![]);
         let tt_dcon = Value::data_constructor(tt_id, vec![]);
         let syntax = quote_data_constructor(
+            &db,
             &global,
             0,
             match &tt_dcon {
@@ -1263,6 +1335,7 @@ mod tests {
     fn test_quote_metavariables() {
         use crate::common::MetaVariableId;
         use crate::test_utils::parse;
+        use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
@@ -1272,19 +1345,19 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
         let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_rc.clone());
-        let syntax = quote(&global, 0, &meta, &u0).expect("quote");
+        let syntax = quote(&db, &global, 0, &meta, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
 
         let meta_id2 = MetaVariableId::new(1);
         global.add_metavariable(
             meta_id2,
-            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            Telescope::from_pairs(vec![(Name::from_with_db(&db, "0"), parse(&db, "U0"))]),
             parse(&db, "U0"),
         );
         let mut local = LocalEnv::new();
         local.push(Value::bit_rc());
         let meta2 = Value::metavariable(meta_id2, local, u0_rc);
-        let syntax = quote(&global, 0, &meta2, &u0).expect("quote");
+        let syntax = quote(&db, &global, 0, &meta2, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[1 Bit]");
     }
 
@@ -1299,12 +1372,13 @@ mod tests {
 
         // ∀ (A : U0) → ∀ (x : A) → A
         let inner: RcSyntax = Syntax::PiCode(
-            Syntax::variable_rc(Index(0)),          // domain is A
+            Syntax::variable_rc(Index(0)), // domain is A
             Icit::Explicit,
-            Binding::anonymous(Syntax::variable_rc(Index(1))), // codomain is A
+            Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(1))), // codomain is A
         )
         .into();
-        let outer: RcValue = Value::PiCode(c.u0(), Icit::Explicit, Closure::new(LocalEnv::new(), inner)).into();
+        let outer: RcValue =
+            Value::PiCode(c.u0(), Icit::Explicit, Closure::new(LocalEnv::new(), inner)).into();
         // Note: Nested Pi types print with separate arrows
         assert_eq!(c.tq(&outer), "∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0");
     }
@@ -1465,10 +1539,14 @@ mod tests {
         let bool_type = parse_syntax(&db, "#[@Bool]").expect("parse bool type");
         let mut env_ty = Environment::new(&global);
         let bool_val = eval::eval(&mut env_ty, &bool_type).expect("eval bool type");
-        let fn_type = Value::PiCode(bool_val.clone(), Icit::Explicit, Closure::new(LocalEnv::new(), bool_type));
+        let fn_type = Value::PiCode(
+            bool_val.clone(),
+            Icit::Explicit,
+            Closure::new(LocalEnv::new(), bool_type),
+        );
 
         // Quote it back at its type
-        let quoted = quote(&global, 0, &val, &fn_type).expect("quote failed");
+        let quoted = quote(&db, &global, 0, &val, &fn_type).expect("quote failed");
 
         // Print both
         let original_str = print_syntax_to_string(&db, &stx);
@@ -1506,10 +1584,14 @@ mod tests {
         let nat_type = parse_syntax(&db, "#[@Nat]").expect("parse nat type");
         let mut env_ty = Environment::new(&global);
         let nat_val = eval::eval(&mut env_ty, &nat_type).expect("eval nat type");
-        let fn_type = Value::PiCode(nat_val.clone(), Icit::Explicit, Closure::new(LocalEnv::new(), nat_type));
+        let fn_type = Value::PiCode(
+            nat_val.clone(),
+            Icit::Explicit,
+            Closure::new(LocalEnv::new(), nat_type),
+        );
 
         // Quote it back at its type
-        let quoted = quote(&global, 0, &val, &fn_type).expect("quote failed");
+        let quoted = quote(&db, &global, 0, &val, &fn_type).expect("quote failed");
 
         // Print both
         let original_str = print_syntax_to_string(&db, &stx);
@@ -1517,9 +1599,9 @@ mod tests {
 
         // The NbE Identity Law: eval then quote should give us back the same term
         // (modulo alpha-equivalence and normalization)
-        // Note: Quoted values use depth-based names for lambdas and "_0", "_1" etc. for case pattern variables
+        // Note: Quoted values use depth-based names for lambdas and "v0", "v1" etc. for case pattern variables
         assert_eq!(
-            quoted_str, "λ %0 → %0 case { @/Zero => [@/Succ ([@/Zero])] | @/Succ %_0 => %_0 }",
+            quoted_str, "λ %0 → %0 case { @/Zero => [@/Succ ([@/Zero])] | @/Succ %v0 => %v0 }",
             "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );
@@ -1546,7 +1628,7 @@ mod tests {
         let val = eval::eval(&mut env, &stx).expect("eval failed");
 
         // The result should be a DataConstructor (False), which we can quote with type_quote
-        let quoted = type_quote(&global, 0, &val).expect("quote failed");
+        let quoted = type_quote(&db, &global, 0, &val).expect("quote failed");
         let result = print_syntax_to_string(&db, &quoted);
 
         // Should reduce to False
@@ -1579,7 +1661,7 @@ mod tests {
         let val = eval::eval(&mut env, &stx).expect("eval failed");
 
         // The result should be a DataConstructor (Zero), which we can quote with type_quote
-        let quoted = type_quote(&global, 0, &val).expect("quote failed");
+        let quoted = type_quote(&db, &global, 0, &val).expect("quote failed");
         let result = print_syntax_to_string(&db, &quoted);
 
         // Should reduce to Zero
@@ -1598,7 +1680,7 @@ mod tests {
         // LiftCode(1, UniverseCode(0)) should quote back to itself
         // This represents U_0 lifted to U_1 for universe polymorphism
         let val = Rc::new(Value::LiftCode(1, Rc::new(Value::UniverseCode(0))));
-        let quoted = type_quote(&global, 0, &val).expect("quote failed");
+        let quoted = type_quote(&db, &global, 0, &val).expect("quote failed");
 
         let expected = Rc::new(Syntax::LiftCode(1, Rc::new(Syntax::UniverseCode(0))));
         assert_eq!(
@@ -1628,7 +1710,7 @@ mod tests {
         let val = Rc::new(Value::LiftCode(1, Rc::new(inner)));
 
         // Should quote back identically (NbE identity law)
-        let quoted = type_quote(&global, 0, &val).expect("quote failed");
+        let quoted = type_quote(&db, &global, 0, &val).expect("quote failed");
 
         let expected_inner = Syntax::LiftCode(2, Rc::new(Syntax::UniverseCode(0)));
         let expected = Rc::new(Syntax::LiftCode(1, Rc::new(expected_inner)));
@@ -1667,7 +1749,7 @@ mod tests {
         let neutral_var = Value::variable(Level::new(0), pi_type.clone());
 
         // 3. Quote it at its type (triggers eta-expansion)
-        let quoted = quote(&c.global, 0, &neutral_var, &pi_type).expect("Quotation failed");
+        let quoted = quote(c.db, &c.global, 0, &neutral_var, &pi_type).expect("Quotation failed");
 
         // 4. Verify the resulting Syntax is a Lambda with an Implicit flag
         match quoted.as_ref() {

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use hwml_core::{Binding, Index, RcSyntax, RcValue, Syntax, Value};
+use hwml_core::{Binding, Index, Name, RcSyntax, RcValue, Syntax, Value};
 
 use crate::{
     constraint::Constraint,
@@ -72,40 +72,41 @@ pub fn zonk<'db>(state: &mut SolverState<'db>) -> Result<(), ElabError<'db>> {
 /// Convention for `Metavariable(id, [arg0,...,argN-1])` with solution body `sol`:
 /// - Substitute `Index(k) → args[N-1-k]` for `k in 0..N` in `sol`.
 pub fn substitute_metas_in_syntax<'db>(
+    db: &'db dyn salsa::Database,
     syn: &Syntax<'db>,
     state: &SolverState<'db>,
 ) -> RcSyntax<'db> {
-    subst_metas(syn, state)
+    subst_metas(db, syn, state)
 }
 
-fn subst_metas<'db>(syn: &Syntax<'db>, state: &SolverState<'db>) -> RcSyntax<'db> {
+fn subst_metas<'db>(db: &'db dyn salsa::Database, syn: &Syntax<'db>, state: &SolverState<'db>) -> RcSyntax<'db> {
     match syn {
         Syntax::Metavariable(meta) => {
             let id = MetaId(meta.id.local_index as u32);
-            let args: Vec<RcSyntax<'db>> = meta.iter().map(|a| subst_metas(a, state)).collect();
+            let args: Vec<RcSyntax<'db>> = meta.iter().map(|a| subst_metas(db, a, state)).collect();
             if let Some(sol_syn) = state.meta_solution_syntax(id) {
-                apply_syntax_solution(sol_syn, &args, 0)
+                apply_syntax_solution(db, sol_syn, &args, 0)
             } else {
                 Syntax::metavariable_rc(meta.id, args)
             }
         }
         Syntax::Lambda(lam) => {
-            let body = subst_metas(&lam.body.body, state);
-            Syntax::lambda_rc(lam.icit, Binding::anonymous(body))
+            let body = subst_metas(db, &lam.body.body, state);
+            Syntax::lambda_rc(lam.icit, Binding::new(lam.body.name, body))
         }
         Syntax::PiCode(dom, icit, binding) => {
             let cod = &binding.body;
-            let dom2 = subst_metas(dom, state);
-            let cod2 = subst_metas(cod, state);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding::anonymous(cod2)))
+            let dom2 = subst_metas(db, dom, state);
+            let cod2 = subst_metas(db, cod, state);
+            Rc::new(Syntax::PiCode(dom2, *icit, Binding::new(binding.name, cod2)))
         }
         Syntax::Application(app) => {
-            let fun = subst_metas(&app.function, state);
-            let arg = subst_metas(&app.argument, state);
+            let fun = subst_metas(db, &app.function, state);
+            let arg = subst_metas(db, &app.argument, state);
             Syntax::application_rc(fun, arg, app.icit)
         }
         Syntax::LiftCode(n, inner) => {
-            let inner2 = subst_metas(inner, state);
+            let inner2 = subst_metas(db, inner, state);
             Rc::new(Syntax::LiftCode(*n, inner2))
         }
         _ => Rc::new(syn.clone()),
@@ -118,6 +119,7 @@ fn subst_metas<'db>(syn: &Syntax<'db>, state: &SolverState<'db>) -> RcSyntax<'db
 /// Convention: `Index(k)` in `sol_body` → `args[N-1-k]`.
 /// `extra_depth` tracks how many extra lambda binders we've entered inside `sol_body`.
 fn apply_syntax_solution<'db>(
+    db: &'db dyn salsa::Database,
     sol_body: &Syntax<'db>,
     args: &[RcSyntax<'db>],
     extra_depth: usize,
@@ -138,7 +140,7 @@ fn apply_syntax_solution<'db>(
                     // Substitution target: Index(k) → args[N-1-k].
                     let arg = &args[n - 1 - adjusted];
                     // Shift free vars in arg up by extra_depth.
-                    shift_syntax_free(arg, extra_depth, 0)
+                    shift_syntax_free(db, arg, extra_depth, 0)
                 } else {
                     // Outer free variable: shift down by N (the args are removed).
                     Syntax::variable_rc(Index(idx - n))
@@ -146,25 +148,25 @@ fn apply_syntax_solution<'db>(
             }
         }
         Syntax::Lambda(lam) => {
-            let body = apply_syntax_solution(&lam.body.body, args, extra_depth + 1);
-            Syntax::lambda_rc(lam.icit, Binding::anonymous(body))
+            let body = apply_syntax_solution(db, &lam.body.body, args, extra_depth + 1);
+            Syntax::lambda_rc(lam.icit, Binding::new(lam.body.name, body))
         }
         Syntax::PiCode(dom, icit, binding) => {
             let cod = &binding.body;
-            let dom2 = apply_syntax_solution(dom, args, extra_depth);
-            let cod2 = apply_syntax_solution(cod, args, extra_depth + 1);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding::anonymous(cod2)))
+            let dom2 = apply_syntax_solution(db, dom, args, extra_depth);
+            let cod2 = apply_syntax_solution(db, cod, args, extra_depth + 1);
+            Rc::new(Syntax::PiCode(dom2, *icit, Binding::new(binding.name, cod2)))
         }
         Syntax::Application(app) => {
-            let fun = apply_syntax_solution(&app.function, args, extra_depth);
-            let arg = apply_syntax_solution(&app.argument, args, extra_depth);
+            let fun = apply_syntax_solution(db, &app.function, args, extra_depth);
+            let arg = apply_syntax_solution(db, &app.argument, args, extra_depth);
             Syntax::application_rc(fun, arg, app.icit)
         }
         Syntax::Metavariable(meta) => {
             // Nested meta (e.g. from pruning): substitute its args too.
             let new_args: Vec<RcSyntax<'db>> = meta
                 .iter()
-                .map(|a| apply_syntax_solution(a, args, extra_depth))
+                .map(|a| apply_syntax_solution(db, a, args, extra_depth))
                 .collect();
             Syntax::metavariable_rc(meta.id, new_args)
         }
@@ -174,7 +176,7 @@ fn apply_syntax_solution<'db>(
 
 /// Shift all free (unbound) variables in `syn` upward by `shift`.
 /// `cutoff` = number of locally-bound variables at the current position.
-fn shift_syntax_free<'db>(syn: &Syntax<'db>, shift: usize, cutoff: usize) -> RcSyntax<'db> {
+fn shift_syntax_free<'db>(db: &'db dyn salsa::Database, syn: &Syntax<'db>, shift: usize, cutoff: usize) -> RcSyntax<'db> {
     if shift == 0 {
         return Rc::new(syn.clone());
     }
@@ -187,18 +189,18 @@ fn shift_syntax_free<'db>(syn: &Syntax<'db>, shift: usize, cutoff: usize) -> RcS
             }
         }
         Syntax::Lambda(lam) => {
-            let body = shift_syntax_free(&lam.body.body, shift, cutoff + 1);
-            Syntax::lambda_rc(lam.icit, Binding::anonymous(body))
+            let body = shift_syntax_free(db, &lam.body.body, shift, cutoff + 1);
+            Syntax::lambda_rc(lam.icit, Binding::new(lam.body.name, body))
         }
         Syntax::PiCode(dom, icit, binding) => {
             let cod = &binding.body;
-            let dom2 = shift_syntax_free(dom, shift, cutoff);
-            let cod2 = shift_syntax_free(cod, shift, cutoff + 1);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding::anonymous(cod2)))
+            let dom2 = shift_syntax_free(db, dom, shift, cutoff);
+            let cod2 = shift_syntax_free(db, cod, shift, cutoff + 1);
+            Rc::new(Syntax::PiCode(dom2, *icit, Binding::new(binding.name, cod2)))
         }
         Syntax::Application(app) => {
-            let fun = shift_syntax_free(&app.function, shift, cutoff);
-            let arg = shift_syntax_free(&app.argument, shift, cutoff);
+            let fun = shift_syntax_free(db, &app.function, shift, cutoff);
+            let arg = shift_syntax_free(db, &app.argument, shift, cutoff);
             Syntax::application_rc(fun, arg, app.icit)
         }
         _ => Rc::new(syn.clone()),

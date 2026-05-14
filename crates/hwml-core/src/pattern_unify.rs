@@ -107,7 +107,7 @@ pub fn unify_pattern<'db>(
             local: local.clone(),
             transparent: TransparentEnv::new(),
         };
-        let ty = eval::eval(&mut env, &ty_binder.value)?;
+        let ty = eval::eval(&mut env, &ty_binder.ty)?;
         let rigid_var = Value::variable_rc(Level::new(current_depth), ty.clone());
         new_bindings.push(PatternBinding { name: None, ty });
         local.push(rigid_var);
@@ -398,7 +398,7 @@ fn unify_equations<'db>(
                         rhs_dcon.arguments.iter(),
                         data_info.arguments.iter()
                     ) {
-                        let arg_ty = eval::eval(&mut env, &ty_binder.value)?;
+                        let arg_ty = eval::eval(&mut env, &ty_binder.ty)?;
                         work_list.push((l.clone(), r.clone(), arg_ty.clone()));
                         // Extend environment with the left argument for dependent types
                         env.push(l.clone());

@@ -4,7 +4,7 @@ use std::{
 };
 
 use hwml_core::{
-    Binding, Index, Level, MetaVariableId, RcSyntax, RcValue, Syntax, Value,
+    Binding, Index, Level, MetaVariableId, Name, RcSyntax, RcValue, Syntax, Value,
     ty::{RcTy, Ty},
     val::{Closure, DataConstructor, EqType, Eliminator, Flex, GlobalEnv, LocalEnv, Normal, Rigid,
           Spine, TypeConstructor, Variable},
@@ -23,6 +23,7 @@ use crate::{
 /// Returns `Ok(true)` on success, `Ok(false)` if not a pattern (non-linear or rhs out-of-scope).
 /// Returns `Err` only for hard failures: occurs-check or scope violation with no valid fallback.
 pub fn pattern_unify<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     state: &mut SolverState<'db>,
     flex: &Flex<'db>,
@@ -68,14 +69,14 @@ pub fn pattern_unify<'db>(
     }
 
     // Produce the syntax solution (closed term in meta scope, de Bruijn indexed).
-    let syntax_sol = match pattern_quote(global, state, &rhs, &rename, &ambiguous, meta_id, arity, arity) {
+    let syntax_sol = match pattern_quote(db, global, state, &rhs, &rename, &ambiguous, meta_id, arity, arity) {
         Ok(s) => s,
         Err(RenameError::Hard(e)) => return Err(e),
         Err(RenameError::Soft) => return Ok(false),
     };
 
     // Produce the value solution (for fast force_flex via subst_value).
-    let value_sol = match rename_value(global, state, &rhs, &rename, &ambiguous, meta_id) {
+    let value_sol = match rename_value(db, global, state, &rhs, &rename, &ambiguous, meta_id) {
         Ok(v) => v,
         Err(RenameError::Hard(e)) => return Err(e),
         Err(RenameError::Soft) => return Ok(false),
@@ -96,6 +97,7 @@ enum RenameError<'db> {
 /// Traverse `val`, replacing outer-scope variables with their de Bruijn indices
 /// in the meta's solution scope.
 fn pattern_quote<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     state: &mut SolverState<'db>,
     val: &Value<'db>,
@@ -141,7 +143,7 @@ fn pattern_quote<'db>(
                 match elim {
                     Eliminator::Application(app) => {
                         let arg_syn = pattern_quote(
-                            global, state, &app.argument.value,
+                            db, global, state, &app.argument.value,
                             rename, ambiguous, meta_id, arity, outer_depth,
                         )?;
                         result = Syntax::application_rc(result, arg_syn, app.icit);
@@ -166,7 +168,7 @@ fn pattern_quote<'db>(
             let forced = state.force_flex(global, flex2);
             if let Some(forced_val) = forced {
                 return pattern_quote(
-                    global, state, &forced_val,
+                    db, global, state, &forced_val,
                     rename, ambiguous, meta_id, arity, outer_depth,
                 );
             }
@@ -174,30 +176,30 @@ fn pattern_quote<'db>(
             if !flex2.spine.is_empty() {
                 return Err(RenameError::Soft);
             }
-            prune_flex_quote(global, state, flex2, flex2_id, rename, ambiguous, meta_id, arity)
+            prune_flex_quote(db, global, state, flex2, flex2_id, rename, ambiguous, meta_id, arity)
         }
 
         Value::UniverseCode(n) => Ok(Rc::new(Syntax::UniverseCode(*n))),
 
         Value::Lambda(lam) => {
             let body_syn = pattern_quote_closure(
-                global, state, &lam.body, rename, ambiguous, meta_id, arity, outer_depth,
+                db, global, state, &lam.body, rename, ambiguous, meta_id, arity, outer_depth,
             )?;
-            Ok(Syntax::lambda_rc(lam.icit, Binding::anonymous(body_syn)))
+            Ok(Syntax::lambda_rc(lam.icit, Binding::new(Name::anonymous(db), body_syn)))
         }
 
         Value::PiCode(dom, icit, cod) => {
             let dom_syn =
-                pattern_quote(global, state, dom, rename, ambiguous, meta_id, arity, outer_depth)?;
+                pattern_quote(db, global, state, dom, rename, ambiguous, meta_id, arity, outer_depth)?;
             let cod_syn = pattern_quote_closure(
-                global, state, cod, rename, ambiguous, meta_id, arity, outer_depth,
+                db, global, state, cod, rename, ambiguous, meta_id, arity, outer_depth,
             )?;
-            Ok(Rc::new(Syntax::PiCode(dom_syn, *icit, Binding::anonymous(cod_syn))))
+            Ok(Rc::new(Syntax::PiCode(dom_syn, *icit, Binding::new(Name::anonymous(db), cod_syn))))
         }
 
         Value::LiftCode(n, inner) => {
             let inner_syn =
-                pattern_quote(global, state, inner, rename, ambiguous, meta_id, arity, outer_depth)?;
+                pattern_quote(db, global, state, inner, rename, ambiguous, meta_id, arity, outer_depth)?;
             Ok(Rc::new(Syntax::LiftCode(*n, inner_syn)))
         }
 
@@ -209,6 +211,7 @@ fn pattern_quote<'db>(
 
 /// Quote a closure body: apply to a fresh variable, extend rename, recurse.
 fn pattern_quote_closure<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     state: &mut SolverState<'db>,
     clos: &Closure<'db>,
@@ -230,6 +233,7 @@ fn pattern_quote_closure<'db>(
     ext_rename.insert(Level::new(outer_depth), arity);
 
     pattern_quote(
+        db,
         global,
         state,
         &body_val,
@@ -247,6 +251,7 @@ fn pattern_quote_closure<'db>(
 /// Creates a fresh `?m'`, solves `flex2 ← λ(n). ?m'[kept]`, and returns the
 /// syntax for `?m'[renamed_kept_args]` in meta scope.
 fn prune_flex_quote<'db>(
+    db: &'db dyn salsa::Database,
     _global: &GlobalEnv<'db>,
     state: &mut SolverState<'db>,
     flex2: &Flex<'db>,
@@ -293,7 +298,7 @@ fn prune_flex_quote<'db>(
     let dummy_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
     let new_meta_id = state.fresh_meta(dummy_ty, kept.len(), MetaKind::Term);
 
-    let syn_sol = intersection_syntax_solution(new_meta_id, flex2_arity, &kept);
+    let syn_sol = intersection_syntax_solution(db, new_meta_id, flex2_arity, &kept);
     let val_sol = intersection_value_solution(new_meta_id, &kept);
     state.solve_meta(flex2_id, syn_sol, val_sol)
         .map_err(RenameError::Hard)?;
@@ -306,6 +311,7 @@ fn prune_flex_quote<'db>(
 // ─── rename_value: Value → Value in meta scope (for force_flex caching) ──────
 
 fn rename_value<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     state: &mut SolverState<'db>,
     val: &Value<'db>,
@@ -322,7 +328,7 @@ fn rename_value<'db>(
             }
             match rename.get(&level) {
                 Some(&pos) => {
-                    let new_ty = rename_value(global, state, &rigid.ty, rename, ambiguous, meta_id)?;
+                    let new_ty = rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
                     Ok(Rc::new(Value::variable(Level::new(pos), new_ty)))
                 }
                 None => Err(RenameError::Hard(ElabError::ScopeViolation {
@@ -347,16 +353,16 @@ fn rename_value<'db>(
                     elab_backtrace: Vec::new(),
                 })),
             };
-            let new_ty = rename_value(global, state, &rigid.ty, rename, ambiguous, meta_id)?;
+            let new_ty = rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
             // Rebuild spine with renamed args.
             let mut new_elims = Vec::with_capacity(rigid.spine.len());
             for elim in rigid.spine.iter() {
                 match elim {
                     Eliminator::Application(app) => {
                         let new_arg_ty =
-                            rename_value(global, state, &app.argument.ty, rename, ambiguous, meta_id)?;
+                            rename_value(db, global, state, &app.argument.ty, rename, ambiguous, meta_id)?;
                         let new_arg_val =
-                            rename_value(global, state, &app.argument.value, rename, ambiguous, meta_id)?;
+                            rename_value(db, global, state, &app.argument.value, rename, ambiguous, meta_id)?;
                         new_elims.push(Eliminator::application(Normal::new(new_arg_ty, new_arg_val), app.icit));
                     }
                     _ => return Err(RenameError::Soft),
@@ -383,41 +389,41 @@ fn rename_value<'db>(
             // If solved: force and recurse.
             let forced = state.force_flex(global, flex2);
             if let Some(forced_val) = forced {
-                return rename_value(global, state, &forced_val, rename, ambiguous, meta_id);
+                return rename_value(db, global, state, &forced_val, rename, ambiguous, meta_id);
             }
             if !flex2.spine.is_empty() {
                 return Err(RenameError::Soft);
             }
-            prune_flex_rename(state, flex2, flex2_id, rename, ambiguous, meta_id)
+            prune_flex_rename(db, state, flex2, flex2_id, rename, ambiguous, meta_id)
         }
 
         Value::Lambda(lam) => {
-            let new_clos = rename_closure(global, state, &lam.body, rename, ambiguous, meta_id)?;
+            let new_clos = rename_closure(db, global, state, &lam.body, rename, ambiguous, meta_id)?;
             Ok(Value::lambda_rc(lam.icit, new_clos))
         }
         Value::PiCode(dom, icit, cod) => {
-            let new_dom = rename_value(global, state, dom, rename, ambiguous, meta_id)?;
-            let new_cod = rename_closure(global, state, cod, rename, ambiguous, meta_id)?;
+            let new_dom = rename_value(db, global, state, dom, rename, ambiguous, meta_id)?;
+            let new_cod = rename_closure(db, global, state, cod, rename, ambiguous, meta_id)?;
             Ok(Rc::new(Value::PiCode(new_dom, *icit, new_cod)))
         }
         Value::LiftCode(n, inner) => {
-            let new_inner = rename_value(global, state, inner, rename, ambiguous, meta_id)?;
+            let new_inner = rename_value(db, global, state, inner, rename, ambiguous, meta_id)?;
             Ok(Rc::new(Value::LiftCode(*n, new_inner)))
         }
         Value::TypeConstructor(tc) => {
             let new_args: Result<Vec<_>, _> =
-                tc.iter().map(|a| rename_value(global, state, a, rename, ambiguous, meta_id)).collect();
+                tc.iter().map(|a| rename_value(db, global, state, a, rename, ambiguous, meta_id)).collect();
             Ok(Rc::new(Value::TypeConstructor(TypeConstructor::new(tc.constructor, new_args?))))
         }
         Value::DataConstructor(dc) => {
             let new_args: Result<Vec<_>, _> =
-                dc.iter().map(|a| rename_value(global, state, a, rename, ambiguous, meta_id)).collect();
+                dc.iter().map(|a| rename_value(db, global, state, a, rename, ambiguous, meta_id)).collect();
             Ok(Rc::new(Value::DataConstructor(DataConstructor::new(dc.constructor, new_args?))))
         }
         Value::EqType(eq) => {
-            let new_ty = rename_value(global, state, &eq.ty, rename, ambiguous, meta_id)?;
-            let new_lhs = rename_value(global, state, &eq.lhs, rename, ambiguous, meta_id)?;
-            let new_rhs = rename_value(global, state, &eq.rhs, rename, ambiguous, meta_id)?;
+            let new_ty = rename_value(db, global, state, &eq.ty, rename, ambiguous, meta_id)?;
+            let new_lhs = rename_value(db, global, state, &eq.lhs, rename, ambiguous, meta_id)?;
+            let new_rhs = rename_value(db, global, state, &eq.rhs, rename, ambiguous, meta_id)?;
             Ok(Rc::new(Value::EqType(EqType::new(new_ty, new_lhs, new_rhs))))
         }
         Value::UniverseCode(_)
@@ -437,6 +443,7 @@ fn rename_value<'db>(
 
 /// Prune `flex2` (value side): same logic as `prune_flex_quote` but returns a `RcValue`.
 fn prune_flex_rename<'db>(
+    db: &'db dyn salsa::Database,
     state: &mut SolverState<'db>,
     flex2: &Flex<'db>,
     flex2_id: MetaId,
@@ -485,7 +492,7 @@ fn prune_flex_rename<'db>(
     let dummy_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
     let new_meta_id = state.fresh_meta(dummy_ty, kept.len(), MetaKind::Term);
 
-    let syn_sol = intersection_syntax_solution(new_meta_id, flex2_arity, &kept);
+    let syn_sol = intersection_syntax_solution(db, new_meta_id, flex2_arity, &kept);
     let val_sol = intersection_value_solution(new_meta_id, &kept);
     state.solve_meta(flex2_id, syn_sol, val_sol)
         .map_err(RenameError::Hard)?;
@@ -499,6 +506,7 @@ fn prune_flex_rename<'db>(
 }
 
 fn rename_closure<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     state: &mut SolverState<'db>,
     clos: &Closure<'db>,
@@ -509,7 +517,7 @@ fn rename_closure<'db>(
     let mut new_local = LocalEnv::new();
     for i in 0..clos.local.depth() {
         let v = clos.local.get(Level::new(i));
-        new_local.push(rename_value(global, state, v, rename, ambiguous, meta_id)?);
+        new_local.push(rename_value(db, global, state, v, rename, ambiguous, meta_id)?);
     }
     Ok(Closure::new(new_local, clos.term.clone()))
 }

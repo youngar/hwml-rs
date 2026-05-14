@@ -168,7 +168,7 @@ impl<'a, 'db> Solver<'a, 'db> {
         if try_identity(self.global, depth, &lhs_f, &rhs_f, &ty_f) {
             // Solve the witness meta to the common value (anti-unification).
             // Convert lhs_f back to syntax for the meta solution.
-            if let Ok(lhs_syntax) = type_quote(self.global, depth, &lhs_f) {
+            if let Ok(lhs_syntax) = type_quote(self.db, self.global, depth, &lhs_f) {
                 let _ = self.state.solve_meta(witness, lhs_syntax, lhs_f.clone());
             }
             self.state.mark_solved(cid);
@@ -178,7 +178,7 @@ impl<'a, 'db> Solver<'a, 'db> {
         // Step 3: run the unifier (handles eta, pattern unification, flex-rigid)
         // Note: unifier now expects homogeneous equality (same type for both sides)
         let result = {
-            let mut unifier = Unifier::new(self.global, self.state, depth);
+            let mut unifier = Unifier::new(self.db, self.global, self.state, depth);
             unifier.unify(lhs_f.clone(), rhs_f.clone(), ty_f.clone())
         };
         match result? {
@@ -187,7 +187,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                 let lhs_f2 = force_deep(self.state, self.global, lhs_f.clone());
                 let rhs_f2 = force_deep(self.state, self.global, rhs_f.clone());
                 if try_identity(self.global, depth, &lhs_f2, &rhs_f2, &ty_f) {
-                    if let Ok(lhs_syntax) = type_quote(self.global, depth, &lhs_f2) {
+                    if let Ok(lhs_syntax) = type_quote(self.db, self.global, depth, &lhs_f2) {
                         let _ = self.state.solve_meta(witness, lhs_syntax, lhs_f2);
                     }
                     self.state.mark_solved(cid);

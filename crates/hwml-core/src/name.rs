@@ -101,11 +101,10 @@ where
         return Err(NameError::ConsecutiveUnderscores(text.to_string()));
     }
 
-    // Special case: standalone underscore (pattern wildcard)
+    // Special case: standalone underscore is not allowed as a valid identifier
+    // Use Name::anonymous(db) for anonymous binders instead
     if text == "_" {
-        let word = Word::new(db, "_");
-        let atom = Atom::new(word);
-        return Ok(Name::new(db, Fixity::Closed, Box::from([atom])));
+        return Err(NameError::WildcardAsIdentifier);
     }
 
     let starts_with_underscore = text.starts_with('_');
@@ -144,6 +143,15 @@ pub struct Name {
 }
 
 impl<'db> Name<'db> {
+    /// Create an anonymous name (empty name with no parts).
+    /// Anonymous names should be printed as %level where level is the De Bruijn level.
+    pub fn anonymous<Db>(db: &'db Db) -> Self
+    where
+        Db: salsa::Database + ?Sized,
+    {
+        Name::new(db, Fixity::Closed, Box::from([]))
+    }
+
     pub fn to_string(&self, db: &'db dyn salsa::Database) -> String {
         let fixity = self.fixity(db);
         let mut s = String::new();
@@ -345,10 +353,9 @@ mod tests {
     #[test]
     fn test_str_to_name_standalone_underscore() {
         let db = TestDatabase::default();
-        let name = str_to_name(&db, "_").unwrap();
-        assert_eq!(name.fixity(&db), Fixity::Closed);
-        assert_eq!(name.len(&db), 1);
-        assert_eq!(name.parts(&db)[0].text(&db), "_");
+        // "_" is now rejected as a valid Name
+        let result = str_to_name(&db, "_");
+        assert!(matches!(result, Err(NameError::WildcardAsIdentifier)));
     }
 
     #[test]
@@ -391,7 +398,7 @@ mod tests {
             "factorial_",
             "my_var",
             "_if_then_else_",
-            "_",
+            // "_" is now rejected as WildcardAsIdentifier
         ];
 
         for input in test_cases {
@@ -399,6 +406,10 @@ mod tests {
             let output = name.to_string(&db);
             assert_eq!(input, output, "Roundtrip failed for '{}'", input);
         }
+
+        // Test that "_" is properly rejected
+        let result = str_to_name(&db, "_");
+        assert!(matches!(result, Err(NameError::WildcardAsIdentifier)));
     }
 
     #[test]
@@ -494,12 +505,22 @@ mod tests {
     }
 
     #[test]
-    fn test_single_underscore_allowed_as_wildcard() {
+    fn test_single_underscore_rejected() {
         let db = TestDatabase::default();
-        // Single underscore is valid as a pattern wildcard
+        // Single underscore is not allowed as a valid identifier
         let result = str_to_name(&db, "_");
-        assert!(result.is_ok());
-        let name = result.unwrap();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), NameError::WildcardAsIdentifier));
+    }
+
+    #[test]
+    fn test_anonymous_name() {
+        let db = TestDatabase::default();
+        // Anonymous name has no parts
+        let name = Name::anonymous(&db);
         assert_eq!(name.fixity(&db), Fixity::Closed);
+        assert_eq!(name.len(&db), 0);
+        assert!(name.is_empty(&db));
+        assert_eq!(name.to_string(&db), "");
     }
 }

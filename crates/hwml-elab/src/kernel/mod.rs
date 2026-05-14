@@ -10,6 +10,7 @@ use hwml_core::{
     },
     Binding, Index, Level, Name, QualifiedName, RcSyntax, RcValue, Source, SourceInfo, Syntax, Value, Word,
 };
+use hwml_support::FromWithDb;
 use hwml_surface::Expression;
 
 use crate::{
@@ -105,6 +106,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
     /// For example, `List` has type `(A : Type) → Type`.
     pub fn synth_type_constructor(
         &self,
+        db: &'db dyn salsa::Database,
         name: QualifiedName<'db>,
         info: &TypeConstructorInfo<'db>,
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
@@ -119,7 +121,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             self.eval_syn_flex(&universe_syn)
         } else {
             // Has parameters: build a Pi type from the telescope
-            self.build_pi_type_from_telescope(&info.arguments, info.level.into())
+            self.build_pi_type_from_telescope(db, &info.arguments, info.level.into())
         };
 
         Ok(Checked::new((syn, Rc::new(Ty::El(ty_val)))))
@@ -220,7 +222,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                             span: None,
                             elab_backtrace: Vec::new(),
                         })?;
-                self.synth_type_constructor(qname, info)
+                self.synth_type_constructor(db, qname, info)
             }
             GlobalNameKind::DataConstructor => {
                 let info =
@@ -513,7 +515,12 @@ impl<'a, 'db> Kernel<'a, 'db> {
 
         // Wrap in a lambda binding with the correct icit from the Pi type.
         // This implements Phase 3: automatic implicit lambda insertion!
-        let lambda_syn = Syntax::lambda_rc(icit, Binding::anonymous(body_syn));
+        let binder_name = if name == "_" {
+            Name::anonymous(db)
+        } else {
+            Name::from_with_db(db, name)
+        };
+        let lambda_syn = Syntax::lambda_rc(icit, Binding::new(binder_name, body_syn));
         Ok(Checked::new(lambda_syn))
     }
 
@@ -738,6 +745,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
     /// For example, `List` with parameter `(A : Type)` gets type `(A : Type) -> Type`.
     fn build_pi_type_from_telescope(
         &self,
+        db: &'db dyn salsa::Database,
         telescope: &hwml_core::syn::Telescope<'db>,
         result_level: usize,
     ) -> RcValue<'db> {
@@ -754,8 +762,8 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let mut result = result_ty;
 
         // Process bindings in reverse order to build the nested Pi
-        for (idx, binder) in telescope.iter().enumerate().rev() {
-            let binding_syn = &binder.value;
+        for (idx, cell) in telescope.iter().enumerate().rev() {
+            let binding_syn = &cell.ty;
             // Evaluate this binding's type in the environment with all previous bindings
             // For simplicity, we create a fresh environment with variables for preceding bindings
             let mut env = hwml_core::val::Environment {
@@ -766,7 +774,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
 
             // Push placeholder variables for all preceding bindings (indices 0..idx)
             for i in 0..idx {
-                let preceding_binding = &telescope.binders[i].value;
+                let preceding_binding = &telescope.cells[i].ty;
                 // Evaluate the preceding binding's type
                 let preceding_ty = match hwml_core::eval::eval(&mut env, preceding_binding) {
                     Ok(ty) => ty,
@@ -792,7 +800,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             // Build a closure for the codomain
             // The closure body is the `result` we're building up
             // But we need it as syntax, so we quote it back
-            let cod_syn = match hwml_core::quote::type_quote(self.global, idx, &result) {
+            let cod_syn = match hwml_core::quote::type_quote(db, self.global, idx, &result) {
                 Ok(syn) => syn,
                 Err(_) => {
                     // Fallback: use UniverseCode(result_level)

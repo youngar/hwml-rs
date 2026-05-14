@@ -94,7 +94,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.push_var(ty);
         let body = f(self);
         self.truncate(depth);
-        Binding::anonymous(self.db, body)
+        Binding::new(Name::anonymous(self.db), body)
     }
 
     #[allow(dead_code)]
@@ -147,7 +147,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         }
 
         for k in 0..self.types.len() {
-            let quoted_ty = quote::type_quote(self.values.global, k, &self.types[k])?;
+            let quoted_ty = quote::type_quote(self.db, self.values.global, k, &self.types[k])?;
             let mut historical_env = self.values.clone();
             historical_env.truncate(k);
             let new_ty = eval::eval(&mut historical_env, &quoted_ty)?;
@@ -477,9 +477,10 @@ pub fn type_synth_metavariable<'db, 'g>(
             local: local_env.clone(),
             transparent: val::TransparentEnv::new(),
         };
-        let expected_ty = eval::eval(&mut temp_env, &arg_ty_binder.value).map_err(|_| Error::BadSynth {
-            tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
-        })?;
+        let expected_ty =
+            eval::eval(&mut temp_env, &arg_ty_binder.ty).map_err(|_| Error::BadSynth {
+                tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
+            })?;
 
         // Check the argument against the expected type.
         type_check(env, arg, &expected_ty)?;
@@ -513,7 +514,11 @@ pub fn type_synth_application<'db, 'g>(
     // NEW: Ensure that the applied term is a function `(x : src) -> tgt(x)` using PiCode.
     let Value::PiCode(source, _icit, target) = &*fun_ty else {
         return Err(Error::BadElim {
-            tm: Syntax::application_rc(application.function.clone(), application.argument.clone(), application.icit),
+            tm: Syntax::application_rc(
+                application.function.clone(),
+                application.argument.clone(),
+                application.icit,
+            ),
             ty_got: fun_ty,
         });
     };
@@ -630,7 +635,7 @@ pub fn type_check_case<'db, 'g>(
                     Rc::new(expected_type.clone())
                 } else {
                     let quoted_expected =
-                        quote::type_quote(env.values.global, branch_depth, expected_type)?;
+                        quote::type_quote(env.db, env.values.global, branch_depth, expected_type)?;
                     let mut eval_env = env.values.clone();
                     eval::eval(&mut eval_env, &quoted_expected)?
                 };
@@ -757,7 +762,7 @@ fn type_check_type_constructor<'db, 'g>(
             };
 
             for (arg, arg_ty_binder) in tcon.arguments.iter().zip(&tcon_info.arguments) {
-                let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.value)?;
+                let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.ty)?;
                 type_check(env, arg, &sem_arg_ty)?;
                 let sem_arg = eval::eval(&mut env.values, arg)?;
                 ty_env.push(sem_arg);
@@ -802,7 +807,7 @@ fn type_check_data_constructor<'db, 'g>(
             // TODO: check that we have the correct number of arguments.
 
             for (arg, arg_ty_binder) in dc.arguments.iter().zip(&dc_info.arguments) {
-                let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.value)?;
+                let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.ty)?;
                 type_check(env, arg, &sem_arg_ty)?;
                 let sem_arg = eval::eval(&mut env.values, arg)?;
                 ty_env.push(sem_arg);
@@ -1117,7 +1122,11 @@ fn type_synth_transport<'db, 'g>(
     // For simplicity, we use U0 here.
     let universe_syntax = Rc::new(Syntax::UniverseCode(0));
     let constant_closure = val::Closure::new(LocalEnv::new(), universe_syntax);
-    let motive_expected_ty = Rc::new(Value::PiCode(eq_ty.ty.clone(), Icit::Explicit, constant_closure));
+    let motive_expected_ty = Rc::new(Value::PiCode(
+        eq_ty.ty.clone(),
+        Icit::Explicit,
+        constant_closure,
+    ));
 
     // Check the motive against this type
     type_check(env, &transport.motive, &motive_expected_ty)?;
@@ -1355,7 +1364,7 @@ fn check_type_constructor_type<'db, 'g>(
     };
 
     for (arg, arg_ty_binder) in tcon.arguments.iter().zip(&tcon_info.arguments) {
-        let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.value)?;
+        let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.ty)?;
         type_check(env, arg, &sem_arg_ty)?;
         let sem_arg = eval::eval(&mut env.values, arg)?;
         ty_env.push(sem_arg);
@@ -1715,6 +1724,7 @@ mod tests {
     #[test]
     fn test_synth_metavariable_with_args() {
         use crate::common::MetaVariableId;
+        use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
@@ -1722,7 +1732,7 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            Telescope::from_pairs(vec![(Name::from_with_db(&db, "0"), parse(&db, "U0"))]),
             parse(&db, "U0"),
         );
 
@@ -1743,6 +1753,7 @@ mod tests {
     #[test]
     fn test_synth_metavariable_wrong_arg_count() {
         use crate::common::MetaVariableId;
+        use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
@@ -1750,7 +1761,7 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            Telescope::from_pairs(vec![(Name::from_with_db(&db, "0"), parse(&db, "U0"))]),
             parse(&db, "U0"),
         );
 
@@ -1764,6 +1775,7 @@ mod tests {
     #[test]
     fn test_synth_metavariable_wrong_arg_type() {
         use crate::common::MetaVariableId;
+        use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
@@ -1771,7 +1783,7 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "$Bit"))]),
+            Telescope::from_pairs(vec![(Name::from_with_db(&db, "0"), parse(&db, "$Bit"))]),
             parse(&db, "U0"),
         );
 
@@ -2578,7 +2590,7 @@ mod tests {
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(0).into()),
+            Binding::new(Name::anonymous(&db), Syntax::UniverseCode(0).into()),
         )
         .into();
         let u1: RcValue = Value::UniverseCode(1).into();
@@ -2589,7 +2601,7 @@ mod tests {
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(1).into()),
+            Binding::new(Name::anonymous(&db), Syntax::UniverseCode(1).into()),
         )
         .into();
         let u2: RcValue = Value::UniverseCode(2).into();
@@ -2600,7 +2612,7 @@ mod tests {
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(1).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(0).into()),
+            Binding::new(Name::anonymous(&db), Syntax::UniverseCode(0).into()),
         )
         .into();
         let u2: RcValue = Value::UniverseCode(2).into();
@@ -2618,7 +2630,7 @@ mod tests {
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(0).into()),
+            Binding::new(Name::anonymous(&db), Syntax::UniverseCode(0).into()),
         )
         .into();
         let u2: RcValue = Value::UniverseCode(2).into();
@@ -2640,7 +2652,7 @@ mod tests {
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(1).into()),
+            Binding::new(Name::anonymous(&db), Syntax::UniverseCode(1).into()),
         )
         .into();
         let u1: RcValue = Value::UniverseCode(1).into();

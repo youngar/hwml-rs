@@ -1272,15 +1272,15 @@ impl<'db> TypeConstructorInfo<'db> {
     }
 
     pub fn parameters(&self) -> impl Iterator<Item = &RcSyntax<'db>> {
-        self.arguments.binders[..self.num_parameters]
+        self.arguments.cells[..self.num_parameters]
             .iter()
-            .map(|b| &b.value)
+            .map(|c| &c.ty)
     }
 
     pub fn indices(&self) -> impl Iterator<Item = &RcSyntax<'db>> {
-        self.arguments.binders[self.num_parameters..]
+        self.arguments.cells[self.num_parameters..]
             .iter()
-            .map(|b| &b.value)
+            .map(|c| &c.ty)
     }
 
     pub fn constructors(&self) -> &[QualifiedName<'db>] {

@@ -146,8 +146,12 @@ pub fn translate_checked_module<'c, 'db>(
         // or closures - all module applications must be inlined at their call sites.
         //
         // The input is already normalized from the evaluation above.
-        let saturated_syntax =
-            saturate_and_quote_for_circt(&checked.global_env, &constant_value, &constant_ty_value)?;
+        let saturated_syntax = saturate_and_quote_for_circt(
+            db,
+            &checked.global_env,
+            &constant_value,
+            &constant_ty_value,
+        )?;
 
         // Extract input types from the constant's type (Pi types)
         let input_types = extract_input_types(&constant.ty);
@@ -191,11 +195,12 @@ pub fn translate_checked_module<'c, 'db>(
 ///
 /// Returns an error if saturation fails (e.g., quotation errors).
 fn saturate_and_quote_for_circt<'db>(
+    db: &'db dyn salsa::Database,
     global_env: &hwml_core::val::GlobalEnv<'db>,
     value: &hwml_core::val::Value<'db>,
     ty: &hwml_core::val::Value<'db>,
 ) -> Result<RcSyntax<'db>> {
-    hwml_core::lower::saturate_and_quote(global_env, 0, value, ty)
+    hwml_core::lower::saturate_and_quote(db, global_env, 0, value, ty)
         .map_err(|e| Error::UnsupportedConstruct(format!("Lambda saturation failed: {:?}", e)))
 }
 

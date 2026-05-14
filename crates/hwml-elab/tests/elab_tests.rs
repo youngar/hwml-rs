@@ -123,6 +123,7 @@ fn force_flex_returns_solution_after_solve() {
 
 #[test]
 fn pattern_unify_linear_solves_meta() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -140,7 +141,7 @@ fn pattern_unify_linear_solves_meta() {
     // RHS = Variable(level 0) — in meta scope, should become Variable(level 0).
     let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
 
-    let solved = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty).unwrap();
+    let solved = pattern::pattern_unify(&db, &global, &mut state, &flex, rhs, ty).unwrap();
     assert!(solved, "pattern unification should succeed");
 
     let solution = state.meta_solution(meta_id).expect("meta should be solved");
@@ -152,6 +153,7 @@ fn pattern_unify_linear_solves_meta() {
 
 #[test]
 fn pattern_unify_scope_violation_returns_err() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -167,7 +169,7 @@ fn pattern_unify_scope_violation_returns_err() {
     // RHS = Variable(level 1) — NOT in the meta's scope (only level 0 was passed).
     let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
 
-    let result = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty);
+    let result = pattern::pattern_unify(&db, &global, &mut state, &flex, rhs, ty);
     match result {
         Err(ElabError::ScopeViolation { .. }) => {}
         other => panic!("expected ScopeViolation, got {other:?}"),
@@ -180,6 +182,7 @@ fn pattern_unify_scope_violation_returns_err() {
 fn unify_rigid_mismatch_is_hard_failure() {
     use hwml_elab::unify::Unifier;
 
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
 
@@ -189,7 +192,7 @@ fn unify_rigid_mismatch_is_hard_failure() {
     let y: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
 
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
-    let mut u = Unifier::new(&global, &mut state, 2);
+    let mut u = Unifier::new(&db, &global, &mut state, 2);
     let result = u.unify(x, y, ty);
     match result {
         Err(ElabError::UnificationFailure { .. }) => {}
@@ -201,6 +204,7 @@ fn unify_rigid_mismatch_is_hard_failure() {
 
 #[test]
 fn pattern_unify_nonlinear_soft_fails_when_rhs_mentions_duplicate() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -217,7 +221,7 @@ fn pattern_unify_nonlinear_soft_fails_when_rhs_mentions_duplicate() {
 
     // RHS mentions level 0 (the ambiguous variable) — should soft-fail (Ok(false)).
     let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
-    let result = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty.clone()).unwrap();
+    let result = pattern::pattern_unify(&db, &global, &mut state, &flex, rhs, ty.clone()).unwrap();
     assert!(
         !result,
         "non-linear pattern with ambiguous RHS should soft-fail"
@@ -230,6 +234,7 @@ fn pattern_unify_nonlinear_soft_fails_when_rhs_mentions_duplicate() {
 
 #[test]
 fn pattern_unify_nonlinear_succeeds_when_rhs_avoids_duplicate() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -248,7 +253,7 @@ fn pattern_unify_nonlinear_succeeds_when_rhs_avoids_duplicate() {
 
     // RHS = z (level 1) — only the linear variable. Should succeed.
     let rhs: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
-    let result = pattern::pattern_unify(&global, &mut state, &flex, rhs, ty.clone()).unwrap();
+    let result = pattern::pattern_unify(&db, &global, &mut state, &flex, rhs, ty.clone()).unwrap();
     assert!(
         result,
         "non-linear pattern with non-ambiguous RHS should succeed"
@@ -265,6 +270,7 @@ fn pattern_unify_nonlinear_succeeds_when_rhs_avoids_duplicate() {
 fn unify_same_meta_trivial_succeeds_without_solving() {
     use hwml_elab::unify::Unifier;
 
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -286,7 +292,7 @@ fn unify_same_meta_trivial_succeeds_without_solving() {
     )));
     let rhs = lhs.clone();
 
-    let mut u = Unifier::new(&global, &mut state, 1);
+    let mut u = Unifier::new(&db, &global, &mut state, 1);
     let result = u.unify(lhs, rhs, ty).unwrap();
     assert!(matches!(result, hwml_elab::unify::UnifyResult::Solved));
     // Meta should NOT be solved — trivially true constraint discharged without constraining ?m.
@@ -297,6 +303,7 @@ fn unify_same_meta_trivial_succeeds_without_solving() {
 fn unify_same_meta_partial_intersection_creates_new_meta() {
     use hwml_elab::unify::Unifier;
 
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -329,7 +336,7 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
     )));
 
     let metas_before = state.iter_metas().count();
-    let mut u = Unifier::new(&global, &mut state, 2);
+    let mut u = Unifier::new(&db, &global, &mut state, 2);
     let result = u.unify(lhs, rhs, ty).unwrap();
     assert!(matches!(result, hwml_elab::unify::UnifyResult::Solved));
 
@@ -636,6 +643,7 @@ fn solver_identity_solves_equal_rigid_values() {
 /// ?m2 should be pruned to ?m2'[x]; ?m solved to ?m2'[x].
 #[test]
 fn pattern_unify_prunes_out_of_scope_flex_arg() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -658,7 +666,7 @@ fn pattern_unify_prunes_out_of_scope_flex_arg() {
     let rhs = Rc::new(Value::Flex(make_meta_flex(m2_id, m2_local)));
 
     // pattern_unify(?m[x] = ?m2[x, y]) — y is out of scope of ?m.
-    let solved = pattern::pattern_unify(&global, &mut state, &flex_m, rhs, ty).unwrap();
+    let solved = pattern::pattern_unify(&db, &global, &mut state, &flex_m, rhs, ty).unwrap();
     assert!(solved, "pruning should let unification succeed");
 
     // ?m2 must be solved (pruned to a fresh meta that doesn't depend on y).
@@ -673,6 +681,7 @@ fn pattern_unify_prunes_out_of_scope_flex_arg() {
 /// ?m[x] = ?m2[x] where all args are in scope — no pruning, ?m2 stays unsolved.
 #[test]
 fn pattern_unify_no_prune_when_all_flex_args_in_scope() {
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -691,7 +700,7 @@ fn pattern_unify_no_prune_when_all_flex_args_in_scope() {
     m2_local.push(x0.clone());
     let rhs = Rc::new(Value::Flex(make_meta_flex(m2_id, m2_local)));
 
-    let solved = pattern::pattern_unify(&global, &mut state, &flex_m, rhs, ty).unwrap();
+    let solved = pattern::pattern_unify(&db, &global, &mut state, &flex_m, rhs, ty).unwrap();
     assert!(solved, "same-scope flex should unify");
 
     // ?m2 should NOT be pruned — it stays unsolved.
@@ -711,6 +720,7 @@ fn pattern_unify_no_prune_when_all_flex_args_in_scope() {
 fn pattern_unify_lowers_rigid_with_spine() {
     use hwml_core::val::{Eliminator, Normal, Spine};
 
+    let db = TestDatabase::default();
     let global = empty_global();
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
@@ -736,7 +746,7 @@ fn pattern_unify_lowers_rigid_with_spine() {
         var_ty.clone(),
     )));
 
-    let solved = pattern::pattern_unify(&global, &mut state, &flex_m, rhs, ty).unwrap();
+    let solved = pattern::pattern_unify(&db, &global, &mut state, &flex_m, rhs, ty).unwrap();
     assert!(solved, "lowering should solve ?m");
     assert!(
         state.meta_solution(m_id).is_some(),

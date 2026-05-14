@@ -17,11 +17,13 @@
 use std::rc::Rc;
 
 use hwml_core::{
+    name::Name,
     syn::Telescope,
     ty::{RcTy, Ty},
     val::{ConstantInfo, DataConstructorInfo, GlobalEnv, TypeConstructorInfo},
     QualifiedName, RcSyntax, Source, SourceRange, UniverseLevel,
 };
+use hwml_support::FromWithDb;
 use hwml_surface::{Def, Inductive, Statement};
 
 use crate::{
@@ -323,7 +325,7 @@ where
                 let args_telescope = Telescope::from_pairs(
                     args.into_iter()
                         .enumerate()
-                        .map(|(i, ty)| (format!("{}", i), ty))
+                        .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
                 );
                 let level = extract_universe_level(universe);
                 let info = TypeConstructorInfo::new(args_telescope, *num_params, UniverseLevel::new(level));
@@ -435,12 +437,12 @@ where
                             elab_backtrace: Vec::new(),
                         })?;
 
-                    let ctor_ty = substitute_metas_in_syntax(&ctor.result, state);
+                    let ctor_ty = substitute_metas_in_syntax(db, &ctor.result, state);
                     // Convert Vec<RcSyntax> to Telescope with numbered names
                     let params_telescope = Telescope::from_pairs(
                         ctor.params.iter().cloned()
                             .enumerate()
-                            .map(|(i, ty)| (format!("{}", i), ty))
+                            .map(|(i, ty)| (Name::from_with_db(db, format!("{}", i)), ty))
                     );
                     let dcon_info = DataConstructorInfo::new(params_telescope, ctor_ty);
                     data_constructors.push((ctor_qname, dcon_info));
@@ -456,7 +458,7 @@ where
                 // Use lenient solver during mutual recursion
                 let elaborated = elab::decl::elab_constant_lenient(db, &mut elab, def)?;
 
-                let val = substitute_metas_in_syntax(&elaborated.value, state);
+                let val = substitute_metas_in_syntax(db, &elaborated.value, state);
 
                 // Update the constant with the real value (automatically transparent)
                 let info = ConstantInfo::new(ty.clone(), val);

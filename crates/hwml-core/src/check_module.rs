@@ -192,14 +192,14 @@ fn validate_type_constructor<'db>(
     };
 
     for param_binder in tcon.parameters.iter() {
-        check_type(&mut tc_env, &param_binder.value)?;
-        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.value)?;
+        check_type(&mut tc_env, &param_binder.ty)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.ty)?;
         tc_env.push_var(param_ty_val);
     }
 
     for index_binder in tcon.indices.iter() {
-        check_type(&mut tc_env, &index_binder.value)?;
-        let index_ty_val = eval::eval(&mut tc_env.values, &index_binder.value)?;
+        check_type(&mut tc_env, &index_binder.ty)?;
+        let index_ty_val = eval::eval(&mut tc_env.values, &index_binder.ty)?;
         tc_env.push_var(index_ty_val);
     }
 
@@ -225,14 +225,14 @@ fn validate_data_constructor<'db>(
 
     // Add type constructor parameters (but not indices) to match parser scoping.
     for param_binder in tcon.parameters.iter() {
-        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.value)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.ty)?;
         tc_env.push_var(param_ty_val);
     }
 
     // Validate data constructor parameters.
     for param_binder in dcon.parameters.iter() {
-        check_type(&mut tc_env, &param_binder.value)?;
-        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.value)?;
+        check_type(&mut tc_env, &param_binder.ty)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.ty)?;
         tc_env.push_var(param_ty_val);
     }
 
@@ -259,8 +259,8 @@ fn validate_metavariable<'db>(
     };
 
     for arg_binder in meta.arguments.iter() {
-        check_type(&mut tc_env, &arg_binder.value)?;
-        let arg_ty_val = eval::eval(&mut tc_env.values, &arg_binder.value)?;
+        check_type(&mut tc_env, &arg_binder.ty)?;
+        let arg_ty_val = eval::eval(&mut tc_env.values, &arg_binder.ty)?;
         tc_env.push_var(arg_ty_val);
     }
 

@@ -5,6 +5,7 @@ use hwml_core::{
     ty::{RcTy, Ty},
     Binding, Name, RcSyntax, Syntax, Value,
 };
+use hwml_support::FromWithDb;
 use hwml_surface::Expression;
 
 use crate::{
@@ -616,13 +617,13 @@ where
         return synth_pi_groups(db, elab, rest_groups, target);
     }
 
-    let name = extract_binder_name(&binders[0]).unwrap_or_else(|| "_".to_string());
+    let name_str = extract_binder_name(&binders[0]).unwrap_or_else(|| "_".to_string());
     let dom_syn = check(db, elab, dom_ty_expr, Rc::new(Ty::UniverseType))?.into_inner();
     let dom_code = elab.kernel.eval_syn_flex(&dom_syn);
 
     let dom_ty: RcTy<'db> = Rc::new(Ty::El(dom_code.clone()));
     let var = elab.kernel.ctx.fresh_var(dom_code.clone());
-    let ext_ctx = elab.kernel.ctx.push_bound(name, dom_ty, var);
+    let ext_ctx = elab.kernel.ctx.push_bound(name_str.clone(), dom_ty, var);
 
     let cod_checked = {
         let mut inner = Elaborator {
@@ -648,7 +649,12 @@ where
     };
 
     let (cod_syn, _) = cod_checked.into_inner();
-    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, icit, Binding::anonymous(cod_syn)));
+    let binder_name = if name_str == "_" {
+        Name::anonymous(db)
+    } else {
+        Name::from_with_db(db, name_str)
+    };
+    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, icit, Binding::new(binder_name, cod_syn)));
     Ok(Checked::new((pi_syn, Rc::new(Ty::UniverseType))))
 }
 
@@ -683,7 +689,7 @@ where
         check(db, &mut inner, &arrow.target, Rc::new(Ty::UniverseType))?.into_inner()
     };
 
-    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Icit::Explicit, Binding::anonymous(cod_syn)));
+    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Icit::Explicit, Binding::new(Name::anonymous(db), cod_syn)));
     Ok(Checked::new((pi_syn, Rc::new(Ty::UniverseType))))
 }
 
@@ -697,7 +703,7 @@ fn synth_let_in<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let name = let_in.id.value.to_string();
+    let name_str = let_in.id.value.to_string();
 
     // Phase 2: require an explicit type annotation.
     let ty_expr = let_in
@@ -718,7 +724,7 @@ where
     let val_syn = check(db, elab, &let_in.value, ty.clone())?.into_inner();
     let val_code = elab.kernel.eval_syn_flex(&val_syn);
 
-    let ext_ctx = elab.kernel.ctx.push_let(name, ty, val_code);
+    let ext_ctx = elab.kernel.ctx.push_let(name_str.clone(), ty, val_code);
 
     let (body_syn, body_ty) = {
         let mut inner = Elaborator {
@@ -734,6 +740,7 @@ where
         synth(db, &mut inner, &let_in.expr)?.into_inner()
     };
 
-    let let_syn: RcSyntax<'db> = Rc::new(Syntax::let_expr(ty_syn, val_syn, Binding::anonymous(body_syn)));
+    let binder_name = Name::from_with_db(db, name_str);
+    let let_syn: RcSyntax<'db> = Rc::new(Syntax::let_expr(ty_syn, val_syn, Binding::new(binder_name, body_syn)));
     Ok(Checked::new((let_syn, body_ty)))
 }

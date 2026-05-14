@@ -128,7 +128,7 @@ pub fn print_value_to_string<'db>(
     value: &Value<'db>,
     ty: &Value<'db>,
 ) -> String {
-    let syntax = quote(global, 0, value, ty).expect("quote failed");
+    let syntax = quote(db, global, 0, value, ty).expect("quote failed");
     print_syntax_to_string(db, &syntax)
 }
 
@@ -145,7 +145,7 @@ pub fn print_type_to_string<'db>(
     global: &GlobalEnv<'db>,
     ty: &Value<'db>,
 ) -> String {
-    let syntax = type_quote(global, 0, ty).expect("type_quote failed");
+    let syntax = type_quote(db, global, 0, ty).expect("type_quote failed");
     print_syntax_to_string(db, &syntax)
 }
 

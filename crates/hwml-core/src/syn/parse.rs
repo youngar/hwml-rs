@@ -1,9 +1,11 @@
 use crate::binding::{Binding, DynBinding};
 use crate::common::{DBParseError, Icit, Index, NegativeLevel};
+use crate::name::Name;
 use crate::syn::declaration::{CompilationUnit, DataConstructorDecl, Declaration};
 use crate::syn::{CaseBranch, RcSyntax, Syntax, Telescope};
 use crate::{MetaVariableId, QualifiedName};
 use core::fmt::Debug;
+use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
 use salsa::Database;
 use std::collections::HashMap;
@@ -603,7 +605,8 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // Build nested lambdas from right to left, preserving names
                 let mut result = body;
                 for name in names.into_iter().rev() {
-                    result = Syntax::lambda_rc(Icit::Explicit, Binding::named(name, result));
+                    result =
+                        Syntax::lambda_rc(Icit::Explicit, Binding::named(state.db, &name, result));
                 }
                 Ok(Some(result))
             }
@@ -645,7 +648,11 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // Restore the name environment
                 state.reset_names(depth);
 
-                Ok(Some(Syntax::let_rc(ty, value, Binding::named(var_name, body))))
+                Ok(Some(Syntax::let_rc(
+                    ty,
+                    value,
+                    Binding::named(state.db, &var_name, body),
+                )))
             }
             Token::Mod => {
                 state.advance_token();
@@ -668,7 +675,7 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 // Build nested modules from right to left, preserving names
                 let mut result = body;
                 for name in names.into_iter().rev() {
-                    result = Syntax::module_rc(Binding::named(name, result));
+                    result = Syntax::module_rc(Binding::named(state.db, &name, result));
                 }
                 Ok(Some(result))
             }
@@ -688,7 +695,9 @@ fn p_atom_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<RcSyntax<'db>>>
                 state.reset_names(depth);
                 let mut result = target;
                 for (name, ty) in binders.into_iter().rev() {
-                    result = Syntax::PiCode(ty, Icit::Explicit, Binding::named(name, result)).into();
+                    result =
+                        Syntax::PiCode(ty, Icit::Explicit, Binding::named(state.db, &name, result))
+                            .into();
                 }
                 Ok(Some(result))
             }
@@ -867,7 +876,7 @@ fn p_case_branch_opt<'db>(state: &mut State<'db>) -> ParseResult<Option<CaseBran
     state.reset_names(depth);
     Ok(Some(CaseBranch::new(
         constructor,
-        DynBinding::new(arity, body),
+        DynBinding::new(state.db, arity, body),
     )))
 }
 
@@ -1003,7 +1012,11 @@ fn p_trailing_elim_opt<'db>(
     // Try to parse another atom - if successful, it's an application
     match p_atom_opt(state)? {
         Some(arg) => {
-            return Ok(Some(Syntax::application_rc(lead.clone(), arg, Icit::Explicit)));
+            return Ok(Some(Syntax::application_rc(
+                lead.clone(),
+                arg,
+                Icit::Explicit,
+            )));
         }
         None => (),
     }
@@ -1190,7 +1203,11 @@ fn p_dcon<'db>(
     state.reset_names(depth);
 
     // Convert Vec<(String, RcSyntax)> to Telescope (preserving names)
-    let telescope = Telescope::from_pairs(param_tys);
+    let telescope = Telescope::from_pairs(
+        param_tys
+            .into_iter()
+            .map(|(name, ty)| (Name::from_with_db(state.db, name), ty)),
+    );
 
     Ok((name, telescope, result_ty))
 }
@@ -1290,8 +1307,16 @@ fn p_tcon_decl<'db>(state: &mut State<'db>) -> ParseResult<Vec<Declaration<'db>>
 
     // Create the type constructor declaration with its data constructors
     // Preserve names in the Telescope
-    let parameters = Telescope::from_pairs(param_tys);
-    let indices = Telescope::from_pairs(index_tys);
+    let parameters = Telescope::from_pairs(
+        param_tys
+            .into_iter()
+            .map(|(name, ty)| (Name::from_with_db(state.db, name), ty)),
+    );
+    let indices = Telescope::from_pairs(
+        index_tys
+            .into_iter()
+            .map(|(name, ty)| (Name::from_with_db(state.db, name), ty)),
+    );
     let tcon_decl =
         Declaration::type_constructor(tcon_name, parameters, indices, data_constructors, universe);
 
@@ -1338,7 +1363,15 @@ fn p_meta_decl<'db>(state: &mut State<'db>) -> ParseResult<Declaration<'db>> {
     p_token(state, Token::Semicolon, Error::MissingSemicolon)?;
 
     // Create telescope from (name, type) pairs
-    Ok(Declaration::metavariable(id, Telescope::from_pairs(arg_binders), ty))
+    Ok(Declaration::metavariable(
+        id,
+        Telescope::from_pairs(
+            arg_binders
+                .into_iter()
+                .map(|(name, ty)| (Name::from_with_db(state.db, name), ty)),
+        ),
+        ty,
+    ))
 }
 
 /// Parse a single declaration.
@@ -1418,7 +1451,10 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %0 → %0"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("0".to_string(), Syntax::variable_rc(Index(0)))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(&db, "0", Syntax::variable_rc(Index(0))),
+            ),
         );
     }
 
@@ -1429,9 +1465,17 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x %y → %x"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("y".to_string(), Syntax::variable_rc(
-                Index(1),
-            ))))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::lambda_rc(
+                        Icit::Explicit,
+                        Binding::named(&db, "y", Syntax::variable_rc(Index(1))),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1442,10 +1486,14 @@ mod tests {
         // Construct: λ x → λ x → %0 (inner x shadows outer, reference goes to inner)
         let syntax = Syntax::lambda_rc(
             Icit::Explicit,
-            Binding::named("x".to_string(), Syntax::lambda_rc(
-                Icit::Explicit,
-                Binding::named("x".to_string(), Syntax::variable_rc(Index(0)))
-            ))
+            Binding::named(
+                &db,
+                "x",
+                Syntax::lambda_rc(
+                    Icit::Explicit,
+                    Binding::named(&db, "x", Syntax::variable_rc(Index(0))),
+                ),
+            ),
         );
 
         let printed = print_syntax_to_string(&db, &syntax);
@@ -1457,10 +1505,12 @@ mod tests {
         // With freshening, we expect: λ %x %x_1 → %x_1
         // This makes it clear that the inner binding is x_1 and the reference is to x_1
         // This is human-readable but NOT round-trippable (parser doesn't know about freshening)
-        assert!(printed.contains("x_1"),
-            "Expected freshened name x_1 in output, got: {}", printed);
+        assert!(
+            printed.contains("x_1"),
+            "Expected freshened name x_1 in output, got: {}",
+            printed
+        );
     }
-
 
     #[test]
     fn test_parse_lambda_with_parens() {
@@ -1469,17 +1519,21 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "(λ %0 → %0)"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("0".to_string(), Syntax::variable_rc(Index(0)))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(&db, "0", Syntax::variable_rc(Index(0))),
+            ),
         );
     }
 
     #[test]
     fn test_parse_pi_simple() {
         let db = TestDatabase::default();
+        use hwml_support::FromWithDb;
         let expected: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(0).into()),
+            Binding::new(Name::from_with_db(&db, "x"), Syntax::UniverseCode(0).into()),
         )
         .into();
         assert_syntax_eq_data(&db, &parse(&db, "∀(%x : 𝒰0) → 𝒰0"), &expected);
@@ -1498,11 +1552,15 @@ mod tests {
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::named("y".to_string(), Syntax::variable_rc(Index(1))),
+            Binding::named(&db, "y", Syntax::variable_rc(Index(1))),
         )
         .into();
-        let expected: RcSyntax =
-            Syntax::PiCode(Syntax::UniverseCode(0).into(), Icit::Explicit, Binding::named("x".to_string(), inner)).into();
+        let expected: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Icit::Explicit,
+            Binding::named(&db, "x", inner),
+        )
+        .into();
         assert_syntax_eq_data(&db, &parse(&db, "∀(%x : 𝒰0) (%y : 𝒰0) → %x"), &expected);
     }
 
@@ -1513,11 +1571,25 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %f %x → %f %x"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("f".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::application_rc(
-                Syntax::variable_rc(Index(1)),
-                Syntax::variable_rc(Index(0)),
+            &Syntax::lambda_rc(
                 Icit::Explicit,
-            ))))),
+                Binding::named(
+                    &db,
+                    "f",
+                    Syntax::lambda_rc(
+                        Icit::Explicit,
+                        Binding::named(
+                            &db,
+                            "x",
+                            Syntax::application_rc(
+                                Syntax::variable_rc(Index(1)),
+                                Syntax::variable_rc(Index(0)),
+                                Icit::Explicit,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1528,17 +1600,36 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %f %x %y → %f %x %y"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("f".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::lambda_rc(Icit::Explicit,
-                Binding::named("y".to_string(), Syntax::application_rc(
-                    Syntax::application_rc(
-                        Syntax::variable_rc(Index(2)),
-                        Syntax::variable_rc(Index(1)),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "f",
+                    Syntax::lambda_rc(
                         Icit::Explicit,
+                        Binding::named(
+                            &db,
+                            "x",
+                            Syntax::lambda_rc(
+                                Icit::Explicit,
+                                Binding::named(
+                                    &db,
+                                    "y",
+                                    Syntax::application_rc(
+                                        Syntax::application_rc(
+                                            Syntax::variable_rc(Index(2)),
+                                            Syntax::variable_rc(Index(1)),
+                                            Icit::Explicit,
+                                        ),
+                                        Syntax::variable_rc(Index(0)),
+                                        Icit::Explicit,
+                                    ),
+                                ),
+                            ),
+                        ),
                     ),
-                    Syntax::variable_rc(Index(0)),
-                    Icit::Explicit,
-                )),
-            ))))),
+                ),
+            ),
         );
     }
 
@@ -1550,7 +1641,10 @@ mod tests {
             &parse(&db, "(λ %x → %x) : 𝒰0"),
             &Syntax::check_rc(
                 Syntax::UniverseCode(0).into(),
-                Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::variable_rc(Index(0)))),
+                Syntax::lambda_rc(
+                    Icit::Explicit,
+                    Binding::named(&db, "x", Syntax::variable_rc(Index(0))),
+                ),
             ),
         );
     }
@@ -1563,11 +1657,25 @@ mod tests {
             &parse(&db, "(λ %f %x → %f %x) : 𝒰0"),
             &Syntax::check_rc(
                 Syntax::UniverseCode(0).into(),
-                Syntax::lambda_rc(Icit::Explicit, Binding::named("f".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::application_rc(
-                    Syntax::variable_rc(Index(1)),
-                    Syntax::variable_rc(Index(0)),
+                Syntax::lambda_rc(
                     Icit::Explicit,
-                ))))),
+                    Binding::named(
+                        &db,
+                        "f",
+                        Syntax::lambda_rc(
+                            Icit::Explicit,
+                            Binding::named(
+                                &db,
+                                "x",
+                                Syntax::application_rc(
+                                    Syntax::variable_rc(Index(1)),
+                                    Syntax::variable_rc(Index(0)),
+                                    Icit::Explicit,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
             ),
         );
     }
@@ -1579,11 +1687,21 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → (λ %y → %y) %x"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::application_rc(
-                Syntax::lambda_rc(Icit::Explicit, Binding::named("y".to_string(), Syntax::variable_rc(Index(0)))),
-                Syntax::variable_rc(Index(0)),
+            &Syntax::lambda_rc(
                 Icit::Explicit,
-            ))),
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::application_rc(
+                        Syntax::lambda_rc(
+                            Icit::Explicit,
+                            Binding::named(&db, "y", Syntax::variable_rc(Index(0))),
+                        ),
+                        Syntax::variable_rc(Index(0)),
+                        Icit::Explicit,
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1622,11 +1740,18 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → ?[0] %x"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::application_rc(
-                Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
-                Syntax::variable_rc(Index(0)),
+            &Syntax::lambda_rc(
                 Icit::Explicit,
-            ))),
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::application_rc(
+                        Syntax::metavariable_rc(MetaVariableId::new(0), vec![]),
+                        Syntax::variable_rc(Index(0)),
+                        Icit::Explicit,
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1744,11 +1869,18 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → @42 %x"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::application_rc(
-                Syntax::constant_rc("42".into_with_db(&db)),
-                Syntax::variable_rc(Index(0)),
+            &Syntax::lambda_rc(
                 Icit::Explicit,
-            ))),
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::application_rc(
+                        Syntax::constant_rc("42".into_with_db(&db)),
+                        Syntax::variable_rc(Index(0)),
+                        Icit::Explicit,
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1758,7 +1890,7 @@ mod tests {
         let expected: RcSyntax = Syntax::PiCode(
             Syntax::constant_rc("42".into_with_db(&db)),
             Icit::Explicit,
-            Binding::named("x".to_string(), Syntax::UniverseCode(0).into()),
+            Binding::named(&db, "x", Syntax::UniverseCode(0).into()),
         )
         .into();
         assert_syntax_eq_data(&db, &parse(&db, "∀(%x : @42) → 𝒰0"), &expected);
@@ -1783,7 +1915,10 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → !0"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::variable_rc(Index(1)))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(&db, "x", Syntax::variable_rc(Index(1))),
+            ),
         );
     }
 
@@ -1794,9 +1929,17 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x %y → !0"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("y".to_string(), Syntax::variable_rc(
-                Index(2),
-            ))))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::lambda_rc(
+                        Icit::Explicit,
+                        Binding::named(&db, "y", Syntax::variable_rc(Index(2))),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1807,11 +1950,25 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x %y → %y !0"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("y".to_string(), Syntax::application_rc(
-                Syntax::variable_rc(Index(0)),
-                Syntax::variable_rc(Index(2)),
+            &Syntax::lambda_rc(
                 Icit::Explicit,
-            ))))),
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::lambda_rc(
+                        Icit::Explicit,
+                        Binding::named(
+                            &db,
+                            "y",
+                            Syntax::application_rc(
+                                Syntax::variable_rc(Index(0)),
+                                Syntax::variable_rc(Index(2)),
+                                Icit::Explicit,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         );
     }
 
@@ -1822,7 +1979,7 @@ mod tests {
         let expected: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::named("x".to_string(), Syntax::variable_rc(Index(1))),
+            Binding::named(&db, "x", Syntax::variable_rc(Index(1))),
         )
         .into();
         assert_syntax_eq_data(&db, &parse(&db, "∀(%x : 𝒰0) → !0"), &expected);
@@ -1834,7 +1991,11 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "!0 !1"),
-            &Syntax::application_rc(Syntax::variable_rc(Index(0)), Syntax::variable_rc(Index(1)), Icit::Explicit),
+            &Syntax::application_rc(
+                Syntax::variable_rc(Index(0)),
+                Syntax::variable_rc(Index(1)),
+                Icit::Explicit,
+            ),
         );
     }
 
@@ -1846,22 +2007,39 @@ mod tests {
             ("!5", Syntax::variable_rc(Index(5))),
             (
                 "λ %x → !0",
-                Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::variable_rc(Index(1)))),
+                Syntax::lambda_rc(
+                    Icit::Explicit,
+                    Binding::named(&db, "x", Syntax::variable_rc(Index(1))),
+                ),
             ),
             (
                 "λ %x %y → %y !0",
-                Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("y".to_string(), Syntax::application_rc(
-                    Syntax::variable_rc(Index(0)),
-                    Syntax::variable_rc(Index(2)),
+                Syntax::lambda_rc(
                     Icit::Explicit,
-                ))))),
+                    Binding::named(
+                        &db,
+                        "x",
+                        Syntax::lambda_rc(
+                            Icit::Explicit,
+                            Binding::named(
+                                &db,
+                                "y",
+                                Syntax::application_rc(
+                                    Syntax::variable_rc(Index(0)),
+                                    Syntax::variable_rc(Index(2)),
+                                    Icit::Explicit,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
             ),
             (
                 "∀(%x : 𝒰0) → !0",
                 Syntax::PiCode(
                     Syntax::UniverseCode(0).into(),
                     Icit::Explicit,
-                    Binding::named("x".to_string(), Syntax::variable_rc(Index(1))),
+                    Binding::named(&db, "x", Syntax::variable_rc(Index(1))),
                 )
                 .into(),
             ),
@@ -1928,7 +2106,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x → %x"),
-            &Syntax::module_rc(Binding::named("x".to_string(), Syntax::variable_rc(Index(0)))),
+            &Syntax::module_rc(Binding::named(&db, "x", Syntax::variable_rc(Index(0)))),
         );
     }
 
@@ -1945,7 +2123,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x → !0"),
-            &Syntax::module_rc(Binding::named("x".to_string(), Syntax::variable_rc(Index(1)))),
+            &Syntax::module_rc(Binding::named(&db, "x", Syntax::variable_rc(Index(1)))),
         );
     }
 
@@ -1955,7 +2133,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x → %x"),
-            &Syntax::module_rc(Binding::named("x".to_string(), Syntax::variable_rc(Index(0)))),
+            &Syntax::module_rc(Binding::named(&db, "x", Syntax::variable_rc(Index(0)))),
         );
     }
 
@@ -1966,9 +2144,11 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %x %y → %x"),
-            &Syntax::module_rc(Binding::named("x".to_string(), Syntax::module_rc(Binding::named("y".to_string(), Syntax::variable_rc(
-                Index(1),
-            ))))),
+            &Syntax::module_rc(Binding::named(
+                &db,
+                "x",
+                Syntax::module_rc(Binding::named(&db, "y", Syntax::variable_rc(Index(1)))),
+            )),
         );
     }
 
@@ -1978,7 +2158,7 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "(mod %x → %x)"),
-            &Syntax::module_rc(Binding::named("x".to_string(), Syntax::variable_rc(Index(0)))),
+            &Syntax::module_rc(Binding::named(&db, "x", Syntax::variable_rc(Index(0)))),
         );
     }
 
@@ -2038,7 +2218,7 @@ mod tests {
             &parse(&db, "(mod %x → %x) : Bit -> Bit"),
             &Syntax::check_rc(
                 Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
-                Syntax::module_rc(Binding::named("x".to_string(), Syntax::variable_rc(Index(0)))),
+                Syntax::module_rc(Binding::named(&db, "x", Syntax::variable_rc(Index(0)))),
             ),
         );
     }
@@ -2068,11 +2248,15 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "mod %f → @x<Bit>(%f)"),
-            &Syntax::module_rc(Binding::named("f".to_string(), Syntax::happlication_rc(
-                Syntax::constant_rc("x".into_with_db(&db)),
-                Syntax::bit_rc(),
-                Syntax::variable_rc(Index(0)),
-            ))),
+            &Syntax::module_rc(Binding::named(
+                &db,
+                "f",
+                Syntax::happlication_rc(
+                    Syntax::constant_rc("x".into_with_db(&db)),
+                    Syntax::bit_rc(),
+                    Syntax::variable_rc(Index(0)),
+                ),
+            )),
         );
     }
 
@@ -2325,7 +2509,11 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "@foo/bar/baz @x/y"),
-            &Syntax::application_rc(Syntax::constant_rc(foo_bar_baz), Syntax::constant_rc(x_y), Icit::Explicit),
+            &Syntax::application_rc(
+                Syntax::constant_rc(foo_bar_baz),
+                Syntax::constant_rc(x_y),
+                Icit::Explicit,
+            ),
         );
     }
 
@@ -2361,9 +2549,17 @@ mod tests {
             &parse(&db, "[@Some λ %0 → λ %0 → %0]"),
             &Syntax::data_constructor_rc(
                 "Some".into_with_db(&db),
-                vec![Syntax::lambda_rc(Icit::Explicit, Binding::named("0".to_string(), Syntax::lambda_rc(Icit::Explicit, Binding::named("0".to_string(),
-                    Syntax::variable_rc(Index(0)),
-                ))))],
+                vec![Syntax::lambda_rc(
+                    Icit::Explicit,
+                    Binding::named(
+                        &db,
+                        "0",
+                        Syntax::lambda_rc(
+                            Icit::Explicit,
+                            Binding::named(&db, "0", Syntax::variable_rc(Index(0))),
+                        ),
+                    ),
+                )],
             ),
         );
     }
@@ -2378,8 +2574,14 @@ mod tests {
             &Syntax::data_constructor_rc(
                 "Pair".into_with_db(&db),
                 vec![
-                    Syntax::lambda_rc(Icit::Explicit, Binding::named("0".to_string(), Syntax::variable_rc(Index(0)))),
-                    Syntax::lambda_rc(Icit::Explicit, Binding::named("0".to_string(), Syntax::variable_rc(Index(0)))),
+                    Syntax::lambda_rc(
+                        Icit::Explicit,
+                        Binding::named(&db, "0", Syntax::variable_rc(Index(0))),
+                    ),
+                    Syntax::lambda_rc(
+                        Icit::Explicit,
+                        Binding::named(&db, "0", Syntax::variable_rc(Index(0))),
+                    ),
                 ],
             ),
         );
@@ -2392,19 +2594,26 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::case_rc(
-                Index(0),
-                vec![
-                    CaseBranch::new(
-                        "true".into_with_db(&db),
-                        DynBinding::new(0, Syntax::constant_rc("1".into_with_db(&db))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::case_rc(
+                        Index(0),
+                        vec![
+                            CaseBranch::new(
+                                "true".into_with_db(&db),
+                                DynBinding::new(&db, 0, Syntax::constant_rc("1".into_with_db(&db))),
+                            ),
+                            CaseBranch::new(
+                                "false".into_with_db(&db),
+                                DynBinding::new(&db, 0, Syntax::constant_rc("0".into_with_db(&db))),
+                            ),
+                        ],
                     ),
-                    CaseBranch::new(
-                        "false".into_with_db(&db),
-                        DynBinding::new(0, Syntax::constant_rc("0".into_with_db(&db))),
-                    ),
-                ],
-            ))),
+                ),
+            ),
         );
     }
 
@@ -2415,19 +2624,26 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::case_rc(
-                Index(0),
-                vec![
-                    CaseBranch::new(
-                        "true".into_with_db(&db),
-                        DynBinding::new(0, Syntax::constant_rc("1".into_with_db(&db))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::case_rc(
+                        Index(0),
+                        vec![
+                            CaseBranch::new(
+                                "true".into_with_db(&db),
+                                DynBinding::new(&db, 0, Syntax::constant_rc("1".into_with_db(&db))),
+                            ),
+                            CaseBranch::new(
+                                "false".into_with_db(&db),
+                                DynBinding::new(&db, 0, Syntax::constant_rc("0".into_with_db(&db))),
+                            ),
+                        ],
                     ),
-                    CaseBranch::new(
-                        "false".into_with_db(&db),
-                        DynBinding::new(0, Syntax::constant_rc("0".into_with_db(&db))),
-                    ),
-                ],
-            ))),
+                ),
+            ),
         );
     }
 
@@ -2462,19 +2678,26 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %x → %x case { @true => @1 | @false => @0 }"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("x".to_string(), Syntax::case_rc(
-                Index(0),
-                vec![
-                    CaseBranch::new(
-                        "true".into_with_db(&db),
-                        DynBinding::new(0, Syntax::constant_rc("1".into_with_db(&db))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "x",
+                    Syntax::case_rc(
+                        Index(0),
+                        vec![
+                            CaseBranch::new(
+                                "true".into_with_db(&db),
+                                DynBinding::new(&db, 0, Syntax::constant_rc("1".into_with_db(&db))),
+                            ),
+                            CaseBranch::new(
+                                "false".into_with_db(&db),
+                                DynBinding::new(&db, 0, Syntax::constant_rc("0".into_with_db(&db))),
+                            ),
+                        ],
                     ),
-                    CaseBranch::new(
-                        "false".into_with_db(&db),
-                        DynBinding::new(0, Syntax::constant_rc("0".into_with_db(&db))),
-                    ),
-                ],
-            ))),
+                ),
+            ),
         );
     }
 
@@ -2487,13 +2710,20 @@ mod tests {
         assert_syntax_eq_data(
             &db,
             &parse(&db, "λ %n → %n case { @Succ %m => %m }"),
-            &Syntax::lambda_rc(Icit::Explicit, Binding::named("n".to_string(), Syntax::case_rc(
-                Index(0),
-                vec![CaseBranch::new(
-                    "Succ".into_with_db(&db),
-                    DynBinding::new(1, Syntax::variable_rc(Index(0))),
-                )],
-            ))),
+            &Syntax::lambda_rc(
+                Icit::Explicit,
+                Binding::named(
+                    &db,
+                    "n",
+                    Syntax::case_rc(
+                        Index(0),
+                        vec![CaseBranch::new(
+                            "Succ".into_with_db(&db),
+                            DynBinding::new(&db, 1, Syntax::variable_rc(Index(0))),
+                        )],
+                    ),
+                ),
+            ),
         );
     }
 
@@ -2667,7 +2897,7 @@ mod tests {
                 "Cons"
             );
             // Cons type should be a Pi type
-            let cons_ty_str = print_syntax_to_string(&db, &tc.data_constructors[1].full_type());
+            let cons_ty_str = print_syntax_to_string(&db, &tc.data_constructors[1].full_type(&db));
             assert!(cons_ty_str.contains("∀"), "Cons should have Pi type");
         } else {
             panic!("Expected TypeConstructorDecl");
@@ -2815,10 +3045,7 @@ tcon @List (%a : U0) : -> U0 where
     fn test_parse_rejects_triple_underscore() {
         let db = TestDatabase::default();
         let result = parse_syntax(&db, "const @___ : Type = Type");
-        assert!(
-            result.is_err(),
-            "Parser should reject '___' in identifiers"
-        );
+        assert!(result.is_err(), "Parser should reject '___' in identifiers");
     }
 
     #[test]

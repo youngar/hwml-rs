@@ -781,7 +781,7 @@ where
     // Evaluate each binding in the telescope.
     for binder in telescope.iter() {
         // Evaluate this type.
-        let ty = eval(&mut env, &binder.value)?;
+        let ty = eval(&mut env, &binder.ty)?;
         types.push(ty.clone());
         // Create a variable of this type.
         // TODO: only push the variable if there is another binding.
@@ -834,7 +834,7 @@ mod tests {
             let ty_stx = self.parse(ty);
             let ty_val = self.eval(&ty_stx);
             let val = self.eval(&stx);
-            let syntax = quote(&self.global, 0, &val, &ty_val).expect("quote failed");
+            let syntax = quote(self.db, &self.global, 0, &val, &ty_val).expect("quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
 
@@ -842,7 +842,7 @@ mod tests {
         fn eval_type(&self, term: &'db str) -> String {
             let stx = self.parse(term);
             let val = self.eval(&stx);
-            let syntax = type_quote(&self.global, 0, &val).expect("type_quote failed");
+            let syntax = type_quote(self.db, &self.global, 0, &val).expect("type_quote failed");
             print_syntax_to_string(self.db, &syntax)
         }
     }
@@ -1041,7 +1041,7 @@ mod tests {
         // Quote and check printed form
         let u0_ty: RcValue = Value::UniverseCode(0).into();
         let quoted =
-            crate::quote::quote(&global, 0, &result, &u0_ty).expect("quote should succeed");
+            crate::quote::quote(&db, &global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
             crate::syn::print::print_syntax_to_string(&db, &quoted),
             "?[0]"
@@ -1054,6 +1054,7 @@ mod tests {
         use crate::common::{Level, MetaVariableId};
         use crate::test_utils::parse;
         use crate::val::GlobalEnv;
+        use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
@@ -1062,7 +1063,7 @@ mod tests {
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            Telescope::from_pairs(vec![(Name::from_with_db(&db, "0"), parse(&db, "U0"))]),
             parse(&db, "U0"),
         );
 
@@ -1091,7 +1092,7 @@ mod tests {
         // Quote and check printed form
         let u0_ty: RcValue = Value::UniverseCode(0).into();
         let quoted =
-            crate::quote::quote(&global, 0, &result, &u0_ty).expect("quote should succeed");
+            crate::quote::quote(&db, &global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
             crate::syn::print::print_syntax_to_string(&db, &quoted),
             "?[0 ^sBit]"
@@ -1114,7 +1115,7 @@ mod tests {
         let pi_ty: RcSyntax = Syntax::PiCode(
             u0_syntax.clone(),
             Icit::Explicit,
-            Binding::anonymous(u0_syntax),
+            Binding::new(Name::anonymous(&db), u0_syntax),
         )
         .into();
         global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), pi_ty);
@@ -1138,7 +1139,7 @@ mod tests {
         // Quote and check printed form
         let u0_ty: RcValue = Value::UniverseCode(0).into();
         let quoted =
-            crate::quote::quote(&global, 0, &result, &u0_ty).expect("quote should succeed");
+            crate::quote::quote(&db, &global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
             crate::syn::print::print_syntax_to_string(&db, &quoted),
             "?[0][^sBit]"

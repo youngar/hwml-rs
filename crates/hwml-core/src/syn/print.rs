@@ -15,27 +15,31 @@ trait NameStackExt {
     fn push_fresh(&mut self, name: String) -> String;
 }
 
-impl NameStackExt for NameStack {
-    fn push_fresh(&mut self, name: String) -> String {
-        if name == "_" {
-            self.push(name.clone());
-            return name;
-        }
-
-        if !self.contains(&name) {
-            self.push(name.clone());
-            return name;
-        }
-
+/// Compute a fresh name without modifying the stack.
+fn compute_fresh_name(name: &str, ns: &NameStack) -> String {
+    if name.is_empty() {
+        format!("{}", ns.len())
+    } else if name == "_" {
+        name.to_string()
+    } else if !ns.contains(&name.to_string()) {
+        name.to_string()
+    } else {
         let mut suffix = 1;
         loop {
-            let fresh_name = format!("{}_{}", name, suffix);
-            if !self.contains(&fresh_name) {
-                self.push(fresh_name.clone());
-                return fresh_name;
+            let candidate = format!("{}_{}", name, suffix);
+            if !ns.contains(&candidate) {
+                return candidate;
             }
             suffix += 1;
         }
+    }
+}
+
+impl NameStackExt for NameStack {
+    fn push_fresh(&mut self, name: String) -> String {
+        let fresh = compute_fresh_name(&name, self);
+        self.push(fresh.clone());
+        fresh
     }
 }
 
@@ -165,12 +169,12 @@ pub fn print_type_constructor_decl<'db, R: Render>(
     let mut st = State::new();
     for binder in tc.parameters.iter() {
         p.text(" (%")?;
-        p.text_owned(binder.name.clone())?;
+        p.text_owned(binder.name.to_string(db))?;
         p.text(" : ")?;
-        binder.value.print(db, st, ns, p)?;
+        binder.ty.print(db, st, ns, p)?;
         p.text(")")?;
         // Push the name AFTER printing the type (with freshening to avoid shadowing ambiguity)
-        ns.push_fresh(binder.name.clone());
+        ns.push_fresh(binder.name.to_string(db));
         st = st.inc_depth();
     }
 
@@ -179,12 +183,12 @@ pub fn print_type_constructor_decl<'db, R: Render>(
     // Print indices as telescope with names
     for binder in tc.indices.iter() {
         p.text("(%")?;
-        p.text_owned(binder.name.clone())?;
+        p.text_owned(binder.name.to_string(db))?;
         p.text(" : ")?;
-        binder.value.print(db, st, ns, p)?;
+        binder.ty.print(db, st, ns, p)?;
         p.text(") ")?;
         // Push the name AFTER printing the type (with freshening to avoid shadowing ambiguity)
-        ns.push_fresh(binder.name.clone());
+        ns.push_fresh(binder.name.to_string(db));
         st = st.inc_depth();
     }
 
@@ -207,11 +211,11 @@ pub fn print_type_constructor_decl<'db, R: Render>(
             let dcon_param_count = dcon.parameters.len();
             for binder in dcon.parameters.iter() {
                 p.text(" (%")?;
-                p.text_owned(binder.name.clone())?;
+                p.text_owned(binder.name.to_string(db))?;
                 p.text(" : ")?;
-                binder.value.print(db, dcon_st, ns, p)?;
+                binder.ty.print(db, dcon_st, ns, p)?;
                 p.text(")")?;
-                ns.push_fresh(binder.name.clone());
+                ns.push_fresh(binder.name.to_string(db));
                 dcon_st = dcon_st.inc_depth();
             }
             p.text(" : ")?;
@@ -247,7 +251,7 @@ pub fn print_metavariable_decl<'db, R: Render>(
         p.text("%")?;
         p.text_owned(format!("{}", st.depth))?;
         p.text(" : ")?;
-        arg_binder.value.print(db, st, ns, p)?;
+        arg_binder.ty.print(db, st, ns, p)?;
         p.text(")")?;
         st = st.inc_depth();
     }
@@ -506,7 +510,7 @@ impl<'db> Print for DynBindingSyntax<'db> {
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         for name in self.names.iter() {
-            ns.push_fresh(name.clone());
+            ns.push_fresh(name.to_string(db));
         }
 
         let st = st.under_binders(st.depth + self.arity);
@@ -542,7 +546,12 @@ impl<'db> Print for Syntax<'db> {
                     Icit::Implicit => p.text("{")?,
                     Icit::Explicit => p.text("(")?,
                 }
-                p.text_owned(&format!("%{}", st.depth))?;
+                // Pre-compute the fresh name without modifying the stack yet.
+                // We need to print the domain type before the binder is in scope.
+                let binder_name_str = target.name.to_string(db);
+                let fresh_name = compute_fresh_name(&binder_name_str, ns);
+
+                p.text_owned(&format!("%{}", fresh_name))?;
                 p.space()?;
                 p.text(":")?;
                 p.space()?;
@@ -554,7 +563,11 @@ impl<'db> Print for Syntax<'db> {
                 p.space()?;
                 p.text("→")?;
                 p.space()?;
-                target.print(db, st, ns, p)
+
+                ns.push(fresh_name);
+                let body_result = target.body.print(db, st.inc_depth(), ns, p);
+                ns.pop();
+                body_result
             }
             Syntax::BitCode => p.text("$Bit"),
 
@@ -1232,30 +1245,30 @@ mod tests {
         let pi1: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(Syntax::UniverseCode(1).into()),
+            Binding::new(Name::anonymous(&db), Syntax::UniverseCode(1).into()),
         )
         .into();
         assert_snapshot!(p(&db, &pi1), @"∀ (%0 : 𝒰0) → 𝒰1");
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::variable_rc(Index(0)),
             Icit::Explicit,
-            Binding::anonymous(Syntax::variable_rc(Index(0))),
+            Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(0))),
         )
         .into();
         let pi2: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding::anonymous(inner),
+            Binding::new(Name::anonymous(&db), inner),
         )
         .into();
-        assert_snapshot!(p(&db, &pi2), @"∀ (%0 : 𝒰0) → ∀ (%1 : %_) → %_");
+        assert_snapshot!(p(&db, &pi2), @"∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %1");
     }
 
     #[test]
     fn print_lambda() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::anonymous(Syntax::variable_rc(Index(0))))), @"λ %_ → %_");
-        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::anonymous(Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(Syntax::variable_rc(Index(1))))))), @"λ %_ %_ → %_");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::lambda_rc(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
     }
 
     #[test]
@@ -1288,13 +1301,13 @@ mod tests {
         let db = TestDatabase::default();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
-        assert_snapshot!(p(&db, &Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(Syntax::case_rc(
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::case_rc(
                         Index(0),
             vec![
-                CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(0, Syntax::constant_rc("a".into_with_db(&db)))),
-                CaseBranch::new("Succ".into_with_db(&db), DynBinding::new(1, Syntax::variable_rc(Index(0)))),
+                CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(&db, 0, Syntax::constant_rc("a".into_with_db(&db)))),
+                CaseBranch::new("Succ".into_with_db(&db), DynBinding::new(&db, 1, Syntax::variable_rc(Index(0)))),
             ]
-        )))), @"λ %_ → %_ case { @/Zero => @/a | @/Succ %_0 => %_0 }");
+        )))), @"λ %0 → %0 case { @/Zero => @/a | @/Succ %v0 => %v0 }");
     }
 
     // =========================================================================
@@ -1380,9 +1393,9 @@ mod tests {
         assert_snapshot!(p(&db, &transport), @"transport !2 to !0 by refl");
 
         // Test with lambda motive - keywords eliminate need for parentheses
-        let lambda_motive = Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(Syntax::bit_rc()));
+        let lambda_motive = Syntax::lambda_rc(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::bit_rc()));
         let transport2 = Syntax::transport_rc(lambda_motive, Syntax::refl_rc(), Syntax::zero_rc());
-        assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %_ → Bit by refl");
+        assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %0 → Bit by refl");
     }
 
     // =========================================================================
@@ -1405,8 +1418,8 @@ mod tests {
     #[test]
     fn print_module() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::module(Binding::anonymous(Syntax::variable_rc(Index(0))))), @"mod %_ → %_");
-        assert_snapshot!(p(&db, &Syntax::module(Binding::anonymous(Syntax::module_rc(Binding::anonymous(Syntax::variable_rc(Index(1))))))), @"mod %_ %_ → %_");
+        assert_snapshot!(p(&db, &Syntax::module(Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(0))))), @"mod %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Binding::new(Name::anonymous(&db), Syntax::module_rc(Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(1))))))), @"mod %0 %1 → %0");
     }
 
     #[test]
@@ -1438,7 +1451,7 @@ mod tests {
     #[test]
     fn print_variable_bound() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::anonymous(Syntax::variable_rc(Index(0))))), @"λ %_ → %_");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
     }
 
     #[test]

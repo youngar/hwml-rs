@@ -199,7 +199,7 @@ where
                     // No annotation: synth the value, get its type.
                     let (val_syn, val_ty) =
                         elab::expr::synth(db, &mut inner, &def.value)?.into_inner();
-                    let ty_syn = quote_type(&mut inner, &val_ty)?;
+                    let ty_syn = quote_type(db, &mut inner, &val_ty)?;
                     (ty_syn, val_syn)
                 }
             }
@@ -658,8 +658,8 @@ pub fn verify_elaborated_constant<'db>(
     value_syn: &Syntax<'db>,
 ) -> Result<(), hwml_core::check::Error<'db>> {
     // Produce meta-free syntax by substituting all solved metas.
-    let ty_clean = crate::zonk::substitute_metas_in_syntax(ty_syn, state);
-    let val_clean = crate::zonk::substitute_metas_in_syntax(value_syn, state);
+    let ty_clean = crate::zonk::substitute_metas_in_syntax(db, ty_syn, state);
+    let val_clean = crate::zonk::substitute_metas_in_syntax(db, value_syn, state);
 
     let mut env = hwml_core::check::TCEnvironment {
         db,
@@ -677,6 +677,7 @@ pub fn verify_elaborated_constant<'db>(
 /// Only handles `Ty::El(code)` (returns the code) and `Ty::UniverseType`.
 /// Returns Err(CannotInfer) for complex types that can't be directly represented.
 fn quote_type<'a, 'db>(
+    db: &'db dyn salsa::Database,
     elab: &mut Elaborator<'a, 'db>,
     ty: &hwml_core::ty::Ty<'db>,
 ) -> Result<RcSyntax<'db>, ElabError<'db>> {
@@ -689,7 +690,7 @@ fn quote_type<'a, 'db>(
         CoreTy::El(code) => {
             let depth = elab.kernel.ctx.depth();
             let universe_val = Value::UniverseCode(0);
-            match hwml_core::quote::quote(elab.kernel.global, depth, code, &universe_val) {
+            match hwml_core::quote::quote(db, elab.kernel.global, depth, code, &universe_val) {
                 Ok(syn) => Ok(syn),
                 Err(_) => Err(ElabError::CannotInfer {
                     span: None, // Quote errors don't have a specific location

@@ -49,43 +49,44 @@ type Result<'db, T> = std::result::Result<T, Error<'db>>;
 /// Returns a saturated value where all reducible HApplications have been
 /// beta-reduced.
 pub fn saturate_value<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     value: &Value<'db>,
 ) -> Result<'db, RcValue<'db>> {
     match value {
         // The key case: HApplication - try to beta-reduce
-        Value::HApplication(happ) => saturate_happlication(global, happ),
+        Value::HApplication(happ) => saturate_happlication(db, global, happ),
 
         // Closures need special handling - we saturate their bodies
-        Value::Lambda(lam) => saturate_lambda(global, lam),
-        Value::Module(module) => saturate_module(global, module),
-        Value::HArrow(harrow) => saturate_harrow(global, harrow),
+        Value::Lambda(lam) => saturate_lambda(db, global, lam),
+        Value::Module(module) => saturate_module(db, global, module),
+        Value::HArrow(harrow) => saturate_harrow(db, global, harrow),
 
         // NEW: Type codes with closures
         Value::PiCode(source, icit, target) => {
-            let new_source = saturate_value(global, source)?;
+            let new_source = saturate_value(db, global, source)?;
             // For now, keep the closure as-is (will be handled during quoting)
             Ok(Rc::new(Value::PiCode(new_source, *icit, target.clone())))
         }
         Value::LiftCode(shift, inner) => {
-            let new_inner = saturate_value(global, inner)?;
+            let new_inner = saturate_value(db, global, inner)?;
             Ok(Rc::new(Value::LiftCode(*shift, new_inner)))
         }
 
         // Recursive cases with subvalues
         Value::SLift(slift) => {
-            let new_ty = saturate_value(global, &slift.ty)?;
+            let new_ty = saturate_value(db, global, &slift.ty)?;
             Ok(Value::slift_rc(new_ty))
         }
         Value::MLift(mlift) => {
-            let new_ty = saturate_value(global, &mlift.ty)?;
+            let new_ty = saturate_value(db, global, &mlift.ty)?;
             Ok(Value::mlift_rc(new_ty))
         }
         Value::TypeConstructor(tc) => {
             let new_args = tc
                 .arguments
                 .iter()
-                .map(|arg| saturate_value(global, arg))
+                .map(|arg| saturate_value(db, global, arg))
                 .collect::<Result<'db, Vec<_>>>()?;
             Ok(Value::type_constructor_rc(tc.constructor, new_args))
         }
@@ -93,29 +94,29 @@ pub fn saturate_value<'db>(
             let new_args = dc
                 .arguments
                 .iter()
-                .map(|arg| saturate_value(global, arg))
+                .map(|arg| saturate_value(db, global, arg))
                 .collect::<Result<'db, Vec<_>>>()?;
             Ok(Value::data_constructor_rc(dc.constructor, new_args))
         }
         Value::EqType(eq) => {
-            let new_ty = saturate_value(global, &eq.ty)?;
-            let new_lhs = saturate_value(global, &eq.lhs)?;
-            let new_rhs = saturate_value(global, &eq.rhs)?;
+            let new_ty = saturate_value(db, global, &eq.ty)?;
+            let new_lhs = saturate_value(db, global, &eq.lhs)?;
+            let new_rhs = saturate_value(db, global, &eq.rhs)?;
             Ok(Value::eq_rc(new_ty, new_lhs, new_rhs))
         }
         Value::Transport(transport) => {
             // For transport, we saturate the proof and value, but keep the motive as-is
             // since it's a closure that will be handled during quoting.
-            let new_proof = saturate_value(global, &transport.proof)?;
-            let new_value = saturate_value(global, &transport.value)?;
+            let new_proof = saturate_value(db, global, &transport.proof)?;
+            let new_value = saturate_value(db, global, &transport.value)?;
             Ok(Value::transport_rc(
                 transport.motive.clone(),
                 new_proof,
                 new_value,
             ))
         }
-        Value::Rigid(rigid) => saturate_rigid(global, rigid),
-        Value::Flex(flex) => saturate_flex(global, flex),
+        Value::Rigid(rigid) => saturate_rigid(db, global, rigid),
+        Value::Flex(flex) => saturate_flex(db, global, flex),
 
         // Base cases: no subvalues to traverse
         Value::UniverseCode(_)
@@ -140,11 +141,12 @@ pub fn saturate_value<'db>(
 /// by running the closure with the argument. Otherwise, we recursively
 /// saturate the subterms.
 fn saturate_happlication<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     happ: &val::HApplication<'db>,
 ) -> Result<'db, RcValue<'db>> {
     // First saturate the argument (always needed)
-    let saturated_arg = saturate_value(global, &happ.argument)?;
+    let saturated_arg = saturate_value(db, global, &happ.argument)?;
 
     // Check if the module is already a concrete Module - if so, beta-reduce directly
     // without saturating the module (which would unnecessarily process the closure body)
@@ -153,20 +155,20 @@ fn saturate_happlication<'db>(
             // Beta-reduce: run the module's body with the saturated argument
             let result = run_closure(global, &module.body, [saturated_arg])?;
             // Recursively saturate in case the result contains more HApplications
-            saturate_value(global, &result)
+            saturate_value(db, global, &result)
         }
         _ => {
             // Not a concrete Module - saturate the module and keep as HApplication
-            let saturated_module = saturate_value(global, &happ.module)?;
+            let saturated_module = saturate_value(db, global, &happ.module)?;
 
             // Check again after saturation (the module might have become concrete)
             match &*saturated_module {
                 Value::Module(module) => {
                     let result = run_closure(global, &module.body, [saturated_arg])?;
-                    saturate_value(global, &result)
+                    saturate_value(db, global, &result)
                 }
                 _ => {
-                    let saturated_ty = saturate_value(global, &happ.module_ty)?;
+                    let saturated_ty = saturate_value(db, global, &happ.module_ty)?;
                     Ok(Value::happlication_rc(
                         saturated_module,
                         saturated_ty,
@@ -180,6 +182,7 @@ fn saturate_happlication<'db>(
 
 /// Saturate a closure by instantiating it with a fresh variable and saturating the body.
 fn saturate_closure<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     closure: &Closure<'db>,
     var_ty: RcValue<'db>,
@@ -192,10 +195,11 @@ fn saturate_closure<'db>(
     let body = run_closure(global, closure, [var.clone()])?;
 
     // Saturate the body
-    let saturated_body = saturate_value(global, &body)?;
+    let saturated_body = saturate_value(db, global, &body)?;
 
     // Quote the saturated body back to syntax to create a new closure
     let new_syntax = quote::quote(
+        db,
         global,
         depth + 1,
         &saturated_body,
@@ -211,31 +215,34 @@ fn saturate_closure<'db>(
 // ============================================================================
 
 fn saturate_lambda<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     lam: &val::Lambda<'db>,
 ) -> Result<'db, RcValue<'db>> {
     // Use a placeholder type for the bound variable
     let placeholder_ty = Value::UniverseCode(0).into();
-    let new_body = saturate_closure(global, &lam.body, placeholder_ty)?;
+    let new_body = saturate_closure(db, global, &lam.body, placeholder_ty)?;
     Ok(Value::lambda_rc(lam.icit, new_body))
 }
 
 fn saturate_module<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     module: &val::Module<'db>,
 ) -> Result<'db, RcValue<'db>> {
     // Use Bit as placeholder type for module argument
     let placeholder_ty = Value::bit_rc();
-    let new_body = saturate_closure(global, &module.body, placeholder_ty)?;
+    let new_body = saturate_closure(db, global, &module.body, placeholder_ty)?;
     Ok(Value::module_rc(new_body))
 }
 
 fn saturate_harrow<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     harrow: &val::HArrow<'db>,
 ) -> Result<'db, RcValue<'db>> {
-    let new_source = saturate_value(global, &harrow.source)?;
-    let new_target = saturate_closure(global, &harrow.target, new_source.clone())?;
+    let new_source = saturate_value(db, global, &harrow.source)?;
+    let new_target = saturate_closure(db, global, &harrow.target, new_source.clone())?;
     Ok(Value::harrow_rc(new_source, new_target))
 }
 
@@ -244,39 +251,42 @@ fn saturate_harrow<'db>(
 // ============================================================================
 
 fn saturate_rigid<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     rigid: &val::Rigid<'db>,
 ) -> Result<'db, RcValue<'db>> {
-    let new_ty = saturate_value(global, &rigid.ty)?;
-    let new_spine = saturate_spine(global, &rigid.spine)?;
+    let new_ty = saturate_value(db, global, &rigid.ty)?;
+    let new_spine = saturate_spine(db, global, &rigid.spine)?;
     Ok(Value::rigid_rc(rigid.head.clone(), new_spine, new_ty))
 }
 
-fn saturate_flex<'db>(global: &GlobalEnv<'db>, flex: &val::Flex<'db>) -> Result<'db, RcValue<'db>> {
-    let new_ty = saturate_value(global, &flex.ty)?;
-    let new_spine = saturate_spine(global, &flex.spine)?;
+fn saturate_flex<'db>(db: &'db dyn salsa::Database, global: &GlobalEnv<'db>, flex: &val::Flex<'db>) -> Result<'db, RcValue<'db>> {
+    let new_ty = saturate_value(db, global, &flex.ty)?;
+    let new_spine = saturate_spine(db, global, &flex.spine)?;
     Ok(Value::flex_rc(flex.head.clone(), new_spine, new_ty))
 }
 
 fn saturate_spine<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     spine: &val::Spine<'db>,
 ) -> Result<'db, val::Spine<'db>> {
     let new_eliminators = spine
         .iter()
-        .map(|elim| saturate_eliminator(global, elim))
+        .map(|elim| saturate_eliminator(db, global, elim))
         .collect::<Result<'db, Vec<_>>>()?;
     Ok(val::Spine::new(new_eliminators))
 }
 
 fn saturate_eliminator<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     elim: &val::Eliminator<'db>,
 ) -> Result<'db, val::Eliminator<'db>> {
     match elim {
         val::Eliminator::Application(app) => {
-            let new_value = saturate_value(global, &app.argument.value)?;
-            let new_ty = saturate_value(global, &app.argument.ty)?;
+            let new_value = saturate_value(db, global, &app.argument.value)?;
+            let new_ty = saturate_value(db, global, &app.argument.ty)?;
             Ok(val::Eliminator::application(
                 val::Normal {
                     value: new_value,
@@ -289,7 +299,7 @@ fn saturate_eliminator<'db>(
             let new_params = case
                 .parameters
                 .iter()
-                .map(|p| saturate_value(global, p))
+                .map(|p| saturate_value(db, global, p))
                 .collect::<Result<'db, Vec<_>>>()?;
             // For now, keep branches as-is since saturating closures is complex
             Ok(val::Eliminator::case(
@@ -311,13 +321,14 @@ fn saturate_eliminator<'db>(
 /// It takes a normalized value, saturates all HApplications, and
 /// quotes the result back to syntax.
 pub fn saturate_and_quote<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     ty: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let saturated = saturate_value(global, value)?;
-    let quoted = quote::quote(global, depth, &saturated, &Rc::new(ty.clone()))?;
+    let saturated = saturate_value(db, global, value)?;
+    let quoted = quote::quote(db, global, depth, &saturated, &Rc::new(ty.clone()))?;
     Ok(quoted)
 }
 
@@ -336,11 +347,12 @@ mod tests {
     /// Test that a simple value without HApplication passes through unchanged.
     #[test]
     fn test_saturate_no_happlication() {
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Simple value: One
         let value = Value::one();
-        let result = saturate_value(&global, &value).expect("should saturate");
+        let result = saturate_value(&db, &global, &value).expect("should saturate");
 
         // Should be the same value
         assert!(matches!(&*result, Value::One(_)));
@@ -349,7 +361,7 @@ mod tests {
     /// Test that HApplication with a concrete Module is beta-reduced.
     #[test]
     fn test_saturate_happlication_with_module() {
-        let _db = TestDatabase::default();
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Create a Module closure that returns its argument (identity)
@@ -370,7 +382,7 @@ mod tests {
         // The HApplication: module<ty>(arg)
         let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), arg);
 
-        let result = saturate_value(&global, &happ).expect("should saturate");
+        let result = saturate_value(&db, &global, &happ).expect("should saturate");
 
         // After saturation, this should be: One
         assert!(matches!(&*result, Value::One(_)));
@@ -392,7 +404,7 @@ mod tests {
 
         let happ = Value::happlication(Rc::new(constant), Rc::new(module_ty), arg);
 
-        let result = saturate_value(&global, &happ).expect("should saturate");
+        let result = saturate_value(&db, &global, &happ).expect("should saturate");
 
         // Should preserve the HApplication since constant can't be reduced
         assert!(matches!(&*result, Value::HApplication(_)));
@@ -401,6 +413,7 @@ mod tests {
     /// Test that nested HApplications are saturated correctly.
     #[test]
     fn test_saturate_nested_happlication() {
+        let db = TestDatabase::default();
         let global = GlobalEnv::new();
 
         // Inner module: mod 0 (ignores argument, returns Zero)
@@ -438,7 +451,7 @@ mod tests {
             Rc::new(inner_happ),
         );
 
-        let result = saturate_value(&global, &outer_happ).expect("should saturate");
+        let result = saturate_value(&db, &global, &outer_happ).expect("should saturate");
 
         // After saturation, this should be: Zero
         assert!(matches!(&*result, Value::Zero(_)));
@@ -463,7 +476,7 @@ mod tests {
         let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), Value::zero_rc());
 
         // Saturate and quote
-        let result = saturate_and_quote(&global, 0, &happ, &Value::bit()).expect("should saturate");
+        let result = saturate_and_quote(&db, &global, 0, &happ, &Value::bit()).expect("should saturate");
 
         // The result should be the syntax for "1"
         let printed = print_syntax_to_string(&db, &result);
