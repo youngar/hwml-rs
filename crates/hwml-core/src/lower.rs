@@ -62,10 +62,10 @@ pub fn saturate_value<'db>(
         Value::HArrow(harrow) => saturate_harrow(global, harrow),
 
         // NEW: Type codes with closures
-        Value::PiCode(source, target) => {
+        Value::PiCode(source, icit, target) => {
             let new_source = saturate_value(global, source)?;
             // For now, keep the closure as-is (will be handled during quoting)
-            Ok(Rc::new(Value::PiCode(new_source, target.clone())))
+            Ok(Rc::new(Value::PiCode(new_source, *icit, target.clone())))
         }
         Value::LiftCode(shift, inner) => {
             let new_inner = saturate_value(global, inner)?;
@@ -217,7 +217,7 @@ fn saturate_lambda<'db>(
     // Use a placeholder type for the bound variable
     let placeholder_ty = Value::UniverseCode(0).into();
     let new_body = saturate_closure(global, &lam.body, placeholder_ty)?;
-    Ok(Value::lambda_rc(new_body))
+    Ok(Value::lambda_rc(lam.icit, new_body))
 }
 
 fn saturate_module<'db>(
@@ -277,10 +277,13 @@ fn saturate_eliminator<'db>(
         val::Eliminator::Application(app) => {
             let new_value = saturate_value(global, &app.argument.value)?;
             let new_ty = saturate_value(global, &app.argument.ty)?;
-            Ok(val::Eliminator::application(val::Normal {
-                value: new_value,
-                ty: new_ty,
-            }))
+            Ok(val::Eliminator::application(
+                val::Normal {
+                    value: new_value,
+                    ty: new_ty,
+                },
+                app.icit,
+            ))
         }
         val::Eliminator::Case(case) => {
             let new_params = case

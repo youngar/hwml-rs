@@ -1,3 +1,4 @@
+use crate::common::Icit;
 use crate::syn::*;
 use crate::*;
 
@@ -89,8 +90,8 @@ impl<'db> DataConstructorDecl<'db> {
     /// Reconstruct the full Pi type from the telescope and result type.
     pub fn full_type(&self) -> RcSyntax<'db> {
         let mut result = self.result_type.clone();
-        for ty in self.parameters.iter().rev() {
-            result = Syntax::PiCode(ty.clone(), Binding(result)).into();
+        for binder in self.parameters.iter().rev() {
+            result = Syntax::PiCode(binder.value.clone(), Icit::Explicit, Binding::anonymous(result)).into();
         }
         result
     }
