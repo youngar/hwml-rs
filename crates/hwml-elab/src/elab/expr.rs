@@ -1,8 +1,9 @@
 use std::{ops::Range, rc::Rc};
 
 use hwml_core::{
+    common::Icit,
     ty::{RcTy, Ty},
-    Binding, Name, RcSyntax, Syntax,
+    Binding, Name, RcSyntax, Syntax, Value,
 };
 use hwml_surface::Expression;
 
@@ -10,7 +11,7 @@ use crate::{
     context::ElabFrameKind,
     error::ElabError,
     kernel::{extract_binder_name, Checked, Kernel},
-    meta::MetaKind,
+    meta::{MetaId, MetaKind},
 };
 
 use super::Elaborator;
@@ -30,6 +31,7 @@ fn expr_loc(expr: &Expression) -> Range<usize> {
             // Match doesn't have a loc field, so use scrutinee's location
             expr_loc(&m.scrutinee)
         }
+        Expression::TypeAscription(asc) => asc.loc.clone(),
         Expression::Underscore(underscore) => underscore.loc.clone(),
         Expression::Paren(paren) => expr_loc(&paren.expr),
         Expression::Num(num) => num.loc.clone(),
@@ -40,6 +42,8 @@ fn expr_loc(expr: &Expression) -> Range<usize> {
         Expression::Id(id) => id.loc.clone(),
         Expression::Universe(universe) => universe.loc.clone(),
         Expression::Dot(dot) => dot.loc.clone(),
+        Expression::Error(err) => err.loc.clone(),
+        Expression::Hole(hole) => hole.loc.clone(),
     }
 }
 
@@ -64,6 +68,7 @@ fn expr_description(expr: &Expression) -> String {
         Expression::Fun(_) => "lambda function".to_string(),
         Expression::LetIn(_) => "let expression".to_string(),
         Expression::Match(_) => "match expression".to_string(),
+        Expression::TypeAscription(_) => "type ascription".to_string(),
         Expression::Underscore(_) => "underscore placeholder".to_string(),
         Expression::Paren(paren) => expr_description(&paren.expr),
         Expression::Num(n) => format!("number literal {}", n.value),
@@ -77,6 +82,14 @@ fn expr_description(expr: &Expression) -> String {
             }
         }
         Expression::Dot(_) => "dot expression".to_string(),
+        Expression::Error(err) => format!("error: {}", err.message),
+        Expression::Hole(hole) => {
+            if let Some(name) = &hole.name {
+                format!("hole ?{}", name)
+            } else {
+                "hole".to_string()
+            }
+        }
     }
 }
 
@@ -88,6 +101,23 @@ fn expr_span<'db>(elab: &Elaborator<'_, 'db>, expr: &Expression) -> Option<hwml_
         elab.context.source(),
         expr_loc(expr),
     ))
+}
+
+/// Check if a type is meta-headed (DOE helper).
+///
+/// Returns `Some(MetaId)` if the type is headed by an unsolved metavariable,
+/// `None` otherwise.
+///
+/// A type is meta-headed when it's `Ty::El(Flex(?m, ...))` where `?m` is unsolved.
+/// This is used to detect when we need to postpone type-checking for DOE.
+fn is_meta_headed<'db>(ty: &RcTy<'db>) -> Option<MetaId> {
+    match ty.as_ref() {
+        Ty::El(val) => match val.as_ref() {
+            Value::Flex(flex) => Some(MetaId(flex.head.id.local_index as u32)),
+            _ => None,
+        }
+        _ => None,
+    }
 }
 
 /// Helper to enrich an error with span and backtrace information if missing.
@@ -427,9 +457,48 @@ fn check_impl<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
+    // DOE (Dynamic Order Elaboration): Postpone lambda checks when type is meta-headed
+    //
+    // Key insight: We only postpone checks for LAMBDAS, because those are the only
+    // expressions where we might need to insert implicit lambdas based on the type.
+    // For other expressions (like `Type`, numbers, etc.), we can just switch to synth mode.
+    //
+    // The solver will collect ready checks and return them as Vec<ReadyCheck>.
+    // The caller (run_solver in decl.rs) processes them by creating elaborators
+    // and running the checks, then solving the placeholder metas.
+    if matches!(expr, Expression::Fun(_)) {
+        if let Some(meta_id) = is_meta_headed(&expected_ty) {
+            let depth = elab.kernel.ctx.depth();
+
+            // Create a placeholder meta that will be solved to the checked result
+            let placeholder = elab.kernel.state.fresh_meta(
+                expected_ty.clone(),
+                depth,
+                MetaKind::Term,
+            );
+
+            // Emit the PostponedCheck constraint
+            let cid = elab.kernel.state.emit_postponed_check(
+                Box::new(expr.clone()),
+                expected_ty.clone(),
+                elab.kernel.ctx.clone(),
+                placeholder,
+                depth,
+            );
+
+            // Block the constraint on the meta
+            elab.kernel.state.block_on(cid, &[meta_id]);
+
+            // Return the placeholder as a "promise" for the result
+            let (placeholder_syn, _placeholder_ty) = elab.kernel.synth_meta(placeholder)?.into_inner();
+            return Ok(Checked::new(placeholder_syn));
+        }
+    }
+
+    // Normal checking: type is not meta-headed
     match expr {
         Expression::Fun(fun) => match elab.kernel.force_to_pi(expected_ty.clone()) {
-            Ok((dom_code, cod_clos)) => elab.kernel.check_lambda(db, fun, dom_code, cod_clos, elab.context.source()),
+            Ok((dom_code, icit, cod_clos)) => elab.kernel.check_lambda(db, fun, dom_code, icit, cod_clos, elab.context.source()),
             Err(_) => {
                 // Switch to synth mode (the "switch rule")
                 let desc = expr_description(expr);
@@ -528,14 +597,15 @@ where
         return Ok(Checked::new((cod_syn, Rc::new(Ty::UniverseType))));
     }
     let group = &groups[0];
-    synth_pi_binders(db, elab, &group.binders, &group.ty, &groups[1..], target)
+    synth_pi_binders(db, elab, &group.binders, &group.ty, group.icit, &groups[1..], target)
 }
 
 fn synth_pi_binders<'a, 'db, Db>(
     db: &'db Db,
     elab: &mut Elaborator<'a, 'db>,
-    binders: &[Box<Expression>],
+    binders: &[hwml_surface::Binder],
     dom_ty_expr: &Expression,
+    icit: Icit,
     rest_groups: &[hwml_surface::TypedBindingGroup],
     target: &Expression,
 ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>>
@@ -571,13 +641,14 @@ where
             &mut inner,
             &binders[1..],
             dom_ty_expr,
+            icit,
             rest_groups,
             target,
         )?
     };
 
     let (cod_syn, _) = cod_checked.into_inner();
-    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Binding(cod_syn)));
+    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, icit, Binding(cod_syn)));
     Ok(Checked::new((pi_syn, Rc::new(Ty::UniverseType))))
 }
 
@@ -612,7 +683,7 @@ where
         check(db, &mut inner, &arrow.target, Rc::new(Ty::UniverseType))?.into_inner()
     };
 
-    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Binding(cod_syn)));
+    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Icit::Explicit, Binding(cod_syn)));
     Ok(Checked::new((pi_syn, Rc::new(Ty::UniverseType))))
 }
 
