@@ -18,7 +18,9 @@ pub fn render_diagnostic(diagnostic: &Diagnostic, file_name: Option<&str>) -> St
     let severity_str = match diagnostic.severity {
         DiagnosticSeverity::Bug => format!("{}{}BUG{}", color::BUG, style::BOLD, style::RESET),
         DiagnosticSeverity::Error => format!("{}{}error{}", color::RED, style::BOLD, style::RESET),
-        DiagnosticSeverity::Warning => format!("{}{}warning{}", color::YELLOW, style::BOLD, style::RESET),
+        DiagnosticSeverity::Warning => {
+            format!("{}{}warning{}", color::YELLOW, style::BOLD, style::RESET)
+        }
         DiagnosticSeverity::Info => format!("{}{}info{}", color::GREEN, style::BOLD, style::RESET),
         DiagnosticSeverity::Hint => format!("{}{}hint{}", color::BLUE, style::BOLD, style::RESET),
     };
@@ -30,37 +32,61 @@ pub fn render_diagnostic(diagnostic: &Diagnostic, file_name: Option<&str>) -> St
         String::new()
     };
 
-    output.push_str(&format!("{}{}: {}\n", severity_str, code_str, diagnostic.message));
+    output.push_str(&format!(
+        "{}{}: {}\n",
+        severity_str, code_str, diagnostic.message
+    ));
 
     // Render primary location
     let location_str = if let Some(fname) = file_name {
-        format!("{}:{}:{}", fname, diagnostic.span.start.line_num, diagnostic.span.start.column() + 1)
+        format!(
+            "{}:{}:{}",
+            fname,
+            diagnostic.span.start.line_num,
+            diagnostic.span.start.column() + 1
+        )
     } else {
-        format!("line {}, column {}", diagnostic.span.start.line_num, diagnostic.span.start.column() + 1)
+        format!(
+            "line {}, column {}",
+            diagnostic.span.start.line_num,
+            diagnostic.span.start.column() + 1
+        )
     };
-    output.push_str(&format!("  {}-->{}  {}\n",
+    output.push_str(&format!(
+        "  {}-->{}  {}\n",
         style::DIM,
         style::RESET,
         location_str,
     ));
-    
+
     // Render backtrace if present - narrative style
     if !diagnostic.backtrace.is_empty() {
         for entry in diagnostic.backtrace.iter() {
             if let Some(loc) = &entry.loc {
                 let loc_str = if let Some(fname) = file_name {
-                    format!("{}:{}:{}", fname, loc.start.line_num, loc.start.column() + 1)
+                    format!(
+                        "{}:{}:{}",
+                        fname,
+                        loc.start.line_num,
+                        loc.start.column() + 1
+                    )
                 } else {
-                    format!("line {}, column {}", loc.start.line_num, loc.start.column() + 1)
+                    format!(
+                        "line {}, column {}",
+                        loc.start.line_num,
+                        loc.start.column() + 1
+                    )
                 };
-                output.push_str(&format!("  {}while {}, at {}{}\n",
+                output.push_str(&format!(
+                    "  {}while {}, at {}{}\n",
                     style::DIM,
                     entry.text,
                     loc_str,
                     style::RESET
                 ));
             } else {
-                output.push_str(&format!("  {}while {}{}\n",
+                output.push_str(&format!(
+                    "  {}while {}{}\n",
                     style::DIM,
                     entry.text,
                     style::RESET
@@ -68,29 +94,31 @@ pub fn render_diagnostic(diagnostic: &Diagnostic, file_name: Option<&str>) -> St
             }
         }
     }
-    
+
     // Render suggestions if present
     if !diagnostic.suggestions.is_empty() {
         output.push_str("\n");
         for suggestion in &diagnostic.suggestions {
-            output.push_str(&format!("{}help:{} {}\n", 
+            output.push_str(&format!(
+                "{}help:{} {}\n",
                 color::GREEN,
                 style::RESET,
                 suggestion.message
             ));
         }
     }
-    
+
     // Render explanation if present
     if let Some(explanation) = &diagnostic.explanation {
         output.push_str("\n");
-        output.push_str(&format!("{}note:{} {}\n", 
+        output.push_str(&format!(
+            "{}note:{} {}\n",
             style::DIM,
             style::RESET,
             explanation
         ));
     }
-    
+
     output
 }
 
@@ -118,13 +146,25 @@ pub fn render_diagnostic_plain(diagnostic: &Diagnostic, file_name: Option<&str>)
         String::new()
     };
 
-    output.push_str(&format!("{}{}: {}\n", severity_str, code_str, diagnostic.message));
+    output.push_str(&format!(
+        "{}{}: {}\n",
+        severity_str, code_str, diagnostic.message
+    ));
 
     // Render primary location
     let location_str = if let Some(fname) = file_name {
-        format!("{}:{}:{}", fname, diagnostic.span.start.line_num, diagnostic.span.start.column() + 1)
+        format!(
+            "{}:{}:{}",
+            fname,
+            diagnostic.span.start.line_num,
+            diagnostic.span.start.column() + 1
+        )
     } else {
-        format!("line {}, column {}", diagnostic.span.start.line_num, diagnostic.span.start.column() + 1)
+        format!(
+            "line {}, column {}",
+            diagnostic.span.start.line_num,
+            diagnostic.span.start.column() + 1
+        )
     };
     output.push_str(&format!("  --> {}\n", location_str));
 
@@ -133,9 +173,18 @@ pub fn render_diagnostic_plain(diagnostic: &Diagnostic, file_name: Option<&str>)
         for entry in diagnostic.backtrace.iter() {
             if let Some(loc) = &entry.loc {
                 let loc_str = if let Some(fname) = file_name {
-                    format!("{}:{}:{}", fname, loc.start.line_num, loc.start.column() + 1)
+                    format!(
+                        "{}:{}:{}",
+                        fname,
+                        loc.start.line_num,
+                        loc.start.column() + 1
+                    )
                 } else {
-                    format!("line {}, column {}", loc.start.line_num, loc.start.column() + 1)
+                    format!(
+                        "line {}, column {}",
+                        loc.start.line_num,
+                        loc.start.column() + 1
+                    )
                 };
                 output.push_str(&format!("  while {}, at {}\n", entry.text, loc_str));
             } else {
@@ -143,7 +192,7 @@ pub fn render_diagnostic_plain(diagnostic: &Diagnostic, file_name: Option<&str>)
             }
         }
     }
-    
+
     // Render suggestions if present
     if !diagnostic.suggestions.is_empty() {
         output.push_str("\n");
@@ -151,12 +200,12 @@ pub fn render_diagnostic_plain(diagnostic: &Diagnostic, file_name: Option<&str>)
             output.push_str(&format!("help: {}\n", suggestion.message));
         }
     }
-    
+
     // Render explanation if present
     if let Some(explanation) = &diagnostic.explanation {
         output.push_str("\n");
         output.push_str(&format!("note: {}\n", explanation));
     }
-    
+
     output
 }

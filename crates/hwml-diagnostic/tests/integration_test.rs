@@ -4,8 +4,8 @@
 //! including serialization, equality checks, and builder patterns.
 
 use hwml_diagnostic::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticSeverity, Fix,
-    Loctext, Position, RelatedDiagnostic, Span, Suggestion,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticSeverity, Fix, Loctext, Position,
+    RelatedDiagnostic, Span, Suggestion,
 };
 use std::path::PathBuf;
 
@@ -136,9 +136,7 @@ fn test_fix_types() {
         text: "inserted text".to_string(),
     };
 
-    let delete_fix = Fix::Delete {
-        span: span(30, 40),
-    };
+    let delete_fix = Fix::Delete { span: span(30, 40) };
 
     // All should serialize and deserialize
     let replace_json = serde_json::to_string(&replace_fix).unwrap();

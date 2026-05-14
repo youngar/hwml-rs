@@ -30,7 +30,11 @@ pub fn parse_with_errors(input: &[u8]) -> ParseResult {
 
     ParseResult {
         program: result.program,
-        errors: result.errors.iter().map(ParseErrorInfo::from_parse_error).collect(),
+        errors: result
+            .errors
+            .iter()
+            .map(ParseErrorInfo::from_parse_error)
+            .collect(),
     }
 }
 
@@ -159,8 +163,14 @@ mod tests {
                 eprintln!("  {:?}", error);
             }
         }
-        assert!(result.errors.is_empty(), "Bool.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Bool.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Bool.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Bool.hwml should have statements"
+        );
     }
 
     #[test]
@@ -173,8 +183,14 @@ mod tests {
                 eprintln!("  {:?}", error);
             }
         }
-        assert!(result.errors.is_empty(), "Nat.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Nat.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Nat.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Nat.hwml should have statements"
+        );
     }
 
     #[test]
@@ -187,55 +203,98 @@ mod tests {
                 eprintln!("  {:?}", error);
             }
         }
-        assert!(result.errors.is_empty(), "List.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "List.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "List.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "List.hwml should have statements"
+        );
     }
 
     #[test]
     fn test_stdlib_unit_parses() {
         let src = std::fs::read("../../stdlib/src/Unit.hwml").expect("Could not read Unit.hwml");
         let result = parse_with_errors(&src);
-        assert!(result.errors.is_empty(), "Unit.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Unit.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Unit.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Unit.hwml should have statements"
+        );
     }
 
     #[test]
     fn test_stdlib_void_parses() {
         let src = std::fs::read("../../stdlib/src/Void.hwml").expect("Could not read Void.hwml");
         let result = parse_with_errors(&src);
-        assert!(result.errors.is_empty(), "Void.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Void.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Void.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Void.hwml should have statements"
+        );
     }
 
     #[test]
     fn test_stdlib_vec_parses() {
         let src = std::fs::read("../../stdlib/src/Vec.hwml").expect("Could not read Vec.hwml");
         let result = parse_with_errors(&src);
-        assert!(result.errors.is_empty(), "Vec.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Vec.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Vec.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Vec.hwml should have statements"
+        );
     }
 
     #[test]
     fn test_stdlib_option_parses() {
-        let src = std::fs::read("../../stdlib/src/Option.hwml").expect("Could not read Option.hwml");
+        let src =
+            std::fs::read("../../stdlib/src/Option.hwml").expect("Could not read Option.hwml");
         let result = parse_with_errors(&src);
-        assert!(result.errors.is_empty(), "Option.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Option.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Option.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Option.hwml should have statements"
+        );
     }
 
     #[test]
     fn test_stdlib_prod_parses() {
         let src = std::fs::read("../../stdlib/src/Prod.hwml").expect("Could not read Prod.hwml");
         let result = parse_with_errors(&src);
-        assert!(result.errors.is_empty(), "Prod.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Prod.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Prod.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Prod.hwml should have statements"
+        );
     }
 
     #[test]
     fn test_stdlib_sum_parses() {
         let src = std::fs::read("../../stdlib/src/Sum.hwml").expect("Could not read Sum.hwml");
         let result = parse_with_errors(&src);
-        assert!(result.errors.is_empty(), "Sum.hwml should parse without errors");
-        assert!(!result.program.statements.is_empty(), "Sum.hwml should have statements");
+        assert!(
+            result.errors.is_empty(),
+            "Sum.hwml should parse without errors"
+        );
+        assert!(
+            !result.program.statements.is_empty(),
+            "Sum.hwml should have statements"
+        );
     }
 }

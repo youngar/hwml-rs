@@ -212,7 +212,11 @@ impl App {
     }
 
     /// Create a new App with specified argument icits
-    pub fn new_with_icits(loc: Range<usize>, elements: Vec<Box<Expression>>, arg_icits: Vec<Icit>) -> Self {
+    pub fn new_with_icits(
+        loc: Range<usize>,
+        elements: Vec<Box<Expression>>,
+        arg_icits: Vec<Icit>,
+    ) -> Self {
         App {
             loc,
             elements,
@@ -359,7 +363,7 @@ pub struct ExpressionError {
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
 pub struct ExpressionHole {
     pub loc: Range<usize>,
-    pub name: Option<String>,  // Named hole like '?goal'
+    pub name: Option<String>, // Named hole like '?goal'
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -367,7 +371,6 @@ pub struct StatementError {
     pub loc: Range<usize>,
     pub message: String,
 }
-
 
 impl Expression {
     /// Get the location range of this expression

@@ -3,11 +3,11 @@
 //! This module bridges the gap between the elaborator's internal error representation
 //! (`ElabError`) and the diagnostic system's rich output format (`Diagnostic`).
 
-use hwml_diagnostic::{Diagnostic, DiagnosticBuilder, DiagnosticSeverity, Loctext, Position, Span};
-use hwml_support::line_info::LineInfo;
 use crate::error::ElabError;
 use hwml_core::ty::Ty;
 use hwml_core::val::GlobalEnv;
+use hwml_diagnostic::{Diagnostic, DiagnosticBuilder, DiagnosticSeverity, Loctext, Position, Span};
+use hwml_support::line_info::LineInfo;
 use hwml_surface::parsing::ParseErrorInfo;
 
 /// Format a type for display in error messages
@@ -26,18 +26,20 @@ where
                 Err(_) => format!("{:?}", code), // Fallback to debug format
             }
         }
-        Ty::SignalEl(code) => {
-            match hwml_core::quote::type_quote(db, global, 0, code) {
-                Ok(syntax) => format!("Signal[{}]", hwml_core::syn::print::print_syntax_to_string(db, &syntax)),
-                Err(_) => format!("Signal[{:?}]", code),
-            }
-        }
-        Ty::ModuleEl(code) => {
-            match hwml_core::quote::type_quote(db, global, 0, code) {
-                Ok(syntax) => format!("Module[{}]", hwml_core::syn::print::print_syntax_to_string(db, &syntax)),
-                Err(_) => format!("Module[{:?}]", code),
-            }
-        }
+        Ty::SignalEl(code) => match hwml_core::quote::type_quote(db, global, 0, code) {
+            Ok(syntax) => format!(
+                "Signal[{}]",
+                hwml_core::syn::print::print_syntax_to_string(db, &syntax)
+            ),
+            Err(_) => format!("Signal[{:?}]", code),
+        },
+        Ty::ModuleEl(code) => match hwml_core::quote::type_quote(db, global, 0, code) {
+            Ok(syntax) => format!(
+                "Module[{}]",
+                hwml_core::syn::print::print_syntax_to_string(db, &syntax)
+            ),
+            Err(_) => format!("Module[{:?}]", code),
+        },
         Ty::Pi(dom, cod) => {
             // Pi types are displayed as: (x : A) → B
             // We show the domain and a placeholder for the codomain since closures are complex
@@ -57,7 +59,11 @@ where
 ///
 /// Uses type-free quotation to convert values back to syntax, then pretty-prints.
 /// This handles DataConstructor and TypeConstructor values with their arguments.
-fn format_value<'db, Db>(db: &'db Db, global: &GlobalEnv<'db>, val: &hwml_core::RcValue<'db>) -> String
+fn format_value<'db, Db>(
+    db: &'db Db,
+    global: &GlobalEnv<'db>,
+    val: &hwml_core::RcValue<'db>,
+) -> String
 where
     Db: salsa::Database,
 {
@@ -96,7 +102,7 @@ where
 {
     // Compute line info for the source file
     let line_info = LineInfo::from_bytes(source_text.as_bytes());
-    
+
     // Helper to convert byte offset to Position
     let byte_to_position = |offset: usize| -> Position {
         let (line_num_0, col_0) = line_info.loc(offset);
@@ -111,15 +117,12 @@ where
 
         Position::new(offset, start_of_line, line_num)
     };
-    
+
     // Helper to convert Range<usize> to Span
     let range_to_span = |range: &std::ops::Range<usize>| -> Span {
-        Span::new(
-            byte_to_position(range.start),
-            byte_to_position(range.end),
-        )
+        Span::new(byte_to_position(range.start), byte_to_position(range.end))
     };
-    
+
     // Get the primary span from the error (or create a zero-width span at offset 0)
     // Note: Even errors without spans will use a placeholder span for the diagnostic system
     let primary_span = if let Some(source_range) = error.span() {
@@ -129,7 +132,7 @@ where
         // This allows the diagnostic to be rendered even without a precise location
         Span::point(byte_to_position(0))
     };
-    
+
     // Determine message and severity based on error type
     let (message, code) = match error {
         ElabError::TypeMismatch { expected, actual, .. } => {
@@ -177,7 +180,7 @@ where
             Some("E0009"),
         ),
     };
-    
+
     // Start building the diagnostic
     let mut builder = DiagnosticBuilder::error(primary_span, message);
 
@@ -188,15 +191,23 @@ where
     // Add helpful suggestions for common error types
     match error {
         ElabError::CannotInfer { .. } => {
-            builder = builder.with_suggestion("add an explicit type annotation to help the compiler infer the type");
+            builder = builder.with_suggestion(
+                "add an explicit type annotation to help the compiler infer the type",
+            );
         }
         ElabError::NotInScope { name, .. } => {
-            builder = builder.with_suggestion(format!("check that '{}' is defined and imported correctly", name));
+            builder = builder.with_suggestion(format!(
+                "check that '{}' is defined and imported correctly",
+                name
+            ));
         }
-        ElabError::TypeMismatch { expected, actual, .. } => {
+        ElabError::TypeMismatch {
+            expected, actual, ..
+        } => {
             // Only add suggestion if types are obviously different
             if !matches!((expected.as_ref(), actual.as_ref()), (Ty::El(_), Ty::El(_))) {
-                builder = builder.with_suggestion("ensure the expression produces a value of the expected type");
+                builder = builder
+                    .with_suggestion("ensure the expression produces a value of the expected type");
             }
         }
         ElabError::UnsolvedMeta { meta, .. } => {
@@ -213,27 +224,31 @@ where
             // No specific help for other errors yet
         }
     }
-    
+
     // Convert elaboration backtrace to diagnostic backtrace with narrative text
     let backtrace = error.backtrace();
-    let backtrace_entries: Vec<Loctext> = backtrace.iter().filter_map(|frame| {
-        // Filter out frames with obviously wrong locations (parser bugs or default values)
-        // Byte range 0..0 or 0..1 translates to line 1, column 1
-        let is_bogus_location = frame.location.range.start == 0 && frame.location.range.end <= 1;
+    let backtrace_entries: Vec<Loctext> = backtrace
+        .iter()
+        .filter_map(|frame| {
+            // Filter out frames with obviously wrong locations (parser bugs or default values)
+            // Byte range 0..0 or 0..1 translates to line 1, column 1
+            let is_bogus_location =
+                frame.location.range.start == 0 && frame.location.range.end <= 1;
 
-        if is_bogus_location {
-            // Skip this frame - it has a bad location from a parser issue
-            return None;
-        }
+            if is_bogus_location {
+                // Skip this frame - it has a bad location from a parser issue
+                return None;
+            }
 
-        let frame_span = range_to_span(&frame.location.range);
+            let frame_span = range_to_span(&frame.location.range);
 
-        // Use the frame's description directly - it now contains detailed info
-        // about what expression is being elaborated
-        let frame_text = frame.description.clone();
+            // Use the frame's description directly - it now contains detailed info
+            // about what expression is being elaborated
+            let frame_text = frame.description.clone();
 
-        Some(Loctext::with_loc(frame_span, frame_text))
-    }).collect();
+            Some(Loctext::with_loc(frame_span, frame_text))
+        })
+        .collect();
 
     if !backtrace_entries.is_empty() {
         builder = builder.with_backtrace(backtrace_entries);

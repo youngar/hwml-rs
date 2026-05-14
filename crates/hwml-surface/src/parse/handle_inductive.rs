@@ -2,7 +2,9 @@
 
 use crate::lex::Token;
 use crate::parse::context::Context;
-use crate::syntax::{Statement, Inductive, Constructor, TypedBindings, Id, Expression, ExpressionHole, App};
+use crate::syntax::{
+    App, Constructor, Expression, ExpressionHole, Id, Inductive, Statement, TypedBindings,
+};
 use hwml_core::common::Icit;
 use std::ops::Range;
 
@@ -16,7 +18,7 @@ impl<'input> Context<'input> {
             self.push_statement(stmt);
             return;
         }
-        
+
         let name = self.parse_id();
 
         // Parse optional parameters: (x : T) (y : U)
@@ -29,7 +31,10 @@ impl<'input> Context<'input> {
             // Parse the type expression (could be "Type" or "(i : Nat) -> Type")
             self.parse_constructor_type()
         } else {
-            Box::new(Expression::Universe(crate::syntax::Universe::new(loc.clone(), None)))
+            Box::new(Expression::Universe(crate::syntax::Universe::new(
+                loc.clone(),
+                None,
+            )))
         };
 
         // Indices are not parsed yet (TODO)
@@ -92,7 +97,8 @@ impl<'input> Context<'input> {
             if !self.at_token(Token::Identifier) {
                 self.emit_error("Expected constructor name");
                 // Try to recover: skip to closing brace or next pipe
-                while !self.at_end() && !self.at_token(Token::RBrace) && !self.at_token(Token::Pipe) {
+                while !self.at_end() && !self.at_token(Token::RBrace) && !self.at_token(Token::Pipe)
+                {
                     self.advance();
                 }
                 if self.at_token(Token::RBrace) {
@@ -101,7 +107,7 @@ impl<'input> Context<'input> {
                 }
                 break;
             }
-            
+
             let ctor_loc = self.current_location();
             let ctor_name = self.parse_id();
 
@@ -113,7 +119,10 @@ impl<'input> Context<'input> {
                 self.parse_constructor_type()
             } else {
                 // Constructor with no explicit type
-                Box::new(Expression::Hole(ExpressionHole::new(self.current_location(), None)))
+                Box::new(Expression::Hole(ExpressionHole::new(
+                    self.current_location(),
+                    None,
+                )))
             };
 
             let constructor = Constructor::new(ctor_loc, ctor_name, ctor_ty);
@@ -124,10 +133,10 @@ impl<'input> Context<'input> {
         let inductive = Inductive::new(loc, name, params, indices, universe, constructors);
         self.push_statement(Statement::Inductive(inductive));
     }
-    
+
     /// Helper: Parse typed binding groups like (x y : Nat) (z : Bool)
     fn parse_typed_bindings_groups(&mut self) -> TypedBindings {
-        use crate::syntax::{TypedBindingGroup, Binder, Pattern};
+        use crate::syntax::{Binder, Pattern, TypedBindingGroup};
 
         let mut groups = vec![];
 
@@ -167,7 +176,7 @@ impl<'input> Context<'input> {
         self.parse_simple_type();
         TypedBindings::new(vec![])
     }
-    
+
     /// Helper: Parse a simple type expression (very basic for now)
     fn parse_simple_type(&mut self) -> Box<Expression> {
         let loc = self.current_location();
@@ -177,14 +186,15 @@ impl<'input> Context<'input> {
             self.consume(Token::Type);
             let level = if self.at_token(Token::Number) {
                 let num_loc = self.current_location();
-                let text = std::str::from_utf8(&self.input[num_loc.clone()])
-                    .unwrap_or("0");
+                let text = std::str::from_utf8(&self.input[num_loc.clone()]).unwrap_or("0");
                 self.advance();
                 text.parse::<u32>().ok()
             } else {
                 None
             };
-            Box::new(Expression::Universe(crate::syntax::Universe::new(loc, level)))
+            Box::new(Expression::Universe(crate::syntax::Universe::new(
+                loc, level,
+            )))
         } else if self.at_token(Token::Identifier) {
             let id = self.parse_id();
             let mut elements = vec![Box::new(Expression::Id(id))];
@@ -202,7 +212,10 @@ impl<'input> Context<'input> {
                 elements.into_iter().next().unwrap()
             }
         } else {
-            Box::new(Expression::Hole(ExpressionHole::new(self.current_location(), None)))
+            Box::new(Expression::Hole(ExpressionHole::new(
+                self.current_location(),
+                None,
+            )))
         }
     }
 
@@ -220,7 +233,11 @@ impl<'input> Context<'input> {
             self.consume(Token::Arrow);
             let right = self.parse_constructor_type(); // Recursive for right-associativity
             let end_loc = self.current_location();
-            left = Box::new(Expression::Arrow(Arrow::new(start_loc.start..end_loc.end, left, right)));
+            left = Box::new(Expression::Arrow(Arrow::new(
+                start_loc.start..end_loc.end,
+                left,
+                right,
+            )));
         }
 
         left

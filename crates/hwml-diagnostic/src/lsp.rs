@@ -16,7 +16,10 @@ pub fn span_to_lsp_range(span: &Span) -> Range {
     Range::new(position_to_lsp(&span.start), position_to_lsp(&span.end))
 }
 
-fn loctext_to_related_info(loctext: &Loctext, file_uri: &Uri) -> Option<DiagnosticRelatedInformation> {
+fn loctext_to_related_info(
+    loctext: &Loctext,
+    file_uri: &Uri,
+) -> Option<DiagnosticRelatedInformation> {
     loctext.loc.as_ref().map(|span| {
         let range = span_to_lsp_range(span);
         let location = Location::new(file_uri.clone(), range);
@@ -40,7 +43,10 @@ fn severity_to_lsp(severity: DiagnosticSeverity) -> LspSeverity {
 pub fn diagnostic_to_lsp(diag: &Diagnostic, file_uri: &Uri, source: Option<&str>) -> LspDiagnostic {
     let range = span_to_lsp_range(&diag.span);
     let severity = Some(severity_to_lsp(diag.severity));
-    let code = diag.code.as_ref().map(|c| NumberOrString::String(c.0.clone()));
+    let code = diag
+        .code
+        .as_ref()
+        .map(|c| NumberOrString::String(c.0.clone()));
     let message = diag.message.clone();
 
     let mut related_information = Vec::new();
@@ -102,9 +108,18 @@ mod tests {
     #[test]
     fn test_severity_to_lsp() {
         assert_eq!(severity_to_lsp(DiagnosticSeverity::Bug), LspSeverity::ERROR);
-        assert_eq!(severity_to_lsp(DiagnosticSeverity::Error), LspSeverity::ERROR);
-        assert_eq!(severity_to_lsp(DiagnosticSeverity::Warning), LspSeverity::WARNING);
-        assert_eq!(severity_to_lsp(DiagnosticSeverity::Info), LspSeverity::INFORMATION);
+        assert_eq!(
+            severity_to_lsp(DiagnosticSeverity::Error),
+            LspSeverity::ERROR
+        );
+        assert_eq!(
+            severity_to_lsp(DiagnosticSeverity::Warning),
+            LspSeverity::WARNING
+        );
+        assert_eq!(
+            severity_to_lsp(DiagnosticSeverity::Info),
+            LspSeverity::INFORMATION
+        );
         assert_eq!(severity_to_lsp(DiagnosticSeverity::Hint), LspSeverity::HINT);
     }
 
@@ -127,7 +142,10 @@ mod tests {
 
         assert_eq!(lsp_diag.severity, Some(LspSeverity::ERROR));
         assert_eq!(lsp_diag.message, "type mismatch");
-        assert_eq!(lsp_diag.code, Some(NumberOrString::String("E0001".to_string())));
+        assert_eq!(
+            lsp_diag.code,
+            Some(NumberOrString::String("E0001".to_string()))
+        );
         assert_eq!(lsp_diag.source, Some("hwml".to_string()));
         assert_eq!(lsp_diag.related_information, None);
     }

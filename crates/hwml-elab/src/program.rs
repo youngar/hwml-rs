@@ -343,7 +343,14 @@ fn elab_def_statement<'db, Db>(
     // NOTE: Namespace resolution for the constant is handled inside elab_constant
     let result: Result<ConstantInfo<'db>, ElabError<'db>> = {
         let mut state = SolverState::new();
-        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
+        let mut elab = Elaborator::new(
+            global,
+            ElabCtx::empty(),
+            &mut state,
+            resolver,
+            stub_table,
+            source,
+        );
         elab::decl::elab_constant(db, &mut elab, def).and_then(|elaborated| {
             zonk(&mut state)?;
             let ty = substitute_metas_in_syntax(db, &elaborated.ty, &state);
@@ -388,7 +395,14 @@ fn elab_prim_statement<'db, Db>(
 
     let result: Result<PrimitiveInfo<'db>, ElabError<'db>> = {
         let mut state = SolverState::new();
-        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
+        let mut elab = Elaborator::new(
+            global,
+            ElabCtx::empty(),
+            &mut state,
+            resolver,
+            stub_table,
+            source,
+        );
         use hwml_core::ty::Ty;
         elab::expr::check(db, &mut elab, &prim.ty, Rc::new(Ty::UniverseType)).and_then(|checked| {
             zonk(&mut state)?;
@@ -478,13 +492,16 @@ fn elab_inductive_statement<'db, Db>(
             let mut args = params.clone();
             args.extend(indices.clone());
             // Convert Vec<RcSyntax> to Telescope with numbered names
-            let args_telescope = Telescope::from_pairs(
-                args.into_iter()
-                    .enumerate()
-                    .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
-            );
+            let args_telescope =
+                Telescope::from_pairs(args.into_iter().enumerate().map(|(i, ty)| {
+                    (
+                        hwml_core::name::Name::from_with_db(db, format!("{}", i)),
+                        ty,
+                    )
+                }));
             let level = extract_universe_level(&universe);
-            let stub_info = TypeConstructorInfo::new(args_telescope, params.len(), UniverseLevel::new(level));
+            let stub_info =
+                TypeConstructorInfo::new(args_telescope, params.len(), UniverseLevel::new(level));
             global.add_type_constructor(qname, stub_info);
             (params, indices, universe)
         }
@@ -508,7 +525,14 @@ fn elab_inductive_statement<'db, Db>(
         ElabError<'db>,
     > = {
         let mut state = SolverState::new();
-        let mut elab = Elaborator::new(global, ElabCtx::empty(), &mut state, resolver, stub_table, source);
+        let mut elab = Elaborator::new(
+            global,
+            ElabCtx::empty(),
+            &mut state,
+            resolver,
+            stub_table,
+            source,
+        );
         elab::decl::elab_inductive(db, &mut elab, ind).and_then(|elaborated| {
             zonk(&mut state)?;
             let num_params = elaborated.params.len();
@@ -519,14 +543,17 @@ fn elab_inductive_statement<'db, Db>(
                 .map(|s| substitute_metas_in_syntax(db, s, &state))
                 .collect();
             // Convert Vec<RcSyntax> to Telescope with numbered names
-            let args_telescope = Telescope::from_pairs(
-                args.into_iter()
-                    .enumerate()
-                    .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
-            );
+            let args_telescope =
+                Telescope::from_pairs(args.into_iter().enumerate().map(|(i, ty)| {
+                    (
+                        hwml_core::name::Name::from_with_db(db, format!("{}", i)),
+                        ty,
+                    )
+                }));
             let universe_syn = substitute_metas_in_syntax(db, &elaborated.universe, &state);
             let level = extract_universe_level(&universe_syn);
-            let tcon_info = TypeConstructorInfo::new(args_telescope, num_params, UniverseLevel::new(level));
+            let tcon_info =
+                TypeConstructorInfo::new(args_telescope, num_params, UniverseLevel::new(level));
 
             // Build DataConstructorInfo for each constructor
             let mut data_constructors = Vec::new();
@@ -564,9 +591,12 @@ fn elab_inductive_statement<'db, Db>(
                 let ctor_ty = substitute_metas_in_syntax(db, &ctor.result, &state);
                 // Convert Vec<RcSyntax> to Telescope with numbered names
                 let params_telescope = Telescope::from_pairs(
-                    ctor.params.iter().cloned()
-                        .enumerate()
-                        .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
+                    ctor.params.iter().cloned().enumerate().map(|(i, ty)| {
+                        (
+                            hwml_core::name::Name::from_with_db(db, format!("{}", i)),
+                            ty,
+                        )
+                    }),
                 );
                 let dcon_info = DataConstructorInfo::new(params_telescope, ctor_ty);
                 data_constructors.push((ctor_qname, dcon_info));
@@ -683,10 +713,28 @@ fn elab_statements<'db, Db>(
     for stmt in statements {
         match stmt {
             Statement::Def(def) => {
-                elab_def_statement(db, global, def, &block_resolver, stub_table, source, decls, errors);
+                elab_def_statement(
+                    db,
+                    global,
+                    def,
+                    &block_resolver,
+                    stub_table,
+                    source,
+                    decls,
+                    errors,
+                );
             }
             Statement::Prim(prim) => {
-                elab_prim_statement(db, global, prim, &block_resolver, stub_table, source, decls, errors);
+                elab_prim_statement(
+                    db,
+                    global,
+                    prim,
+                    &block_resolver,
+                    stub_table,
+                    source,
+                    decls,
+                    errors,
+                );
             }
             Statement::Inductive(ind) => {
                 elab_inductive_statement(
@@ -912,7 +960,10 @@ where
                 match solve_err {
                     SolveError::NoProgress => {
                         errors.push(ElabError::NotImplemented {
-                            feature: format!("Constraint solver made no progress in SCC {}", scc_idx),
+                            feature: format!(
+                                "Constraint solver made no progress in SCC {}",
+                                scc_idx
+                            ),
                             span: None,
                             elab_backtrace: Vec::new(),
                         });
@@ -1199,7 +1250,14 @@ fn gather_declarations<'db, Db>(
                 let ns_resolver = resolver.push_namespace(db, &path);
 
                 // Recursively gather declarations from nested namespace
-                gather_declarations(db, &ns.statements, Some(ns_qname), &ns_resolver, source, out);
+                gather_declarations(
+                    db,
+                    &ns.statements,
+                    Some(ns_qname),
+                    &ns_resolver,
+                    source,
+                    out,
+                );
             }
             Statement::Def(_) | Statement::Inductive(_) | Statement::Prim(_) => {
                 // CRITICAL: Use surface_id_to_path to handle dotted names like "Std.Bool"

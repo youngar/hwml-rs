@@ -1,5 +1,5 @@
-use crate::Icit;
 use crate::syn::*;
+use crate::Icit;
 use crate::*;
 
 /// A primitive declaration.

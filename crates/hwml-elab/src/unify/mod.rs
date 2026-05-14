@@ -52,7 +52,12 @@ pub struct Unifier<'a, 'db> {
 }
 
 impl<'a, 'db> Unifier<'a, 'db> {
-    pub fn new(db: &'db dyn salsa::Database, global: &'a GlobalEnv<'db>, state: &'a mut SolverState<'db>, depth: usize) -> Self {
+    pub fn new(
+        db: &'db dyn salsa::Database,
+        global: &'a GlobalEnv<'db>,
+        state: &'a mut SolverState<'db>,
+        depth: usize,
+    ) -> Self {
         Unifier {
             global,
             state,
@@ -182,7 +187,9 @@ impl<'a, 'db> Unifier<'a, 'db> {
         }
 
         // Both StuckApplication: unify constant heads and spines.
-        if let (Value::StuckApplication(sa1), Value::StuckApplication(sa2)) = (lhs.as_ref(), rhs.as_ref()) {
+        if let (Value::StuckApplication(sa1), Value::StuckApplication(sa2)) =
+            (lhs.as_ref(), rhs.as_ref())
+        {
             return self.unify_stuck_applications(sa1, sa2, &lhs, &rhs);
         }
 
@@ -200,12 +207,8 @@ impl<'a, 'db> Unifier<'a, 'db> {
             }
 
             // Name-based structural equality
-            (Value::Prim(p1), Value::Prim(p2)) => {
-                self.unify_prims(p1, p2, &lhs, &rhs)
-            }
-            (Value::Constant(c1), Value::Constant(c2)) => {
-                self.unify_constants(c1, c2, &lhs, &rhs)
-            }
+            (Value::Prim(p1), Value::Prim(p2)) => self.unify_prims(p1, p2, &lhs, &rhs),
+            (Value::Constant(c1), Value::Constant(c2)) => self.unify_constants(c1, c2, &lhs, &rhs),
 
             // Unit types (always equal)
             (Value::Zero(_), Value::Zero(_)) => Ok(UnifyResult::Solved),
@@ -228,9 +231,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
             }
 
             // Hardware arrow types (injectivity on source and target)
-            (Value::HArrow(ha1), Value::HArrow(ha2)) => {
-                self.unify_harrows(ha1, ha2)
-            }
+            (Value::HArrow(ha1), Value::HArrow(ha2)) => self.unify_harrows(ha1, ha2),
 
             // Hardware applications (structural equality)
             (Value::HApplication(happ1), Value::HApplication(happ2)) => {
@@ -265,7 +266,14 @@ impl<'a, 'db> Unifier<'a, 'db> {
     ) -> Result<UnifyResult, ElabError<'db>> {
         let flex = flex.clone();
         let dummy: RcTy<'db> = Rc::new(Ty::UniverseType);
-        if pattern::pattern_unify(self.db, self.global, self.state, &flex, other.clone(), dummy)? {
+        if pattern::pattern_unify(
+            self.db,
+            self.global,
+            self.state,
+            &flex,
+            other.clone(),
+            dummy,
+        )? {
             return Ok(UnifyResult::Solved);
         }
         Ok(UnifyResult::Stuck)
@@ -465,7 +473,8 @@ impl<'a, 'db> Unifier<'a, 'db> {
         }
 
         // Create a fresh variable and unify the target closures
-        let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), ha1.source.clone()));
+        let var: RcValue<'db> =
+            Rc::new(Value::variable(Level::new(self.depth), ha1.source.clone()));
         let tgt1 = ha1.target.apply(self.global, &var);
         let tgt2 = ha2.target.apply(self.global, &var);
 
@@ -645,20 +654,22 @@ impl<'a, 'db> Unifier<'a, 'db> {
                 .collect();
 
             // Apply closures to fresh variables using run_closure
-            let body1 = eval::run_closure(self.global, &b1.body, args.clone())
-                .map_err(|_| ElabError::UnificationFailure {
+            let body1 = eval::run_closure(self.global, &b1.body, args.clone()).map_err(|_| {
+                ElabError::UnificationFailure {
                     lhs: Rc::new(Value::UniverseCode(0)),
                     rhs: Rc::new(Value::UniverseCode(0)),
                     span: None,
                     elab_backtrace: Vec::new(),
-                })?;
-            let body2 = eval::run_closure(self.global, &b2.body, args)
-                .map_err(|_| ElabError::UnificationFailure {
+                }
+            })?;
+            let body2 = eval::run_closure(self.global, &b2.body, args).map_err(|_| {
+                ElabError::UnificationFailure {
                     lhs: Rc::new(Value::UniverseCode(0)),
                     rhs: Rc::new(Value::UniverseCode(0)),
                     span: None,
                     elab_backtrace: Vec::new(),
-                })?;
+                }
+            })?;
 
             // Increase depth for the fresh variables
             self.depth += b1.arity;

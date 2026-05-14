@@ -124,8 +124,12 @@ impl<'input> Context<'input> {
         while !self.at_end() {
             match self.peek() {
                 // Statement keywords - always sync here
-                Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim)
-                | Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) => {
+                Some(Token::Def)
+                | Some(Token::Meta)
+                | Some(Token::Prim)
+                | Some(Token::Namespace)
+                | Some(Token::Open)
+                | Some(Token::Inductive) => {
                     break;
                 }
 

@@ -116,7 +116,12 @@ impl<'db> ElabError<'db> {
 
         // Write the main error message
         match self {
-            ElabError::TypeMismatch { expected, actual, span, .. } => {
+            ElabError::TypeMismatch {
+                expected,
+                actual,
+                span,
+                ..
+            } => {
                 output.push_str("Type mismatch");
                 // TODO: Use proper type formatting with GlobalEnv
                 // For now, use Debug format as a placeholder
@@ -201,7 +206,12 @@ impl<'db> std::fmt::Display for ElabError<'db> {
         // Note: We keep messages simple because the elaboration backtrace
         // provides all the context about what was being checked and where.
         match self {
-            ElabError::TypeMismatch { expected, actual, span, .. } => {
+            ElabError::TypeMismatch {
+                expected,
+                actual,
+                span,
+                ..
+            } => {
                 writeln!(f, "Type mismatch")?;
                 writeln!(f, "  expected: {:?}", expected)?;
                 writeln!(f, "  found:    {:?}", actual)?;
@@ -264,11 +274,7 @@ impl<'db> std::fmt::Display for ElabError<'db> {
             writeln!(f)?;
             writeln!(f, "Elaboration backtrace:")?;
             for (i, frame) in backtrace.iter().enumerate() {
-                writeln!(f, "  {}. {} ({:?})",
-                    i + 1,
-                    frame.description,
-                    frame.kind
-                )?;
+                writeln!(f, "  {}. {} ({:?})", i + 1, frame.description, frame.kind)?;
                 writeln!(f, "     at {:?}", frame.location)?;
             }
         }

@@ -91,7 +91,10 @@ impl<'db> SolverState<'db> {
             elab_backtrace: Vec::new(),
         })?;
         if entry.solution.is_some() {
-            return Err(ElabError::MetaAlreadySolved { meta: id, elab_backtrace: Vec::new(), });
+            return Err(ElabError::MetaAlreadySolved {
+                meta: id,
+                elab_backtrace: Vec::new(),
+            });
         }
         // Kind consistency: UniverseLevel metas must resolve to a universe code or flex.
         if matches!(entry.kind, MetaKind::UniverseLevel) {

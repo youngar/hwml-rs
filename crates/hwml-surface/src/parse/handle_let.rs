@@ -18,9 +18,10 @@ impl Context<'_> {
         // Expect identifier for let binding name
         if !self.at_token(Token::Identifier) {
             self.emit_error("Expected identifier after 'let'");
-            let error_expr = Box::new(Expression::Error(
-                crate::syntax::ExpressionError::new(loc, "Invalid let expression".to_string())
-            ));
+            let error_expr = Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                loc,
+                "Invalid let expression".to_string(),
+            )));
             self.push_expr(error_expr);
             return;
         }
@@ -81,9 +82,10 @@ impl Context<'_> {
         // Expect ':='
         if !self.at_token(Token::ColonEqual) {
             self.emit_error("Expected ':=' in let expression");
-            let error_expr = Box::new(Expression::Error(
-                crate::syntax::ExpressionError::new(loc, "Invalid let expression".to_string())
-            ));
+            let error_expr = Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                loc,
+                "Invalid let expression".to_string(),
+            )));
             self.push_expr(error_expr);
             return;
         }
@@ -116,9 +118,10 @@ impl Context<'_> {
         // Expect 'in' keyword
         if !self.at_token(Token::In) {
             self.emit_error("Expected 'in' after let value");
-            let error_expr = Box::new(Expression::Error(
-                crate::syntax::ExpressionError::new(loc, "Invalid let expression".to_string())
-            ));
+            let error_expr = Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                loc,
+                "Invalid let expression".to_string(),
+            )));
             self.push_expr(error_expr);
             return;
         }

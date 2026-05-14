@@ -267,7 +267,6 @@ impl std::fmt::Display for MetaVariableId {
     }
 }
 
-
 /// Implicit/Explicit marker for function arguments.
 ///
 /// This distinguishes between:

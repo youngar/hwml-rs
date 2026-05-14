@@ -200,7 +200,10 @@ pub fn extract_statement_deps<'db>(
             extract_expr_refs(db, &prim.ty, &mut refs, &mut locals);
         }
         // Meta, Open, Namespace, Invalid don't contribute to dependency graph
-        Statement::Meta(_) | Statement::Open(_) | Statement::Namespace(_) | Statement::Invalid(_) => {}
+        Statement::Meta(_)
+        | Statement::Open(_)
+        | Statement::Namespace(_)
+        | Statement::Invalid(_) => {}
     }
 
     refs

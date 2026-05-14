@@ -4,7 +4,7 @@ use hwml_core::{
     eval,
     ty::Ty,
     val::{Environment, GlobalEnv},
-    RcSyntax, Syntax, SourceRange,
+    RcSyntax, SourceRange, Syntax,
 };
 use hwml_surface::{BindingGroup, Def, Inductive, TypedBindingGroup};
 
@@ -21,18 +21,12 @@ use crate::{
 
 /// Helper to create a SourceRange from a definition and the current elaboration context.
 fn def_span<'db>(elab: &Elaborator<'_, 'db>, def: &Def) -> Option<SourceRange<'db>> {
-    Some(SourceRange::new(
-        elab.context.source(),
-        def.loc.clone(),
-    ))
+    Some(SourceRange::new(elab.context.source(), def.loc.clone()))
 }
 
 /// Helper to create a SourceRange from an inductive declaration and the current elaboration context.
 fn ind_span<'db>(elab: &Elaborator<'_, 'db>, ind: &Inductive) -> Option<SourceRange<'db>> {
-    Some(SourceRange::new(
-        elab.context.source(),
-        ind.loc.clone(),
-    ))
+    Some(SourceRange::new(elab.context.source(), ind.loc.clone()))
 }
 
 // ─── Result types ─────────────────────────────────────────────────────────────
@@ -179,7 +173,7 @@ where
                 &def_resolver,
                 elab.kernel.stub_table,
             ),
-            context: elab.context.clone(),  // Share the same elaboration context
+            context: elab.context.clone(), // Share the same elaboration context
         };
 
         if def.bindings.groups.is_empty() {
@@ -225,10 +219,12 @@ where
                         .into_inner()
                     }
                 }
-                None => return Err(ElabError::CannotInfer {
-                    span: def_span(elab, def),
-                    elab_backtrace: elab.context.snapshot(),
-                }),
+                None => {
+                    return Err(ElabError::CannotInfer {
+                        span: def_span(elab, def),
+                        elab_backtrace: elab.context.snapshot(),
+                    })
+                }
             };
 
             let ty_code = inner.kernel.eval_syn_flex(&ty_syn);
@@ -524,7 +520,9 @@ where
             // Solve the placeholder with the result
             let result_syn = result.into_inner();
             let result_val = temp_elab.kernel.eval_syn_flex(&result_syn);
-            elab.kernel.state.solve_meta(check.placeholder, result_syn, result_val)?;
+            elab.kernel
+                .state
+                .solve_meta(check.placeholder, result_syn, result_val)?;
         }
     }
 
@@ -573,7 +571,9 @@ where
             let result = elab::expr::check(db, &mut temp_elab, &check.expr, check.expected_ty)?;
             let result_syn = result.into_inner();
             let result_val = temp_elab.kernel.eval_syn_flex(&result_syn);
-            elab.kernel.state.solve_meta(check.placeholder, result_syn, result_val)?;
+            elab.kernel
+                .state
+                .solve_meta(check.placeholder, result_syn, result_val)?;
         }
     }
 

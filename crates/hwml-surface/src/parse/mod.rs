@@ -6,19 +6,19 @@
 //! Diagnostic context is tracked via the state stack - parent states remain
 //! as continuations, providing rich context for error messages.
 
-pub mod state;
 pub mod context;
-mod handle_stmt;
-mod handle_expr;
-mod handle_pattern;
-mod handle_inductive;
-mod handle_namespace;
-mod handle_recovery;
-mod handle_match;
-mod handle_fun;
-mod handle_pi;
-mod handle_let;
 mod handle_bindings;
+mod handle_expr;
+mod handle_fun;
+mod handle_inductive;
+mod handle_let;
+mod handle_match;
+mod handle_namespace;
+mod handle_pattern;
+mod handle_pi;
+mod handle_recovery;
+mod handle_stmt;
+pub mod state;
 
 #[cfg(test)]
 mod tests;
@@ -70,7 +70,7 @@ impl<'input> Parser<'input> {
 
         Self { context }
     }
-    
+
     /// Parse the input into a Program
     pub fn parse(mut self) -> ParseResult {
         // Parse statements until EOF
@@ -102,7 +102,7 @@ impl<'input> Parser<'input> {
         // Finalize and return result
         self.context.finalize()
     }
-    
+
     /// Dispatch to appropriate handler based on state
     fn handle_state(&mut self, state: State) {
         match state {
@@ -113,87 +113,100 @@ impl<'input> Parser<'input> {
 
             // Def
             State::DefStart { loc } => self.context.handle_def_start(loc),
-            State::DefAfterName { loc, name } => {
-                self.context.handle_def_after_name(loc, name)
-            }
-            State::DefAfterBindings { loc, name, bindings } => {
-                self.context.handle_def_after_bindings(loc, name, bindings)
-            }
-            State::DefAfterType { loc, name, bindings, ty } => {
-                self.context.handle_def_after_type(loc, name, bindings, ty)
-            }
-            State::DefAfterValue { loc, name, bindings, ty } => {
-                self.context.handle_def_after_value(loc, name, bindings, ty)
-            }
+            State::DefAfterName { loc, name } => self.context.handle_def_after_name(loc, name),
+            State::DefAfterBindings {
+                loc,
+                name,
+                bindings,
+            } => self.context.handle_def_after_bindings(loc, name, bindings),
+            State::DefAfterType {
+                loc,
+                name,
+                bindings,
+                ty,
+            } => self.context.handle_def_after_type(loc, name, bindings, ty),
+            State::DefAfterValue {
+                loc,
+                name,
+                bindings,
+                ty,
+            } => self.context.handle_def_after_value(loc, name, bindings, ty),
 
             // Meta (similar to def)
             State::MetaStart { loc } => self.context.handle_meta_start(loc),
-            State::MetaAfterName { loc, name } => {
-                self.context.handle_meta_after_name(loc, name)
-            }
-            State::MetaAfterBindings { loc, name, bindings } => {
-                self.context.handle_meta_after_bindings(loc, name, bindings)
-            }
-            State::MetaAfterType { loc, name, bindings, ty } => {
-                self.context.handle_meta_after_type(loc, name, bindings, ty)
-            }
-            State::MetaAfterValue { loc, name, bindings, ty } => {
-                self.context.handle_meta_after_value(loc, name, bindings, ty)
-            }
+            State::MetaAfterName { loc, name } => self.context.handle_meta_after_name(loc, name),
+            State::MetaAfterBindings {
+                loc,
+                name,
+                bindings,
+            } => self.context.handle_meta_after_bindings(loc, name, bindings),
+            State::MetaAfterType {
+                loc,
+                name,
+                bindings,
+                ty,
+            } => self.context.handle_meta_after_type(loc, name, bindings, ty),
+            State::MetaAfterValue {
+                loc,
+                name,
+                bindings,
+                ty,
+            } => self
+                .context
+                .handle_meta_after_value(loc, name, bindings, ty),
 
             // Prim
             State::PrimStart { loc } => self.context.handle_prim_start(loc),
-            State::PrimAfterName { loc, name } => {
-                self.context.handle_prim_after_name(loc, name)
-            }
-            State::PrimAfterType { loc, name } => {
-                self.context.handle_prim_after_type(loc, name)
-            }
+            State::PrimAfterName { loc, name } => self.context.handle_prim_after_name(loc, name),
+            State::PrimAfterType { loc, name } => self.context.handle_prim_after_type(loc, name),
 
             // Inductive
-            State::InductiveStart { loc } => {
-                self.context.handle_inductive_start(loc)
-            }
+            State::InductiveStart { loc } => self.context.handle_inductive_start(loc),
 
             // Other inductive states not used (we handle everything in InductiveStart)
-            State::InductiveAfterName { .. } |
-            State::InductiveAfterParams { .. } |
-            State::InductiveAfterIndices { .. } |
-            State::InductiveConstructors { .. } |
-            State::Constructor { .. } => {
+            State::InductiveAfterName { .. }
+            | State::InductiveAfterParams { .. }
+            | State::InductiveAfterIndices { .. }
+            | State::InductiveConstructors { .. }
+            | State::Constructor { .. } => {
                 // These states exist but we don't use them in the current implementation
                 self.context.emit_error("Unexpected inductive state");
             }
 
             // Namespace
-            State::NamespaceStart { loc, name } => {
-                self.context.handle_namespace_start(loc, name)
-            }
-            State::NamespaceBody { loc, name, statement_stack_depth } => {
-                self.context.handle_namespace_body(loc, name, statement_stack_depth)
-            }
-            State::NamespaceEnd { loc, name, statement_stack_depth } => {
-                self.context.handle_namespace_end(loc, name, statement_stack_depth)
-            }
+            State::NamespaceStart { loc, name } => self.context.handle_namespace_start(loc, name),
+            State::NamespaceBody {
+                loc,
+                name,
+                statement_stack_depth,
+            } => self
+                .context
+                .handle_namespace_body(loc, name, statement_stack_depth),
+            State::NamespaceEnd {
+                loc,
+                name,
+                statement_stack_depth,
+            } => self
+                .context
+                .handle_namespace_end(loc, name, statement_stack_depth),
 
             // Open
-            State::OpenStart { loc } => {
-                self.context.handle_open_start(loc)
-            }
+            State::OpenStart { loc } => self.context.handle_open_start(loc),
 
             // Expression parsing
-            State::ExprStart { min_prec } => {
-                self.context.handle_expr_start(min_prec)
-            }
+            State::ExprStart { min_prec } => self.context.handle_expr_start(min_prec),
             State::ExprFinish { partial, min_prec } => {
                 self.context.handle_expr_finish(partial, min_prec)
             }
-            State::ExprApp { elements, arg_icits, next_arg_icit, min_prec } => {
-                self.context.handle_expr_app(elements, arg_icits, next_arg_icit, min_prec)
-            }
-            State::ArrowAfterRhs { lhs } => {
-                self.context.handle_arrow_after_rhs(lhs)
-            }
+            State::ExprApp {
+                elements,
+                arg_icits,
+                next_arg_icit,
+                min_prec,
+            } => self
+                .context
+                .handle_expr_app(elements, arg_icits, next_arg_icit, min_prec),
+            State::ArrowAfterRhs { lhs } => self.context.handle_arrow_after_rhs(lhs),
             State::TypeAscriptionAfterType { expr } => {
                 self.context.handle_type_ascription_after_type(expr)
             }
@@ -202,17 +215,22 @@ impl<'input> Parser<'input> {
             }
 
             // Match expressions - now handled as postfix in handle_expr_finish
-            State::MatchClauses { loc, scrutinee, clauses } => {
-                self.context.handle_match_clauses(loc, scrutinee, clauses)
-            }
-            State::MatchClauseAfterBody { loc, scrutinee, clauses, pattern } => {
-                self.context.handle_match_clause_after_body(loc, scrutinee, clauses, pattern)
-            }
+            State::MatchClauses {
+                loc,
+                scrutinee,
+                clauses,
+            } => self.context.handle_match_clauses(loc, scrutinee, clauses),
+            State::MatchClauseAfterBody {
+                loc,
+                scrutinee,
+                clauses,
+                pattern,
+            } => self
+                .context
+                .handle_match_clause_after_body(loc, scrutinee, clauses, pattern),
 
             // Lambda expressions
-            State::FunAfterKeyword { loc } => {
-                self.context.handle_fun_after_keyword(loc)
-            }
+            State::FunAfterKeyword { loc } => self.context.handle_fun_after_keyword(loc),
             State::FunAfterBindingsParsed { loc } => {
                 self.context.handle_fun_after_bindings_parsed(loc)
             }
@@ -221,60 +239,79 @@ impl<'input> Parser<'input> {
             }
 
             // Pi types (dependent function types)
-            State::PiAfterKeyword { loc } => {
-                self.context.handle_pi_after_keyword(loc)
-            }
+            State::PiAfterKeyword { loc } => self.context.handle_pi_after_keyword(loc),
             State::PiAfterBindings { loc, bindings } => {
                 self.context.handle_pi_after_bindings(loc, bindings)
             }
 
             // Let expressions
-            State::LetAfterKeyword { loc } => {
-                self.context.handle_let_after_keyword(loc)
-            }
-            State::LetAfterName { loc, name } => {
-                self.context.handle_let_after_name(loc, name)
-            }
+            State::LetAfterKeyword { loc } => self.context.handle_let_after_keyword(loc),
+            State::LetAfterName { loc, name } => self.context.handle_let_after_name(loc, name),
             State::LetAfterBindingsParsed { loc, name } => {
                 self.context.handle_let_after_bindings_parsed(loc, name)
             }
-            State::LetAfterType { loc, name, bindings, ty } => {
-                self.context.handle_let_after_type(loc, name, bindings, ty)
-            }
-            State::LetAfterValue { loc, name, bindings, ty } => {
-                self.context.handle_let_after_value(loc, name, bindings, ty)
-            }
-            State::LetAfterBody { loc, name, bindings, ty, value } => {
-                self.context.handle_let_after_body(loc, name, bindings, ty, value)
-            }
+            State::LetAfterType {
+                loc,
+                name,
+                bindings,
+                ty,
+            } => self.context.handle_let_after_type(loc, name, bindings, ty),
+            State::LetAfterValue {
+                loc,
+                name,
+                bindings,
+                ty,
+            } => self.context.handle_let_after_value(loc, name, bindings, ty),
+            State::LetAfterBody {
+                loc,
+                name,
+                bindings,
+                ty,
+                value,
+            } => self
+                .context
+                .handle_let_after_body(loc, name, bindings, ty, value),
 
             // Bindings (async parsing)
             State::ParseBindingsStart { groups } => {
                 self.context.handle_parse_bindings_start(groups)
             }
-            State::BindingGroupAfterType { binders, groups, icit, is_implicit, .. } => {
-                self.context.handle_binding_group_after_type(binders, groups, icit, is_implicit)
-            }
+            State::BindingGroupAfterType {
+                binders,
+                groups,
+                icit,
+                is_implicit,
+                ..
+            } => self
+                .context
+                .handle_binding_group_after_type(binders, groups, icit, is_implicit),
 
             // Telescope bindings (for dependent arrows)
             State::ParseTelescopeBindings { groups } => {
                 self.context.handle_parse_telescope_bindings(groups)
             }
-            State::TelescopeBindingAfterType { binders, groups } => {
-                self.context.handle_telescope_binding_after_type(binders, groups)
-            }
+            State::TelescopeBindingAfterType { binders, groups } => self
+                .context
+                .handle_telescope_binding_after_type(binders, groups),
 
             // Dependent arrows (telescope notation)
-            State::DependentArrowAfterBindingsParsed { loc, expr_stack_checkpoint, bindings_stack_checkpoint } => {
-                self.context.handle_dependent_arrow_after_bindings_parsed(loc, expr_stack_checkpoint, bindings_stack_checkpoint)
-            }
-            State::DependentArrowAfterBody { loc, bindings } => {
-                self.context.handle_dependent_arrow_after_body(loc, bindings)
-            }
+            State::DependentArrowAfterBindingsParsed {
+                loc,
+                expr_stack_checkpoint,
+                bindings_stack_checkpoint,
+            } => self.context.handle_dependent_arrow_after_bindings_parsed(
+                loc,
+                expr_stack_checkpoint,
+                bindings_stack_checkpoint,
+            ),
+            State::DependentArrowAfterBody { loc, bindings } => self
+                .context
+                .handle_dependent_arrow_after_body(loc, bindings),
 
             // TODO: Add remaining states
             _ => {
-                self.context.emit_error(format!("Unimplemented state: {:?}", state));
+                self.context
+                    .emit_error(format!("Unimplemented state: {:?}", state));
             }
         }
     }

@@ -1,4 +1,4 @@
-use hwml_core::{RcSyntax, RcValue, ty::RcTy, SourceRange};
+use hwml_core::{ty::RcTy, RcSyntax, RcValue, SourceRange};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct MetaId(pub u32);

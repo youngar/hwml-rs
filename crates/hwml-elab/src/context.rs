@@ -177,9 +177,9 @@ impl<'db> ElabContext<'db> {
     ///
     /// Returns `None` if no byte range has been set yet.
     pub fn current_location(&self) -> Option<SourceRange<'db>> {
-        self.current_byte_range.as_ref().map(|range| {
-            SourceRange::new(self.current_source, range.clone())
-        })
+        self.current_byte_range
+            .as_ref()
+            .map(|range| SourceRange::new(self.current_source, range.clone()))
     }
 
     /// Get a snapshot of the current backtrace.
@@ -236,11 +236,7 @@ impl<'db> ElabContext<'db> {
     /// # Arguments
     /// * `source` - The new source file
     /// * `f` - Closure to run with the new source
-    pub fn with_source<R>(
-        &mut self,
-        source: Source<'db>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+    pub fn with_source<R>(&mut self, source: Source<'db>, f: impl FnOnce(&mut Self) -> R) -> R {
         let old_source = self.current_source;
         self.current_source = source;
         let result = f(self);

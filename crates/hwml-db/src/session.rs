@@ -85,7 +85,12 @@ impl CompilerSession {
             let text = std::fs::read_to_string(&canonical)
                 .wrap_err_with(|| format!("Failed to read {}", canonical.display()))?;
 
-            let source_file = SourceFile::new(&mut session.db, canonical.clone(), text, "interactive".to_string());
+            let source_file = SourceFile::new(
+                &mut session.db,
+                canonical.clone(),
+                text,
+                "interactive".to_string(),
+            );
 
             // Add to file cache
             session.file_cache.insert(canonical.clone(), source_file);
@@ -114,7 +119,12 @@ impl CompilerSession {
         let canonical = self.normalize_path(&path)?;
 
         // Create Salsa SourceFile input
-        let source_file = SourceFile::new(&mut self.db, canonical.clone(), text, "interactive".to_string());
+        let source_file = SourceFile::new(
+            &mut self.db,
+            canonical.clone(),
+            text,
+            "interactive".to_string(),
+        );
 
         // Add to file cache
         self.file_cache.insert(canonical.clone(), source_file);
@@ -174,7 +184,8 @@ impl CompilerSession {
                     .wrap_err_with(|| format!("Failed to read {}", canonical.display()))?;
 
                 // Create Salsa input
-                let file = SourceFile::new(&self.db, canonical.clone(), text, "interactive".to_string());
+                let file =
+                    SourceFile::new(&self.db, canonical.clone(), text, "interactive".to_string());
 
                 // Cache it
                 *entry.insert(file)
@@ -201,7 +212,8 @@ impl CompilerSession {
             }
             Entry::Vacant(entry) => {
                 // File not loaded yet, create it
-                let file = SourceFile::new(&mut self.db, canonical, new_text, "interactive".to_string());
+                let file =
+                    SourceFile::new(&mut self.db, canonical, new_text, "interactive".to_string());
                 entry.insert(file);
                 Ok(())
             }

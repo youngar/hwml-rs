@@ -98,7 +98,10 @@ fn span_from_offsets(text: &str, start: usize, end: usize) -> Span {
 
 // Convert ElabError to Diagnostic.
 /// Format a value for error messages (simple, user-friendly representation)
-fn format_value_for_error<'db>(db: &'db dyn salsa::Database, val: &hwml_core::RcValue<'db>) -> String {
+fn format_value_for_error<'db>(
+    db: &'db dyn salsa::Database,
+    val: &hwml_core::RcValue<'db>,
+) -> String {
     use hwml_core::Value;
     match val.as_ref() {
         Value::UniverseCode(n) => format!("Type{}", n),
@@ -134,7 +137,9 @@ pub fn convert_elab_error_to_diagnostic<'db>(
         .collect();
 
     let (message, code) = match error {
-        ElabError::TypeMismatch { expected, actual, .. } => (
+        ElabError::TypeMismatch {
+            expected, actual, ..
+        } => (
             format!("Type mismatch: expected {:?}, found {:?}", expected, actual),
             Some(DiagnosticCode::new("E0002")),
         ),
@@ -228,7 +233,10 @@ pub fn file_diagnostics(db: &dyn salsa::Database, source: SourceFile) -> Arc<Vec
 
 // Aggregate diagnostics from all files in the workspace.
 #[salsa::tracked]
-pub fn workspace_diagnostics(db: &dyn salsa::Database, vfs: VfsFileMap) -> Arc<DiagnosticCollection> {
+pub fn workspace_diagnostics(
+    db: &dyn salsa::Database,
+    vfs: VfsFileMap,
+) -> Arc<DiagnosticCollection> {
     let mut collection = DiagnosticCollection::new();
     for (path, source) in vfs.files(db).iter() {
         for diagnostic in file_diagnostics(db, *source).iter() {
@@ -294,8 +302,18 @@ mod tests {
     #[test]
     fn test_workspace_diagnostics() {
         let db = HwmlDatabase::new();
-        let valid = SourceFile::new(&db, PathBuf::from("/test/valid.hwml"), "def x := 1".to_string(), "test".to_string());
-        let invalid = SourceFile::new(&db, PathBuf::from("/test/invalid.hwml"), "@#$% invalid".to_string(), "test".to_string());
+        let valid = SourceFile::new(
+            &db,
+            PathBuf::from("/test/valid.hwml"),
+            "def x := 1".to_string(),
+            "test".to_string(),
+        );
+        let invalid = SourceFile::new(
+            &db,
+            PathBuf::from("/test/invalid.hwml"),
+            "@#$% invalid".to_string(),
+            "test".to_string(),
+        );
 
         let mut files = HashMap::new();
         files.insert(PathBuf::from("/test/valid.hwml"), valid);
@@ -305,7 +323,9 @@ mod tests {
         let collection = workspace_diagnostics(&db, vfs);
         assert!(collection.counts.errors > 0);
         assert_eq!(collection.by_file.len(), 1);
-        assert!(collection.by_file.contains_key(&PathBuf::from("/test/invalid.hwml")));
+        assert!(collection
+            .by_file
+            .contains_key(&PathBuf::from("/test/invalid.hwml")));
     }
 
     #[test]
@@ -314,9 +334,24 @@ mod tests {
         db.enable_logging();
 
         // Create three files
-        let file_a = SourceFile::new(&db, PathBuf::from("/test/a.hwml"), "def a := 1".to_string(), "test".to_string());
-        let file_b = SourceFile::new(&db, PathBuf::from("/test/b.hwml"), "def b := 2".to_string(), "test".to_string());
-        let file_c = SourceFile::new(&db, PathBuf::from("/test/c.hwml"), "invalid @#$".to_string(), "test".to_string());
+        let file_a = SourceFile::new(
+            &db,
+            PathBuf::from("/test/a.hwml"),
+            "def a := 1".to_string(),
+            "test".to_string(),
+        );
+        let file_b = SourceFile::new(
+            &db,
+            PathBuf::from("/test/b.hwml"),
+            "def b := 2".to_string(),
+            "test".to_string(),
+        );
+        let file_c = SourceFile::new(
+            &db,
+            PathBuf::from("/test/c.hwml"),
+            "invalid @#$".to_string(),
+            "test".to_string(),
+        );
 
         // Initial computation
         let diags_a = file_diagnostics(&db, file_a);
@@ -352,8 +387,18 @@ mod tests {
         db.enable_logging();
 
         // Create initial workspace
-        let file_a = SourceFile::new(&db, PathBuf::from("/test/a.hwml"), "def a := 1".to_string(), "test".to_string());
-        let file_b = SourceFile::new(&db, PathBuf::from("/test/b.hwml"), "def b := 2".to_string(), "test".to_string());
+        let file_a = SourceFile::new(
+            &db,
+            PathBuf::from("/test/a.hwml"),
+            "def a := 1".to_string(),
+            "test".to_string(),
+        );
+        let file_b = SourceFile::new(
+            &db,
+            PathBuf::from("/test/b.hwml"),
+            "def b := 2".to_string(),
+            "test".to_string(),
+        );
 
         let mut files = HashMap::new();
         files.insert(PathBuf::from("/test/a.hwml"), file_a);
@@ -366,7 +411,9 @@ mod tests {
         db.take_logs();
 
         // Edit file A
-        file_a.set_text(&mut db).to("invalid syntax @#$".to_string());
+        file_a
+            .set_text(&mut db)
+            .to("invalid syntax @#$".to_string());
 
         // Re-query workspace diagnostics
         let collection2 = workspace_diagnostics(&db, vfs);

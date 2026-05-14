@@ -163,7 +163,10 @@ fn subst_spine_vals<'db>(
             Eliminator::Application(app) => {
                 let new_ty = subst_value(global, &app.argument.ty, local)?;
                 let new_val = subst_value(global, &app.argument.value, local)?;
-                new_elims.push(Eliminator::application(Normal::new(new_ty, new_val), app.icit));
+                new_elims.push(Eliminator::application(
+                    Normal::new(new_ty, new_val),
+                    app.icit,
+                ));
             }
             Eliminator::Case(_) => {
                 // Case branches contain closures; substitute them.

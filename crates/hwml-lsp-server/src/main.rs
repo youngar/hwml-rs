@@ -7,8 +7,8 @@ use lsp_server::{
 };
 use lsp_types::{
     notification::*, request::*, Diagnostic, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, InitializeParams, OneOf, PublishDiagnosticsParams,
-    SaveOptions, ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
+    DidOpenTextDocumentParams, InitializeParams, OneOf, PublishDiagnosticsParams, SaveOptions,
+    ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, Uri,
 };
 use std::{error::Error, path::PathBuf, time::Instant};
@@ -299,7 +299,8 @@ impl Server {
     fn compile_file(&self, db: &HwmlDatabase, uri: &Uri, file: hwml_db::db::SourceFile) {
         // Collect parse errors from Salsa query
         let diagnostics = hwml_db::diagnostics::file_diagnostics(db, file);
-        let mut all_diagnostics: Vec<hwml_diagnostic::Diagnostic> = diagnostics.iter().cloned().collect();
+        let mut all_diagnostics: Vec<hwml_diagnostic::Diagnostic> =
+            diagnostics.iter().cloned().collect();
 
         // Also collect elaboration errors (type checking)
         // This is done outside the Salsa query because elaboration requires &HwmlDatabase
@@ -316,12 +317,19 @@ impl Server {
 
             // Run elaboration
             let mut global = hwml_core::val::GlobalEnv::new();
-            let elab_result = hwml_elab::program::elab_program_with_source(db, &mut global, program, Some(file_source));
+            let elab_result = hwml_elab::program::elab_program_with_source(
+                db,
+                &mut global,
+                program,
+                Some(file_source),
+            );
 
             // Convert elaboration errors to diagnostics
             let text = file.text(db);
             for elab_error in &elab_result.errors {
-                if let Some(diag) = hwml_db::diagnostics::convert_elab_error_to_diagnostic(db, file, elab_error) {
+                if let Some(diag) =
+                    hwml_db::diagnostics::convert_elab_error_to_diagnostic(db, file, elab_error)
+                {
                     all_diagnostics.push(diag);
                 }
             }

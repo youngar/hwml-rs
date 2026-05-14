@@ -83,19 +83,19 @@ impl DiagnosticBuilder {
         builder.diagnostic.severity = DiagnosticSeverity::Hint;
         builder
     }
-    
+
     /// Add an error code (e.g., "E0308")
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
         self.diagnostic.code = Some(DiagnosticCode::new(code));
         self
     }
-    
+
     /// Add a detailed explanation
     pub fn with_explanation(mut self, explanation: impl Into<String>) -> Self {
         self.diagnostic.explanation = Some(explanation.into());
         self
     }
-    
+
     /// Add a suggestion (without an automatic fix)
     pub fn with_suggestion(mut self, message: impl Into<String>) -> Self {
         self.diagnostic.suggestions.push(Suggestion {
@@ -104,7 +104,7 @@ impl DiagnosticBuilder {
         });
         self
     }
-    
+
     /// Add a suggestion with an automatic fix
     pub fn with_fix(mut self, message: impl Into<String>, fix: Fix) -> Self {
         self.diagnostic.suggestions.push(Suggestion {
@@ -113,14 +113,9 @@ impl DiagnosticBuilder {
         });
         self
     }
-    
+
     /// Add a related diagnostic location
-    pub fn with_related(
-        mut self,
-        file: PathBuf,
-        span: Span,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn with_related(mut self, file: PathBuf, span: Span, message: impl Into<String>) -> Self {
         self.diagnostic.related.push(RelatedDiagnostic {
             file,
             span,
@@ -128,22 +123,17 @@ impl DiagnosticBuilder {
         });
         self
     }
-    
+
     /// Add a backtrace entry with location
-    pub fn with_backtrace_entry(
-        mut self,
-        text: impl Into<String>,
-        span: Span,
-    ) -> Self {
-        self.diagnostic.backtrace.push(Loctext::with_loc(span, text));
+    pub fn with_backtrace_entry(mut self, text: impl Into<String>, span: Span) -> Self {
+        self.diagnostic
+            .backtrace
+            .push(Loctext::with_loc(span, text));
         self
     }
 
     /// Add a backtrace entry without location
-    pub fn with_backtrace_text(
-        mut self,
-        text: impl Into<String>,
-    ) -> Self {
+    pub fn with_backtrace_text(mut self, text: impl Into<String>) -> Self {
         self.diagnostic.backtrace.push(Loctext::without_loc(text));
         self
     }
@@ -155,24 +145,21 @@ impl DiagnosticBuilder {
     }
 
     /// Add an extra remark with location
-    pub fn with_remark(
-        mut self,
-        text: impl Into<String>,
-        span: Span,
-    ) -> Self {
-        self.diagnostic.extra_remarks.push(Loctext::with_loc(span, text));
+    pub fn with_remark(mut self, text: impl Into<String>, span: Span) -> Self {
+        self.diagnostic
+            .extra_remarks
+            .push(Loctext::with_loc(span, text));
         self
     }
 
     /// Add an extra remark without location
-    pub fn with_remark_text(
-        mut self,
-        text: impl Into<String>,
-    ) -> Self {
-        self.diagnostic.extra_remarks.push(Loctext::without_loc(text));
+    pub fn with_remark_text(mut self, text: impl Into<String>) -> Self {
+        self.diagnostic
+            .extra_remarks
+            .push(Loctext::without_loc(text));
         self
     }
-    
+
     /// Build the final diagnostic
     pub fn build(self) -> Diagnostic {
         self.diagnostic
@@ -231,7 +218,10 @@ mod tests {
             .with_explanation("This is a detailed explanation")
             .build();
 
-        assert_eq!(diag.explanation.as_ref().unwrap(), "This is a detailed explanation");
+        assert_eq!(
+            diag.explanation.as_ref().unwrap(),
+            "This is a detailed explanation"
+        );
     }
 
     #[test]
@@ -253,14 +243,18 @@ mod tests {
                 Fix::Replace {
                     span: span(10, 15),
                     replacement: "42".to_string(),
-                }
+                },
             )
             .build();
 
         assert_eq!(diag.suggestions.len(), 1);
         assert!(diag.suggestions[0].fix.is_some());
 
-        if let Some(Fix::Replace { span: fix_span, replacement }) = &diag.suggestions[0].fix {
+        if let Some(Fix::Replace {
+            span: fix_span,
+            replacement,
+        }) = &diag.suggestions[0].fix
+        {
             assert_eq!(fix_span.start.offset, 10);
             assert_eq!(fix_span.end.offset, 15);
             assert_eq!(replacement, "42");
@@ -272,11 +266,7 @@ mod tests {
     #[test]
     fn test_with_related() {
         let diag = DiagnosticBuilder::error(span(0, 1), "error")
-            .with_related(
-                PathBuf::from("other.hwml"),
-                span(20, 30),
-                "declared here"
-            )
+            .with_related(PathBuf::from("other.hwml"), span(20, 30), "declared here")
             .build();
 
         assert_eq!(diag.related.len(), 1);
@@ -295,7 +285,7 @@ mod tests {
             .with_related(
                 PathBuf::from("main.hwml"),
                 span(10, 20),
-                "function declared here"
+                "function declared here",
             )
             .build();
 

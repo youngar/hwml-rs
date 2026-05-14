@@ -135,14 +135,7 @@ impl<'a, 'db> Solver<'a, 'db> {
                 ctx,
                 placeholder,
                 depth,
-            } => self.step_postponed_check(
-                cid,
-                expr,
-                expected_ty,
-                ctx,
-                placeholder,
-                depth,
-            ),
+            } => self.step_postponed_check(cid, expr, expected_ty, ctx, placeholder, depth),
         }
     }
 
@@ -230,7 +223,9 @@ impl<'a, 'db> Solver<'a, 'db> {
         rhs: &RcValue<'db>,
         depth: usize,
     ) -> bool {
-        if let (Value::PiCode(d1, _icit1, c1), Value::PiCode(d2, _icit2, c2)) = (lhs.as_ref(), rhs.as_ref()) {
+        if let (Value::PiCode(d1, _icit1, c1), Value::PiCode(d2, _icit2, c2)) =
+            (lhs.as_ref(), rhs.as_ref())
+        {
             let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
 
             // Emit: d1 = d2 : Type (domain equality)
@@ -458,7 +453,11 @@ impl<'a, 'db> Solver<'a, 'db> {
 
                         // Build the result: application of field to receiver
                         let field_syn = hwml_core::Syntax::constant_rc(field_qualified);
-                        let result_syn = hwml_core::Syntax::application_rc(field_syn, receiver_val, Icit::Explicit);
+                        let result_syn = hwml_core::Syntax::application_rc(
+                            field_syn,
+                            receiver_val,
+                            Icit::Explicit,
+                        );
 
                         // Evaluate the field type
                         let field_ty_val = eval::substitute(

@@ -4,7 +4,7 @@
 mod tests {
     use crate::parse::Parser;
     use crate::syntax::*;
-    
+
     #[test]
     fn test_recover_from_invalid_def() {
         // Test: def bad := def good := 1
@@ -12,14 +12,14 @@ mod tests {
         let input = b"def bad := def good := 1";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have parsed at least the second def
         assert!(result.program.statements.len() >= 1);
-        
+
         // Should have some errors
         assert!(result.errors.len() > 0);
     }
-    
+
     #[test]
     fn test_recover_from_missing_name() {
         // Test: def := 1 def foo := 2
@@ -27,10 +27,10 @@ mod tests {
         let input = b"def := 1 def foo := 2";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have errors
         assert!(result.errors.len() > 0);
-        
+
         // Should still parse the second def
         let has_foo = result.program.statements.iter().any(|stmt| {
             if let Statement::Def(def) = stmt {
@@ -39,10 +39,10 @@ mod tests {
                 false
             }
         });
-        
+
         assert!(has_foo, "Should have recovered and parsed 'foo'");
     }
-    
+
     #[test]
     fn test_multiple_statements_with_errors() {
         // Test: def a := 1 def bad def c := 3
@@ -50,14 +50,14 @@ mod tests {
         let input = b"def a := 1 def bad def c := 3";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have some errors
         assert!(result.errors.len() > 0);
-        
+
         // Should have parsed at least 2 statements
         assert!(result.program.statements.len() >= 2);
     }
-    
+
     #[test]
     fn test_recover_in_namespace() {
         // Test: namespace Foo { def bad def good := 1 }
@@ -65,10 +65,10 @@ mod tests {
         let input = b"namespace Foo { def bad def good := 1 }";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have parsed the namespace
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Namespace(ns) => {
                 assert_eq!(&*ns.name.value, "Foo");
@@ -77,11 +77,11 @@ mod tests {
             }
             _ => panic!("Expected Namespace statement"),
         }
-        
+
         // Should have errors
         assert!(result.errors.len() > 0);
     }
-    
+
     #[test]
     fn test_sync_at_statement_keywords() {
         // Test: garbage def foo := 1
@@ -89,10 +89,10 @@ mod tests {
         let input = b"garbage tokens here def foo := 1";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have errors from the garbage
         assert!(result.errors.len() > 0);
-        
+
         // Should have recovered and parsed foo
         let has_foo = result.program.statements.iter().any(|stmt| {
             if let Statement::Def(def) = stmt {
@@ -101,38 +101,38 @@ mod tests {
                 false
             }
         });
-        
+
         assert!(has_foo, "Should have synced at 'def' and parsed 'foo'");
     }
-    
+
     #[test]
     fn test_empty_input() {
         // Test: empty input
         let input = b"";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have no statements
         assert_eq!(result.program.statements.len(), 0);
-        
+
         // Should have no errors
         assert_eq!(result.errors.len(), 0);
     }
-    
+
     #[test]
     fn test_only_errors() {
         // Test: input with only garbage
         let input = b"this is all garbage";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         // Should have errors
         assert!(result.errors.len() > 0);
-        
+
         // Might have some error statements
         // (depends on recovery strategy)
     }
-    
+
     #[test]
     fn test_recover_from_unmatched_brace() {
         // Test: namespace Foo { def a := 1 namespace Bar { def b := 2 }
@@ -164,7 +164,10 @@ mod tests {
 
         // With smart recovery, we should parse both namespace and bar
         // The exact count depends on whether namespace recovery creates error statements
-        assert!(result.program.statements.len() >= 1, "Should have at least namespace");
+        assert!(
+            result.program.statements.len() >= 1,
+            "Should have at least namespace"
+        );
 
         // Check if we successfully parsed bar (recovery working!)
         let has_bar = result.program.statements.iter().any(|stmt| {
@@ -230,7 +233,10 @@ mod tests {
                 false
             }
         });
-        assert!(has_bar, "Should have parsed 'bar' after recovering from paren error");
+        assert!(
+            has_bar,
+            "Should have parsed 'bar' after recovering from paren error"
+        );
     }
 
     #[test]
@@ -356,7 +362,10 @@ mod tests {
         println!("Program: {:#?}", result.program);
 
         // Should have error for missing pattern
-        assert!(result.errors.iter().any(|e| e.message.contains("pattern") || e.message.contains("=>")));
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("pattern") || e.message.contains("=>")));
 
         // Should still parse the def
         assert_eq!(result.program.statements.len(), 1);

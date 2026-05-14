@@ -51,7 +51,10 @@ fn ind_span<'db>(source: Source<'db>, ind: &Inductive) -> Option<SourceRange<'db
 }
 
 /// Helper to create a SourceRange from a Constructor and the inductive's source.
-fn ctor_span<'db>(source: Source<'db>, ctor: &hwml_surface::Constructor) -> Option<SourceRange<'db>> {
+fn ctor_span<'db>(
+    source: Source<'db>,
+    ctor: &hwml_surface::Constructor,
+) -> Option<SourceRange<'db>> {
     Some(SourceRange::new(source, ctor.loc.clone()))
 }
 
@@ -148,8 +151,14 @@ where
                 let ind_resolver = decl_resolver.push_namespace(db, &ind_path);
 
                 // Elaborate just the header: params, indices, universe
-                let mut elab =
-                    Elaborator::new(global, ElabCtx::empty(), state, &ind_resolver, stub_table, decl_info.source);
+                let mut elab = Elaborator::new(
+                    global,
+                    ElabCtx::empty(),
+                    state,
+                    &ind_resolver,
+                    stub_table,
+                    decl_info.source,
+                );
 
                 // Elaborate parameters (returns both syntax and extended context)
                 let (params, param_ctx) =
@@ -213,8 +222,14 @@ where
                     decl_info.qualified_name.to_string(db)
                 );
 
-                let mut elab =
-                    Elaborator::new(global, ElabCtx::empty(), state, decl_resolver, stub_table, decl_info.source);
+                let mut elab = Elaborator::new(
+                    global,
+                    ElabCtx::empty(),
+                    state,
+                    decl_resolver,
+                    stub_table,
+                    decl_info.source,
+                );
 
                 let ty = if !def.bindings.groups.is_empty() {
                     // Has bindings like `def f (x : A) (y : B) : T`
@@ -234,13 +249,10 @@ where
                         }
                     } else {
                         // Build Pi type from typed bindings
-                        let target = def
-                            .ty
-                            .as_ref()
-                            .ok_or(ElabError::CannotInfer {
-                                span: def_span(decl_info.source, def),
-                                elab_backtrace: elab.context.snapshot(),
-                            })?;
+                        let target = def.ty.as_ref().ok_or(ElabError::CannotInfer {
+                            span: def_span(decl_info.source, def),
+                            elab_backtrace: elab.context.snapshot(),
+                        })?;
                         let pi = elab::decl::build_pi_expr(typed_groups, target);
 
                         elab::expr::check(
@@ -265,7 +277,10 @@ where
                             depth,
                             MetaKind::UniverseLevel,
                             loc.clone(),
-                            format!("unannotated definition '{:?}' at {:?}", decl_info.qualified_name, loc),
+                            format!(
+                                "unannotated definition '{:?}' at {:?}",
+                                decl_info.qualified_name, loc
+                            ),
                         )
                     } else {
                         elab.kernel.state.fresh_meta(
@@ -322,13 +337,19 @@ where
                 let mut args = params.clone();
                 args.extend(indices.clone());
                 // Convert Vec<RcSyntax> to Telescope with numbered names
-                let args_telescope = Telescope::from_pairs(
-                    args.into_iter()
-                        .enumerate()
-                        .map(|(i, ty)| (hwml_core::name::Name::from_with_db(db, format!("{}", i)), ty))
-                );
+                let args_telescope =
+                    Telescope::from_pairs(args.into_iter().enumerate().map(|(i, ty)| {
+                        (
+                            hwml_core::name::Name::from_with_db(db, format!("{}", i)),
+                            ty,
+                        )
+                    }));
                 let level = extract_universe_level(universe);
-                let info = TypeConstructorInfo::new(args_telescope, *num_params, UniverseLevel::new(level));
+                let info = TypeConstructorInfo::new(
+                    args_telescope,
+                    *num_params,
+                    UniverseLevel::new(level),
+                );
                 global.add_type_constructor(*qname, info);
                 eprintln!(
                     "[SCC_ELAB] Phase 2 (Hoist): Verify - can we look it up? {:?}",
@@ -394,8 +415,14 @@ where
             ) => {
                 // CRITICAL FIX: Use the cached parameter context from Phase 1
                 // This ensures variable IDs match between the signature and the body
-                let mut elab =
-                    Elaborator::new(global, param_ctx.clone(), state, decl_resolver, stub_table, decl_info.source);
+                let mut elab = Elaborator::new(
+                    global,
+                    param_ctx.clone(),
+                    state,
+                    decl_resolver,
+                    stub_table,
+                    decl_info.source,
+                );
 
                 // Use lenient solver during mutual recursion
                 let elaborated = elab::decl::elab_inductive_lenient(db, &mut elab, ind)?;
@@ -440,9 +467,11 @@ where
                     let ctor_ty = substitute_metas_in_syntax(db, &ctor.result, state);
                     // Convert Vec<RcSyntax> to Telescope with numbered names
                     let params_telescope = Telescope::from_pairs(
-                        ctor.params.iter().cloned()
+                        ctor.params
+                            .iter()
+                            .cloned()
                             .enumerate()
-                            .map(|(i, ty)| (Name::from_with_db(db, format!("{}", i)), ty))
+                            .map(|(i, ty)| (Name::from_with_db(db, format!("{}", i)), ty)),
                     );
                     let dcon_info = DataConstructorInfo::new(params_telescope, ctor_ty);
                     data_constructors.push((ctor_qname, dcon_info));
@@ -452,8 +481,14 @@ where
                 // CRITICAL FIX: Use the cached type context from Phase 1
                 // For most constants this will be empty, but for dependent functions
                 // it contains the parameter bindings
-                let mut elab =
-                    Elaborator::new(global, ty_ctx.clone(), state, decl_resolver, stub_table, decl_info.source);
+                let mut elab = Elaborator::new(
+                    global,
+                    ty_ctx.clone(),
+                    state,
+                    decl_resolver,
+                    stub_table,
+                    decl_info.source,
+                );
 
                 // Use lenient solver during mutual recursion
                 let elaborated = elab::decl::elab_constant_lenient(db, &mut elab, def)?;

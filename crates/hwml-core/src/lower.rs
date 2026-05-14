@@ -260,7 +260,11 @@ fn saturate_rigid<'db>(
     Ok(Value::rigid_rc(rigid.head.clone(), new_spine, new_ty))
 }
 
-fn saturate_flex<'db>(db: &'db dyn salsa::Database, global: &GlobalEnv<'db>, flex: &val::Flex<'db>) -> Result<'db, RcValue<'db>> {
+fn saturate_flex<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    flex: &val::Flex<'db>,
+) -> Result<'db, RcValue<'db>> {
     let new_ty = saturate_value(db, global, &flex.ty)?;
     let new_spine = saturate_spine(db, global, &flex.spine)?;
     Ok(Value::flex_rc(flex.head.clone(), new_spine, new_ty))
@@ -476,7 +480,8 @@ mod tests {
         let happ = Value::happlication(Rc::new(module), Rc::new(module_ty), Value::zero_rc());
 
         // Saturate and quote
-        let result = saturate_and_quote(&db, &global, 0, &happ, &Value::bit()).expect("should saturate");
+        let result =
+            saturate_and_quote(&db, &global, 0, &happ, &Value::bit()).expect("should saturate");
 
         // The result should be the syntax for "1"
         let printed = print_syntax_to_string(&db, &result);

@@ -991,7 +991,6 @@ fn quote_transport<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Index, Level};
     use crate::common::UniverseLevel;
     use crate::eval;
     use crate::syn::parse::parse_syntax;
@@ -999,6 +998,7 @@ mod tests {
     use crate::syn::Telescope;
     use crate::val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
     use crate::TestDatabase;
+    use crate::{Index, Level};
     use hwml_support::salsa::IntoWithDb;
 
     // =========================================================================
@@ -1633,11 +1633,7 @@ mod tests {
         let result = print_syntax_to_string(&db, &quoted);
 
         // Should reduce to False
-        assert_eq!(
-            result, "[@False]",
-            "Case reduction failed! Got: {}",
-            result
-        );
+        assert_eq!(result, "[@False]", "Case reduction failed! Got: {}", result);
     }
 
     #[test]

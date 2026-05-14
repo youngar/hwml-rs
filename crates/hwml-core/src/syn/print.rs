@@ -1,5 +1,5 @@
-use crate::Icit;
 use crate::syn::*;
+use crate::Icit;
 use crate::*;
 use elegance::{Io, Printer, Render};
 
@@ -446,7 +446,13 @@ where
     }
 }
 
-fn ensure<F, R>(st: State, ns: &mut NameStack, p: &mut Printer<R>, properties: Properties, f: F) -> Result<(), R::Error>
+fn ensure<F, R>(
+    st: State,
+    ns: &mut NameStack,
+    p: &mut Printer<R>,
+    properties: Properties,
+    f: F,
+) -> Result<(), R::Error>
 where
     F: FnOnce(State, &mut NameStack, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
@@ -880,7 +886,10 @@ impl<'db> Print for CaseBranch<'db> {
     ) -> Result<(), R::Error> {
         let mut fresh_names = Vec::new();
         for i in 0..self.body.arity {
-            let name = self.body.names.get(i)
+            let name = self
+                .body
+                .names
+                .get(i)
                 .map(|n| n.to_string(db))
                 .unwrap_or_else(|| format!("{}", st.depth + i));
             let fresh_name = ns.push_fresh(name);
@@ -963,7 +972,9 @@ impl<'db> Print for SignalUniverse<'db> {
         _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, _ns, p, SIGNAL_UNIVERSE, |_st, _ns, p| p.text("SignalUniverse"))
+        ensure(st, _ns, p, SIGNAL_UNIVERSE, |_st, _ns, p| {
+            p.text("SignalUniverse")
+        })
     }
 }
 
@@ -1393,7 +1404,10 @@ mod tests {
         assert_snapshot!(p(&db, &transport), @"transport !2 to !0 by refl");
 
         // Test with lambda motive - keywords eliminate need for parentheses
-        let lambda_motive = Syntax::lambda_rc(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::bit_rc()));
+        let lambda_motive = Syntax::lambda_rc(
+            Icit::Explicit,
+            Binding::new(Name::anonymous(&db), Syntax::bit_rc()),
+        );
         let transport2 = Syntax::transport_rc(lambda_motive, Syntax::refl_rc(), Syntax::zero_rc());
         assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %0 → Bit by refl");
     }

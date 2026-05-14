@@ -79,7 +79,11 @@ pub fn substitute_metas_in_syntax<'db>(
     subst_metas(db, syn, state)
 }
 
-fn subst_metas<'db>(db: &'db dyn salsa::Database, syn: &Syntax<'db>, state: &SolverState<'db>) -> RcSyntax<'db> {
+fn subst_metas<'db>(
+    db: &'db dyn salsa::Database,
+    syn: &Syntax<'db>,
+    state: &SolverState<'db>,
+) -> RcSyntax<'db> {
     match syn {
         Syntax::Metavariable(meta) => {
             let id = MetaId(meta.id.local_index as u32);
@@ -98,7 +102,11 @@ fn subst_metas<'db>(db: &'db dyn salsa::Database, syn: &Syntax<'db>, state: &Sol
             let cod = &binding.body;
             let dom2 = subst_metas(db, dom, state);
             let cod2 = subst_metas(db, cod, state);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding::new(binding.name, cod2)))
+            Rc::new(Syntax::PiCode(
+                dom2,
+                *icit,
+                Binding::new(binding.name, cod2),
+            ))
         }
         Syntax::Application(app) => {
             let fun = subst_metas(db, &app.function, state);
@@ -155,7 +163,11 @@ fn apply_syntax_solution<'db>(
             let cod = &binding.body;
             let dom2 = apply_syntax_solution(db, dom, args, extra_depth);
             let cod2 = apply_syntax_solution(db, cod, args, extra_depth + 1);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding::new(binding.name, cod2)))
+            Rc::new(Syntax::PiCode(
+                dom2,
+                *icit,
+                Binding::new(binding.name, cod2),
+            ))
         }
         Syntax::Application(app) => {
             let fun = apply_syntax_solution(db, &app.function, args, extra_depth);
@@ -176,7 +188,12 @@ fn apply_syntax_solution<'db>(
 
 /// Shift all free (unbound) variables in `syn` upward by `shift`.
 /// `cutoff` = number of locally-bound variables at the current position.
-fn shift_syntax_free<'db>(db: &'db dyn salsa::Database, syn: &Syntax<'db>, shift: usize, cutoff: usize) -> RcSyntax<'db> {
+fn shift_syntax_free<'db>(
+    db: &'db dyn salsa::Database,
+    syn: &Syntax<'db>,
+    shift: usize,
+    cutoff: usize,
+) -> RcSyntax<'db> {
     if shift == 0 {
         return Rc::new(syn.clone());
     }
@@ -196,7 +213,11 @@ fn shift_syntax_free<'db>(db: &'db dyn salsa::Database, syn: &Syntax<'db>, shift
             let cod = &binding.body;
             let dom2 = shift_syntax_free(db, dom, shift, cutoff);
             let cod2 = shift_syntax_free(db, cod, shift, cutoff + 1);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding::new(binding.name, cod2)))
+            Rc::new(Syntax::PiCode(
+                dom2,
+                *icit,
+                Binding::new(binding.name, cod2),
+            ))
         }
         Syntax::Application(app) => {
             let fun = shift_syntax_free(db, &app.function, shift, cutoff);

@@ -4,15 +4,15 @@
 //! and setting up test environments.
 
 use crate::check_module::check_module;
-use crate::Level;
 use crate::eval;
 use crate::quote::{quote, type_quote};
 use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
 use crate::syn::print::print_syntax_to_string;
-use crate::RcSyntax;
 use crate::val::Environment;
-use crate::{GlobalEnv, RcValue, Value};
+use crate::Level;
+use crate::RcSyntax;
 use crate::TestDatabase;
+use crate::{GlobalEnv, RcValue, Value};
 
 // ========== Prelude String Constants ==========
 // Note: Type constructor references use #[@Name args...], data constructor references use [@Name args...]

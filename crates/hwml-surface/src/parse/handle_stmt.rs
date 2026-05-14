@@ -11,7 +11,7 @@
 use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::State;
-use crate::syntax::{Statement, Def, Meta, Prim, Id, Bindings, Expression, Open};
+use crate::syntax::{Bindings, Def, Expression, Id, Meta, Open, Prim, Statement};
 use std::ops::Range;
 
 impl<'input> Context<'input> {
@@ -77,8 +77,12 @@ impl<'input> Context<'input> {
     pub(super) fn skip_to_statement_boundary(&mut self) {
         while !self.at_end() {
             match self.peek() {
-                Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim)
-                | Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) => break,
+                Some(Token::Def)
+                | Some(Token::Meta)
+                | Some(Token::Prim)
+                | Some(Token::Namespace)
+                | Some(Token::Open)
+                | Some(Token::Inductive) => break,
                 _ => self.advance(),
             }
         }
@@ -107,7 +111,12 @@ impl<'input> Context<'input> {
         self.parse_bindings_async(continuation);
     }
 
-    pub(super) fn handle_def_after_bindings(&mut self, loc: Range<usize>, name: Id, _bindings: Bindings) {
+    pub(super) fn handle_def_after_bindings(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        _bindings: Bindings,
+    ) {
         // Pop the ACTUAL bindings from bindings_stack (ignore dummy passed in state)
         let bindings = self.pop_bindings();
         if self.at_token(Token::Colon) {
@@ -116,12 +125,15 @@ impl<'input> Context<'input> {
             // Push TWO states: continuation first, then expression parser
             // When expression finishes, it will push result to expr_stack
             // Then DefAfterType will pop it
-            let dummy_ty = Box::new(Expression::Hole(crate::syntax::ExpressionHole::new(0..0, None)));
+            let dummy_ty = Box::new(Expression::Hole(crate::syntax::ExpressionHole::new(
+                0..0,
+                None,
+            )));
             self.push_state(State::DefAfterType {
                 loc,
                 name,
                 bindings,
-                ty: dummy_ty // Will be ignored - handler will pop from stack
+                ty: dummy_ty, // Will be ignored - handler will pop from stack
             });
 
             // Push expression parser (runs first)
@@ -146,7 +158,13 @@ impl<'input> Context<'input> {
         }
     }
 
-    pub(super) fn handle_def_after_type(&mut self, loc: Range<usize>, name: Id, bindings: Bindings, _ty: Box<Expression>) {
+    pub(super) fn handle_def_after_type(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        _ty: Box<Expression>,
+    ) {
         // Pop the ACTUAL type from the expression stack (ignore the dummy passed in state)
         let ty = self.pop_expr();
 
@@ -170,7 +188,13 @@ impl<'input> Context<'input> {
         }
     }
 
-    pub(super) fn handle_def_after_value(&mut self, loc: Range<usize>, name: Id, bindings: Bindings, ty: Option<Box<Expression>>) {
+    pub(super) fn handle_def_after_value(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        ty: Option<Box<Expression>>,
+    ) {
         let value = self.pop_expr();
         let def = Def::new(loc, name, bindings, ty, value);
         self.push_statement(Statement::Def(def));
@@ -191,20 +215,32 @@ impl<'input> Context<'input> {
 
     pub(super) fn handle_meta_after_name(&mut self, loc: Range<usize>, name: Id) {
         let bindings = self.parse_bindings();
-        self.push_state(State::MetaAfterBindings { loc, name, bindings });
+        self.push_state(State::MetaAfterBindings {
+            loc,
+            name,
+            bindings,
+        });
     }
 
-    pub(super) fn handle_meta_after_bindings(&mut self, loc: Range<usize>, name: Id, bindings: Bindings) {
+    pub(super) fn handle_meta_after_bindings(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+    ) {
         if self.at_token(Token::Colon) {
             self.consume(Token::Colon);
 
             // Push continuation (will pop type from expr_stack)
-            let dummy_ty = Box::new(Expression::Hole(crate::syntax::ExpressionHole::new(0..0, None)));
+            let dummy_ty = Box::new(Expression::Hole(crate::syntax::ExpressionHole::new(
+                0..0,
+                None,
+            )));
             self.push_state(State::MetaAfterType {
                 loc,
                 name,
                 bindings,
-                ty: dummy_ty // Ignored - handler will pop from stack
+                ty: dummy_ty, // Ignored - handler will pop from stack
             });
 
             // Push expression parser (runs first)
@@ -229,7 +265,13 @@ impl<'input> Context<'input> {
         }
     }
 
-    pub(super) fn handle_meta_after_type(&mut self, loc: Range<usize>, name: Id, bindings: Bindings, _ty: Box<Expression>) {
+    pub(super) fn handle_meta_after_type(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        _ty: Box<Expression>,
+    ) {
         // Pop the ACTUAL type from the expression stack
         let ty = self.pop_expr();
 
@@ -253,7 +295,13 @@ impl<'input> Context<'input> {
         }
     }
 
-    pub(super) fn handle_meta_after_value(&mut self, loc: Range<usize>, name: Id, bindings: Bindings, ty: Option<Box<Expression>>) {
+    pub(super) fn handle_meta_after_value(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        bindings: Bindings,
+        ty: Option<Box<Expression>>,
+    ) {
         let value = self.pop_expr();
         let meta = Meta::new(loc, name, bindings, ty, value);
         self.push_statement(Statement::Meta(meta));

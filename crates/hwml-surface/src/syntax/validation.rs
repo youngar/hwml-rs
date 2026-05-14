@@ -1,7 +1,7 @@
 //! AST Validation
 //!
 //! Debug-mode validation of parsed AST structure, inspired by Carbon's Tree::Verify().
-//! 
+//!
 //! This catches parser bugs by verifying structural invariants that should always hold.
 //! Only enabled in debug builds to avoid performance overhead in release builds.
 
@@ -134,8 +134,12 @@ fn verify_expression(expr: &Expression) {
             verify_expression(&dot.receiver);
             verify_id(&dot.field);
         }
-        Expression::Num(_) | Expression::Hole(_) | Expression::Universe(_)
-        | Expression::Underscore(_) | Expression::Error(_) | Expression::Str(_) => {
+        Expression::Num(_)
+        | Expression::Hole(_)
+        | Expression::Universe(_)
+        | Expression::Underscore(_)
+        | Expression::Error(_)
+        | Expression::Str(_) => {
             // These are atomic, nothing to recursively verify
         }
     }
@@ -170,10 +174,7 @@ fn verify_pattern(pattern: &Pattern) {
 
 #[cfg(debug_assertions)]
 fn verify_id(id: &Id) {
-    assert!(
-        !id.value.is_empty(),
-        "Identifier must not be empty"
-    );
+    assert!(!id.value.is_empty(), "Identifier must not be empty");
     assert!(
         &*id.value != "<error>",
         "Identifier should not be the error marker '<error>'"

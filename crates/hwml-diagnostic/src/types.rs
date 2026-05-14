@@ -135,7 +135,11 @@ pub struct Position {
 impl Position {
     /// Create a new position with all fields
     pub fn new(offset: usize, start_of_line: usize, line_num: usize) -> Self {
-        Self { offset, start_of_line, line_num }
+        Self {
+            offset,
+            start_of_line,
+            line_num,
+        }
     }
 
     /// Column number (0-indexed) within the line
@@ -169,7 +173,10 @@ impl Span {
 
     /// Create a zero-width span at a position
     pub fn point(pos: Position) -> Self {
-        Self { start: pos, end: pos }
+        Self {
+            start: pos,
+            end: pos,
+        }
     }
 
     /// Check if this span contains a byte offset
@@ -235,7 +242,7 @@ impl DiagnosticCode {
     pub fn new(code: impl Into<String>) -> Self {
         Self(code.into())
     }
-    
+
     /// Get the code as a string
     pub fn as_str(&self) -> &str {
         &self.0
@@ -253,7 +260,7 @@ impl std::fmt::Display for DiagnosticCode {
 pub struct Suggestion {
     /// Description of what to change
     pub message: String,
-    
+
     /// Optional automated fix
     pub fix: Option<Fix>,
 }
@@ -262,21 +269,13 @@ pub struct Suggestion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Fix {
     /// Replace a range with new text
-    Replace {
-        span: Span,
-        replacement: String,
-    },
+    Replace { span: Span, replacement: String },
 
     /// Insert text at a position
-    Insert {
-        position: usize,
-        text: String,
-    },
+    Insert { position: usize, text: String },
 
     /// Delete a range
-    Delete {
-        span: Span,
-    },
+    Delete { span: Span },
 }
 
 /// A related diagnostic location
@@ -366,12 +365,15 @@ mod tests {
         severities.sort();
 
         // After sorting, Bug should come first, then Error, etc.
-        assert_eq!(severities, vec![
-            DiagnosticSeverity::Bug,
-            DiagnosticSeverity::Error,
-            DiagnosticSeverity::Warning,
-            DiagnosticSeverity::Info,
-            DiagnosticSeverity::Hint,
-        ]);
+        assert_eq!(
+            severities,
+            vec![
+                DiagnosticSeverity::Bug,
+                DiagnosticSeverity::Error,
+                DiagnosticSeverity::Warning,
+                DiagnosticSeverity::Info,
+                DiagnosticSeverity::Hint,
+            ]
+        );
     }
 }

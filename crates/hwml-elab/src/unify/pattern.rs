@@ -4,11 +4,13 @@ use std::{
 };
 
 use hwml_core::{
-    Binding, Index, Level, MetaVariableId, Name, RcSyntax, RcValue, Syntax, Value,
-    ty::{RcTy, Ty},
-    val::{Closure, DataConstructor, EqType, Eliminator, Flex, GlobalEnv, LocalEnv, Normal, Rigid,
-          Spine, TypeConstructor, Variable},
     eval,
+    ty::{RcTy, Ty},
+    val::{
+        Closure, DataConstructor, Eliminator, EqType, Flex, GlobalEnv, LocalEnv, Normal, Rigid,
+        Spine, TypeConstructor, Variable,
+    },
+    Binding, Index, Level, MetaVariableId, Name, RcSyntax, RcValue, Syntax, Value,
 };
 
 use crate::{
@@ -69,7 +71,9 @@ pub fn pattern_unify<'db>(
     }
 
     // Produce the syntax solution (closed term in meta scope, de Bruijn indexed).
-    let syntax_sol = match pattern_quote(db, global, state, &rhs, &rename, &ambiguous, meta_id, arity, arity) {
+    let syntax_sol = match pattern_quote(
+        db, global, state, &rhs, &rename, &ambiguous, meta_id, arity, arity,
+    ) {
         Ok(s) => s,
         Err(RenameError::Hard(e)) => return Err(e),
         Err(RenameError::Soft) => return Ok(false),
@@ -82,7 +86,9 @@ pub fn pattern_unify<'db>(
         Err(RenameError::Soft) => return Ok(false),
     };
 
-    state.solve_meta(meta_id, syntax_sol, value_sol).map(|_| true)
+    state
+        .solve_meta(meta_id, syntax_sol, value_sol)
+        .map(|_| true)
 }
 
 // ─── Error type ──────────────────────────────────────────────────────────────
@@ -132,19 +138,28 @@ fn pattern_quote<'db>(
             }
             let &pos = match rename.get(&level) {
                 Some(p) => p,
-                None => return Err(RenameError::Hard(ElabError::ScopeViolation {
-                    meta: meta_id,
-                    span: None,
-                    elab_backtrace: Vec::new(),
-                })),
+                None => {
+                    return Err(RenameError::Hard(ElabError::ScopeViolation {
+                        meta: meta_id,
+                        span: None,
+                        elab_backtrace: Vec::new(),
+                    }))
+                }
             };
             let mut result = Syntax::variable_rc(Index(arity - 1 - pos));
             for elim in rigid.spine.iter() {
                 match elim {
                     Eliminator::Application(app) => {
                         let arg_syn = pattern_quote(
-                            db, global, state, &app.argument.value,
-                            rename, ambiguous, meta_id, arity, outer_depth,
+                            db,
+                            global,
+                            state,
+                            &app.argument.value,
+                            rename,
+                            ambiguous,
+                            meta_id,
+                            arity,
+                            outer_depth,
                         )?;
                         result = Syntax::application_rc(result, arg_syn, app.icit);
                     }
@@ -168,38 +183,88 @@ fn pattern_quote<'db>(
             let forced = state.force_flex(global, flex2);
             if let Some(forced_val) = forced {
                 return pattern_quote(
-                    db, global, state, &forced_val,
-                    rename, ambiguous, meta_id, arity, outer_depth,
+                    db,
+                    global,
+                    state,
+                    &forced_val,
+                    rename,
+                    ambiguous,
+                    meta_id,
+                    arity,
+                    outer_depth,
                 );
             }
             // Only handle empty spine (can't prune with non-empty spine).
             if !flex2.spine.is_empty() {
                 return Err(RenameError::Soft);
             }
-            prune_flex_quote(db, global, state, flex2, flex2_id, rename, ambiguous, meta_id, arity)
+            prune_flex_quote(
+                db, global, state, flex2, flex2_id, rename, ambiguous, meta_id, arity,
+            )
         }
 
         Value::UniverseCode(n) => Ok(Rc::new(Syntax::UniverseCode(*n))),
 
         Value::Lambda(lam) => {
             let body_syn = pattern_quote_closure(
-                db, global, state, &lam.body, rename, ambiguous, meta_id, arity, outer_depth,
+                db,
+                global,
+                state,
+                &lam.body,
+                rename,
+                ambiguous,
+                meta_id,
+                arity,
+                outer_depth,
             )?;
-            Ok(Syntax::lambda_rc(lam.icit, Binding::new(Name::anonymous(db), body_syn)))
+            Ok(Syntax::lambda_rc(
+                lam.icit,
+                Binding::new(Name::anonymous(db), body_syn),
+            ))
         }
 
         Value::PiCode(dom, icit, cod) => {
-            let dom_syn =
-                pattern_quote(db, global, state, dom, rename, ambiguous, meta_id, arity, outer_depth)?;
-            let cod_syn = pattern_quote_closure(
-                db, global, state, cod, rename, ambiguous, meta_id, arity, outer_depth,
+            let dom_syn = pattern_quote(
+                db,
+                global,
+                state,
+                dom,
+                rename,
+                ambiguous,
+                meta_id,
+                arity,
+                outer_depth,
             )?;
-            Ok(Rc::new(Syntax::PiCode(dom_syn, *icit, Binding::new(Name::anonymous(db), cod_syn))))
+            let cod_syn = pattern_quote_closure(
+                db,
+                global,
+                state,
+                cod,
+                rename,
+                ambiguous,
+                meta_id,
+                arity,
+                outer_depth,
+            )?;
+            Ok(Rc::new(Syntax::PiCode(
+                dom_syn,
+                *icit,
+                Binding::new(Name::anonymous(db), cod_syn),
+            )))
         }
 
         Value::LiftCode(n, inner) => {
-            let inner_syn =
-                pattern_quote(db, global, state, inner, rename, ambiguous, meta_id, arity, outer_depth)?;
+            let inner_syn = pattern_quote(
+                db,
+                global,
+                state,
+                inner,
+                rename,
+                ambiguous,
+                meta_id,
+                arity,
+                outer_depth,
+            )?;
             Ok(Rc::new(Syntax::LiftCode(*n, inner_syn)))
         }
 
@@ -226,8 +291,8 @@ fn pattern_quote_closure<'db>(
 
     let mut body_local = clos.local.clone();
     body_local.push(fresh_var);
-    let body_val = eval::substitute(global, &clos.term, body_local)
-        .map_err(|_| RenameError::Soft)?;
+    let body_val =
+        eval::substitute(global, &clos.term, body_local).map_err(|_| RenameError::Soft)?;
 
     let mut ext_rename = rename.clone();
     ext_rename.insert(Level::new(outer_depth), arity);
@@ -300,7 +365,8 @@ fn prune_flex_quote<'db>(
 
     let syn_sol = intersection_syntax_solution(db, new_meta_id, flex2_arity, &kept);
     let val_sol = intersection_value_solution(new_meta_id, &kept);
-    state.solve_meta(flex2_id, syn_sol, val_sol)
+    state
+        .solve_meta(flex2_id, syn_sol, val_sol)
         .map_err(RenameError::Hard)?;
 
     // Produce syntax for ?m'[renamed kept args] in meta scope.
@@ -328,7 +394,8 @@ fn rename_value<'db>(
             }
             match rename.get(&level) {
                 Some(&pos) => {
-                    let new_ty = rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
+                    let new_ty =
+                        rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
                     Ok(Rc::new(Value::variable(Level::new(pos), new_ty)))
                 }
                 None => Err(RenameError::Hard(ElabError::ScopeViolation {
@@ -347,11 +414,13 @@ fn rename_value<'db>(
             }
             let &pos = match rename.get(&level) {
                 Some(p) => p,
-                None => return Err(RenameError::Hard(ElabError::ScopeViolation {
-                    meta: meta_id,
-                    span: None,
-                    elab_backtrace: Vec::new(),
-                })),
+                None => {
+                    return Err(RenameError::Hard(ElabError::ScopeViolation {
+                        meta: meta_id,
+                        span: None,
+                        elab_backtrace: Vec::new(),
+                    }))
+                }
             };
             let new_ty = rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
             // Rebuild spine with renamed args.
@@ -359,11 +428,28 @@ fn rename_value<'db>(
             for elim in rigid.spine.iter() {
                 match elim {
                     Eliminator::Application(app) => {
-                        let new_arg_ty =
-                            rename_value(db, global, state, &app.argument.ty, rename, ambiguous, meta_id)?;
-                        let new_arg_val =
-                            rename_value(db, global, state, &app.argument.value, rename, ambiguous, meta_id)?;
-                        new_elims.push(Eliminator::application(Normal::new(new_arg_ty, new_arg_val), app.icit));
+                        let new_arg_ty = rename_value(
+                            db,
+                            global,
+                            state,
+                            &app.argument.ty,
+                            rename,
+                            ambiguous,
+                            meta_id,
+                        )?;
+                        let new_arg_val = rename_value(
+                            db,
+                            global,
+                            state,
+                            &app.argument.value,
+                            rename,
+                            ambiguous,
+                            meta_id,
+                        )?;
+                        new_elims.push(Eliminator::application(
+                            Normal::new(new_arg_ty, new_arg_val),
+                            app.icit,
+                        ));
                     }
                     _ => return Err(RenameError::Soft),
                 }
@@ -398,7 +484,8 @@ fn rename_value<'db>(
         }
 
         Value::Lambda(lam) => {
-            let new_clos = rename_closure(db, global, state, &lam.body, rename, ambiguous, meta_id)?;
+            let new_clos =
+                rename_closure(db, global, state, &lam.body, rename, ambiguous, meta_id)?;
             Ok(Value::lambda_rc(lam.icit, new_clos))
         }
         Value::PiCode(dom, icit, cod) => {
@@ -411,20 +498,32 @@ fn rename_value<'db>(
             Ok(Rc::new(Value::LiftCode(*n, new_inner)))
         }
         Value::TypeConstructor(tc) => {
-            let new_args: Result<Vec<_>, _> =
-                tc.iter().map(|a| rename_value(db, global, state, a, rename, ambiguous, meta_id)).collect();
-            Ok(Rc::new(Value::TypeConstructor(TypeConstructor::new(tc.constructor, new_args?))))
+            let new_args: Result<Vec<_>, _> = tc
+                .iter()
+                .map(|a| rename_value(db, global, state, a, rename, ambiguous, meta_id))
+                .collect();
+            Ok(Rc::new(Value::TypeConstructor(TypeConstructor::new(
+                tc.constructor,
+                new_args?,
+            ))))
         }
         Value::DataConstructor(dc) => {
-            let new_args: Result<Vec<_>, _> =
-                dc.iter().map(|a| rename_value(db, global, state, a, rename, ambiguous, meta_id)).collect();
-            Ok(Rc::new(Value::DataConstructor(DataConstructor::new(dc.constructor, new_args?))))
+            let new_args: Result<Vec<_>, _> = dc
+                .iter()
+                .map(|a| rename_value(db, global, state, a, rename, ambiguous, meta_id))
+                .collect();
+            Ok(Rc::new(Value::DataConstructor(DataConstructor::new(
+                dc.constructor,
+                new_args?,
+            ))))
         }
         Value::EqType(eq) => {
             let new_ty = rename_value(db, global, state, &eq.ty, rename, ambiguous, meta_id)?;
             let new_lhs = rename_value(db, global, state, &eq.lhs, rename, ambiguous, meta_id)?;
             let new_rhs = rename_value(db, global, state, &eq.rhs, rename, ambiguous, meta_id)?;
-            Ok(Rc::new(Value::EqType(EqType::new(new_ty, new_lhs, new_rhs))))
+            Ok(Rc::new(Value::EqType(EqType::new(
+                new_ty, new_lhs, new_rhs,
+            ))))
         }
         Value::UniverseCode(_)
         | Value::BitCode
@@ -494,7 +593,8 @@ fn prune_flex_rename<'db>(
 
     let syn_sol = intersection_syntax_solution(db, new_meta_id, flex2_arity, &kept);
     let val_sol = intersection_value_solution(new_meta_id, &kept);
-    state.solve_meta(flex2_id, syn_sol, val_sol)
+    state
+        .solve_meta(flex2_id, syn_sol, val_sol)
         .map_err(RenameError::Hard)?;
 
     let new_meta_vid = MetaVariableId::new(new_meta_id.0 as u16);
@@ -517,7 +617,9 @@ fn rename_closure<'db>(
     let mut new_local = LocalEnv::new();
     for i in 0..clos.local.depth() {
         let v = clos.local.get(Level::new(i));
-        new_local.push(rename_value(db, global, state, v, rename, ambiguous, meta_id)?);
+        new_local.push(rename_value(
+            db, global, state, v, rename, ambiguous, meta_id,
+        )?);
     }
     Ok(Closure::new(new_local, clos.term.clone()))
 }

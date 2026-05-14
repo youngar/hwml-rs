@@ -27,23 +27,16 @@
 //! .build();
 //! ```
 
-pub mod types;
-pub mod builder;
 pub mod ansi;
+pub mod builder;
 pub mod marked_source;
 pub mod terminal;
+pub mod types;
 
 // Re-export core types for convenience
 pub use types::{
-    Diagnostic,
-    DiagnosticSeverity,
-    Position,
-    Span,
-    Loctext,
-    DiagnosticCode,
-    Suggestion,
-    Fix,
-    RelatedDiagnostic,
+    Diagnostic, DiagnosticCode, DiagnosticSeverity, Fix, Loctext, Position, RelatedDiagnostic,
+    Span, Suggestion,
 };
 
 pub use builder::DiagnosticBuilder;
@@ -55,8 +48,8 @@ pub mod lsp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
 
-#[cfg(feature = "json")]
-pub mod json;
+// #[cfg(feature = "json")]
+// pub mod json;
 
-#[cfg(feature = "system")]
-pub mod system;
+// #[cfg(feature = "system")]
+// pub mod system;

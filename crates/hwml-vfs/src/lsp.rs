@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 ///
 /// ```ignore
 /// let mut vfs = LspVfs::new();
-/// 
+///
 /// // When editor opens a file
 /// vfs.open_document(uri, path, initial_content);
 ///
@@ -119,7 +119,7 @@ impl Vfs for LspVfs {
         let canonical = path
             .canonicalize()
             .map_err(|_| VfsError::Canonicalization(path.to_path_buf()))?;
-        
+
         Ok(SourceFile::new(db, canonical, text, "lsp".to_string()))
     }
 

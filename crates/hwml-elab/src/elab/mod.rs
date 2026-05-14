@@ -84,10 +84,7 @@ impl<'a, 'db> Elaborator<'a, 'db> {
     }
 
     /// Create a CannotInfer error with automatic backtrace capture
-    pub fn error_cannot_infer(
-        &self,
-        span: Option<SourceRange<'db>>,
-    ) -> ElabError<'db> {
+    pub fn error_cannot_infer(&self, span: Option<SourceRange<'db>>) -> ElabError<'db> {
         ElabError::CannotInfer {
             span,
             elab_backtrace: self.context.snapshot(),

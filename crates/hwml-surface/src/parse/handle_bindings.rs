@@ -7,7 +7,9 @@
 use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::{Precedence, State};
-use crate::syntax::{Binder, BindingGroup, Bindings, Pattern, TypedBindingGroup, UntypedBindingGroup};
+use crate::syntax::{
+    Binder, BindingGroup, Bindings, Pattern, TypedBindingGroup, UntypedBindingGroup,
+};
 use hwml_core::common::Icit;
 
 impl Context<'_> {
@@ -16,13 +18,11 @@ impl Context<'_> {
     pub(super) fn parse_bindings_async(&mut self, continuation: State) {
         // Push the continuation first (runs LAST)
         self.push_state(continuation);
-        
+
         // Push the binding parser (runs FIRST)
-        self.push_state(State::ParseBindingsStart {
-            groups: vec![],
-        });
+        self.push_state(State::ParseBindingsStart { groups: vec![] });
     }
-    
+
     /// Handle ParseBindingsStart - accumulate binding groups
     pub(super) fn handle_parse_bindings_start(&mut self, mut groups: Vec<BindingGroup>) {
         // Check if we have more bindings to parse
@@ -30,7 +30,11 @@ impl Context<'_> {
         if self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
             // Determine if this is an implicit binding group
             let is_implicit = self.at_token(Token::LBrace);
-            let icit = if is_implicit { Icit::Implicit } else { Icit::Explicit };
+            let icit = if is_implicit {
+                Icit::Implicit
+            } else {
+                Icit::Explicit
+            };
 
             // Consume opening delimiter
             if is_implicit {
@@ -75,7 +79,11 @@ impl Context<'_> {
                 self.parse_expression(Precedence::Lowest);
             } else {
                 // Untyped binding group
-                let closing_token = if is_implicit { Token::RBrace } else { Token::RParen };
+                let closing_token = if is_implicit {
+                    Token::RBrace
+                } else {
+                    Token::RParen
+                };
                 let closing_str = if is_implicit { "'}'" } else { "')'" };
 
                 if !self.at_token(closing_token) {
@@ -89,15 +97,18 @@ impl Context<'_> {
                 // Continue parsing more binding groups
                 self.push_state(State::ParseBindingsStart { groups });
             }
-        } else if self.at_token(Token::Identifier) &&
-                  !self.at_token(Token::Colon) &&
-                  !self.at_token(Token::ColonEqual) {
+        } else if self.at_token(Token::Identifier)
+            && !self.at_token(Token::Colon)
+            && !self.at_token(Token::ColonEqual)
+        {
             // Bare identifier (untyped)
             let id = self.parse_id();
             let loc = id.loc.clone();
             let binder = Binder::new(loc, Pattern::Id(id));
-            groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
-            
+            groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![
+                binder,
+            ])));
+
             // Continue parsing more binding groups
             self.push_state(State::ParseBindingsStart { groups });
         } else if self.at_token(Token::Underscore) {
@@ -108,8 +119,10 @@ impl Context<'_> {
                 loc.clone(),
                 Pattern::Underscore(crate::syntax::Underscore::new(loc)),
             );
-            groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
-            
+            groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![
+                binder,
+            ])));
+
             // Continue parsing more binding groups
             self.push_state(State::ParseBindingsStart { groups });
         } else {
@@ -117,7 +130,7 @@ impl Context<'_> {
             self.push_bindings(Bindings::new(groups));
         }
     }
-    
+
     /// Handle after parsing type in a binding group
     pub(super) fn handle_binding_group_after_type(
         &mut self,
@@ -130,7 +143,11 @@ impl Context<'_> {
         let ty = self.pop_expr();
 
         // Expect closing delimiter matching the opening
-        let closing_token = if is_implicit { Token::RBrace } else { Token::RParen };
+        let closing_token = if is_implicit {
+            Token::RBrace
+        } else {
+            Token::RParen
+        };
         let closing_str = if is_implicit { "'}'" } else { "')'" };
 
         if !self.at_token(closing_token) {
@@ -140,7 +157,9 @@ impl Context<'_> {
         }
 
         // Add this typed binding group with the correct icit
-        groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty, icit)));
+        groups.push(BindingGroup::Typed(TypedBindingGroup::new(
+            binders, ty, icit,
+        )));
 
         // Continue parsing more binding groups
         self.push_state(State::ParseBindingsStart { groups });
@@ -185,10 +204,7 @@ impl Context<'_> {
             self.consume(Token::Colon);
 
             // Push continuation (runs AFTER type is parsed)
-            self.push_state(State::TelescopeBindingAfterType {
-                binders,
-                groups,
-            });
+            self.push_state(State::TelescopeBindingAfterType { binders, groups });
 
             // Parse type expression asynchronously
             self.parse_expression(crate::parse::state::Precedence::Lowest);
@@ -215,7 +231,11 @@ impl Context<'_> {
         }
 
         // Add this group
-        groups.push(crate::syntax::TypedBindingGroup::new(binders, ty, Icit::Explicit));
+        groups.push(crate::syntax::TypedBindingGroup::new(
+            binders,
+            ty,
+            Icit::Explicit,
+        ));
 
         // Continue parsing more telescope bindings
         self.push_state(State::ParseTelescopeBindings { groups });

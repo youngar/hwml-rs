@@ -6,7 +6,7 @@ use petgraph::algo::toposort;
 use petgraph::graph::DiGraph;
 use thiserror::Error;
 
-use crate::manifest::{ManifestError, LibraryDepSource, load_manifest};
+use crate::manifest::{load_manifest, LibraryDepSource, ManifestError};
 use crate::{LibraryDep, LibraryManifest};
 
 #[derive(Debug, Error)]
@@ -16,7 +16,11 @@ pub enum WorkspaceError {
     #[error("Dependency cycle detected: {0}")]
     CycleDetected(String),
     #[error("Library '{name}' found at two different paths: {first} and {second}")]
-    DuplicateLibrary { name: String, first: PathBuf, second: PathBuf },
+    DuplicateLibrary {
+        name: String,
+        first: PathBuf,
+        second: PathBuf,
+    },
     #[error("Failed to find manifest for dependency '{name}' of '{parent}': {source}")]
     DepManifestNotFound {
         name: String,
@@ -46,7 +50,10 @@ impl Workspace {
 
         let topo_order = topo_sort(&libraries)?;
 
-        Ok(Workspace { libraries, topo_order })
+        Ok(Workspace {
+            libraries,
+            topo_order,
+        })
     }
 
     /// Search upward from `start` for `hwml.toml` (cargo-style discovery).
@@ -116,25 +123,27 @@ fn load_recursive(
 
     // Recurse into dependencies.
     for dep in &deps {
-        let dep_manifest_path = resolve_dep_manifest_path(dep, &libraries[&name].root)
-            .ok_or_else(|| WorkspaceError::DepManifestNotFound {
-                name: dep.name.clone(),
-                parent: name.clone(),
-                source: ManifestError::MissingName(PathBuf::from(&dep.name)),
+        let dep_manifest_path =
+            resolve_dep_manifest_path(dep, &libraries[&name].root).ok_or_else(|| {
+                WorkspaceError::DepManifestNotFound {
+                    name: dep.name.clone(),
+                    parent: name.clone(),
+                    source: ManifestError::MissingName(PathBuf::from(&dep.name)),
+                }
             })?;
-        load_recursive(&dep_manifest_path, Some(&name), libraries, root_to_name).map_err(
-            |e| match e {
+        load_recursive(&dep_manifest_path, Some(&name), libraries, root_to_name).map_err(|e| {
+            match e {
                 WorkspaceError::ManifestNotFound(p) => WorkspaceError::DepManifestNotFound {
                     name: dep.name.clone(),
                     parent: name.clone(),
-                    source: ManifestError::Io(p, std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "manifest not found",
-                    )),
+                    source: ManifestError::Io(
+                        p,
+                        std::io::Error::new(std::io::ErrorKind::NotFound, "manifest not found"),
+                    ),
                 },
                 other => other,
-            },
-        )?;
+            }
+        })?;
     }
 
     Ok(())
@@ -142,9 +151,7 @@ fn load_recursive(
 
 fn resolve_dep_manifest_path(dep: &LibraryDep, parent_root: &Path) -> Option<PathBuf> {
     match &dep.source {
-        LibraryDepSource::Path(rel) => {
-            Some(parent_root.join(rel).join("hwml.toml"))
-        }
+        LibraryDepSource::Path(rel) => Some(parent_root.join(rel).join("hwml.toml")),
         LibraryDepSource::Registry { .. } => {
             // Registry resolution not yet implemented. Would check installed packages.
             None
@@ -174,7 +181,13 @@ fn topo_sort(libraries: &IndexMap<String, LibraryManifest>) -> Result<Vec<String
     }
 
     toposort(&graph, None)
-        .map(|order| order.into_iter().rev().map(|n| graph[n].to_owned()).collect())
+        .map(|order| {
+            order
+                .into_iter()
+                .rev()
+                .map(|n| graph[n].to_owned())
+                .collect()
+        })
         .map_err(|cycle| {
             let name = graph[cycle.node_id()].to_owned();
             WorkspaceError::CycleDetected(name)

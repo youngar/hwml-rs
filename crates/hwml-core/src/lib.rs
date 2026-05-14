@@ -29,8 +29,8 @@ pub use syn::declaration::{
     CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, PrimitiveDecl,
     TypeConstructorDecl,
 };
-pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
 pub use syn::telescope::Cell;
+pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
 pub use typed::*;
 pub use val::{GlobalEnv, RcValue, Value};
 

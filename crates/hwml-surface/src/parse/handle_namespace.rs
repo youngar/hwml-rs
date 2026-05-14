@@ -6,7 +6,7 @@
 use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::State;
-use crate::syntax::{Statement, Namespace, Id};
+use crate::syntax::{Id, Namespace, Statement};
 use std::ops::Range;
 
 impl<'input> Context<'input> {
@@ -15,7 +15,7 @@ impl<'input> Context<'input> {
     pub(super) fn handle_namespace_start(&mut self, loc: Range<usize>, name: Id) {
         // Enter block tracking
         self.enter_block(crate::parse::context::BlockKind::Namespace);
-        
+
         // Expect opening brace
         if !self.at_token(Token::LBrace) {
             self.emit_error("Expected '{' after namespace name");
@@ -24,7 +24,7 @@ impl<'input> Context<'input> {
             self.push_statement(stmt);
             return;
         }
-        
+
         self.consume(Token::LBrace);
 
         // Track brace for error recovery
@@ -41,20 +41,25 @@ impl<'input> Context<'input> {
             name: name.clone(),
             statement_stack_depth,
         });
-        
+
         // 2. Then push the BODY state (will run first)
         self.push_state(State::NamespaceBody {
             loc,
             name,
             statement_stack_depth,
         });
-        
+
         // Return immediately - let the dispatcher handle the states
     }
 
     /// Handle namespace body - loops by re-queueing itself
     /// This implements the loop in the state machine, not in native recursion
-    pub(super) fn handle_namespace_body(&mut self, loc: Range<usize>, name: Id, statement_stack_depth: usize) {
+    pub(super) fn handle_namespace_body(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        statement_stack_depth: usize,
+    ) {
         // Check if we're done with the body
         if self.at_token(Token::RBrace) || self.at_end() {
             // Done parsing statements - exit and let NamespaceEnd handle cleanup
@@ -68,7 +73,7 @@ impl<'input> Context<'input> {
         self.push_state(State::NamespaceBody {
             loc: loc.clone(),
             name: name.clone(),
-            statement_stack_depth,  // Pass through unchanged
+            statement_stack_depth, // Pass through unchanged
         });
 
         // Queue the statement parser (will run before NamespaceBody runs again)
@@ -84,7 +89,12 @@ impl<'input> Context<'input> {
     }
 
     /// Handle namespace end - collects statements and creates Namespace
-    pub(super) fn handle_namespace_end(&mut self, loc: Range<usize>, name: Id, statement_stack_depth: usize) {
+    pub(super) fn handle_namespace_end(
+        &mut self,
+        loc: Range<usize>,
+        name: Id,
+        statement_stack_depth: usize,
+    ) {
         // Expect closing brace
         if self.at_token(Token::RBrace) {
             self.consume(Token::RBrace);
@@ -92,22 +102,22 @@ impl<'input> Context<'input> {
         } else {
             self.emit_error("Expected '}' after namespace body");
         }
-        
+
         // Exit block tracking
         self.exit_block();
-        
+
         // Calculate how many statements were added to the stack
         let current_depth = self.statement_stack_len();
         let statement_count = current_depth - statement_stack_depth;
-        
+
         // Pop all statements that were parsed in the body
         // They come off in LIFO order, so we need to reverse them
         let mut statements = Vec::with_capacity(statement_count);
         for _ in 0..statement_count {
             statements.push(self.pop_statement());
         }
-        statements.reverse();  // Reverse to get original parse order
-        
+        statements.reverse(); // Reverse to get original parse order
+
         // Create namespace statement
         let namespace = Namespace::new(loc, name, statements);
         self.push_statement(Statement::Namespace(namespace));

@@ -8,7 +8,7 @@
 use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::State;
-use crate::syntax::{Expression, Fun, Bindings};
+use crate::syntax::{Bindings, Expression, Fun};
 use std::ops::Range;
 
 impl<'input> Context<'input> {
@@ -27,19 +27,17 @@ impl<'input> Context<'input> {
         // Expect '=>' (fat arrow)
         if !self.at_token(Token::FatArrow) {
             self.emit_error("Expected '=>' after lambda bindings");
-            let error_expr = Box::new(Expression::Error(
-                crate::syntax::ExpressionError::new(loc, "Invalid lambda".to_string())
-            ));
+            let error_expr = Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                loc,
+                "Invalid lambda".to_string(),
+            )));
             self.push_expr(error_expr);
             return;
         }
         self.consume(Token::FatArrow);
 
         // Push continuation state (runs AFTER body is parsed)
-        self.push_state(State::FunAfterBody {
-            loc,
-            bindings,
-        });
+        self.push_state(State::FunAfterBody { loc, bindings });
 
         // Parse body expression (runs FIRST, pushes to expr_stack)
         self.parse_expression(crate::parse::state::Precedence::Lowest);
@@ -49,7 +47,7 @@ impl<'input> Context<'input> {
     pub(super) fn handle_fun_after_body(&mut self, loc: Range<usize>, bindings: Bindings) {
         // Pop the body expression from expr_stack
         let body = self.pop_expr();
-        
+
         // Build Fun node
         let end_loc = body.loc();
         let fun_expr = Box::new(Expression::Fun(Fun::new(
@@ -57,7 +55,7 @@ impl<'input> Context<'input> {
             bindings,
             body,
         )));
-        
+
         // Push to expr_stack
         self.push_expr(fun_expr);
     }

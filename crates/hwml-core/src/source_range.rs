@@ -112,5 +112,3 @@ impl<'db, A> HasSourceRange<'db> for WithSourceRange<'db, A> {
         self.1.clone()
     }
 }
-
-

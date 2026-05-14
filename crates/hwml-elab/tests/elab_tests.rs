@@ -736,10 +736,10 @@ fn pattern_unify_lowers_rigid_with_spine() {
 
     // RHS = x0 applied to x0: Rigid(Level(0), Spine([Application(x0)])).
     let mut spine = Spine::empty();
-    spine.push(Eliminator::application(Normal::new(
-        var_ty.clone(),
-        x0.clone(),
-    ), hwml_core::common::Icit::Explicit));
+    spine.push(Eliminator::application(
+        Normal::new(var_ty.clone(), x0.clone()),
+        hwml_core::common::Icit::Explicit,
+    ));
     let rhs = Rc::new(Value::Rigid(hwml_core::val::Rigid::new(
         hwml_core::val::Variable::new(Level::new(0)),
         spine,

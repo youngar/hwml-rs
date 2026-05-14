@@ -18,7 +18,7 @@ use std::path::PathBuf;
 pub enum SpecialPosition {
     /// Mark is at the end of a line
     EndOfLine,
-    
+
     /// Mark is at the end of a file
     EndOfFile,
 }
@@ -28,10 +28,10 @@ pub enum SpecialPosition {
 pub enum Mark<Tag> {
     /// Beginning of a range
     RangeBegin(Tag),
-    
+
     /// End of a range
     RangeEnd(Tag),
-    
+
     /// A point (zero-width span)
     Point(Tag),
 }
@@ -41,7 +41,7 @@ pub enum Mark<Tag> {
 pub enum Token<Tag> {
     /// Plain source text
     String(String),
-    
+
     /// A diagnostic mark with optional special position info
     Mark(Option<SpecialPosition>, Mark<Tag>),
 }
@@ -51,7 +51,7 @@ pub enum Token<Tag> {
 pub struct Line<Tag> {
     /// Tags (messages) that should be displayed after this line
     pub marks: Vec<Tag>,
-    
+
     /// The actual line content with embedded marks
     pub tokens: Vec<Token<Tag>>,
 }
@@ -64,10 +64,10 @@ pub struct Line<Tag> {
 pub struct Block<Tag> {
     /// Starting line number (1-indexed)
     pub begin_line_num: usize,
-    
+
     /// Ending line number (1-indexed, inclusive)
     pub end_line_num: usize,
-    
+
     /// The lines within this block
     pub lines: Vec<Line<Tag>>,
 }
@@ -77,7 +77,7 @@ pub struct Block<Tag> {
 pub struct Part<Tag> {
     /// Source file path
     pub file: PathBuf,
-    
+
     /// Blocks within this file
     pub blocks: Vec<Block<Tag>>,
 }
@@ -95,7 +95,7 @@ pub struct MarkingConfig {
     /// When this threshold is exceeded, the source is split into
     /// multiple blocks. Default: 5 (from Asai).
     pub block_splitting_threshold: usize,
-    
+
     /// Set of line break sequences to recognize
     pub line_breaks: LineBreaks,
 }
@@ -116,7 +116,7 @@ pub enum LineBreaks {
     ///
     /// Compatible with LSP and most parsers.
     Traditional,
-    
+
     /// Unicode line breaks including VT, FF, NEL, LS, PS
     ///
     /// Full Unicode Line Breaking Algorithm support.
@@ -131,7 +131,10 @@ impl LineBreaks {
                 matches!(s, "\n" | "\r" | "\r\n")
             }
             LineBreaks::Unicode => {
-                matches!(s, "\n" | "\r" | "\r\n" | "\x0B" | "\x0C" | "\u{0085}" | "\u{2028}" | "\u{2029}")
+                matches!(
+                    s,
+                    "\n" | "\r" | "\r\n" | "\x0B" | "\x0C" | "\u{0085}" | "\u{2028}" | "\u{2029}"
+                )
             }
         }
     }
@@ -144,13 +147,13 @@ impl LineBreaks {
 pub struct DiagnosticTag {
     /// Index in the list (main message = 0, extra remarks = 1, 2, ...)
     pub index: usize,
-    
+
     /// Whether this is the main message or an extra remark
     pub kind: TagKind,
-    
+
     /// The message text to display
     pub text: String,
-    
+
     /// Priority for overlapping ranges (lower = higher priority)
     pub priority: usize,
 }
@@ -160,7 +163,7 @@ pub struct DiagnosticTag {
 pub enum TagKind {
     /// Main diagnostic message
     Main,
-    
+
     /// Extra remark with index
     ExtraRemark(usize),
 }
@@ -168,7 +171,7 @@ pub enum TagKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_line_breaks_traditional() {
         let lb = LineBreaks::Traditional;
@@ -177,7 +180,7 @@ mod tests {
         assert!(lb.is_line_break("\r\n"));
         assert!(!lb.is_line_break("\x0B")); // VT not recognized
     }
-    
+
     #[test]
     fn test_line_breaks_unicode() {
         let lb = LineBreaks::Unicode;

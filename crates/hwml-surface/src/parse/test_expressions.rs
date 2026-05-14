@@ -4,16 +4,16 @@
 mod tests {
     use crate::parse::Parser;
     use crate::syntax::*;
-    
+
     #[test]
     fn test_simple_number() {
         // Test: def x := 42
         let input = b"def x := 42";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 assert_eq!(&*def.id.value, "x");
@@ -28,38 +28,36 @@ mod tests {
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_identifier_expression() {
         // Test: def x := foo
         let input = b"def x := foo";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
-            Statement::Def(def) => {
-                match &*def.value {
-                    Expression::Id(id) => {
-                        assert_eq!(&*id.value, "foo");
-                    }
-                    _ => panic!("Expected Id expression"),
+            Statement::Def(def) => match &*def.value {
+                Expression::Id(id) => {
+                    assert_eq!(&*id.value, "foo");
                 }
-            }
+                _ => panic!("Expected Id expression"),
+            },
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_application() {
         // Test: def x := f a
         let input = b"def x := f a";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 match &*def.value {
@@ -82,41 +80,37 @@ mod tests {
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_parenthesized_expression() {
         // Test: def x := (foo)
         let input = b"def x := (foo)";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
-            Statement::Def(def) => {
-                match &*def.value {
-                    Expression::Paren(paren) => {
-                        match &*paren.expr {
-                            Expression::Id(id) => assert_eq!(&*id.value, "foo"),
-                            _ => panic!("Expected Id inside paren"),
-                        }
-                    }
-                    _ => panic!("Expected Paren expression"),
-                }
-            }
+            Statement::Def(def) => match &*def.value {
+                Expression::Paren(paren) => match &*paren.expr {
+                    Expression::Id(id) => assert_eq!(&*id.value, "foo"),
+                    _ => panic!("Expected Id inside paren"),
+                },
+                _ => panic!("Expected Paren expression"),
+            },
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_type_expression() {
         // Test: prim Nat : Type
         let input = b"prim Nat : Type";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Prim(prim) => {
                 assert_eq!(&*prim.id.value, "Nat");
@@ -130,14 +124,14 @@ mod tests {
             _ => panic!("Expected Prim statement"),
         }
     }
-    
+
     #[test]
     fn test_underscore() {
         // Test: def x := _
         let input = b"def x := _";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
 
         match &result.program.statements[0] {

@@ -298,7 +298,7 @@ impl<'input> Context<'input> {
                 elements,
                 arg_icits,
                 next_arg_icit,
-                min_prec
+                min_prec,
             });
 
             // Parse next argument

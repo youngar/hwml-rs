@@ -1,16 +1,16 @@
-use crate::Binding;
-use crate::{Icit, Level};
 use crate::equal;
 use crate::eval;
 use crate::pattern_unify;
 use crate::quote;
 use crate::syn as stx;
 use crate::syn;
-use crate::Syntax;
 use crate::val;
 use crate::val::{Environment, LocalEnv};
-use crate::{RcValue, Value};
+use crate::Binding;
+use crate::Syntax;
 use crate::*;
+use crate::{Icit, Level};
+use crate::{RcValue, Value};
 use salsa::Database;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -1375,10 +1375,10 @@ fn check_type_constructor_type<'db, 'g>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Index;
     use crate::common::UniverseLevel;
     use crate::syn::parse::parse_syntax;
     use crate::syn::{RcSyntax, Telescope};
+    use crate::Index;
 
     use crate::val::Closure;
     use crate::QualifiedName;

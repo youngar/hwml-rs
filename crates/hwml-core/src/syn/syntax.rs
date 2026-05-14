@@ -106,11 +106,19 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::lambda(icit, body))
     }
 
-    pub fn application(fun: RcSyntax<'db>, arg: RcSyntax<'db>, icit: crate::common::Icit) -> Syntax<'db> {
+    pub fn application(
+        fun: RcSyntax<'db>,
+        arg: RcSyntax<'db>,
+        icit: crate::common::Icit,
+    ) -> Syntax<'db> {
         Syntax::Application(Application::new(fun, arg, icit))
     }
 
-    pub fn application_rc(fun: RcSyntax<'db>, arg: RcSyntax<'db>, icit: crate::common::Icit) -> RcSyntax<'db> {
+    pub fn application_rc(
+        fun: RcSyntax<'db>,
+        arg: RcSyntax<'db>,
+        icit: crate::common::Icit,
+    ) -> RcSyntax<'db> {
         Rc::new(Syntax::application(fun, arg, icit))
     }
 
@@ -417,8 +425,16 @@ pub struct Application<'db> {
 }
 
 impl<'db> Application<'db> {
-    pub fn new(function: RcSyntax<'db>, argument: RcSyntax<'db>, icit: crate::common::Icit) -> Application<'db> {
-        Application { function, argument, icit }
+    pub fn new(
+        function: RcSyntax<'db>,
+        argument: RcSyntax<'db>,
+        icit: crate::common::Icit,
+    ) -> Application<'db> {
+        Application {
+            function,
+            argument,
+            icit,
+        }
     }
 
     pub fn explicit(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Application<'db> {

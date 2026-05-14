@@ -6,11 +6,11 @@
 //! are continuations that remain on the stack, providing context for error messages.
 
 use crate::lex::Token;
-use crate::syntax::{
-    Expression, Id, Bindings, TypedBindings, Statement, Program,
-    ExpressionError, ExpressionHole, StatementError,
-};
 use crate::parse::state::State;
+use crate::syntax::{
+    Bindings, Expression, ExpressionError, ExpressionHole, Id, Program, Statement, StatementError,
+    TypedBindings,
+};
 use hwml_core::common::Icit;
 use std::ops::Range;
 
@@ -26,7 +26,6 @@ pub enum BlockKind {
 /// Parser context - holds all mutable state
 pub struct Context<'input> {
     // ===== Input =====
-
     /// Source input (for byte ranges)
     pub(super) input: &'input [u8],
 
@@ -40,12 +39,10 @@ pub struct Context<'input> {
     pub(super) position: usize,
 
     // ===== State Machine =====
-
     /// Parser state stack (states carry their own data!)
     state_stack: Vec<State>,
 
     // ===== Typed Result Stacks (NO generic PartialNode!) =====
-
     /// Expression results being built
     expr_stack: Vec<Box<Expression>>,
 
@@ -62,12 +59,10 @@ pub struct Context<'input> {
     id_stack: Vec<Id>,
 
     // ===== Error Handling =====
-
     /// Collected parse errors
     errors: Vec<ParseError>,
 
     // ===== Block Depth Tracking (for error recovery) =====
-
     /// Block context stack (namespace, match, function, etc.)
     block_depth: Vec<BlockContext>,
 
@@ -160,7 +155,12 @@ impl<'input> Context<'input> {
     /// Consume a token, return its location
     /// Panics if token doesn't match (caller should check with at_token first)
     pub fn consume(&mut self, tok: Token) -> Range<usize> {
-        assert!(self.at_token(tok), "Expected {:?}, found {:?}", tok, self.peek());
+        assert!(
+            self.at_token(tok),
+            "Expected {:?}, found {:?}",
+            tok,
+            self.peek()
+        );
         let loc = self.tokens[self.position].1.clone();
         self.position += 1;
         loc
@@ -245,7 +245,9 @@ impl<'input> Context<'input> {
             "typed_bindings_stack underflow! Current state: {:?}",
             self.state_stack.last()
         );
-        self.typed_bindings_stack.pop().expect("TypedBindings stack underflow")
+        self.typed_bindings_stack
+            .pop()
+            .expect("TypedBindings stack underflow")
     }
 
     pub fn push_statement(&mut self, stmt: Statement) {
@@ -253,7 +255,9 @@ impl<'input> Context<'input> {
     }
 
     pub fn pop_statement(&mut self) -> Statement {
-        self.statement_stack.pop().expect("Statement stack underflow")
+        self.statement_stack
+            .pop()
+            .expect("Statement stack underflow")
     }
 
     pub fn statement_stack_len(&self) -> usize {
@@ -274,19 +278,28 @@ impl<'input> Context<'input> {
     /// Handles both typed bindings (x : Type) and untyped bindings (x)
     /// Also supports implicit bindings: {x : Type}
     pub fn parse_bindings(&mut self) -> Bindings {
-        use crate::syntax::{BindingGroup, UntypedBindingGroup, TypedBindingGroup, Binder, Pattern};
+        use crate::syntax::{
+            Binder, BindingGroup, Pattern, TypedBindingGroup, UntypedBindingGroup,
+        };
 
         let mut groups = vec![];
 
         // Check if we have bindings (starts with '(', '{', bare identifier, or underscore)
-        while self.at_token(Token::LParen) ||
-              self.at_token(Token::LBrace) ||
-              self.at_token(Token::Underscore) ||
-              (self.at_token(Token::Identifier) && !self.at_token(Token::Colon) && !self.at_token(Token::ColonEqual)) {
+        while self.at_token(Token::LParen)
+            || self.at_token(Token::LBrace)
+            || self.at_token(Token::Underscore)
+            || (self.at_token(Token::Identifier)
+                && !self.at_token(Token::Colon)
+                && !self.at_token(Token::ColonEqual))
+        {
             if self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
                 // Determine if this is explicit (x : A) or implicit {x : A}
                 let is_implicit = self.at_token(Token::LBrace);
-                let icit = if is_implicit { Icit::Implicit } else { Icit::Explicit };
+                let icit = if is_implicit {
+                    Icit::Implicit
+                } else {
+                    Icit::Explicit
+                };
 
                 // Consume opening delimiter
                 if is_implicit {
@@ -306,7 +319,10 @@ impl<'input> Context<'input> {
                         // Underscore pattern
                         let loc = self.current_location();
                         self.consume(Token::Underscore);
-                        binders.push(Binder::new(loc.clone(), Pattern::Underscore(crate::syntax::Underscore::new(loc))));
+                        binders.push(Binder::new(
+                            loc.clone(),
+                            Pattern::Underscore(crate::syntax::Underscore::new(loc)),
+                        ));
                     }
                 }
 
@@ -333,7 +349,9 @@ impl<'input> Context<'input> {
                     }
 
                     // Add typed binding group with the correct icit
-                    groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty, icit)));
+                    groups.push(BindingGroup::Typed(TypedBindingGroup::new(
+                        binders, ty, icit,
+                    )));
                 } else {
                     // Untyped binding group (only allowed for explicit bindings)
                     if is_implicit {
@@ -362,13 +380,20 @@ impl<'input> Context<'input> {
                 let id = self.parse_id();
                 let loc = id.loc.clone();
                 let binder = Binder::new(loc, Pattern::Id(id));
-                groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
+                groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![
+                    binder,
+                ])));
             } else if self.at_token(Token::Underscore) {
                 // Bare underscore (untyped)
                 let loc = self.current_location();
                 self.consume(Token::Underscore);
-                let binder = Binder::new(loc.clone(), Pattern::Underscore(crate::syntax::Underscore::new(loc)));
-                groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![binder])));
+                let binder = Binder::new(
+                    loc.clone(),
+                    Pattern::Underscore(crate::syntax::Underscore::new(loc)),
+                );
+                groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(vec![
+                    binder,
+                ])));
             }
         }
 
@@ -390,7 +415,9 @@ impl<'input> Context<'input> {
             // Check for application: List A, List A B, List (Option A), etc.
             let mut app_elements = vec![first_expr];
             while (self.at_token(Token::Identifier) || self.at_token(Token::LParen))
-                  && !self.at_token(Token::Arrow) && !self.at_token(Token::RParen) {
+                && !self.at_token(Token::Arrow)
+                && !self.at_token(Token::RParen)
+            {
                 if self.at_token(Token::Identifier) {
                     let id = self.parse_id();
                     app_elements.push(Box::new(Expression::Id(id)));
@@ -412,7 +439,7 @@ impl<'input> Context<'input> {
                 let end_loc = app_elements.last().unwrap().loc();
                 Box::new(Expression::App(crate::syntax::App::new(
                     start_loc.start..end_loc.end,
-                    app_elements
+                    app_elements,
                 )))
             } else {
                 app_elements.into_iter().next().unwrap()
@@ -421,14 +448,15 @@ impl<'input> Context<'input> {
             self.consume(Token::Type);
             let level = if self.at_token(Token::Number) {
                 let num_loc = self.current_location();
-                let text = std::str::from_utf8(&self.input[num_loc.clone()])
-                    .unwrap_or("0");
+                let text = std::str::from_utf8(&self.input[num_loc.clone()]).unwrap_or("0");
                 self.advance();
                 text.parse::<u32>().ok()
             } else {
                 None
             };
-            Box::new(Expression::Universe(crate::syntax::Universe::new(loc, level)))
+            Box::new(Expression::Universe(crate::syntax::Universe::new(
+                loc, level,
+            )))
         } else if self.at_token(Token::Pi) {
             // Pi type: Pi (x : A) -> B
             self.consume(Token::Pi);
@@ -439,7 +467,10 @@ impl<'input> Context<'input> {
             // Expect '->'
             if !self.at_token(Token::Arrow) {
                 self.emit_error("Expected '->' after Pi bindings");
-                return Box::new(Expression::Error(crate::syntax::ExpressionError::new(loc, "Expected '->' after Pi bindings".to_string())));
+                return Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                    loc,
+                    "Expected '->' after Pi bindings".to_string(),
+                )));
             }
             self.consume(Token::Arrow);
 
@@ -464,7 +495,10 @@ impl<'input> Context<'input> {
             expr
         } else {
             self.emit_error("Expected type expression");
-            Box::new(Expression::Error(crate::syntax::ExpressionError::new(loc, "Expected type".to_string())))
+            Box::new(Expression::Error(crate::syntax::ExpressionError::new(
+                loc,
+                "Expected type".to_string(),
+            )))
         };
 
         // Now check for arrow types: A -> B, (Prod A B) -> C, etc.
@@ -482,7 +516,9 @@ impl<'input> Context<'input> {
             let mut result = types.pop().unwrap();
             while let Some(left) = types.pop() {
                 let arrow_loc = left.loc().start..result.loc().end;
-                result = Box::new(Expression::Arrow(crate::syntax::Arrow::new(arrow_loc, left, result)));
+                result = Box::new(Expression::Arrow(crate::syntax::Arrow::new(
+                    arrow_loc, left, result,
+                )));
             }
             result
         } else {
@@ -497,10 +533,16 @@ impl<'input> Context<'input> {
 
     /// Check if we're at a synchronization point for error recovery (statement level)
     pub fn at_sync_point(&self) -> bool {
-        matches!(self.peek(),
-            Some(Token::Def) | Some(Token::Meta) | Some(Token::Prim) |
-            Some(Token::Namespace) | Some(Token::Open) | Some(Token::Inductive) |
-            Some(Token::RBrace) | None
+        matches!(
+            self.peek(),
+            Some(Token::Def)
+                | Some(Token::Meta)
+                | Some(Token::Prim)
+                | Some(Token::Namespace)
+                | Some(Token::Open)
+                | Some(Token::Inductive)
+                | Some(Token::RBrace)
+                | None
         )
     }
 
@@ -515,7 +557,8 @@ impl<'input> Context<'input> {
     /// - Statement keywords (also sync expressions)
     /// - EOF
     pub fn at_expr_sync_point(&self) -> bool {
-        matches!(self.peek(),
+        matches!(
+            self.peek(),
             // Expression delimiters
             Some(Token::Comma) | Some(Token::RParen) | Some(Token::RBrace) |
             // Match/lambda terminators
@@ -536,7 +579,8 @@ impl<'input> Context<'input> {
     /// - Statement keywords
     /// - EOF
     pub fn at_pattern_sync_point(&self) -> bool {
-        matches!(self.peek(),
+        matches!(
+            self.peek(),
             // Pattern-specific: match clause separators
             Some(Token::Pipe) | Some(Token::FatArrow) |
             // Delimiters
@@ -548,7 +592,6 @@ impl<'input> Context<'input> {
             None
         )
     }
-
 
     /// Skip to the next expression boundary for error recovery.
     ///
@@ -614,8 +657,6 @@ impl<'input> Context<'input> {
         }
     }
 
-
-
     // ===== Block Depth Tracking =====
 
     pub fn enter_block(&mut self, kind: BlockKind) {
@@ -643,7 +684,6 @@ impl<'input> Context<'input> {
 
     // Note: Diagnostic context is tracked via state_stack.
     // See State::diagnostic_context() in state.rs
-
 
     pub fn push_brace(&mut self, loc: Range<usize>) {
         self.brace_stack.push(loc);
@@ -715,7 +755,11 @@ impl<'input> Context<'input> {
         while self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
             // Determine if this is explicit (x : A) or implicit {x : A}
             let is_implicit = self.at_token(Token::LBrace);
-            let icit = if is_implicit { Icit::Implicit } else { Icit::Explicit };
+            let icit = if is_implicit {
+                Icit::Implicit
+            } else {
+                Icit::Explicit
+            };
 
             // Consume opening delimiter
             if is_implicit {
@@ -784,10 +828,7 @@ impl<'input> Context<'input> {
 
     /// Create an error statement node
     pub fn make_error_statement(&self, msg: impl Into<String>) -> Statement {
-        Statement::Invalid(StatementError::new(
-            self.current_location(),
-            msg.into(),
-        ))
+        Statement::Invalid(StatementError::new(self.current_location(), msg.into()))
     }
 
     // ===== Finalization =====

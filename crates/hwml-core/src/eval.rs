@@ -1,8 +1,8 @@
-use crate::Icit;
 use crate::val::{
     self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
     MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
 };
+use crate::Icit;
 use crate::*;
 use std::{
     fmt::{self, Display},
@@ -1051,9 +1051,9 @@ mod tests {
     #[test]
     fn test_eval_metavariable_with_args() {
         // A metavariable with arguments evaluates to a Flex neutral with a local env
-        use crate::{Level, common::MetaVariableId};
         use crate::test_utils::parse;
         use crate::GlobalEnv;
+        use crate::{common::MetaVariableId, Level};
         use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();

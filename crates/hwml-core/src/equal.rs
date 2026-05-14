@@ -143,7 +143,8 @@ pub fn equate<'a, 'db: 'a>(
                 (Value::Lambda(lam), other) | (other, Value::Lambda(lam)) => {
                     // One is a lambda, eta-expand the other
                     let lam_body = lam.body.apply(global, &arg);
-                    let other_app = crate::eval::run_application(global, other, arg.clone(), *pi_icit)?;
+                    let other_app =
+                        crate::eval::run_application(global, other, arg.clone(), *pi_icit)?;
                     let target_ty = pi_target.apply(global, &arg);
                     equate(
                         global,
@@ -1128,10 +1129,10 @@ pub fn equate_levels<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Index;
     use crate::common::{MetaVariableId, UniverseLevel};
-    use crate::{Syntax, syn::Telescope};
     use crate::val::{GlobalEnv, LocalEnv, Spine};
+    use crate::Index;
+    use crate::{syn::Telescope, Syntax};
     use std::rc::Rc;
 
     // =========================================================================
@@ -1297,10 +1298,10 @@ mod tests {
 
         // Create the identity function: λx : Bit. x
         let bit_ty = Value::bit_rc();
-        let identity = Value::lambda_rc(Icit::Explicit, val::Closure::new(
-            LocalEnv::new(),
-            Rc::new(Syntax::variable(Index(0))),
-        ));
+        let identity = Value::lambda_rc(
+            Icit::Explicit,
+            val::Closure::new(LocalEnv::new(), Rc::new(Syntax::variable(Index(0)))),
+        );
 
         // Create a transparent environment with f = identity at level 0
         let mut transparent = TransparentEnv::new();

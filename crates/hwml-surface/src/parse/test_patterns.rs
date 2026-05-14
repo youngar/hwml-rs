@@ -4,20 +4,20 @@
 mod tests {
     use crate::parse::Parser;
     use crate::syntax::*;
-    
+
     #[test]
     fn test_simple_binding() {
         // Test: def f x := x
         let input = b"def f x := x";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 assert_eq!(&*def.id.value, "f");
-                
+
                 // Should have one untyped binding group with one binder
                 assert_eq!(def.bindings.groups.len(), 1);
                 match &def.bindings.groups[0] {
@@ -37,20 +37,20 @@ mod tests {
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_typed_binding() {
         // Test: def f (x : Nat) := x
         let input = b"def f (x : Nat) := x";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 assert_eq!(&*def.id.value, "f");
-                
+
                 // Should have one typed binding group
                 assert_eq!(def.bindings.groups.len(), 1);
                 match &def.bindings.groups[0] {
@@ -77,40 +77,40 @@ mod tests {
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_multiple_binders() {
         // Test: def f x y z := x
         let input = b"def f x y z := x";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 assert_eq!(&*def.id.value, "f");
-                
+
                 // Should have three untyped binding groups (one per parameter)
                 assert_eq!(def.bindings.groups.len(), 3);
             }
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_multiple_typed_binders() {
         // Test: def f (x y : Nat) := x
         let input = b"def f (x y : Nat) := x";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 assert_eq!(&*def.id.value, "f");
-                
+
                 // Should have one typed binding group with two binders
                 assert_eq!(def.bindings.groups.len(), 1);
                 match &def.bindings.groups[0] {
@@ -137,20 +137,20 @@ mod tests {
             _ => panic!("Expected Def statement"),
         }
     }
-    
+
     #[test]
     fn test_pattern_with_underscore() {
         // Test: def f _ := 0
         let input = b"def f _ := 0";
         let parser = Parser::new(input);
         let result = parser.parse();
-        
+
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 assert_eq!(&*def.id.value, "f");
-                
+
                 // Should have one untyped binding with underscore
                 assert_eq!(def.bindings.groups.len(), 1);
                 match &def.bindings.groups[0] {

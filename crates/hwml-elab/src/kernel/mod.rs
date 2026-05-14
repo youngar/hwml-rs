@@ -8,7 +8,8 @@ use hwml_core::{
         Closure, ConstantInfo, DataConstructorInfo, GlobalEnv, LocalEnv, PrimitiveInfo,
         TypeConstructorInfo,
     },
-    Binding, Index, Level, Name, QualifiedName, RcSyntax, RcValue, Source, SourceInfo, Syntax, Value, Word,
+    Binding, Index, Level, Name, QualifiedName, RcSyntax, RcValue, Source, SourceInfo, Syntax,
+    Value, Word,
 };
 use hwml_support::FromWithDb;
 use hwml_surface::Expression;
@@ -249,14 +250,17 @@ impl<'a, 'db> Kernel<'a, 'db> {
     ) -> Result<Checked<(RcSyntax<'db>, RcTy<'db>)>, ElabError<'db>> {
         let depth = self.ctx.depth();
         if idx.0 >= depth {
-            return Err(ElabError::CannotInfer { span: None, elab_backtrace: Vec::new(), });
+            return Err(ElabError::CannotInfer {
+                span: None,
+                elab_backtrace: Vec::new(),
+            });
         }
         // Convert de Bruijn index to level.
         let level = Level::new(depth - 1 - idx.0);
-        let entry = self
-            .ctx
-            .lookup_level(level)
-            .ok_or(ElabError::CannotInfer { span: None, elab_backtrace: Vec::new(), })?;
+        let entry = self.ctx.lookup_level(level).ok_or(ElabError::CannotInfer {
+            span: None,
+            elab_backtrace: Vec::new(),
+        })?;
         let syn = Syntax::variable_rc(idx);
         Ok(Checked::new((syn, entry.ty.clone())))
     }
@@ -491,7 +495,14 @@ impl<'a, 'db> Kernel<'a, 'db> {
                             let cod_term = Rc::new(Syntax::UniverseCode(0));
                             let cod_clos2 = Closure::new(inner_kernel.ctx.to_local_env(), cod_term);
                             inner_kernel
-                                .check_lambda(db, &remaining_fun, dom_val, Icit::Explicit, cod_clos2, source)?
+                                .check_lambda(
+                                    db,
+                                    &remaining_fun,
+                                    dom_val,
+                                    Icit::Explicit,
+                                    cod_clos2,
+                                    source,
+                                )?
                                 .into_inner()
                         }
                     }
@@ -582,8 +593,13 @@ impl<'a, 'db> Kernel<'a, 'db> {
         };
 
         // Emit constraint: actual_code = expected_code : Type
-        self.state
-            .emit_eq_with_loc(actual_code, expected_code, Rc::new(Ty::UniverseType), depth, loc);
+        self.state.emit_eq_with_loc(
+            actual_code,
+            expected_code,
+            Rc::new(Ty::UniverseType),
+            depth,
+            loc,
+        );
 
         // Return the original elaborated term.
         // It has type actual_ty, but the constraint ensures actual_ty = expected_ty.

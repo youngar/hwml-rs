@@ -23,7 +23,10 @@ pub struct LibraryDep {
 #[derive(Debug, Clone)]
 pub enum LibraryDepSource {
     Path(PathBuf),
-    Registry { version: String, source_hash: Option<[u8; 32]> },
+    Registry {
+        version: String,
+        source_hash: Option<[u8; 32]>,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -82,8 +85,8 @@ pub fn load_manifest(manifest_path: &Path) -> Result<LibraryManifest, ManifestEr
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| ManifestError::Io(manifest_path.to_owned(), e))?;
 
-    let raw: RawManifest = toml::from_str(&text)
-        .map_err(|e| ManifestError::Toml(manifest_path.to_owned(), e))?;
+    let raw: RawManifest =
+        toml::from_str(&text).map_err(|e| ManifestError::Toml(manifest_path.to_owned(), e))?;
 
     let root = manifest_path
         .parent()
@@ -127,17 +130,13 @@ fn resolve_source_files(
     }
 }
 
-fn discover_hwml_files(
-    root: &Path,
-    manifest_path: &Path,
-) -> Result<Vec<PathBuf>, ManifestError> {
+fn discover_hwml_files(root: &Path, manifest_path: &Path) -> Result<Vec<PathBuf>, ManifestError> {
     let mut files: Vec<PathBuf> = walkdir::WalkDir::new(root)
         .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type().is_file()
-                && e.path().extension().map_or(false, |ext| ext == "hwml")
+            e.file_type().is_file() && e.path().extension().map_or(false, |ext| ext == "hwml")
         })
         .map(|e| e.into_path())
         .collect();
@@ -163,12 +162,18 @@ fn resolve_dependencies(
         .into_iter()
         .map(|(name, dep)| {
             let source = match dep {
-                RawDep::Version(v) => LibraryDepSource::Registry { version: v, source_hash: None },
+                RawDep::Version(v) => LibraryDepSource::Registry {
+                    version: v,
+                    source_hash: None,
+                },
                 RawDep::Table(t) => {
                     if let Some(path) = t.path {
                         LibraryDepSource::Path(root.join(path))
                     } else if let Some(version) = t.version {
-                        LibraryDepSource::Registry { version, source_hash: None }
+                        LibraryDepSource::Registry {
+                            version,
+                            source_hash: None,
+                        }
                     } else {
                         LibraryDepSource::Registry {
                             version: "*".to_owned(),

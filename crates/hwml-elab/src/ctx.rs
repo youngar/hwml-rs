@@ -1,7 +1,7 @@
 use hwml_core::{
-    Level, Index, RcValue, Value,
     ty::RcTy,
     val::{LocalEnv, TransparentEnv},
+    Index, Level, RcValue, Value,
 };
 use im::Vector;
 
@@ -38,7 +38,9 @@ impl<'db> Default for ElabCtx<'db> {
 
 impl<'db> ElabCtx<'db> {
     pub fn empty() -> Self {
-        ElabCtx { entries: Vector::new() }
+        ElabCtx {
+            entries: Vector::new(),
+        }
     }
 
     pub fn depth(&self) -> usize {
@@ -49,7 +51,12 @@ impl<'db> ElabCtx<'db> {
     /// at the current depth — callers create it with `Value::variable_rc`.
     pub fn push_bound(&self, name: String, ty: RcTy<'db>, val: RcValue<'db>) -> Self {
         let mut new = self.clone();
-        new.entries.push_back(CtxEntry { name, ty, value: val, binding: Binding::Bound });
+        new.entries.push_back(CtxEntry {
+            name,
+            ty,
+            value: val,
+            binding: Binding::Bound,
+        });
         new
     }
 
