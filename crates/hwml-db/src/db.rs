@@ -25,7 +25,10 @@ pub struct SourceFile {
 
 impl SourceFile {
     /// Get the SourceFileId for this file (computed on demand, interned)
-    pub fn file_id<'db>(&self, db: &'db dyn salsa::Database) -> hwml_core::SourceFileId<'db> {
+    pub fn file_id<'db, DB>(&self, db: &'db DB) -> hwml_core::SourceFileId<'db>
+    where
+        DB: salsa::Database + ?Sized,
+    {
         let canonical_path_str = self.path(db).to_str().unwrap_or_else(|| {
             eprintln!(
                 "Warning: Non-UTF8 path encountered: {:?} (using 'unknown' as fallback)",
@@ -57,11 +60,14 @@ impl VfsFileMap {
     ///
     /// Note: This is a convenience method. The VfsFileMap internally uses PathBuf keys,
     /// so we convert the SourceFileId to a PathBuf for lookup.
-    pub fn get_by_file_id<'db>(
+    pub fn get_by_file_id<'db, DB>(
         &self,
-        db: &'db dyn salsa::Database,
+        db: &'db DB,
         file_id: hwml_core::SourceFileId<'db>,
-    ) -> Option<SourceFile> {
+    ) -> Option<SourceFile>
+    where
+        DB: salsa::Database + ?Sized,
+    {
         // Convert SourceFileId to PathBuf
         let canonical_path_str: &str = file_id.canonical_path(db).text(db);
         let path_buf = PathBuf::from(canonical_path_str);

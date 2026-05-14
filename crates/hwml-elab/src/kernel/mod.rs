@@ -51,7 +51,10 @@ pub struct Kernel<'a, 'db> {
 }
 
 /// Helper to format a path of Names as a dotted string for error messages
-fn format_path<'db>(db: &'db dyn salsa::Database, path: &[Name<'db>]) -> String {
+fn format_path<'db, DB>(db: &'db DB, path: &[Name<'db>]) -> String
+where
+    DB: salsa::Database + ?Sized,
+{
     path.iter()
         .map(|name| name.to_string(db))
         .collect::<Vec<_>>()

@@ -29,7 +29,7 @@ impl<'db> OpenDirective<'db> {
     /// If there's no alias, qualifies the entire path against the namespace.
     pub fn try_rewrite<Db>(&self, db: &'db Db, path: &[Name<'db>]) -> Option<QualifiedName<'db>>
     where
-        Db: salsa::Database + ?Sized,
+        Db: salsa::Database,
     {
         assert!(
             !path.is_empty(),
@@ -177,7 +177,7 @@ impl<'db> Resolver<'db> {
     /// Qualifies a single name against the current namespace.
     pub fn qualify<Db>(&self, db: &'db Db, name: Name<'db>) -> QualifiedName<'db>
     where
-        Db: salsa::Database + ?Sized,
+        Db: salsa::Database,
     {
         QualifiedName::new(db, self.namespace, name)
     }
@@ -185,7 +185,7 @@ impl<'db> Resolver<'db> {
     /// Qualifies a path against the current namespace.
     pub fn qualify_path<Db>(&self, db: &'db Db, path: &[Name<'db>]) -> QualifiedName<'db>
     where
-        Db: salsa::Database + ?Sized,
+        Db: salsa::Database,
     {
         QualifiedName::qualify_path(db, self.namespace, path)
             .expect("qualify_path should always succeed with non-empty path")
@@ -202,7 +202,7 @@ impl<'db> Resolver<'db> {
     /// Enter a new namespace, which is implicitly a new lexical scope.
     pub fn push_namespace<Db>(&self, db: &'db Db, path: &[Name<'db>]) -> Self
     where
-        Db: salsa::Database + ?Sized,
+        Db: salsa::Database,
     {
         let mut namespace = self.namespace;
         let mut scopes = self.scopes.clone();

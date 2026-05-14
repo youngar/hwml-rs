@@ -36,7 +36,10 @@ impl<'db> Atom<'db> {
         Atom(s)
     }
 
-    pub fn text(&self, db: &'db dyn salsa::Database) -> &str {
+    pub fn text<DB>(&self, db: &'db DB) -> &str
+    where
+        DB: salsa::Database + ?Sized,
+    {
         self.0.text(db)
     }
 }
@@ -152,7 +155,10 @@ impl<'db> Name<'db> {
         Name::new(db, Fixity::Closed, Box::from([]))
     }
 
-    pub fn to_string(&self, db: &'db dyn salsa::Database) -> String {
+    pub fn to_string<DB>(&self, db: &'db DB) -> String
+    where
+        DB: salsa::Database + ?Sized,
+    {
         let fixity = self.fixity(db);
         let mut s = String::new();
         if fixity == Fixity::Infix || fixity == Fixity::Prefix {
@@ -227,7 +233,10 @@ pub struct QualifiedName {
 }
 
 impl<'db> QualifiedName<'db> {
-    pub fn to_string(&self, db: &'db dyn salsa::Database) -> String {
+    pub fn to_string<DB>(&self, db: &'db DB) -> String
+    where
+        DB: salsa::Database + ?Sized,
+    {
         let names = self.segments(db);
         let mut s = String::new();
         let mut first = true;

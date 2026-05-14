@@ -98,10 +98,10 @@ fn span_from_offsets(text: &str, start: usize, end: usize) -> Span {
 
 // Convert ElabError to Diagnostic.
 /// Format a value for error messages (simple, user-friendly representation)
-fn format_value_for_error<'db>(
-    db: &'db dyn salsa::Database,
-    val: &hwml_core::RcValue<'db>,
-) -> String {
+fn format_value_for_error<'db, DB>(db: &'db DB, val: &hwml_core::RcValue<'db>) -> String
+where
+    DB: salsa::Database + ?Sized,
+{
     use hwml_core::Value;
     match val.as_ref() {
         Value::UniverseCode(n) => format!("Type{}", n),
@@ -116,11 +116,14 @@ fn format_value_for_error<'db>(
 }
 
 // Public for use by LSP server.
-pub fn convert_elab_error_to_diagnostic<'db>(
-    db: &'db dyn salsa::Database,
+pub fn convert_elab_error_to_diagnostic<'db, DB>(
+    db: &'db DB,
     source: SourceFile,
     error: &hwml_elab::error::ElabError<'db>,
-) -> Option<Diagnostic> {
+) -> Option<Diagnostic>
+where
+    DB: salsa::Database + ?Sized,
+{
     use hwml_elab::error::ElabError;
 
     let text = source.text(db);

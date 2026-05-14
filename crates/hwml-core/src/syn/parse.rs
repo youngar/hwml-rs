@@ -441,7 +441,10 @@ fn split_qname_components(name_str: &str) -> Vec<&str> {
     name_str.split('/').filter(|s| !s.is_empty()).collect()
 }
 
-fn p_qname<'db>(db: &'db dyn salsa::Database, name_str: &str) -> QualifiedName<'db> {
+fn p_qname<'db, DB>(db: &'db DB, name_str: &str) -> QualifiedName<'db>
+where
+    DB: salsa::Database + ?Sized,
+{
     let components = split_qname_components(name_str);
     let mut qname = None;
     for component in components {

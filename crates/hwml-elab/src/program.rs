@@ -31,7 +31,10 @@ use crate::{
 };
 
 /// Helper to create a synthetic source for testing/entry points
-fn synthetic_source<'db>(db: &'db dyn salsa::Database, label: &str) -> Source<'db> {
+fn synthetic_source<'db, DB>(db: &'db DB, label: &str) -> Source<'db>
+where
+    DB: salsa::Database + ?Sized,
+{
     let word = Word::new(db, label);
     Source::new(db, SourceInfo::Synthetic(word))
 }

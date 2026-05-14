@@ -88,7 +88,10 @@ impl<'db> DataConstructorDecl<'db> {
     }
 
     /// Reconstruct the full Pi type from the telescope and result type.
-    pub fn full_type(&self, db: &'db dyn salsa::Database) -> RcSyntax<'db> {
+    pub fn full_type<DB>(&self, db: &'db DB) -> RcSyntax<'db>
+    where
+        DB: salsa::Database + ?Sized,
+    {
         let mut result = self.result_type.clone();
         for cell in self.parameters.iter().rev() {
             result = Syntax::PiCode(

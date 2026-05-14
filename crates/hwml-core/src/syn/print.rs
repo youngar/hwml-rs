@@ -43,7 +43,10 @@ impl NameStackExt for NameStack {
     }
 }
 
-pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
+pub fn dump_syntax<'db, DB>(db: &'db DB, syntax: &Syntax<'db>)
+where
+    DB: salsa::Database,
+{
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
     let st = State::new();
     let mut names = NameStack::new();
@@ -52,7 +55,10 @@ pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
     let _ = p.finish();
 }
 
-pub fn print_syntax_to_string<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) -> String {
+pub fn print_syntax_to_string<'db, DB>(db: &'db DB, syntax: &Syntax<'db>) -> String
+where
+    DB: salsa::Database,
+{
     let mut p = Printer::new(String::new(), 80);
     let st = State::new();
     let mut names = NameStack::new();
@@ -60,7 +66,10 @@ pub fn print_syntax_to_string<'db>(db: &'db dyn salsa::Database, syntax: &Syntax
     p.finish().unwrap_or_default()
 }
 
-pub fn dump_module<'db>(db: &'db dyn salsa::Database, module: &CompilationUnit<'db>) {
+pub fn dump_module<'db, DB>(db: &'db DB, module: &CompilationUnit<'db>)
+where
+    DB: salsa::Database,
+{
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
     let mut names = NameStack::new();
     let _ = print_module(db, module, &mut names, &mut p);
