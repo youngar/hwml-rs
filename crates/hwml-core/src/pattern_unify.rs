@@ -101,13 +101,13 @@ pub fn unify_pattern<'db>(
     let mut new_bindings = Vec::new();
     let mut current_depth = base_depth;
 
-    for ty_syntax in dcon_info.arguments.iter() {
+    for ty_binder in dcon_info.arguments.iter() {
         let mut env = Environment {
             global,
             local: local.clone(),
             transparent: TransparentEnv::new(),
         };
-        let ty = eval::eval(&mut env, ty_syntax)?;
+        let ty = eval::eval(&mut env, &ty_binder.value)?;
         let rigid_var = Value::variable_rc(Level::new(current_depth), ty.clone());
         new_bindings.push(PatternBinding { name: None, ty });
         local.push(rigid_var);
@@ -146,7 +146,6 @@ pub fn unify_pattern<'db>(
 
     let index_types: Result<Vec<_>, _> = tcon_info
         .indices()
-        .iter()
         .map(|ty_syntax| eval::eval(&mut param_env, ty_syntax))
         .collect();
     let index_types = index_types?;
@@ -226,7 +225,7 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
         Value::Lambda(_) => false,
 
         // NEW: Type codes
-        Value::PiCode(source, _target) => {
+        Value::PiCode(source, _icit, _target) => {
             // Check source, but skip target closure for now
             occurs_check(transparent, level, source)
         }
@@ -335,7 +334,11 @@ fn unify_equations<'db>(
                 solutions.push((level, lhs.clone()));
             }
 
-            (Value::Lambda(l1), Value::Lambda(l2), Value::PiCode(pi_source, pi_target)) => {
+            (
+                Value::Lambda(l1),
+                Value::Lambda(l2),
+                Value::PiCode(pi_source, pi_icit, pi_target),
+            ) => {
                 let var = Value::variable_rc(Level::new(depth), pi_source.clone());
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
@@ -343,17 +346,17 @@ fn unify_equations<'db>(
                 work_list.push((l1_body, l2_body, result_ty));
             }
 
-            (Value::Lambda(l1), _, Value::PiCode(pi_source, pi_target)) => {
+            (Value::Lambda(l1), _, Value::PiCode(pi_source, pi_icit, pi_target)) => {
                 let var = Value::variable_rc(Level::new(depth), pi_source.clone());
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
-                let rhs_applied = eval::run_application(global, &rhs, var.clone())?;
+                let rhs_applied = eval::run_application(global, &rhs, var.clone(), *pi_icit)?;
                 let result_ty = eval::run_closure(global, pi_target, [var])?;
                 work_list.push((l1_body, rhs_applied, result_ty));
             }
 
-            (_, Value::Lambda(l2), Value::PiCode(pi_source, pi_target)) => {
+            (_, Value::Lambda(l2), Value::PiCode(pi_source, pi_icit, pi_target)) => {
                 let var = Value::variable_rc(Level::new(depth), pi_source.clone());
-                let lhs_applied = eval::run_application(global, &lhs, var.clone())?;
+                let lhs_applied = eval::run_application(global, &lhs, var.clone(), *pi_icit)?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
                 let result_ty = eval::run_closure(global, pi_target, [var])?;
                 work_list.push((lhs_applied, l2_body, result_ty));
@@ -390,12 +393,12 @@ fn unify_equations<'db>(
                     env.extend(parameters);
 
                     // Evaluate the type of each argument and add equations
-                    for (l, r, ty_syntax) in itertools::izip!(
+                    for (l, r, ty_binder) in itertools::izip!(
                         lhs_dcon.arguments.iter(),
                         rhs_dcon.arguments.iter(),
                         data_info.arguments.iter()
                     ) {
-                        let arg_ty = eval::eval(&mut env, ty_syntax)?;
+                        let arg_ty = eval::eval(&mut env, &ty_binder.value)?;
                         work_list.push((l.clone(), r.clone(), arg_ty.clone()));
                         // Extend environment with the left argument for dependent types
                         env.push(l.clone());

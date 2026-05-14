@@ -266,3 +266,57 @@ impl std::fmt::Display for MetaVariableId {
         write!(f, "{}", self.local_index)
     }
 }
+
+
+/// Implicit/Explicit marker for function arguments.
+///
+/// This distinguishes between:
+/// - `Explicit`: Regular function arguments `(x : A) → B` and `f x`
+/// - `Implicit`: Implicit arguments `{x : A} → B` and `f {x}` (to be inferred)
+///
+/// # Implementation Notes
+///
+/// - Icit is tracked in both Syntax (core IR) and Value (NbE) domains
+/// - Lambda nodes MUST track their Icit for quotation and sanity checking
+/// - During application, Icit is validated with debug_assert in development
+/// - Implicit arguments are erased during hardware lowering (type-checking only)
+///
+/// # Phase 1
+///
+/// All uses default to `Icit::Explicit` - no behavior changes yet.
+/// Implicit argument inference will be implemented in later phases.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum Icit {
+    /// Explicit argument: `(x : A) → B`, application `f x`
+    Explicit,
+    /// Implicit argument: `{x : A} → B`, application `f {x}` (to be inferred)
+    Implicit,
+}
+
+impl Icit {
+    /// Returns true if this is an explicit argument
+    pub fn is_explicit(self) -> bool {
+        matches!(self, Icit::Explicit)
+    }
+
+    /// Returns true if this is an implicit argument
+    pub fn is_implicit(self) -> bool {
+        matches!(self, Icit::Implicit)
+    }
+}
+
+impl Default for Icit {
+    fn default() -> Self {
+        Icit::Explicit
+    }
+}
+
+impl Display for Icit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Icit::Explicit => write!(f, "explicit"),
+            Icit::Implicit => write!(f, "implicit"),
+        }
+    }
+}

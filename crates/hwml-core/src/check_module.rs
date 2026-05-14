@@ -191,15 +191,15 @@ fn validate_type_constructor<'db>(
         return Err(Error::InvalidTypeConstructorUniverse(tcon.name));
     };
 
-    for param_ty in tcon.parameters.iter() {
-        check_type(&mut tc_env, param_ty)?;
-        let param_ty_val = eval::eval(&mut tc_env.values, param_ty)?;
+    for param_binder in tcon.parameters.iter() {
+        check_type(&mut tc_env, &param_binder.value)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.value)?;
         tc_env.push_var(param_ty_val);
     }
 
-    for index_ty in tcon.indices.iter() {
-        check_type(&mut tc_env, index_ty)?;
-        let index_ty_val = eval::eval(&mut tc_env.values, index_ty)?;
+    for index_binder in tcon.indices.iter() {
+        check_type(&mut tc_env, &index_binder.value)?;
+        let index_ty_val = eval::eval(&mut tc_env.values, &index_binder.value)?;
         tc_env.push_var(index_ty_val);
     }
 
@@ -224,15 +224,15 @@ fn validate_data_constructor<'db>(
     };
 
     // Add type constructor parameters (but not indices) to match parser scoping.
-    for param_ty in tcon.parameters.iter() {
-        let param_ty_val = eval::eval(&mut tc_env.values, param_ty)?;
+    for param_binder in tcon.parameters.iter() {
+        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.value)?;
         tc_env.push_var(param_ty_val);
     }
 
     // Validate data constructor parameters.
-    for param_ty in dcon.parameters.iter() {
-        check_type(&mut tc_env, param_ty)?;
-        let param_ty_val = eval::eval(&mut tc_env.values, param_ty)?;
+    for param_binder in dcon.parameters.iter() {
+        check_type(&mut tc_env, &param_binder.value)?;
+        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.value)?;
         tc_env.push_var(param_ty_val);
     }
 
@@ -258,9 +258,9 @@ fn validate_metavariable<'db>(
         types: Vec::new(),
     };
 
-    for arg_ty in meta.arguments.iter() {
-        check_type(&mut tc_env, arg_ty)?;
-        let arg_ty_val = eval::eval(&mut tc_env.values, arg_ty)?;
+    for arg_binder in meta.arguments.iter() {
+        check_type(&mut tc_env, &arg_binder.value)?;
+        let arg_ty_val = eval::eval(&mut tc_env.values, &arg_binder.value)?;
         tc_env.push_var(arg_ty_val);
     }
 
@@ -284,7 +284,7 @@ fn is_hardware_type(ty: &Value) -> bool {
 
         // PiCode type: check if the final return type is hardware
         // We need to check the syntax of the closure body
-        Value::PiCode(_, target) => is_hardware_type_syntax(&target.term),
+        Value::PiCode(_, _icit, target) => is_hardware_type_syntax(&target.term),
 
         // Everything else is meta-level
         _ => false,
@@ -298,7 +298,7 @@ fn is_hardware_type_syntax<'db>(ty: &RcSyntax<'db>) -> bool {
         Syntax::SLift(_) | Syntax::MLift(_) => true,
 
         // PiCode type: check the target
-        Syntax::PiCode(_, target) => is_hardware_type_syntax(&target.0),
+        Syntax::PiCode(_, _icit, target) => is_hardware_type_syntax(&target.body),
 
         // Check term - recurse into the inner term
         Syntax::Check(check) => is_hardware_type_syntax(&check.term),
