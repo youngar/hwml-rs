@@ -1,3 +1,4 @@
+use crate::common::Icit;
 use crate::*;
 use std::{collections::HashMap, fmt, marker::PhantomData, rc::*};
 use syn::{RcSyntax, Telescope};
@@ -54,8 +55,9 @@ pub enum Value<'db> {
     /// Evaluated type code: Universe at level `n`
     UniverseCode(usize),
 
-    /// Evaluated type code: Dependent function type
-    PiCode(RcValue<'db>, Closure<'db>),
+    /// Evaluated type code: Dependent function type (domain, icit, codomain)
+    /// The Icit flag distinguishes explicit (x : A) → B from implicit {x : A} → B
+    PiCode(RcValue<'db>, crate::common::Icit, Closure<'db>),
 
     /// Evaluated type code: Universe lifting for cumulativity
     /// The evaluated, structural representation of a shifted type code.
@@ -99,12 +101,12 @@ pub enum Value<'db> {
 }
 
 impl<'db> Value<'db> {
-    pub fn lambda(body: Closure<'db>) -> Value<'db> {
-        Value::Lambda(Lambda::new(body))
+    pub fn lambda(icit: crate::common::Icit, body: Closure<'db>) -> Value<'db> {
+        Value::Lambda(Lambda::new(icit, body))
     }
 
-    pub fn lambda_rc(body: Closure<'db>) -> RcValue<'db> {
-        Rc::new(Value::lambda(body))
+    pub fn lambda_rc(icit: crate::common::Icit, body: Closure<'db>) -> RcValue<'db> {
+        Rc::new(Value::lambda(icit, body))
     }
 
     pub fn let_expr(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> Value<'db> {
@@ -330,12 +332,22 @@ impl<'db> Value<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Lambda<'db> {
+    /// Implicit/Explicit flag - CRITICAL for quotation and sanity checking
+    pub icit: crate::common::Icit,
     pub body: Closure<'db>,
 }
 
 impl<'db> Lambda<'db> {
-    pub fn new(body: Closure<'db>) -> Lambda<'db> {
-        Lambda { body }
+    pub fn new(icit: crate::common::Icit, body: Closure<'db>) -> Lambda<'db> {
+        Lambda { icit, body }
+    }
+
+    pub fn explicit(body: Closure<'db>) -> Lambda<'db> {
+        Lambda::new(Icit::Explicit, body)
+    }
+
+    pub fn implicit(body: Closure<'db>) -> Lambda<'db> {
+        Lambda::new(Icit::Implicit, body)
     }
 }
 
@@ -744,8 +756,8 @@ pub enum Eliminator<'db> {
 }
 
 impl<'db> Eliminator<'db> {
-    pub fn application(argument: Normal<'db>) -> Eliminator<'db> {
-        Eliminator::Application(Application::new(argument))
+    pub fn application(argument: Normal<'db>, icit: crate::common::Icit) -> Eliminator<'db> {
+        Eliminator::Application(Application::new(argument, icit))
     }
 
     pub fn case(
@@ -760,11 +772,20 @@ impl<'db> Eliminator<'db> {
 #[derive(Clone, Debug)]
 pub struct Application<'db> {
     pub argument: Normal<'db>,
+    pub icit: crate::common::Icit,
 }
 
 impl<'db> Application<'db> {
-    pub fn new(argument: Normal<'db>) -> Application<'db> {
-        Application { argument }
+    pub fn new(argument: Normal<'db>, icit: crate::common::Icit) -> Application<'db> {
+        Application { argument, icit }
+    }
+
+    pub fn explicit(argument: Normal<'db>) -> Application<'db> {
+        Application::new(argument, Icit::Explicit)
+    }
+
+    pub fn implicit(argument: Normal<'db>) -> Application<'db> {
+        Application::new(argument, Icit::Implicit)
     }
 }
 
@@ -1250,12 +1271,16 @@ impl<'db> TypeConstructorInfo<'db> {
         self.arguments.len() - self.num_parameters
     }
 
-    pub fn parameters(&self) -> &[RcSyntax<'db>] {
-        &self.arguments.bindings[..self.num_parameters]
+    pub fn parameters(&self) -> impl Iterator<Item = &RcSyntax<'db>> {
+        self.arguments.binders[..self.num_parameters]
+            .iter()
+            .map(|b| &b.value)
     }
 
-    pub fn indices(&self) -> &[RcSyntax<'db>] {
-        &self.arguments.bindings[self.num_parameters..]
+    pub fn indices(&self) -> impl Iterator<Item = &RcSyntax<'db>> {
+        self.arguments.binders[self.num_parameters..]
+            .iter()
+            .map(|b| &b.value)
     }
 
     pub fn constructors(&self) -> &[QualifiedName<'db>] {

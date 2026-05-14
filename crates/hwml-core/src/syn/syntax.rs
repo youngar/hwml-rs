@@ -1,3 +1,4 @@
+use crate::common::Icit;
 use crate::*;
 use hwml_support::*;
 use std::{marker::PhantomData, rc::Rc};
@@ -13,9 +14,10 @@ pub enum Syntax<'db> {
     /// This is a TERM that evaluates to a type code value
     UniverseCode(usize),
 
-    /// Type code: Dependent function type (source, target)
+    /// Type code: Dependent function type (source, icit, target)
     /// This is a TERM that evaluates to a type code value
-    PiCode(RcSyntax<'db>, BindingSyntax<'db>),
+    /// The Icit flag distinguishes explicit (x : A) → B from implicit {x : A} → B
+    PiCode(RcSyntax<'db>, crate::common::Icit, BindingSyntax<'db>),
 
     /// Type code: Universe lifting for cumulativity
     /// LiftCode(n, inner) shifts a type code up by n universe levels
@@ -96,20 +98,20 @@ impl<'db> Syntax<'db> {
         Rc::new(Syntax::transport(motive, proof, value))
     }
 
-    pub fn lambda(body: BindingSyntax<'db>) -> Syntax<'db> {
-        Syntax::Lambda(Lambda::new(body))
+    pub fn lambda(icit: crate::common::Icit, body: BindingSyntax<'db>) -> Syntax<'db> {
+        Syntax::Lambda(Lambda::new(icit, body))
     }
 
-    pub fn lambda_rc(body: BindingSyntax<'db>) -> RcSyntax<'db> {
-        Rc::new(Syntax::lambda(body))
+    pub fn lambda_rc(icit: crate::common::Icit, body: BindingSyntax<'db>) -> RcSyntax<'db> {
+        Rc::new(Syntax::lambda(icit, body))
     }
 
-    pub fn application(fun: RcSyntax<'db>, arg: RcSyntax<'db>) -> Syntax<'db> {
-        Syntax::Application(Application::new(fun, arg))
+    pub fn application(fun: RcSyntax<'db>, arg: RcSyntax<'db>, icit: crate::common::Icit) -> Syntax<'db> {
+        Syntax::Application(Application::new(fun, arg, icit))
     }
 
-    pub fn application_rc(fun: RcSyntax<'db>, arg: RcSyntax<'db>) -> RcSyntax<'db> {
-        Rc::new(Syntax::application(fun, arg))
+    pub fn application_rc(fun: RcSyntax<'db>, arg: RcSyntax<'db>, icit: crate::common::Icit) -> RcSyntax<'db> {
+        Rc::new(Syntax::application(fun, arg, icit))
     }
 
     pub fn type_constructor(
@@ -388,12 +390,22 @@ impl<'db> Transport<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Lambda<'db> {
+    /// Implicit/Explicit flag - CRITICAL for quotation and sanity checking
+    pub icit: crate::common::Icit,
     pub body: BindingSyntax<'db>,
 }
 
 impl<'db> Lambda<'db> {
-    pub fn new(body: BindingSyntax<'db>) -> Lambda<'db> {
-        Lambda { body }
+    pub fn new(icit: crate::common::Icit, body: BindingSyntax<'db>) -> Lambda<'db> {
+        Lambda { icit, body }
+    }
+
+    pub fn explicit(body: BindingSyntax<'db>) -> Lambda<'db> {
+        Lambda::new(Icit::Explicit, body)
+    }
+
+    pub fn implicit(body: BindingSyntax<'db>) -> Lambda<'db> {
+        Lambda::new(Icit::Implicit, body)
     }
 }
 
@@ -401,11 +413,20 @@ impl<'db> Lambda<'db> {
 pub struct Application<'db> {
     pub function: RcSyntax<'db>,
     pub argument: RcSyntax<'db>,
+    pub icit: crate::common::Icit,
 }
 
 impl<'db> Application<'db> {
-    pub fn new(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Application<'db> {
-        Application { function, argument }
+    pub fn new(function: RcSyntax<'db>, argument: RcSyntax<'db>, icit: crate::common::Icit) -> Application<'db> {
+        Application { function, argument, icit }
+    }
+
+    pub fn explicit(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Application<'db> {
+        Application::new(function, argument, Icit::Explicit)
+    }
+
+    pub fn implicit(function: RcSyntax<'db>, argument: RcSyntax<'db>) -> Application<'db> {
+        Application::new(function, argument, Icit::Implicit)
     }
 }
 
