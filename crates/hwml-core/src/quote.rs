@@ -336,11 +336,8 @@ pub fn quote_flex_instances<'db>(
     }
 }
 
-/// Quote an instance of a PiCode type (a dependent function type).
-/// At type `PiCode(source, icit, target)`, the instance can be:
-/// - A Lambda value (quote as lambda)
-/// - A neutral with spine (eta-expand to lambda)
-/// - Another PiCode (quote as a type code)
+/// Quote an instance of PiCode.
+/// Lambdas quote directly; neutrals eta-expand.
 pub fn quote_pi_code_instances<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
@@ -387,7 +384,7 @@ where
     let body = quote(global, depth + 1, &app_val, &result_ty)?;
 
     // PRESERVE Icit when creating lambda
-    Ok(Syntax::lambda_rc(icit, Binding(body)))
+    Ok(Syntax::lambda_rc(icit, Binding::anonymous(body)))
 }
 
 /// Trait for values that can be eta-expanded (neutrals with spines).
@@ -448,9 +445,6 @@ pub fn type_quote<'db>(
     match value {
         Value::TypeConstructor(tcon) => quote_type_constructor(global, depth, tcon),
         Value::DataConstructor(dcon) => {
-            // Quote DataConstructor without type information (type-free quotation)
-            // We don't have the TypeConstructor here, so pass a dummy one
-            // Actually, we don't need it anymore since quote_data_constructor is type-free
             let dummy_tcon = TypeConstructor {
                 constructor: dcon.constructor,
                 arguments: vec![],
@@ -474,7 +468,6 @@ pub fn type_quote<'db>(
         Value::Flex(flex) => quote_flex(global, depth, flex),
         Value::EqType(eq) => quote_eq_type(global, depth, eq),
 
-        // NEW: Type codes (types as first-class terms)
         Value::UniverseCode(level) => quote_universe_code(global, depth, *level),
         Value::PiCode(source, icit, target) => quote_pi_code(global, depth, source, *icit, target),
         Value::LiftCode(shift, inner_val) => {
@@ -483,7 +476,6 @@ pub fn type_quote<'db>(
         }
         Value::BitCode => quote_bit_code(global, depth),
 
-        // Terms that can appear in constructor arguments
         Value::Zero(_) => Ok(Syntax::zero_rc()),
         Value::One(_) => Ok(Syntax::one_rc()),
 
@@ -491,12 +483,6 @@ pub fn type_quote<'db>(
     }
 }
 
-// ============================================================================
-// Type Code Quotation Functions
-// ============================================================================
-
-/// Quote a UniverseCode to syntax.
-/// NEW: Type codes are types as first-class terms.
 pub fn quote_universe_code<'db>(
     _global: &GlobalEnv<'db>,
     _depth: usize,
@@ -505,8 +491,6 @@ pub fn quote_universe_code<'db>(
     Ok(Rc::new(Syntax::UniverseCode(level)))
 }
 
-/// Quote a PiCode to syntax.
-/// NEW: Dependent function type as a first-class term.
 pub fn quote_pi_code<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
@@ -514,21 +498,16 @@ pub fn quote_pi_code<'db>(
     icit: crate::common::Icit,
     target: &Closure<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    // Quote the source type code
     let syn_source = type_quote(global, depth, source)?;
 
-    // Create a fresh variable for the binder
-    // The variable's type is the decoded type from the source code
     let arg = Value::variable_rc(Level::new(depth), source.clone());
     let sem_target = run_closure(global, target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
-    // PRESERVE Icit
-    Ok(Rc::new(Syntax::PiCode(syn_source, icit, Binding(syn_target))))
+    let name = format!("{}", depth);
+    Ok(Rc::new(Syntax::PiCode(syn_source, icit, Binding::named(name, syn_target))))
 }
 
-/// Quote a BitCode to syntax.
-/// NEW: Bit type as a first-class term.
 pub fn quote_bit_code<'db>(_global: &GlobalEnv<'db>, _depth: usize) -> Result<'db, RcSyntax<'db>> {
     Ok(Rc::new(Syntax::BitCode))
 }
@@ -542,7 +521,8 @@ pub fn quote_let<'db>(
     let syn_ty = quote_at_unknown_type(global, depth, &let_val.ty)?;
     let syn_value = quote(global, depth, &let_val.value, &let_val.ty)?;
     let syn_body = quote(global, depth + 1, &let_val.body, _expected_ty)?;
-    Ok(Syntax::let_rc(syn_ty, syn_value, Binding(syn_body)))
+    let name = format!("{}", depth);
+    Ok(Syntax::let_rc(syn_ty, syn_value, Binding::named(name, syn_body)))
 }
 
 fn quote_at_unknown_type<'db>(
@@ -553,14 +533,11 @@ fn quote_at_unknown_type<'db>(
     type_quote(global, depth, value)
 }
 
-/// Quote a TypeConstructor to syntax.
-/// This is TYPE-FREE quotation: we don't look up types, just recursively quote arguments.
 pub fn quote_type_constructor<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     tcon: &TypeConstructor<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    // Quote each argument without looking up types (type-free quotation)
     let mut arguments = Vec::new();
     for sem_arg in tcon.iter() {
         let syn_arg = type_quote(global, depth, sem_arg)?;
@@ -570,15 +547,12 @@ pub fn quote_type_constructor<'db>(
     Ok(Syntax::type_constructor_rc(tcon.constructor, arguments))
 }
 
-/// Quote a DataConstructor to syntax.
-/// This is TYPE-FREE quotation: we don't look up types, just recursively quote arguments.
 pub fn quote_data_constructor<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     dcon: &val::DataConstructor<'db>,
     _tcon: &TypeConstructor<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    // Quote each argument without looking up types (type-free quotation)
     let mut arguments = Vec::new();
     for sem_arg in dcon.iter() {
         let syn_arg = type_quote(global, depth, sem_arg)?;
@@ -680,7 +654,7 @@ pub fn quote_lambda<'db>(
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
     // PRESERVE Icit from lambda
-    Ok(Syntax::lambda_rc(lambda.icit, Binding(syn_body)))
+    Ok(Syntax::lambda_rc(lambda.icit, Binding::anonymous(syn_body)))
 }
 
 /// Quote a Module to syntax, using its HArrow type.
@@ -700,7 +674,9 @@ pub fn quote_module<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    Ok(Syntax::module_rc(Binding(syn_body)))
+    // Generate a name based on depth for quoted modules (values don't have names)
+    let name = format!("{}", depth);
+    Ok(Syntax::module_rc(Binding::named(name, syn_body)))
 }
 // ============================================================================
 // Neutral Quotation Functions
@@ -791,8 +767,8 @@ fn quote_metavariable<'db>(
 
     // Quote each value in the local environment
     let mut substitution = Vec::new();
-    for (value, syn_ty) in meta.local.iter().zip(meta_info.arguments.iter()) {
-        let sem_ty = eval::eval(&mut env, syn_ty)?;
+    for (value, syn_ty_binder) in meta.local.iter().zip(meta_info.arguments.iter()) {
+        let sem_ty = eval::eval(&mut env, &syn_ty_binder.value)?;
         let quoted = quote(global, depth, value.as_ref(), &sem_ty)?;
         substitution.push(quoted);
         env.push(value.clone());
@@ -919,7 +895,7 @@ fn quote_transport<'db>(
     let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
     let motive_body = type_quote(global, depth + 1, &motive_result)?;
-    let motive = Syntax::lambda_rc(Icit::Explicit, Binding(motive_body));
+    let motive = Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(motive_body));
 
     // Quote the proof at the equality type
     let eq_ty = Value::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone());
@@ -943,6 +919,7 @@ mod tests {
     use crate::eval;
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
+    use crate::syn::Telescope;
     use crate::val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
     use crate::TestDatabase;
     use hwml_support::salsa::IntoWithDb;
@@ -1138,7 +1115,8 @@ mod tests {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Identity: λ x → x
-        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
+        // Values don't have names, so quoted lambdas use "_"
+        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %_ → %_");
     }
 
     // =========================================================================
@@ -1205,8 +1183,8 @@ mod tests {
         // Pi types eta-expand neutrals: f : A → B becomes λx. f x
         let pi_ty = c.pi_u0_u0();
         let var = Value::variable(Level::new(0), Rc::new(pi_ty.clone()));
-        // λ %0 → %0[%0] (function applied to its argument)
-        assert_eq!(c.q(&var, &pi_ty), "λ %0 → %0[%0]");
+        // λ %_ → %_[%_] (function applied to its argument, values use "_" names)
+        assert_eq!(c.q(&var, &pi_ty), "λ %_ → %_[%_]");
 
         // HArrow types do NOT eta-expand neutrals
         let harrow_ty = c.harrow_bit_bit();
@@ -1221,30 +1199,19 @@ mod tests {
 
     #[test]
     fn test_quote_type_constructors() {
+        use crate::test_utils::load_prelude;
+
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let prelude = "tcon @Nat : -> U0 where dcon @Z : #[@Nat]; tcon @Vec (%a : U0) : -> U0 where dcon @VNil : #[@Vec %a];";
+        let global = load_prelude(&db, prelude);
         let u0: RcValue = Value::UniverseCode(0).into();
 
-        // No args: #[@Nat]
         let nat_id = "Nat".into_with_db(&db);
-        global.add_type_constructor(
-            nat_id,
-            TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
-        );
         let nat = Value::type_constructor(nat_id, vec![]);
         let syntax = quote(&global, 0, &nat, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "#[@/Nat]");
 
-        // With args: #[@Vec Bit]
         let vec_id = "Vec".into_with_db(&db);
-        global.add_type_constructor(
-            vec_id,
-            TypeConstructorInfo::new(
-                vec![Syntax::UniverseCode(0).into()],
-                1,
-                UniverseLevel::new(0),
-            ),
-        );
         let vec_bit = Value::type_constructor(vec_id, vec![Value::bit_rc()]);
         let syntax = quote(&global, 0, &vec_bit, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "#[@/Vec Bit]");
@@ -1256,21 +1223,14 @@ mod tests {
 
     #[test]
     fn test_quote_data_constructors() {
+        use crate::test_utils::load_prelude;
+
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let prelude = "tcon @Unit : -> U0 where dcon @tt : #[@Unit];";
+        let global = load_prelude(&db, prelude);
 
-        // Register Unit type and tt constructor
         let unit_id = "Unit".into_with_db(&db);
-        global.add_type_constructor(
-            unit_id,
-            TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
-        );
         let tt_id = "tt".into_with_db(&db);
-        global.add_data_constructor(
-            tt_id,
-            DataConstructorInfo::new(vec![], Syntax::type_constructor_rc(unit_id, vec![])),
-        );
-
         let unit_tcon = crate::val::TypeConstructor::new(unit_id, vec![]);
         let tt_dcon = Value::data_constructor(tt_id, vec![]);
         let syntax = quote_data_constructor(
@@ -1293,24 +1253,24 @@ mod tests {
     #[test]
     fn test_quote_metavariables() {
         use crate::common::MetaVariableId;
+        use crate::test_utils::parse;
+
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
         let u0: RcValue = Value::UniverseCode(0).into();
         let u0_rc = u0.clone();
 
-        // No args: ?[0]
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
+        global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
         let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_rc.clone());
         let syntax = quote(&global, 0, &meta, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
 
-        // With args: ?[1 Bit]
         let meta_id2 = MetaVariableId::new(1);
         global.add_metavariable(
             meta_id2,
-            vec![Syntax::UniverseCode(0).into()],
-            Syntax::UniverseCode(0).into(),
+            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            parse(&db, "U0"),
         );
         let mut local = LocalEnv::new();
         local.push(Value::bit_rc());
@@ -1332,7 +1292,7 @@ mod tests {
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::variable_rc(Index(0)),          // domain is A
             Icit::Explicit,
-            Binding(Syntax::variable_rc(Index(1))), // codomain is A
+            Binding::anonymous(Syntax::variable_rc(Index(1))), // codomain is A
         )
         .into();
         let outer: RcValue = Value::PiCode(c.u0(), Icit::Explicit, Closure::new(LocalEnv::new(), inner)).into();
@@ -1386,9 +1346,10 @@ mod tests {
         let c = Ctx::new(&db);
         // λ f → f $Bit - the body (f $Bit) is a neutral application
         // Note: A → B parses as HArrow, not Pi. Use ∀ (%x : A) → B for Pi.
+        // Values use "_" for names
         assert_eq!(
             c.quote_at("λ %f → %f $Bit", "∀ (%f : ∀ (%x : U0) → U0) → U0"),
-            "λ %0 → %0[$/Bit]"
+            "λ %_ → %_[$/Bit]"
         );
     }
 
@@ -1396,8 +1357,9 @@ mod tests {
     fn test_quote_neutral_variable_in_lambda() {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
-        // λ x → x at type ∀ (x : Bit) → Bit gives λ %0 → %0
-        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : Bit) → Bit"), "λ %0 → %0");
+        // λ x → x at type ∀ (x : Bit) → Bit
+        // Values use "_" for names
+        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : Bit) → Bit"), "λ %_ → %_");
     }
 
     #[test]
@@ -1407,12 +1369,13 @@ mod tests {
         // λ f → λ g → f (g $Bit) - nested neutral applications
         // f : ∀ (x : U0) → U0, g : ∀ (x : U0) → U0
         // Note: printer collapses nested lambdas into multi-binder form
+        // Values use "_" for names
         assert_eq!(
             c.quote_at(
                 "λ %f → λ %g → %f (%g $Bit)",
                 "∀ (%f : ∀ (%x : U0) → U0) (%g : ∀ (%x : U0) → U0) → U0"
             ),
-            "λ %0 %1 → %0[%1[$/Bit]]"
+            "λ %_ %_ → %_[%_[$/Bit]]"
         );
     }
 
@@ -1504,9 +1467,10 @@ mod tests {
 
         // The NbE Identity Law: eval then quote should give us back the same term
         // (modulo alpha-equivalence and normalization)
+        // Note: Quoted values use "_" for names since values don't preserve surface names
         assert_eq!(
-            original_str, quoted_str,
-            "NbE Identity Law failed for stuck Case expression!\nOriginal: {}\nQuoted:   {}",
+            quoted_str, "λ %_ → %_ case { @/True => [@/False] | @/False => [@/True] }",
+            "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );
     }
@@ -1543,9 +1507,11 @@ mod tests {
         let quoted_str = print_syntax_to_string(&db, &quoted);
 
         // The NbE Identity Law: eval then quote should give us back the same term
+        // (modulo alpha-equivalence and normalization)
+        // Note: Quoted values use "_" for lambdas, "_0", "_1" etc. for case pattern variables
         assert_eq!(
-            original_str, quoted_str,
-            "NbE Identity Law failed for stuck Case expression!\nOriginal: {}\nQuoted:   {}",
+            quoted_str, "λ %_ → %_ case { @/Zero => [@/Succ ([@/Zero])] | @/Succ %_0 => %_0 }",
+            "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );
     }
