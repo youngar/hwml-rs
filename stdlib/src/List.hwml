@@ -18,14 +18,14 @@ def length {A : Type} (xs : List A) : Nat :=
     }
 
 // Append two lists
-def append {A : Type} (xs : List A) (ys : List A) : List A :=
+def append {A : Type} (xs ys : List A) : List A :=
     xs match {
     | nil => ys
     | cons x xs' => cons x (append xs' ys)
     }
 
 // Map a function over a list
-def map {A : Type} {B : Type} (f : A -> B) (xs : List A) : List B :=
+def map {A B : Type} (f : A -> B) (xs : List A) : List B :=
     xs match {
     | nil => nil
     | cons x xs' => cons (f x) (map f xs')
@@ -59,14 +59,14 @@ def is_empty {A : Type} (xs : List A) : Std.Bool :=
     }
 
 // Fold right
-def foldr {A : Type} {B : Type} (f : A -> B -> B) (init : B) (xs : List A) : B :=
+def foldr {A B : Type} (f : A -> B -> B) (init : B) (xs : List A) : B :=
     xs match {
     | nil => init
     | cons x xs' => f x (foldr f init xs')
     }
 
 // Fold left
-def foldl {A : Type} {B : Type} (f : B -> A -> B) (init : B) (xs : List A) : B :=
+def foldl {A B : Type} (f : B -> A -> B) (init : B) (xs : List A) : B :=
     xs match {
     | nil => init
     | cons x xs' => foldl f (f init x) xs'

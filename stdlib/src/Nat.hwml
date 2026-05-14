@@ -15,14 +15,14 @@ def four : Nat := succ three
 def five : Nat := succ four
 
 // Addition
-def add (m : Nat) (n : Nat) : Nat :=
+def add (m n : Nat) : Nat :=
     m match {
     | zero => n
     | succ m' => succ (add m' n)
     }
 
 // Multiplication
-def mul (m : Nat) (n : Nat) : Nat :=
+def mul (m n : Nat) : Nat :=
     m match {
     | zero => zero
     | succ m' => add n (mul m' n)
@@ -36,7 +36,7 @@ def pred (n : Nat) : Nat :=
     }
 
 // Subtraction (saturating at zero)
-def sub (m : Nat) (n : Nat) : Nat :=
+def sub (m n : Nat) : Nat :=
     n match {
     | zero => m
     | succ n' => sub (pred m) n'
@@ -50,7 +50,7 @@ def is_zero (n : Nat) : Std.Bool :=
     }
 
 // Equality test
-def eq (m : Nat) (n : Nat) : Std.Bool :=
+def eq (m n : Nat) : Std.Bool :=
     m match {
     | zero => is_zero n
     | succ m' =>
@@ -72,27 +72,27 @@ def le (m n : Nat) : Std.Bool :=
     }
 
 // Less than
-def lt (m : Nat) (n : Nat) : Std.Bool :=
+def lt (m n : Nat) : Std.Bool :=
     Std.Bool.and (le m n) (Std.Bool.not (eq m n))
 
 // Greater than or equal
-def ge (m : Nat) (n : Nat) : Std.Bool :=
+def ge (m n : Nat) : Std.Bool :=
     le n m
 
 // Greater than
-def gt (m : Nat) (n : Nat) : Std.Bool :=
+def gt (m n : Nat) : Std.Bool :=
     lt n m
 
 // Minimum of two naturals
-def min (m : Nat) (n : Nat) : Nat :=
+def min (m n : Nat) : Nat :=
     Std.Bool.ite Nat (le m n) m n
 
 // Maximum of two naturals
-def max (m : Nat) (n : Nat) : Nat :=
+def max (m n : Nat) : Nat :=
     Std.Bool.ite Nat (le m n) n m
 
 // Power (exponentiation)
-def pow (base : Nat) (exp : Nat) : Nat :=
+def pow (base exp : Nat) : Nat :=
     exp match {
     | zero => one
     | succ exp' => mul base (pow base exp')

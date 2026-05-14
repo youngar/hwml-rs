@@ -3,32 +3,32 @@
 // Updated to use implicit arguments for type parameters.
 // Usage: fst my_pair  (instead of: fst Nat Bool my_pair)
 
-inductive Std.Prod (A : Type) (B : Type) : Type := {
+inductive Std.Prod (A B : Type) : Type := {
     | pair : A -> B -> Prod A B
 }
 
 namespace Std.Prod {
 
 // First projection
-def fst {A : Type} {B : Type} (p : Prod A B) : A :=
+def fst {A B : Type} (p : Prod A B) : A :=
     p match {
     | pair a _ => a
     }
 
 // Second projection
-def snd {A : Type} {B : Type} (p : Prod A B) : B :=
+def snd {A B : Type} (p : Prod A B) : B :=
     p match {
     | pair _ b => b
     }
 
 // Swap the components of a pair
-def swap {A : Type} {B : Type} (p : Prod A B) : Prod B A :=
+def swap {A B : Type} (p : Prod A B) : Prod B A :=
     p match {
     | pair a b => pair b a
     }
 
 // Map over both components
-def map {A : Type} {B : Type} {C : Type} {D : Type}
+def map {A B C D : Type}
         (f : A -> C) (g : B -> D) (p : Prod A B) : Prod C D :=
     p match {
     | pair a b => pair (f a) (g b)

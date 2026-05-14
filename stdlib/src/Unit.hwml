@@ -11,11 +11,11 @@ namespace Std.Unit {
 def unit : Unit := tt
 
 // Any function from Unit can be uncurried - Unit carries no information
-def uncurry (A : Type) (f : Unit -> A) : A :=
+def uncurry {A : Type} (f : Unit -> A) : A :=
     f unit
 
 // Conversely, any value can be turned into a constant function from Unit
-def curry (A : Type) (a : A) : Unit -> A :=
+def curry {A : Type} (a : A) : Unit -> A :=
     fun _ => a
 
 }

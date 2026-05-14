@@ -27,7 +27,7 @@ def is_some {A : Type} (opt : Option A) : Bool :=
     }
 
 // Map a function over an option
-def map {A : Type} {B : Type} (f : A -> B) (opt : Option A) : Option B :=
+def map {A B : Type} (f : A -> B) (opt : Option A) : Option B :=
     opt match {
     | none => none
     | some x => some (f x)
@@ -41,7 +41,7 @@ def get_or_else {A : Type} (default : A) (opt : Option A) : A :=
     }
 
 // Bind operation (monadic bind)
-def bind {A : Type} {B : Type} (opt : Option A) (f : A -> Option B) : Option B :=
+def bind {A B : Type} (opt : Option A) (f : A -> Option B) : Option B :=
     opt match {
     | none => none
     | some x => f x

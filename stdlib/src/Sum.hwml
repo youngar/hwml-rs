@@ -3,7 +3,7 @@
 // Updated to use implicit arguments for type parameters.
 // Usage: elim f g my_sum  (instead of: elim Nat Bool String f g my_sum)
 
-inductive Std.Sum (A : Type) (B : Type) : Type := {
+inductive Std.Sum (A B : Type) : Type := {
     | inl : A -> Sum A B
     | inr : B -> Sum A B
 }
@@ -11,21 +11,21 @@ inductive Std.Sum (A : Type) (B : Type) : Type := {
 namespace Std.Sum {
 
 // Check if sum is left
-def is_left {A : Type} {B : Type} (s : Sum A B) : Bool :=
+def is_left {A B : Type} (s : Sum A B) : Bool :=
     s match {
     | inl _ => true
     | inr _ => false
     }
 
 // Check if sum is right
-def is_right {A : Type} {B : Type} (s : Sum A B) : Bool :=
+def is_right {A B : Type} (s : Sum A B) : Bool :=
     s match {
     | inl _ => false
     | inr _ => true
     }
 
 // Case analysis / elimination
-def elim {A : Type} {B : Type} {C : Type}
+def elim {A B C : Type}
          (f : A -> C) (g : B -> C) (s : Sum A B) : C :=
     s match {
     | inl a => f a
@@ -33,7 +33,7 @@ def elim {A : Type} {B : Type} {C : Type}
     }
 
 // Map over the left type
-def map_left {A : Type} {B : Type} {C : Type}
+def map_left {A B C : Type}
              (f : A -> C) (s : Sum A B) : Sum C B :=
     s match {
     | inl a => inl (f a)
@@ -41,7 +41,7 @@ def map_left {A : Type} {B : Type} {C : Type}
     }
 
 // Map over the right type
-def map_right {A : Type} {B : Type} {D : Type}
+def map_right {A B D : Type}
               (g : B -> D) (s : Sum A B) : Sum A D :=
     s match {
     | inl a => inl a
@@ -49,7 +49,7 @@ def map_right {A : Type} {B : Type} {D : Type}
     }
 
 // Map over both types
-def bimap {A : Type} {B : Type} {C : Type} {D : Type}
+def bimap {A B C D : Type}
           (f : A -> C) (g : B -> D) (s : Sum A B) : Sum C D :=
     s match {
     | inl a => inl (f a)
@@ -57,7 +57,7 @@ def bimap {A : Type} {B : Type} {C : Type} {D : Type}
     }
 
 // Swap left and right
-def swap {A : Type} {B : Type} (s : Sum A B) : Sum B A :=
+def swap {A B : Type} (s : Sum A B) : Sum B A :=
     s match {
     | inl a => inr a
     | inr b => inl b

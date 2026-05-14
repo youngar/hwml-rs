@@ -30,7 +30,7 @@ def tail {A : Type} {n : Nat} (v : Vec A (Std.Nat.succ n)) : Vec A n :=
     }
 
 // Append two vectors - the result length is the sum of input lengths
-def append {A : Type} {m : Nat} {n : Nat}
+def append {A : Type} {m n : Nat}
            (xs : Vec A m) (ys : Vec A n) : Vec A (Std.Nat.add m n) :=
     xs match {
     | vnil => ys
@@ -38,7 +38,7 @@ def append {A : Type} {m : Nat} {n : Nat}
     }
 
 // Map a function over a vector, preserving length
-def map {A : Type} {B : Type} {n : Nat}
+def map {A B : Type} {n : Nat}
         (f : A -> B) (v : Vec A n) : Vec B n :=
     v match {
     | vnil => vnil
@@ -53,7 +53,7 @@ def replicate {A : Type} {n : Nat} (x : A) : Vec A n :=
     }
 
 // Zip two vectors of the same length
-def zip {A : Type} {B : Type} {n : Nat}
+def zip {A B : Type} {n : Nat}
         (xs : Vec A n) (ys : Vec B n) : Vec (A -> B) n :=
     xs match {
     | vnil => vnil

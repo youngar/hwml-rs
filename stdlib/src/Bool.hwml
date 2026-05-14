@@ -16,36 +16,36 @@ def not (b : Bool) : Bool :=
     }
 
 // Boolean AND
-def and (a : Bool) (b : Bool) : Bool :=
+def and (a b : Bool) : Bool :=
     a match {
     | true => b
     | false => false
     }
 
 // Boolean OR
-def or (a : Bool) (b : Bool) : Bool :=
+def or (a b : Bool) : Bool :=
     a match {
     | true => true
     | false => b
     }
 
 // Boolean XOR
-def xor (a : Bool) (b : Bool) : Bool :=
+def xor (a b : Bool) : Bool :=
     a match {
     | true => not b
     | false => b
     }
 
 // Boolean NAND
-def nand (a : Bool) (b : Bool) : Bool :=
+def nand (a b : Bool) : Bool :=
     not (and a b)
 
 // Boolean NOR
-def nor (a : Bool) (b : Bool) : Bool :=
+def nor (a b : Bool) : Bool :=
     not (or a b)
 
 // Boolean equality
-def eq (a : Bool) (b : Bool) : Bool :=
+def eq (a b : Bool) : Bool :=
     a match {
     | true => b
     | false => not b
