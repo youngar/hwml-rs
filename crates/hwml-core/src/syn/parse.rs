@@ -2343,7 +2343,7 @@ mod tests {
         let db = TestDatabase::default();
         let parsed = parse(&db, "@hello");
         let printed = print_syntax_to_string(&db, &parsed);
-        assert_eq!(printed, "@/hello");
+        assert_eq!(printed, "@hello");
     }
 
     #[test]
@@ -2351,14 +2351,14 @@ mod tests {
         let db = TestDatabase::default();
         let parsed = parse(&db, "@42");
         let printed = print_syntax_to_string(&db, &parsed);
-        assert_eq!(printed, "@/42");
+        assert_eq!(printed, "@42");
     }
 
     #[test]
     fn test_string_interning_comprehensive() {
         let db = TestDatabase::default();
         let test_cases = vec!["@hello", "@world", "@foo", "@bar", "@hello"];
-        let expected_outputs = vec!["@/hello", "@/world", "@/foo", "@/bar", "@/hello"];
+        let expected_outputs = vec!["@hello", "@world", "@foo", "@bar", "@hello"];
         let parsed_terms: Vec<_> = test_cases.iter().map(|s| parse(&db, s)).collect();
 
         for (i, term) in parsed_terms.iter().enumerate() {
@@ -2943,9 +2943,9 @@ const @id : ∀ (%a : U0) (%x : %a) → %a = λ %a %x → %x;"#;
         // Note: Full round-trip isn't guaranteed because types may be quoted
         // with generated names. We just verify that printing succeeds and
         // produces valid output.
-        assert!(output.contains("prim $/Nat"));
-        assert!(output.contains("tcon @/Bool"));
-        assert!(output.contains("const @/id"));
+        assert!(output.contains("prim $Nat"));
+        assert!(output.contains("tcon @Bool"));
+        assert!(output.contains("const @id"));
     }
 
     #[test]
@@ -2972,12 +2972,12 @@ tcon @List (%a : U0) : -> U0 where
         let module = parse_module(&db, input).expect("parse failed");
         let output = crate::syn::print_module_to_string(&db, &module);
         println!("Module output:\n{}", output);
-        assert!(output.contains("prim $/Nat : 𝒰0;"));
+        assert!(output.contains("prim $Nat : 𝒰0;"));
         // With the new system, type constructor parameters print with their actual names
         // The test input doesn't specify a name, so the parser generates one
-        assert!(output.contains("tcon @/List"));
-        assert!(output.contains("dcon @/Nil"));
-        assert!(output.contains("dcon @/Cons"));
+        assert!(output.contains("tcon @List"));
+        assert!(output.contains("dcon @Nil"));
+        assert!(output.contains("dcon @Cons"));
     }
 
     // ========== EQUALITY TYPE PARSING TESTS ==========

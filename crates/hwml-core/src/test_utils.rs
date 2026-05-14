@@ -388,7 +388,7 @@ mod tests {
         let ty = eval_str(&db, &global, "#[@Nat]");
 
         // Print it back
-        assert_eq!(print_value_to_string(&db, &global, &val, &ty), "[@/Zero]");
+        assert_eq!(print_value_to_string(&db, &global, &val, &ty), "[@Zero]");
     }
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
         // Print it back
         assert_eq!(
             print_value_to_string(&db, &global, &val, &ty),
-            "[@/Succ ([@/Zero])]"
+            "[@Succ ([@Zero])]"
         );
     }
 
@@ -416,7 +416,7 @@ mod tests {
         let ty = eval_str(&db, &global, "#[@Nat]");
 
         // Print it back
-        assert_eq!(print_type_to_string(&db, &global, &ty), "#[@/Nat]");
+        assert_eq!(print_type_to_string(&db, &global, &ty), "#[@Nat]");
     }
 
     #[test]
@@ -593,6 +593,6 @@ mod tests {
 
         // The printed form should show the variable as !0 (unbound at depth 0)
         let printed = print_value_to_string(&db, &global, &val, &ty);
-        assert_eq!(printed, "[@/Succ !0]");
+        assert_eq!(printed, "[@Succ !0]");
     }
 }

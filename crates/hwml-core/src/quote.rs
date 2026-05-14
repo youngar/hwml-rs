@@ -1246,10 +1246,10 @@ mod tests {
         let u0: RcValue = Value::UniverseCode(0).into();
         // Constant: @myConst
         let cid = "myConst".into_with_db(&db);
-        assert_eq!(c.q(&Value::constant(cid), &u0), "@/myConst");
+        assert_eq!(c.q(&Value::constant(cid), &u0), "@myConst");
         // Primitive: $Nat
         let pid = "Nat".into_with_db(&db);
-        assert_eq!(c.q(&Value::prim(pid), &u0), "$/Nat");
+        assert_eq!(c.q(&Value::prim(pid), &u0), "$Nat");
     }
 
     // =========================================================================
@@ -1289,12 +1289,12 @@ mod tests {
         let nat_id = "Nat".into_with_db(&db);
         let nat = Value::type_constructor(nat_id, vec![]);
         let syntax = quote(&db, &global, 0, &nat, &u0).expect("quote");
-        assert_eq!(print_syntax_to_string(&db, &syntax), "#[@/Nat]");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "#[@Nat]");
 
         let vec_id = "Vec".into_with_db(&db);
         let vec_bit = Value::type_constructor(vec_id, vec![Value::bit_rc()]);
         let syntax = quote(&db, &global, 0, &vec_bit, &u0).expect("quote");
-        assert_eq!(print_syntax_to_string(&db, &syntax), "#[@/Vec Bit]");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "#[@Vec Bit]");
     }
 
     // =========================================================================
@@ -1324,7 +1324,7 @@ mod tests {
             &unit_tcon,
         )
         .expect("quote");
-        assert_eq!(print_syntax_to_string(&db, &syntax), "[@/tt]");
+        assert_eq!(print_syntax_to_string(&db, &syntax), "[@tt]");
     }
 
     // =========================================================================
@@ -1432,7 +1432,7 @@ mod tests {
         // Values use depth-based names
         assert_eq!(
             c.quote_at("λ %f → %f $Bit", "∀ (%f : ∀ (%x : U0) → U0) → U0"),
-            "λ %0 → %0[$/Bit]"
+            "λ %0 → %0[$Bit]"
         );
     }
 
@@ -1458,7 +1458,7 @@ mod tests {
                 "λ %f → λ %g → %f (%g $Bit)",
                 "∀ (%f : ∀ (%x : U0) → U0) (%g : ∀ (%x : U0) → U0) → U0"
             ),
-            "λ %0 %1 → %0[%1[$/Bit]]"
+            "λ %0 %1 → %0[%1[$Bit]]"
         );
     }
 
@@ -1556,7 +1556,7 @@ mod tests {
         // (modulo alpha-equivalence and normalization)
         // Note: Quoted values use depth-based names since values don't preserve surface names
         assert_eq!(
-            quoted_str, "λ %0 → %0 case { @/True => [@/False] | @/False => [@/True] }",
+            quoted_str, "λ %0 → %0 case { @True => [@False] | @False => [@True] }",
             "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );
@@ -1601,7 +1601,7 @@ mod tests {
         // (modulo alpha-equivalence and normalization)
         // Note: Quoted values use depth-based names for lambdas and "v0", "v1" etc. for case pattern variables
         assert_eq!(
-            quoted_str, "λ %0 → %0 case { @/Zero => [@/Succ ([@/Zero])] | @/Succ %v0 => %v0 }",
+            quoted_str, "λ %0 → %0 case { @Zero => [@Succ ([@Zero])] | @Succ %v0 => %v0 }",
             "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );
@@ -1633,7 +1633,7 @@ mod tests {
 
         // Should reduce to False
         assert_eq!(
-            result, "[@/False]",
+            result, "[@False]",
             "Case reduction failed! Got: {}",
             result
         );
@@ -1665,7 +1665,7 @@ mod tests {
         let result = print_syntax_to_string(&db, &quoted);
 
         // Should reduce to Zero
-        assert_eq!(result, "[@/Zero]", "Case reduction failed! Got: {}", result);
+        assert_eq!(result, "[@Zero]", "Case reduction failed! Got: {}", result);
     }
 
     // =========================================================================

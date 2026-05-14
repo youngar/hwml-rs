@@ -1274,8 +1274,8 @@ mod tests {
     #[test]
     fn print_application() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)), Icit::Explicit)), @"@/f[@/x]");
-        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)), Icit::Explicit), Syntax::constant_rc("y".into_with_db(&db)), Icit::Explicit)), @"@/f[@/x, @/y]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)), Icit::Explicit)), @"@f[@x]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)), Icit::Explicit), Syntax::constant_rc("y".into_with_db(&db)), Icit::Explicit)), @"@f[@x, @y]");
     }
 
     // =========================================================================
@@ -1285,15 +1285,15 @@ mod tests {
     #[test]
     fn print_type_constructor() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::type_constructor("Nat".into_with_db(&db), vec![])), @"#[@/Nat]");
-        assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![Syntax::constant_rc("A".into_with_db(&db)), Syntax::constant_rc("n".into_with_db(&db))])), @"#[@/Vec @/A @/n]");
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Nat".into_with_db(&db), vec![])), @"#[@Nat]");
+        assert_snapshot!(p(&db, &Syntax::type_constructor("Vec".into_with_db(&db), vec![Syntax::constant_rc("A".into_with_db(&db)), Syntax::constant_rc("n".into_with_db(&db))])), @"#[@Vec @A @n]");
     }
 
     #[test]
     fn print_data_constructor() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::data_constructor("Nil".into_with_db(&db), vec![])), @"[@/Nil]");
-        assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![Syntax::constant_rc("x".into_with_db(&db)), Syntax::constant_rc("xs".into_with_db(&db))])), @"[@/Cons @/x @/xs]");
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Nil".into_with_db(&db), vec![])), @"[@Nil]");
+        assert_snapshot!(p(&db, &Syntax::data_constructor("Cons".into_with_db(&db), vec![Syntax::constant_rc("x".into_with_db(&db)), Syntax::constant_rc("xs".into_with_db(&db))])), @"[@Cons @x @xs]");
     }
 
     #[test]
@@ -1307,7 +1307,7 @@ mod tests {
                 CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(&db, 0, Syntax::constant_rc("a".into_with_db(&db)))),
                 CaseBranch::new("Succ".into_with_db(&db), DynBinding::new(&db, 1, Syntax::variable_rc(Index(0)))),
             ]
-        )))), @"λ %0 → %0 case { @/Zero => @/a | @/Succ %v0 => %v0 }");
+        )))), @"λ %0 → %0 case { @Zero => @a | @Succ %v0 => %v0 }");
     }
 
     // =========================================================================
@@ -1429,7 +1429,7 @@ mod tests {
                         Syntax::constant_rc("m".into_with_db(&db)),
             Syntax::harrow_rc(Syntax::bit_rc(), Syntax::bit_rc()),
             Syntax::constant_rc("x".into_with_db(&db))
-        )), @"@/m<Bit → Bit>(@/x)");
+        )), @"@m<Bit → Bit>(@x)");
     }
 
     // =========================================================================
@@ -1439,13 +1439,13 @@ mod tests {
     #[test]
     fn print_prim() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::prim_from(&db, "and")), @"$/and");
+        assert_snapshot!(p(&db, &Syntax::prim_from(&db, "and")), @"$and");
     }
 
     #[test]
     fn print_constant() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::constant_from(&db, "myConst")), @"@/myConst");
+        assert_snapshot!(p(&db, &Syntax::constant_from(&db, "myConst")), @"@myConst");
     }
 
     #[test]
@@ -1475,7 +1475,7 @@ mod tests {
     #[test]
     fn print_check() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::check(Syntax::UniverseCode(0).into(), Syntax::constant_rc("x".into_with_db(&db)))), @"@/x : 𝒰0");
+        assert_snapshot!(p(&db, &Syntax::check(Syntax::UniverseCode(0).into(), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
     }
 
     // =========================================================================
@@ -1523,7 +1523,7 @@ mod tests {
         let std_vec = std.qualify_name(&db, "Vec");
         assert_snapshot!(
             p(&db, &Syntax::type_constructor(std_vec, vec![Syntax::constant_rc("A".into_with_db(&db))])),
-            @"#[@std/Vec @/A]"
+            @"#[@std/Vec @A]"
         );
     }
 
@@ -1534,7 +1534,7 @@ mod tests {
         let std_some = std.qualify_name(&db, "Some");
         assert_snapshot!(
             p(&db, &Syntax::data_constructor(std_some, vec![Syntax::constant_rc("x".into_with_db(&db))])),
-            @"[@std/Some @/x]"
+            @"[@std/Some @x]"
         );
     }
 }

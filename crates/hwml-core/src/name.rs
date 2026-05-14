@@ -228,15 +228,8 @@ pub struct QualifiedName {
 
 impl<'db> QualifiedName<'db> {
     pub fn to_string(&self, db: &'db dyn salsa::Database) -> String {
-        let mut s = String::new();
-
-        // Add leading "/" for root-level qualified names
-        // This makes it visually clear that QualifiedNames are absolute paths
-        if self.namespace(db).is_none() {
-            s.push('/');
-        }
-
         let names = self.segments(db);
+        let mut s = String::new();
         let mut first = true;
         for name in names {
             if !first {
