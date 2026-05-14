@@ -1,4 +1,7 @@
 // List: Polymorphic lists (cons lists)
+//
+// Updated to use implicit arguments for type parameters.
+// Usage: length my_list  (instead of: length Nat my_list)
 
 inductive Std.List (A : Type) : Type := {
     | nil : List A
@@ -8,108 +11,108 @@ inductive Std.List (A : Type) : Type := {
 namespace Std.List {
 
 // Length of a list
-def length (A : Type) (xs : List A) : Nat :=
+def length {A : Type} (xs : List A) : Nat :=
     xs match {
     | nil => Std.zero
-    | cons _ xs' => Std.succ (length A xs')
+    | cons _ xs' => Std.succ (length xs')
     }
 
 // Append two lists
-def append (A : Type) (xs : List A) (ys : List A) : List A :=
+def append {A : Type} (xs : List A) (ys : List A) : List A :=
     xs match {
     | nil => ys
-    | cons x xs' => cons x (append A xs' ys)
+    | cons x xs' => cons x (append xs' ys)
     }
 
 // Map a function over a list
-def map (A : Type) (B : Type) (f : A -> B) (xs : List A) : List B :=
+def map {A : Type} {B : Type} (f : A -> B) (xs : List A) : List B :=
     xs match {
     | nil => nil
-    | cons x xs' => cons (f x) (map A B f xs')
+    | cons x xs' => cons (f x) (map f xs')
     }
 
 // Reverse a list
-def reverse_helper (A : Type) (xs : List A) (acc : List A) : List A :=
+def reverse_helper {A : Type} (xs : List A) (acc : List A) : List A :=
     xs match {
     | nil => acc
-    | cons x xs' => reverse_helper A xs' (cons x acc)
+    | cons x xs' => reverse_helper xs' (cons x acc)
     }
 
-def reverse (A : Type) (xs : List A) : List A :=
-    reverse_helper A xs nil
+def reverse {A : Type} (xs : List A) : List A :=
+    reverse_helper xs nil
 
 // Head of a list (returns first element, or nil for empty lists - using Option would be better)
 // This is a partial function, demonstrating that we may want an Option type
 
 // Tail of a list
-def tail (A : Type) (xs : List A) : List A :=
+def tail {A : Type} (xs : List A) : List A :=
     xs match {
     | nil => nil
     | cons _ xs' => xs'
     }
 
 // Check if list is empty
-def is_empty (A : Type) (xs : List A) : Std.Bool :=
+def is_empty {A : Type} (xs : List A) : Std.Bool :=
     xs match {
     | nil => Std.true
     | cons _ _ => Std.false
     }
 
 // Fold right
-def foldr (A : Type) (B : Type) (f : A -> B -> B) (init : B) (xs : List A) : B :=
+def foldr {A : Type} {B : Type} (f : A -> B -> B) (init : B) (xs : List A) : B :=
     xs match {
     | nil => init
-    | cons x xs' => f x (foldr A B f init xs')
+    | cons x xs' => f x (foldr f init xs')
     }
 
 // Fold left
-def foldl (A : Type) (B : Type) (f : B -> A -> B) (init : B) (xs : List A) : B :=
+def foldl {A : Type} {B : Type} (f : B -> A -> B) (init : B) (xs : List A) : B :=
     xs match {
     | nil => init
-    | cons x xs' => foldl A B f (f init x) xs'
+    | cons x xs' => foldl f (f init x) xs'
     }
 
 // Filter elements that satisfy a predicate
-def filter (A : Type) (p : A -> Std.Bool) (xs : List A) : List A :=
+def filter {A : Type} (p : A -> Std.Bool) (xs : List A) : List A :=
     xs match {
     | nil => nil
     | cons x xs' =>
-        Std.Bool.ite (List A)
+        Std.Bool.ite {List A}
             (p x)
-            (cons x (filter A p xs'))
-            (filter A p xs')
+            (cons x (filter p xs'))
+            (filter p xs')
     }
 
 // Take first n elements
-def take (A : Type) (n : Nat) (xs : List A) : List A :=
+def take {A : Type} (n : Nat) (xs : List A) : List A :=
     n match {
     | Std.zero => nil
     | Std.succ n' =>
         xs match {
         | nil => nil
-        | cons x xs' => cons x (take A n' xs')
+        | cons x xs' => cons x (take n' xs')
         }
     }
 
 // Drop first n elements
-def drop (A : Type) (n : Nat) (xs : List A) : List A :=
+def drop {A : Type} (n : Nat) (xs : List A) : List A :=
     n match {
     | Std.zero => xs
     | Std.succ n' =>
         xs match {
         | nil => nil
-        | cons _ xs' => drop A n' xs'
+        | cons _ xs' => drop n' xs'
         }
     }
 
 // Zip two lists together
-def zip (A : Type) (B : Type) (xs : List A) (ys : List B) : List (A -> B) :=
+def zip {A : Type} {B : Type} (xs : List A) (ys : List B) : List (A -> B) :=
     xs match {
     | nil => nil
     | cons x xs' =>
         ys match {
         | nil => nil
-        | cons y ys' => cons (fun _ => y) (zip A B xs' ys')
+        | cons y ys' => cons (fun _ => y) (zip xs' ys')
         }
     }
 }

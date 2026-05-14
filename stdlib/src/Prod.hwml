@@ -1,4 +1,7 @@
 // Prod: Product type (pairs)
+//
+// Updated to use implicit arguments for type parameters.
+// Usage: fst my_pair  (instead of: fst Nat Bool my_pair)
 
 inductive Std.Prod (A : Type) (B : Type) : Type := {
     | pair : A -> B -> Prod A B
@@ -7,51 +10,51 @@ inductive Std.Prod (A : Type) (B : Type) : Type := {
 namespace Std.Prod {
 
 // First projection
-def fst (A : Type) (B : Type) (p : Prod A B) : A :=
+def fst {A : Type} {B : Type} (p : Prod A B) : A :=
     p match {
     | pair a _ => a
     }
 
 // Second projection
-def snd (A : Type) (B : Type) (p : Prod A B) : B :=
+def snd {A : Type} {B : Type} (p : Prod A B) : B :=
     p match {
     | pair _ b => b
     }
 
 // Swap the components of a pair
-def swap (A : Type) (B : Type) (p : Prod A B) : Prod B A :=
+def swap {A : Type} {B : Type} (p : Prod A B) : Prod B A :=
     p match {
     | pair a b => pair b a
     }
 
 // Map over both components
-def map (A : Type) (B : Type) (C : Type) (D : Type)
+def map {A : Type} {B : Type} {C : Type} {D : Type}
         (f : A -> C) (g : B -> D) (p : Prod A B) : Prod C D :=
     p match {
     | pair a b => pair (f a) (g b)
     }
 
 // Map over the first component
-def map_fst (A : Type) (B : Type) (C : Type)
+def map_fst {A : Type} {B : Type} {C : Type}
             (f : A -> C) (p : Prod A B) : Prod C B :=
     p match {
     | pair a b => pair (f a) b
     }
 
 // Map over the second component
-def map_snd (A : Type) (B : Type) (D : Type)
+def map_snd {A : Type} {B : Type} {D : Type}
             (g : B -> D) (p : Prod A B) : Prod A D :=
     p match {
     | pair a b => pair a (g b)
     }
 
 // Curry: convert a function on pairs to a curried function
-def curry (A : Type) (B : Type) (C : Type)
+def curry {A : Type} {B : Type} {C : Type}
           (f : Prod A B -> C) : A -> B -> C :=
     fun a => fun b => f (pair a b)
 
 // Uncurry: convert a curried function to a function on pairs
-def uncurry (A : Type) (B : Type) (C : Type)
+def uncurry {A : Type} {B : Type} {C : Type}
             (f : A -> B -> C) : Prod A B -> C :=
     fun p =>
         p match {

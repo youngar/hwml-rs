@@ -1,4 +1,8 @@
 // Vec: Length-indexed vectors
+//
+// Updated to use implicit arguments for type parameters.
+// Usage: head my_vec  (instead of: head Nat 5 my_vec)
+// Note: Length indices (n : Nat) remain explicit as they may affect computation
 
 // Vec is indexed by its length (a natural number)
 // Parameters: A (the element type)
@@ -14,48 +18,48 @@ namespace Std.Vec {
 
 // Get the head of a non-empty vector
 // This is safe because we know the vector has length (succ n)
-def head (A : Type) (n : Nat) (v : Vec A (Std.Nat.succ n)) : A :=
+def head {A : Type} {n : Nat} (v : Vec A (Std.Nat.succ n)) : A :=
     v match {
     | vcons _ x _ => x
     }
 
 // Get the tail of a non-empty vector
-def tail (A : Type) (n : Nat) (v : Vec A (Std.Nat.succ n)) : Vec A n :=
+def tail {A : Type} {n : Nat} (v : Vec A (Std.Nat.succ n)) : Vec A n :=
     v match {
     | vcons _ _ xs => xs
     }
 
 // Append two vectors - the result length is the sum of input lengths
-def append (A : Type) (m : Nat) (n : Nat)
+def append {A : Type} {m : Nat} {n : Nat}
            (xs : Vec A m) (ys : Vec A n) : Vec A (Std.Nat.add m n) :=
     xs match {
     | vnil => ys
-    | vcons m' x xs' => vcons (Std.Nat.add m' n) x (append A m' n xs' ys)
+    | vcons m' x xs' => vcons (Std.Nat.add m' n) x (append xs' ys)
     }
 
 // Map a function over a vector, preserving length
-def map (A : Type) (B : Type) (n : Nat)
+def map {A : Type} {B : Type} {n : Nat}
         (f : A -> B) (v : Vec A n) : Vec B n :=
     v match {
     | vnil => vnil
-    | vcons n' x xs => vcons n' (f x) (map A B n' f xs)
+    | vcons n' x xs => vcons n' (f x) (map f xs)
     }
 
 // Replicate a value n times
-def replicate (A : Type) (n : Nat) (x : A) : Vec A n :=
+def replicate {A : Type} {n : Nat} (x : A) : Vec A n :=
     n match {
     | Std.zero => vnil
-    | Std.succ n' => vcons n' x (replicate A n' x)
+    | Std.succ n' => vcons n' x (replicate x)
     }
 
 // Zip two vectors of the same length
-def zip (A : Type) (B : Type) (n : Nat)
+def zip {A : Type} {B : Type} {n : Nat}
         (xs : Vec A n) (ys : Vec B n) : Vec (A -> B) n :=
     xs match {
     | vnil => vnil
     | vcons n' x xs' =>
         ys match {
-        | vcons _ y ys' => vcons n' (fun _ => y) (zip A B n' xs' ys')
+        | vcons _ y ys' => vcons n' (fun _ => y) (zip xs' ys')
         }
     }
 
