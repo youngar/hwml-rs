@@ -224,6 +224,33 @@ impl<'db> SolverState<'db> {
         cid
     }
 
+    /// Emit a postponed check constraint (DOE).
+    ///
+    /// This is used when checking an expression against a meta-headed type.
+    /// The check is postponed until the meta is solved.
+    pub fn emit_postponed_check(
+        &mut self,
+        expr: Box<hwml_surface::Expression>,
+        expected_ty: RcTy<'db>,
+        ctx: crate::ctx::ElabCtx<'db>,
+        placeholder: crate::meta::MetaId,
+        depth: usize,
+    ) -> ConstraintId {
+        let cid = ConstraintId(self.next_constraint);
+        self.next_constraint += 1;
+        let constraint = Constraint::PostponedCheck {
+            expr,
+            expected_ty,
+            ctx,
+            placeholder,
+            depth,
+        };
+        self.constraints
+            .insert(cid, ConstraintEntry::new(cid, constraint));
+        self.active_queue.push_back(cid);
+        cid
+    }
+
     pub fn pop_active(&mut self) -> Option<ConstraintId> {
         self.active_queue.pop_front()
     }

@@ -1,6 +1,6 @@
 use hwml_core::{ty::RcTy, Name, RcSyntax, RcValue};
 
-use crate::meta::MetaId;
+use crate::{ctx::ElabCtx, meta::MetaId};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct ConstraintId(pub u32);
@@ -41,6 +41,26 @@ pub enum Constraint<'db> {
         /// Fresh metavariable for the resulting type
         result_ty_meta: MetaId,
         /// Elaboration depth for proper context
+        depth: usize,
+    },
+    /// Postponed type-checking (DOE - Dynamic Order Elaboration).
+    /// When checking an expression against a meta-headed type, we postpone
+    /// the check until the meta is solved. This enables first-class polymorphism
+    /// and automatic implicit lambda insertion.
+    ///
+    /// Example: `let x : ?M = fun y => y`
+    /// If ?M later resolves to `{A : Type} -> A -> A`, we insert an implicit lambda.
+    PostponedCheck {
+        /// The surface expression to check (stored for retry)
+        expr: Box<hwml_surface::Expression>,
+        /// The meta-headed expected type (will be forced on retry)
+        expected_ty: RcTy<'db>,
+        /// Captured elaboration context (local variables at postpone time)
+        ctx: ElabCtx<'db>,
+        /// Placeholder meta that will be solved to the checked result
+        /// This is a fresh meta that acts as a "promise" for the result
+        placeholder: MetaId,
+        /// Elaboration depth for proper scoping
         depth: usize,
     },
 }
