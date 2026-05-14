@@ -21,7 +21,7 @@ pub fn parse_surface_program_with_errors(
 
 #[salsa::tracked]
 pub fn parse_surface_program(db: &dyn salsa::Database, source_file: SourceFile) -> Option<Program> {
-    parse_surface_program_with_errors(db, source_file).program.clone()
+    Some(parse_surface_program_with_errors(db, source_file).program.clone())
 }
 
 /// Harvest declarations from a single file.

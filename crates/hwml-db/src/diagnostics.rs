@@ -104,7 +104,7 @@ fn format_value_for_error<'db>(db: &'db dyn salsa::Database, val: &hwml_core::Rc
         Value::UniverseCode(n) => format!("Type{}", n),
         Value::TypeConstructor(tc) => format!("{}", tc.constructor.to_string(db)),
         Value::DataConstructor(dc) => format!("{}", dc.constructor.to_string(db)),
-        Value::PiCode(_, _) => "Π type".to_string(),
+        Value::PiCode(_, _, _) => "Π type".to_string(),
         Value::BitCode => "Bit".to_string(),
         Value::Flex(flex) => format!("?{}", flex.head.id.local_index),
         Value::Rigid(r) => format!("%{}", r.head.level.0),
