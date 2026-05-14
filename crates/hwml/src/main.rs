@@ -208,13 +208,13 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
                 }
             }
 
-            // Skip this file if parsing failed
-            let program = match &parse_result.program {
-                Some(p) => p.clone(),
-                None => {
-                    continue;
-                }
-            };
+            // Skip this file if parsing had errors
+            if !parse_result.errors.is_empty() {
+                eprintln!("[ERROR] Parsing errors in {}, skipping", source_path.display());
+                continue;
+            }
+
+            let program = parse_result.program.clone();
 
             library_programs.push((source_path.clone(), program));
         }
@@ -350,10 +350,12 @@ fn run_single_file(args: Args, file_path: PathBuf) {
         }
     }
 
-    let Some(program) = parse_result.program else {
+    if !parse_result.errors.is_empty() {
         println!("Failed to parse");
         return;
-    };
+    }
+
+    let program = parse_result.program;
 
     // Create Salsa database
     let db = hwml_db::HwmlDatabase::new();

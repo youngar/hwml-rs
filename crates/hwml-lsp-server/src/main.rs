@@ -304,7 +304,8 @@ impl Server {
         // Also collect elaboration errors (type checking)
         // This is done outside the Salsa query because elaboration requires &HwmlDatabase
         let parse_result = hwml_db::workspace::parse_surface_program_with_errors(db, file);
-        if let Some(ref program) = parse_result.program {
+        let program = &parse_result.program;
+        {
             // Create source identifier
             let library_name_word = hwml_core::Word::new(db, file.library_name(db).as_str());
             let path_str = file.path(db).to_str().unwrap_or("unknown");
