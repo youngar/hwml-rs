@@ -474,7 +474,7 @@ impl<'db> Print for RcSyntax<'db> {
     }
 }
 
-impl<'db, A> Print for Binding<A>
+impl<'db, A> Print for Binding<'db, A>
 where
     A: Print,
 {
@@ -486,7 +486,7 @@ where
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
-        ns.push_fresh(self.name.clone());
+        ns.push_fresh(self.name.to_string(db));
 
         let st = st.inc_depth();
         let result = self.term().print(db, st, ns, p);
@@ -672,7 +672,7 @@ impl<'db> Print for Lambda<'db> {
                     p.text("λ ")?;
                     loop {
                         // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
-                        let fresh_name = ns.push_fresh(next.body.name.clone());
+                        let fresh_name = ns.push_fresh(next.body.name.to_string(db));
 
                         // Show {binder} for implicit, binder for explicit
                         // Print the freshened name in the binder position
@@ -868,7 +868,7 @@ impl<'db> Print for CaseBranch<'db> {
         let mut fresh_names = Vec::new();
         for i in 0..self.body.arity {
             let name = self.body.names.get(i)
-                .cloned()
+                .map(|n| n.to_string(db))
                 .unwrap_or_else(|| format!("{}", st.depth + i));
             let fresh_name = ns.push_fresh(name);
             fresh_names.push(fresh_name);
@@ -1039,7 +1039,7 @@ impl<'db> Print for Module<'db> {
                 p.cgroup(0, |p| {
                     p.text("mod ")?;
                     loop {
-                        let fresh_name = ns.push_fresh(next.body.name.clone());
+                        let fresh_name = ns.push_fresh(next.body.name.to_string(db));
                         p.text_owned(format!("%{}", fresh_name))?;
                         st = st.inc_depth();
                         match next.body.term().as_ref() {
@@ -1162,7 +1162,7 @@ impl<'db> Print for Let<'db> {
     ) -> Result<(), R::Error> {
         // Print: let %x : ty = value; body
         // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
-        let fresh_name = ns.push_fresh(self.body.name.clone());
+        let fresh_name = ns.push_fresh(self.body.name.to_string(db));
 
         let result = p.cgroup(2, |p| {
             p.text("let ")?;

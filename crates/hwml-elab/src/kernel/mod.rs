@@ -113,7 +113,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         // Build the type from the telescope
         // If there are no arguments, the type is just `Type_level`
         // Otherwise, it's a Pi type: (x1 : A1) -> ... -> (xn : An) -> Type_level
-        let ty_val = if info.arguments.bindings.is_empty() {
+        let ty_val = if info.arguments.is_empty() {
             // No parameters: just a universe type
             let universe_syn: RcSyntax<'db> = Rc::new(Syntax::UniverseCode(info.level.into()));
             self.eval_syn_flex(&universe_syn)
@@ -513,7 +513,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
 
         // Wrap in a lambda binding with the correct icit from the Pi type.
         // This implements Phase 3: automatic implicit lambda insertion!
-        let lambda_syn = Syntax::lambda_rc(icit, Binding(body_syn));
+        let lambda_syn = Syntax::lambda_rc(icit, Binding::anonymous(body_syn));
         Ok(Checked::new(lambda_syn))
     }
 
@@ -642,13 +642,14 @@ impl<'a, 'db> Kernel<'a, 'db> {
                     dummy_ty,
                 )))
             }
-            Syntax::PiCode(dom, _icit, Binding(cod)) => {
+            Syntax::PiCode(dom, _icit, binding) => {
+                let cod = &binding.body;
                 let dom_val = self.flex_eval_with_local(dom, local.clone());
                 let cod_clos = Closure::new(local, cod.clone());
                 Rc::new(Value::PiCode(dom_val, *_icit, cod_clos))
             }
             Syntax::Lambda(lam) => {
-                let body_clos = Closure::new(local, lam.body.0.clone());
+                let body_clos = Closure::new(local, lam.body.body.clone());
                 Value::lambda_rc(lam.icit, body_clos)
             }
             Syntax::Application(app) => {
@@ -744,7 +745,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let result_ty = Rc::new(Value::UniverseCode(result_level));
 
         // If telescope is empty, just return the result type
-        if telescope.bindings.is_empty() {
+        if telescope.is_empty() {
             return result_ty;
         }
 
@@ -753,7 +754,8 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let mut result = result_ty;
 
         // Process bindings in reverse order to build the nested Pi
-        for (idx, binding_syn) in telescope.bindings.iter().enumerate().rev() {
+        for (idx, binder) in telescope.iter().enumerate().rev() {
+            let binding_syn = &binder.value;
             // Evaluate this binding's type in the environment with all previous bindings
             // For simplicity, we create a fresh environment with variables for preceding bindings
             let mut env = hwml_core::val::Environment {
@@ -764,7 +766,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
 
             // Push placeholder variables for all preceding bindings (indices 0..idx)
             for i in 0..idx {
-                let preceding_binding = &telescope.bindings[i];
+                let preceding_binding = &telescope.binders[i].value;
                 // Evaluate the preceding binding's type
                 let preceding_ty = match hwml_core::eval::eval(&mut env, preceding_binding) {
                     Ok(ty) => ty,

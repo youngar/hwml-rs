@@ -109,7 +109,7 @@ fn snap_return_type_binder() {
 #[test]
 fn snap_identity_function() {
     let src = "def id (A : Type) (a : A) : A := a";
-    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0 = λ %0 %1 → %1;");
+    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ (%0 : 𝒰0) → ∀ (%1 : %_) → %_ = λ %_ %_ → %_;");
 }
 
 // ── Level 2: higher-order ─────────────────────────────────────────────────────
@@ -119,8 +119,8 @@ fn snap_apply() {
     // Function application: (A → B) applied to A gives B.
     let src = "def apply (A : Type) (B : Type) (f : A -> B) (a : A) : B := f a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/apply : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : ∀ (%2 : %0) → %1) → ∀ (%3 :
-    %0) → %1 = λ %0 %1 %2 %3 → %2[%3];
+    const @/apply : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : ∀ (%2 : %_) → %_) → ∀ (%3 :
+    %_) → %_ = λ %_ %_ %_ %_ → %_[%_];
     ");
 }
 
@@ -128,12 +128,12 @@ fn snap_apply() {
 fn snap_const() {
     let src = "def const (A : Type) (B : Type) (a : A) (b : B) : A := a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/const : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %0) → ∀ (%3 : %1) → %0 = λ %0
-      %1
-      %2
-      %3
+    const @/const : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %_) → ∀ (%3 : %_) → %_ = λ %_
+      %_
+      %_
+      %_
       →
-      %2;
+      %_;
     ");
 }
 
@@ -143,9 +143,9 @@ fn snap_const() {
 fn snap_compose() {
     let src = "def compose (A : Type) (B : Type) (C : Type) (f : B -> C) (g : A -> B) (a : A) : C := f (g a)";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/compose : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %1)
-    → %2) → ∀ (%4 : ∀ (%4 : %0) → %1) → ∀ (%5 : %0) → %2 = λ %0 %1 %2 %3 %4 %5 →
-      %3[%4[%5]];
+    const @/compose : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %_)
+    → %_) → ∀ (%4 : ∀ (%4 : %_) → %_) → ∀ (%5 : %_) → %_ = λ %_ %_ %_ %_ %_ %_ →
+      %_[%_[%_]];
     ");
 }
 
@@ -156,9 +156,9 @@ fn snap_flip_function() {
     let src =
         "def flip (A : Type) (B : Type) (C : Type) (f : A -> B -> C) (b : B) (a : A) : C := f a b";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/flip : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %0) → ∀
-    (%4 : %1) → %2) → ∀ (%4 : %1) → ∀ (%5 : %0) → %2 = λ %0 %1 %2 %3 %4 %5 →
-      %3[%5, %4];
+    const @/flip : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : 𝒰0) → ∀ (%3 : ∀ (%3 : %_) → ∀
+    (%4 : %_) → %_) → ∀ (%4 : %_) → ∀ (%5 : %_) → %_ = λ %_ %_ %_ %_ %_ %_ →
+      %_[%_, %_];
     ");
 }
 
@@ -170,13 +170,13 @@ fn snap_multiple_defs() {
 def id (A : Type) (a : A) : A := a
 def const (A : Type) (B : Type) (a : A) (b : B) : A := a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/id : ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0 = λ %0 %1 → %1;
-    const @/const : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %0) → ∀ (%3 : %1) → %0 = λ %0
-      %1
-      %2
-      %3
+    const @/id : ∀ (%0 : 𝒰0) → ∀ (%1 : %_) → %_ = λ %_ %_ → %_;
+    const @/const : ∀ (%0 : 𝒰0) → ∀ (%1 : 𝒰0) → ∀ (%2 : %_) → ∀ (%3 : %_) → %_ = λ %_
+      %_
+      %_
+      %_
       →
-      %2;
+      %_;
     ");
 }
 
@@ -209,7 +209,7 @@ fn snap_fun_without_annotation_errors() {
 fn snap_implicit_identity() {
     // Identity function with implicit type parameter
     let src = "def id {A : Type} (x : A) : A := x";
-    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ {%0 : 𝒰0} → ∀ (%1 : %0) → %0 = λ {%0} %1 → %1;");
+    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ {%0 : 𝒰0} → ∀ (%1 : %_) → %_ = λ {%_} %_ → %_;");
 }
 
 #[test]
@@ -217,12 +217,12 @@ fn snap_implicit_const() {
     // Const function with implicit type parameters
     let src = "def const {A : Type} {B : Type} (a : A) (b : B) : A := a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/const : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ (%2 : %0) → ∀ (%3 : %1) → %0 = λ {%0}
-      {%1}
-      %2
-      %3
+    const @/const : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ (%2 : %_) → ∀ (%3 : %_) → %_ = λ {%_}
+      {%_}
+      %_
+      %_
       →
-      %2;
+      %_;
     ");
 }
 
@@ -231,8 +231,8 @@ fn snap_mixed_implicit_explicit() {
     // Function with both implicit and explicit parameters
     let src = "def apply {A : Type} {B : Type} (f : A -> B) (a : A) : B := f a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/apply : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ (%2 : ∀ (%2 : %0) → %1) → ∀ (%3 :
-    %0) → %1 = λ {%0} {%1} %2 %3 → %2[%3];
+    const @/apply : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ (%2 : ∀ (%2 : %_) → %_) → ∀ (%3 :
+    %_) → %_ = λ {%_} {%_} %_ %_ → %_[%_];
     ");
 }
 
@@ -241,15 +241,15 @@ fn snap_implicit_compose() {
     // Function composition with implicit type parameters
     let src = "def compose {A : Type} {B : Type} {C : Type} (f : B -> C) (g : A -> B) (a : A) : C := f (g a)";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/compose : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ {%2 : 𝒰0} → ∀ (%3 : ∀ (%3 : %1)
-    → %2) → ∀ (%4 : ∀ (%4 : %0) → %1) → ∀ (%5 : %0) → %2 = λ {%0}
-      {%1}
-      {%2}
-      %3
-      %4
-      %5
+    const @/compose : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ {%2 : 𝒰0} → ∀ (%3 : ∀ (%3 : %_)
+    → %_) → ∀ (%4 : ∀ (%4 : %_) → %_) → ∀ (%5 : %_) → %_ = λ {%_}
+      {%_}
+      {%_}
+      %_
+      %_
+      %_
       →
-      %3[%4[%5]];
+      %_[%_[%_]];
     ");
 }
 
@@ -288,8 +288,8 @@ fn snap_implicit_nested_types() {
     // Implicit arguments with nested function types
     let src = "def map {A : Type} {B : Type} (f : A -> B) : (A -> B) := f";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/map : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ (%2 : ∀ (%2 : %0) → %1) → ∀ (%3 : %0)
-    → %1 = λ {%0} {%1} %2 → %2;
+    const @/map : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ (%2 : ∀ (%2 : %_) → %_) → ∀ (%3 : %_)
+    → %_ = λ {%_} {%_} %_ → %_;
     ");
 }
 
@@ -298,12 +298,12 @@ fn snap_implicit_return_function() {
     // Function that returns a function with implicit params
     let src = "def make_const {A : Type} (a : A) (B : Type) (b : B) : A := a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/make_const : ∀ {%0 : 𝒰0} → ∀ (%1 : %0) → ∀ (%2 : 𝒰0) → ∀ (%3 : %2) → %0 = λ {%0}
-      %1
-      %2
-      %3
+    const @/make_const : ∀ {%0 : 𝒰0} → ∀ (%1 : %_) → ∀ (%2 : 𝒰0) → ∀ (%3 : %_) → %_ = λ {%_}
+      %_
+      %_
+      %_
       →
-      %1;
+      %_;
     ");
 }
 
@@ -312,8 +312,8 @@ fn snap_implicit_multiple_in_sequence() {
     // Multiple implicit parameters in a row
     let src = "def triple {A : Type} {B : Type} {C : Type} (a : A) (b : B) (c : C) : A := a";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/triple : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ {%2 : 𝒰0} → ∀ (%3 : %0) → ∀ (%4 :
-    %1) → ∀ (%5 : %2) → %0 = λ {%0} {%1} {%2} %3 %4 %5 → %3;
+    const @/triple : ∀ {%0 : 𝒰0} → ∀ {%1 : 𝒰0} → ∀ {%2 : 𝒰0} → ∀ (%3 : %_) → ∀ (%4 :
+    %_) → ∀ (%5 : %_) → %_ = λ {%_} {%_} {%_} %_ %_ %_ → %_;
     ");
 }
 
@@ -324,7 +324,7 @@ fn snap_doe_postponed_lambda() {
     // DOE should postpone checking a lambda when the expected type is unknown
     // This is a basic test that DOE doesn't break normal elaboration
     let src = "def id (A : Type) (x : A) : A := x";
-    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0 = λ %0 %1 → %1;");
+    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ (%0 : 𝒰0) → ∀ (%1 : %_) → %_ = λ %_ %_ → %_;");
 }
 
 #[test]
@@ -332,7 +332,7 @@ fn snap_doe_implicit_lambda_postponed() {
     // DOE with implicit arguments: postpone checking when type is a meta
     // The implicit lambda insertion should still work correctly
     let src = "def id {A : Type} (x : A) : A := x";
-    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ {%0 : 𝒰0} → ∀ (%1 : %0) → %0 = λ {%0} %1 → %1;");
+    insta::assert_snapshot!(elab_str(src), @"const @/id : ∀ {%0 : 𝒰0} → ∀ (%1 : %_) → %_ = λ {%_} %_ → %_;");
 }
 
 #[test]
@@ -341,11 +341,11 @@ fn snap_doe_higher_order() {
     // Tests that postponing works with nested function types
     let src = "def twice {A : Type} (f : A -> A) (x : A) : A := f (f x)";
     insta::assert_snapshot!(elab_str(src), @"
-    const @/twice : ∀ {%0 : 𝒰0} → ∀ (%1 : ∀ (%1 : %0) → %0) → ∀ (%2 : %0) → %0 = λ {%0}
-      %1
-      %2
+    const @/twice : ∀ {%0 : 𝒰0} → ∀ (%1 : ∀ (%1 : %_) → %_) → ∀ (%2 : %_) → %_ = λ {%_}
+      %_
+      %_
       →
-      %1[%1[%2]];
+      %_[%_[%_]];
     ");
 }
 

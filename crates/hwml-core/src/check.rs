@@ -86,7 +86,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.values.depth()
     }
 
-    pub fn under_binder<F, R>(&mut self, ty: RcValue<'db>, f: F) -> Binding<R>
+    pub fn under_binder<F, R>(&mut self, ty: RcValue<'db>, f: F) -> Binding<'db, R>
     where
         F: FnOnce(&mut Self) -> R,
     {
@@ -94,7 +94,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.push_var(ty);
         let body = f(self);
         self.truncate(depth);
-        Binding::anonymous(body)
+        Binding::anonymous(self.db, body)
     }
 
     #[allow(dead_code)]
@@ -114,7 +114,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         ty: &RcValue<'db>,
         depth: usize,
     ) -> RcSyntax<'db> {
-        quote::quote(self.global_env(), depth, tm, ty).unwrap()
+        quote::quote(self.db, self.global_env(), depth, tm, ty).unwrap()
     }
 
     pub fn quote(&self, tm: &RcValue<'db>, ty: &RcValue<'db>) -> RcSyntax<'db> {

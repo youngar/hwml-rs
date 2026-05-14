@@ -726,7 +726,7 @@ pub(crate) fn intersection_syntax_solution<'db>(
         .collect();
     let mut body: RcSyntax<'db> = Syntax::metavariable_rc(meta_vid, subst);
     for _ in 0..old_arity {
-        body = Syntax::lambda_rc(Icit::Explicit, Binding(body));
+        body = Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(body));
     }
     body
 }

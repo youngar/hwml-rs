@@ -17,6 +17,7 @@
 use std::rc::Rc;
 
 use hwml_core::{
+    syn::Telescope,
     ty::{RcTy, Ty},
     val::{ConstantInfo, DataConstructorInfo, GlobalEnv, TypeConstructorInfo},
     QualifiedName, RcSyntax, Source, SourceRange, UniverseLevel,
@@ -318,8 +319,14 @@ where
                 );
                 let mut args = params.clone();
                 args.extend(indices.clone());
+                // Convert Vec<RcSyntax> to Telescope with numbered names
+                let args_telescope = Telescope::from_pairs(
+                    args.into_iter()
+                        .enumerate()
+                        .map(|(i, ty)| (format!("{}", i), ty))
+                );
                 let level = extract_universe_level(universe);
-                let info = TypeConstructorInfo::new(args, *num_params, UniverseLevel::new(level));
+                let info = TypeConstructorInfo::new(args_telescope, *num_params, UniverseLevel::new(level));
                 global.add_type_constructor(*qname, info);
                 eprintln!(
                     "[SCC_ELAB] Phase 2 (Hoist): Verify - can we look it up? {:?}",
@@ -429,7 +436,13 @@ where
                         })?;
 
                     let ctor_ty = substitute_metas_in_syntax(&ctor.result, state);
-                    let dcon_info = DataConstructorInfo::new(ctor.params.clone(), ctor_ty);
+                    // Convert Vec<RcSyntax> to Telescope with numbered names
+                    let params_telescope = Telescope::from_pairs(
+                        ctor.params.iter().cloned()
+                            .enumerate()
+                            .map(|(i, ty)| (format!("{}", i), ty))
+                    );
+                    let dcon_info = DataConstructorInfo::new(params_telescope, ctor_ty);
                     data_constructors.push((ctor_qname, dcon_info));
                 }
             }

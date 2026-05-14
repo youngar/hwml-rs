@@ -52,42 +52,44 @@ type Result<'db, T> = std::result::Result<T, Error<'db>>;
 
 /// Read a normal (value * type) back into syntax.
 pub fn quote_normal<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     normal: &Normal<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    quote(global, depth, &normal.value, &normal.ty)
+    quote(db, global, depth, &normal.value, &normal.ty)
 }
 
 /// Read a value back into syntax at a given type.
 /// Quotation is type-directed: we dispatch based on the type.
 pub fn quote<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     ty: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     if let Value::Let(let_val) = value {
-        return quote_let(global, depth, let_val, ty);
+        return quote_let(db, global, depth, let_val, ty);
     }
 
     match ty {
         Value::TypeConstructor(tcon) => {
-            quote_type_constructor_instances(global, depth, value, tcon)
+            quote_type_constructor_instances(db, global, depth, value, tcon)
         }
         Value::HardwareUniverse(hwuniverse) => {
-            quote_hwuniverse_instances(global, depth, value, hwuniverse)
+            quote_hwuniverse_instances(db, global, depth, value, hwuniverse)
         }
         Value::SignalUniverse(signal_universe) => {
-            quote_signal_universe_instances(global, depth, value, signal_universe)
+            quote_signal_universe_instances(db, global, depth, value, signal_universe)
         }
         Value::ModuleUniverse(module_universe) => {
-            quote_module_universe_instances(global, depth, value, module_universe)
+            quote_module_universe_instances(db, global, depth, value, module_universe)
         }
         // Hardware-level types
-        Value::SLift(slift) => quote_slift_instances(global, depth, value, slift),
-        Value::MLift(mlift) => quote_mlift_instances(global, depth, value, mlift),
-        Value::Bit(bit) => quote_bit_instances(global, depth, value, bit),
+        Value::SLift(slift) => quote_slift_instances(db, global, depth, value, slift),
+        Value::MLift(mlift) => quote_mlift_instances(db, global, depth, value, mlift),
+        Value::Bit(bit) => quote_bit_instances(db, global, depth, value, bit),
         Value::HArrow(harrow) => quote_harrow_instances(global, depth, value, harrow),
         // Neutral types
         Value::Prim(prim) => quote_prim_instances(global, depth, value, prim),
@@ -116,17 +118,18 @@ pub fn quote<'db>(
 
 /// Quote an instance of a TypeConstructor.
 pub fn quote_type_constructor_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     tcon: &TypeConstructor<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::DataConstructor(dcon) => quote_data_constructor(global, depth, dcon, tcon),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::DataConstructor(dcon) => quote_data_constructor(db, global, depth, dcon, tcon),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
@@ -134,18 +137,19 @@ pub fn quote_type_constructor_instances<'db>(
 /// Quote an instance of HardwareUniverse (a hardware type).
 /// HardwareUniverse has two constructors: SLift and MLift.
 pub fn quote_hwuniverse_instances<'db>(
+    db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     value: &Value<'db>,
     _hwuniverse: &val::HardwareUniverse<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
-        Value::SLift(slift) => quote_slift(global, depth, slift),
-        Value::MLift(mlift) => quote_mlift(global, depth, mlift),
-        Value::Prim(prim) => quote_prim(global, depth, prim),
-        Value::Constant(constant) => quote_constant(global, depth, constant),
-        Value::Rigid(rigid) => quote_rigid(global, depth, rigid),
-        Value::Flex(flex) => quote_flex(global, depth, flex),
+        Value::SLift(slift) => quote_slift(db, global, depth, slift),
+        Value::MLift(mlift) => quote_mlift(db, global, depth, mlift),
+        Value::Prim(prim) => quote_prim(db, global, depth, prim),
+        Value::Constant(constant) => quote_constant(db, global, depth, constant),
+        Value::Rigid(rigid) => quote_rigid(db, global, depth, rigid),
+        Value::Flex(flex) => quote_flex(db, global, depth, flex),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
@@ -504,8 +508,9 @@ pub fn quote_pi_code<'db>(
     let sem_target = run_closure(global, target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
-    let name = format!("{}", depth);
-    Ok(Rc::new(Syntax::PiCode(syn_source, icit, Binding::named(name, syn_target))))
+    let name_str = format!("{}", depth);
+    let name = Name::from_with_db(global.db, &name_str);
+    Ok(Rc::new(Syntax::PiCode(syn_source, icit, Binding::new(name, syn_target))))
 }
 
 pub fn quote_bit_code<'db>(_global: &GlobalEnv<'db>, _depth: usize) -> Result<'db, RcSyntax<'db>> {
@@ -521,8 +526,9 @@ pub fn quote_let<'db>(
     let syn_ty = quote_at_unknown_type(global, depth, &let_val.ty)?;
     let syn_value = quote(global, depth, &let_val.value, &let_val.ty)?;
     let syn_body = quote(global, depth + 1, &let_val.body, _expected_ty)?;
-    let name = format!("{}", depth);
-    Ok(Syntax::let_rc(syn_ty, syn_value, Binding::named(name, syn_body)))
+    let name_str = format!("{}", depth);
+    let name = Name::from_with_db(global.db, &name_str);
+    Ok(Syntax::let_rc(syn_ty, syn_value, Binding::new(name, syn_body)))
 }
 
 fn quote_at_unknown_type<'db>(
@@ -653,8 +659,10 @@ pub fn quote_lambda<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    // PRESERVE Icit from lambda
-    Ok(Syntax::lambda_rc(lambda.icit, Binding::anonymous(syn_body)))
+    // Generate a name based on depth for quoted lambdas (values don't have names)
+    let name_str = format!("{}", depth);
+    let name = Name::from_with_db(global.db, &name_str);
+    Ok(Syntax::lambda_rc(lambda.icit, Binding::new(name, syn_body)))
 }
 
 /// Quote a Module to syntax, using its HArrow type.
@@ -675,8 +683,9 @@ pub fn quote_module<'db>(
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
     // Generate a name based on depth for quoted modules (values don't have names)
-    let name = format!("{}", depth);
-    Ok(Syntax::module_rc(Binding::named(name, syn_body)))
+    let name_str = format!("{}", depth);
+    let name = Name::from_with_db(global.db, &name_str);
+    Ok(Syntax::module_rc(Binding::new(name, syn_body)))
 }
 // ============================================================================
 // Neutral Quotation Functions
@@ -1115,8 +1124,8 @@ mod tests {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Identity: λ x → x
-        // Values don't have names, so quoted lambdas use "_"
-        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %_ → %_");
+        // Values don't have names, so quoted lambdas use depth-based names
+        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
     }
 
     // =========================================================================
@@ -1346,10 +1355,10 @@ mod tests {
         let c = Ctx::new(&db);
         // λ f → f $Bit - the body (f $Bit) is a neutral application
         // Note: A → B parses as HArrow, not Pi. Use ∀ (%x : A) → B for Pi.
-        // Values use "_" for names
+        // Values use depth-based names
         assert_eq!(
             c.quote_at("λ %f → %f $Bit", "∀ (%f : ∀ (%x : U0) → U0) → U0"),
-            "λ %_ → %_[$/Bit]"
+            "λ %0 → %0[$/Bit]"
         );
     }
 
@@ -1358,8 +1367,8 @@ mod tests {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ x → x at type ∀ (x : Bit) → Bit
-        // Values use "_" for names
-        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : Bit) → Bit"), "λ %_ → %_");
+        // Values use depth-based names
+        assert_eq!(c.quote_at("λ %x → %x", "∀ (%x : Bit) → Bit"), "λ %0 → %0");
     }
 
     #[test]
@@ -1369,13 +1378,13 @@ mod tests {
         // λ f → λ g → f (g $Bit) - nested neutral applications
         // f : ∀ (x : U0) → U0, g : ∀ (x : U0) → U0
         // Note: printer collapses nested lambdas into multi-binder form
-        // Values use "_" for names
+        // Values use depth-based names
         assert_eq!(
             c.quote_at(
                 "λ %f → λ %g → %f (%g $Bit)",
                 "∀ (%f : ∀ (%x : U0) → U0) (%g : ∀ (%x : U0) → U0) → U0"
             ),
-            "λ %_ %_ → %_[%_[$/Bit]]"
+            "λ %0 %1 → %0[%1[$/Bit]]"
         );
     }
 
@@ -1467,9 +1476,9 @@ mod tests {
 
         // The NbE Identity Law: eval then quote should give us back the same term
         // (modulo alpha-equivalence and normalization)
-        // Note: Quoted values use "_" for names since values don't preserve surface names
+        // Note: Quoted values use depth-based names since values don't preserve surface names
         assert_eq!(
-            quoted_str, "λ %_ → %_ case { @/True => [@/False] | @/False => [@/True] }",
+            quoted_str, "λ %0 → %0 case { @/True => [@/False] | @/False => [@/True] }",
             "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );
@@ -1508,9 +1517,9 @@ mod tests {
 
         // The NbE Identity Law: eval then quote should give us back the same term
         // (modulo alpha-equivalence and normalization)
-        // Note: Quoted values use "_" for lambdas, "_0", "_1" etc. for case pattern variables
+        // Note: Quoted values use depth-based names for lambdas and "_0", "_1" etc. for case pattern variables
         assert_eq!(
-            quoted_str, "λ %_ → %_ case { @/Zero => [@/Succ ([@/Zero])] | @/Succ %_0 => %_0 }",
+            quoted_str, "λ %0 → %0 case { @/Zero => [@/Succ ([@/Zero])] | @/Succ %_0 => %_0 }",
             "Quoted case expression doesn't match expected structure!\nOriginal: {}\nQuoted:   {}",
             original_str, quoted_str
         );

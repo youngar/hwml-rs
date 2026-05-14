@@ -922,8 +922,8 @@ mod tests {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ x → x at ∀ (x : U0) → U0
-        // Values don't preserve names, so quoted lambdas use "_"
-        assert_eq!(c.eval_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %_ → %_");
+        // Values don't preserve names, so quoted lambdas use depth-based names
+        assert_eq!(c.eval_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
     }
 
     #[test]

@@ -183,7 +183,7 @@ fn pattern_quote<'db>(
             let body_syn = pattern_quote_closure(
                 global, state, &lam.body, rename, ambiguous, meta_id, arity, outer_depth,
             )?;
-            Ok(Syntax::lambda_rc(lam.icit, Binding(body_syn)))
+            Ok(Syntax::lambda_rc(lam.icit, Binding::anonymous(body_syn)))
         }
 
         Value::PiCode(dom, icit, cod) => {
@@ -192,7 +192,7 @@ fn pattern_quote<'db>(
             let cod_syn = pattern_quote_closure(
                 global, state, cod, rename, ambiguous, meta_id, arity, outer_depth,
             )?;
-            Ok(Rc::new(Syntax::PiCode(dom_syn, *icit, Binding(cod_syn))))
+            Ok(Rc::new(Syntax::PiCode(dom_syn, *icit, Binding::anonymous(cod_syn))))
         }
 
         Value::LiftCode(n, inner) => {

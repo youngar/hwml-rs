@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use hwml_core::{
+    syn::Telescope,
     ty::Ty,
     val::{ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo},
     QualifiedName, RcSyntax, Source, SourceInfo, UniverseLevel, Word,
@@ -474,8 +475,14 @@ fn elab_inductive_statement<'db, Db>(
             let (params, indices, universe) = result;
             let mut args = params.clone();
             args.extend(indices.clone());
+            // Convert Vec<RcSyntax> to Telescope with numbered names
+            let args_telescope = Telescope::from_pairs(
+                args.into_iter()
+                    .enumerate()
+                    .map(|(i, ty)| (format!("{}", i), ty))
+            );
             let level = extract_universe_level(&universe);
-            let stub_info = TypeConstructorInfo::new(args, params.len(), UniverseLevel::new(level));
+            let stub_info = TypeConstructorInfo::new(args_telescope, params.len(), UniverseLevel::new(level));
             global.add_type_constructor(qname, stub_info);
             (params, indices, universe)
         }
@@ -509,9 +516,15 @@ fn elab_inductive_statement<'db, Db>(
                 .chain(elaborated.indices.iter())
                 .map(|s| substitute_metas_in_syntax(s, &state))
                 .collect();
+            // Convert Vec<RcSyntax> to Telescope with numbered names
+            let args_telescope = Telescope::from_pairs(
+                args.into_iter()
+                    .enumerate()
+                    .map(|(i, ty)| (format!("{}", i), ty))
+            );
             let universe_syn = substitute_metas_in_syntax(&elaborated.universe, &state);
             let level = extract_universe_level(&universe_syn);
-            let tcon_info = TypeConstructorInfo::new(args, num_params, UniverseLevel::new(level));
+            let tcon_info = TypeConstructorInfo::new(args_telescope, num_params, UniverseLevel::new(level));
 
             // Build DataConstructorInfo for each constructor
             let mut data_constructors = Vec::new();
@@ -547,7 +560,13 @@ fn elab_inductive_statement<'db, Db>(
                         elab_backtrace: Vec::new(),
                     })?;
                 let ctor_ty = substitute_metas_in_syntax(&ctor.result, &state);
-                let dcon_info = DataConstructorInfo::new(ctor.params.clone(), ctor_ty);
+                // Convert Vec<RcSyntax> to Telescope with numbered names
+                let params_telescope = Telescope::from_pairs(
+                    ctor.params.iter().cloned()
+                        .enumerate()
+                        .map(|(i, ty)| (format!("{}", i), ty))
+                );
+                let dcon_info = DataConstructorInfo::new(params_telescope, ctor_ty);
                 data_constructors.push((ctor_qname, dcon_info));
             }
 

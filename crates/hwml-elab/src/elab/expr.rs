@@ -648,7 +648,7 @@ where
     };
 
     let (cod_syn, _) = cod_checked.into_inner();
-    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, icit, Binding(cod_syn)));
+    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, icit, Binding::anonymous(cod_syn)));
     Ok(Checked::new((pi_syn, Rc::new(Ty::UniverseType))))
 }
 
@@ -683,7 +683,7 @@ where
         check(db, &mut inner, &arrow.target, Rc::new(Ty::UniverseType))?.into_inner()
     };
 
-    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Icit::Explicit, Binding(cod_syn)));
+    let pi_syn: RcSyntax<'db> = Rc::new(Syntax::PiCode(dom_syn, Icit::Explicit, Binding::anonymous(cod_syn)));
     Ok(Checked::new((pi_syn, Rc::new(Ty::UniverseType))))
 }
 
@@ -734,6 +734,6 @@ where
         synth(db, &mut inner, &let_in.expr)?.into_inner()
     };
 
-    let let_syn: RcSyntax<'db> = Rc::new(Syntax::let_expr(ty_syn, val_syn, Binding(body_syn)));
+    let let_syn: RcSyntax<'db> = Rc::new(Syntax::let_expr(ty_syn, val_syn, Binding::anonymous(body_syn)));
     Ok(Checked::new((let_syn, body_ty)))
 }

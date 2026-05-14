@@ -4,8 +4,8 @@ use hwml_support::*;
 use std::{marker::PhantomData, rc::Rc};
 
 pub type RcSyntax<'db> = Rc<Syntax<'db>>;
-pub type BindingSyntax<'db> = Binding<RcSyntax<'db>>;
-pub type DynBindingSyntax<'db> = DynBinding<RcSyntax<'db>>;
+pub type BindingSyntax<'db> = Binding<'db, RcSyntax<'db>>;
+pub type DynBindingSyntax<'db> = DynBinding<'db, RcSyntax<'db>>;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub enum Syntax<'db> {

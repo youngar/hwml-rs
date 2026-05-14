@@ -90,13 +90,14 @@ fn subst_metas<'db>(syn: &Syntax<'db>, state: &SolverState<'db>) -> RcSyntax<'db
             }
         }
         Syntax::Lambda(lam) => {
-            let body = subst_metas(&lam.body.0, state);
-            Syntax::lambda_rc(lam.icit, Binding(body))
+            let body = subst_metas(&lam.body.body, state);
+            Syntax::lambda_rc(lam.icit, Binding::anonymous(body))
         }
-        Syntax::PiCode(dom, icit, Binding(cod)) => {
+        Syntax::PiCode(dom, icit, binding) => {
+            let cod = &binding.body;
             let dom2 = subst_metas(dom, state);
             let cod2 = subst_metas(cod, state);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding(cod2)))
+            Rc::new(Syntax::PiCode(dom2, *icit, Binding::anonymous(cod2)))
         }
         Syntax::Application(app) => {
             let fun = subst_metas(&app.function, state);
@@ -145,13 +146,14 @@ fn apply_syntax_solution<'db>(
             }
         }
         Syntax::Lambda(lam) => {
-            let body = apply_syntax_solution(&lam.body.0, args, extra_depth + 1);
-            Syntax::lambda_rc(lam.icit, Binding(body))
+            let body = apply_syntax_solution(&lam.body.body, args, extra_depth + 1);
+            Syntax::lambda_rc(lam.icit, Binding::anonymous(body))
         }
-        Syntax::PiCode(dom, icit, Binding(cod)) => {
+        Syntax::PiCode(dom, icit, binding) => {
+            let cod = &binding.body;
             let dom2 = apply_syntax_solution(dom, args, extra_depth);
             let cod2 = apply_syntax_solution(cod, args, extra_depth + 1);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding(cod2)))
+            Rc::new(Syntax::PiCode(dom2, *icit, Binding::anonymous(cod2)))
         }
         Syntax::Application(app) => {
             let fun = apply_syntax_solution(&app.function, args, extra_depth);
@@ -185,13 +187,14 @@ fn shift_syntax_free<'db>(syn: &Syntax<'db>, shift: usize, cutoff: usize) -> RcS
             }
         }
         Syntax::Lambda(lam) => {
-            let body = shift_syntax_free(&lam.body.0, shift, cutoff + 1);
-            Syntax::lambda_rc(lam.icit, Binding(body))
+            let body = shift_syntax_free(&lam.body.body, shift, cutoff + 1);
+            Syntax::lambda_rc(lam.icit, Binding::anonymous(body))
         }
-        Syntax::PiCode(dom, icit, Binding(cod)) => {
+        Syntax::PiCode(dom, icit, binding) => {
+            let cod = &binding.body;
             let dom2 = shift_syntax_free(dom, shift, cutoff);
             let cod2 = shift_syntax_free(cod, shift, cutoff + 1);
-            Rc::new(Syntax::PiCode(dom2, *icit, Binding(cod2)))
+            Rc::new(Syntax::PiCode(dom2, *icit, Binding::anonymous(cod2)))
         }
         Syntax::Application(app) => {
             let fun = shift_syntax_free(&app.function, shift, cutoff);
