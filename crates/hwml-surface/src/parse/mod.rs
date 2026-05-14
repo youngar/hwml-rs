@@ -188,8 +188,8 @@ impl<'input> Parser<'input> {
             State::ExprFinish { partial, min_prec } => {
                 self.context.handle_expr_finish(partial, min_prec)
             }
-            State::ExprApp { elements, min_prec } => {
-                self.context.handle_expr_app(elements, min_prec)
+            State::ExprApp { elements, arg_icits, next_arg_icit, min_prec } => {
+                self.context.handle_expr_app(elements, arg_icits, next_arg_icit, min_prec)
             }
             State::ArrowAfterRhs { lhs } => {
                 self.context.handle_arrow_after_rhs(lhs)
@@ -252,8 +252,8 @@ impl<'input> Parser<'input> {
             State::ParseBindingsStart { groups } => {
                 self.context.handle_parse_bindings_start(groups)
             }
-            State::BindingGroupAfterType { binders, groups, .. } => {
-                self.context.handle_binding_group_after_type(binders, groups)
+            State::BindingGroupAfterType { binders, groups, icit, is_implicit, .. } => {
+                self.context.handle_binding_group_after_type(binders, groups, icit, is_implicit)
             }
 
             // Telescope bindings (for dependent arrows)

@@ -139,7 +139,7 @@ mod tests {
         let result = parser.parse();
         
         assert_eq!(result.program.statements.len(), 1);
-        
+
         match &result.program.statements[0] {
             Statement::Def(def) => {
                 match &*def.value {
@@ -147,6 +147,109 @@ mod tests {
                         // Good!
                     }
                     _ => panic!("Expected Underscore expression"),
+                }
+            }
+            _ => panic!("Expected Def statement"),
+        }
+    }
+
+    #[test]
+    fn test_implicit_pi_type() {
+        use hwml_core::common::Icit;
+
+        // Test: def id : Pi {A : Type} (x : A) -> A := ...
+        let input = b"def id : Pi {A : Type} (x : A) -> A := _";
+        let parser = Parser::new(input);
+        let result = parser.parse();
+
+        assert_eq!(result.program.statements.len(), 1);
+
+        match &result.program.statements[0] {
+            Statement::Def(def) => {
+                assert_eq!(&*def.id.value, "id");
+
+                // Check the type annotation
+                match &def.ty {
+                    Some(ty_expr) => {
+                        match &**ty_expr {
+                            Expression::Pi(pi) => {
+                                assert_eq!(pi.bindings.groups.len(), 2);
+
+                                // First binding should be implicit: {A : Type}
+                                let first = &pi.bindings.groups[0];
+                                assert_eq!(first.icit, Icit::Implicit);
+                                assert_eq!(first.binders.len(), 1);
+
+                                // Second binding should be explicit: (x : A)
+                                let second = &pi.bindings.groups[1];
+                                assert_eq!(second.icit, Icit::Explicit);
+                                assert_eq!(second.binders.len(), 1);
+                            }
+                            _ => panic!("Expected Pi expression, got {:?}", ty_expr),
+                        }
+                    }
+                    None => panic!("Expected type annotation"),
+                }
+            }
+            _ => panic!("Expected Def statement"),
+        }
+    }
+
+    #[test]
+    fn test_implicit_application() {
+        use hwml_core::common::Icit;
+
+        // Test: def test := id {Nat} 42
+        let input = b"def test := id {Nat} 42";
+        let parser = Parser::new(input);
+        let result = parser.parse();
+
+        assert_eq!(result.program.statements.len(), 1);
+
+        match &result.program.statements[0] {
+            Statement::Def(def) => {
+                assert_eq!(&*def.id.value, "test");
+
+                // Check the value is an application
+                match &*def.value {
+                    Expression::App(app) => {
+                        // Should have 3 elements: id, {Nat}, 42
+                        assert_eq!(app.elements.len(), 3);
+
+                        // Should have 2 arg_icits (one for each arg, not the function)
+                        assert_eq!(app.arg_icits.len(), 2);
+
+                        // First arg {Nat} should be implicit
+                        assert_eq!(app.arg_icits[0], Icit::Implicit);
+
+                        // Second arg 42 should be explicit
+                        assert_eq!(app.arg_icits[1], Icit::Explicit);
+
+                        // Verify the function is 'id'
+                        match &*app.elements[0] {
+                            Expression::Id(id) => {
+                                assert_eq!(&*id.value, "id");
+                            }
+                            _ => panic!("Expected Id for function"),
+                        }
+
+                        // Verify first arg is 'Nat'
+                        match &*app.elements[1] {
+                            Expression::Id(id) => {
+                                assert_eq!(&*id.value, "Nat");
+                            }
+                            _ => panic!("Expected Id for implicit arg"),
+                        }
+
+                        // Verify second arg is '42'
+                        match &*app.elements[2] {
+                            Expression::Num(num) => {
+                                assert_eq!(&*num.value, "42");
+                            }
+                            _ => panic!("Expected Num for explicit arg"),
+                        }
+                    }
+                    _ => panic!("Expected App expression, got {:?}", def.value),
                 }
             }
             _ => panic!("Expected Def statement"),

@@ -11,6 +11,7 @@ use crate::syntax::{
     ExpressionError, ExpressionHole, StatementError,
 };
 use crate::parse::state::State;
+use hwml_core::common::Icit;
 use std::ops::Range;
 
 /// Block kind for tracking nested structures
@@ -271,17 +272,28 @@ impl<'input> Context<'input> {
 
     /// Parse bindings (parameters) - returns empty if none present
     /// Handles both typed bindings (x : Type) and untyped bindings (x)
+    /// Also supports implicit bindings: {x : Type}
     pub fn parse_bindings(&mut self) -> Bindings {
         use crate::syntax::{BindingGroup, UntypedBindingGroup, TypedBindingGroup, Binder, Pattern};
 
         let mut groups = vec![];
 
-        // Check if we have bindings (starts with '(', bare identifier, or underscore)
+        // Check if we have bindings (starts with '(', '{', bare identifier, or underscore)
         while self.at_token(Token::LParen) ||
+              self.at_token(Token::LBrace) ||
               self.at_token(Token::Underscore) ||
               (self.at_token(Token::Identifier) && !self.at_token(Token::Colon) && !self.at_token(Token::ColonEqual)) {
-            if self.at_token(Token::LParen) {
-                self.consume(Token::LParen);
+            if self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
+                // Determine if this is explicit (x : A) or implicit {x : A}
+                let is_implicit = self.at_token(Token::LBrace);
+                let icit = if is_implicit { Icit::Implicit } else { Icit::Explicit };
+
+                // Consume opening delimiter
+                if is_implicit {
+                    self.consume(Token::LBrace);
+                } else {
+                    self.consume(Token::LParen);
+                }
 
                 // Parse binders (identifiers or underscores)
                 let mut binders = vec![];
@@ -305,21 +317,42 @@ impl<'input> Context<'input> {
                     // Parse the type as an expression (types are just expressions in dependent types!)
                     let ty = self.parse_type_expression_sync();
 
-                    // Expect )
-                    if !self.at_token(Token::RParen) {
-                        self.emit_error("Expected ')' after typed binding");
+                    // Expect closing delimiter matching the opening
+                    if is_implicit {
+                        if !self.at_token(Token::RBrace) {
+                            self.emit_error("Expected '}' after implicit binding");
+                        } else {
+                            self.consume(Token::RBrace);
+                        }
                     } else {
-                        self.consume(Token::RParen);
+                        if !self.at_token(Token::RParen) {
+                            self.emit_error("Expected ')' after typed binding");
+                        } else {
+                            self.consume(Token::RParen);
+                        }
                     }
 
-                    // Add typed binding group
-                    groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty)));
+                    // Add typed binding group with the correct icit
+                    groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty, icit)));
                 } else {
-                    // Untyped binding group
-                    if !self.at_token(Token::RParen) {
-                        self.emit_error("Expected ')' or ':' after binders");
+                    // Untyped binding group (only allowed for explicit bindings)
+                    if is_implicit {
+                        self.emit_error("Implicit bindings must be typed");
+                    }
+
+                    // Expect closing delimiter
+                    if is_implicit {
+                        if !self.at_token(Token::RBrace) {
+                            self.emit_error("Expected '}' after binders");
+                        } else {
+                            self.consume(Token::RBrace);
+                        }
                     } else {
-                        self.consume(Token::RParen);
+                        if !self.at_token(Token::RParen) {
+                            self.emit_error("Expected ')' or ':' after binders");
+                        } else {
+                            self.consume(Token::RParen);
+                        }
                     }
 
                     groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(binders)));
@@ -672,14 +705,24 @@ impl<'input> Context<'input> {
 
     /// Parse typed bindings for Pi types (synchronous version)
     /// Pi requires ALL bindings to be typed: Pi (x : A) (y : B) -> C
+    /// Also supports implicit bindings: Pi {x : A} (y : B) -> C
     fn parse_pi_typed_bindings_sync(&mut self) -> TypedBindings {
         use crate::syntax::{Binder, Pattern, TypedBindingGroup};
 
         let mut groups = vec![];
 
-        // Expect at least one typed binding group: (x : A) or (x y : A)
-        while self.at_token(Token::LParen) {
-            self.consume(Token::LParen);
+        // Expect at least one typed binding group: (x : A) or {x : A}
+        while self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
+            // Determine if this is explicit (x : A) or implicit {x : A}
+            let is_implicit = self.at_token(Token::LBrace);
+            let icit = if is_implicit { Icit::Implicit } else { Icit::Explicit };
+
+            // Consume opening delimiter
+            if is_implicit {
+                self.consume(Token::LBrace);
+            } else {
+                self.consume(Token::LParen);
+            }
 
             // Parse binders (identifiers or underscores)
             let mut binders = vec![];
@@ -709,15 +752,23 @@ impl<'input> Context<'input> {
             // Parse the type
             let ty = self.parse_type_expression_sync();
 
-            // Expect ')'
-            if !self.at_token(Token::RParen) {
-                self.emit_error("Expected ')' after typed binding");
+            // Expect closing delimiter matching the opening
+            if is_implicit {
+                if !self.at_token(Token::RBrace) {
+                    self.emit_error("Expected '}' after implicit binding");
+                } else {
+                    self.consume(Token::RBrace);
+                }
             } else {
-                self.consume(Token::RParen);
+                if !self.at_token(Token::RParen) {
+                    self.emit_error("Expected ')' after typed binding");
+                } else {
+                    self.consume(Token::RParen);
+                }
             }
 
-            // Add typed binding group
-            groups.push(TypedBindingGroup::new(binders, ty));
+            // Add typed binding group with the correct icit
+            groups.push(TypedBindingGroup::new(binders, ty, icit));
         }
 
         TypedBindings::new(groups)

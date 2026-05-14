@@ -4,6 +4,7 @@
 //! This eliminates the need for a generic "PartialNode" stack.
 
 use crate::syntax::{Bindings, Constructor, Expression, Id, Statement, TypedBindings};
+use hwml_core::common::Icit;
 use std::ops::Range;
 
 /// Parser state - each variant carries the data accumulated so far
@@ -174,6 +175,8 @@ pub enum State {
     /// After parsing one argument, check for more
     ExprApp {
         elements: Vec<Box<Expression>>, // Accumulated app elements
+        arg_icits: Vec<Icit>,           // Icit for each argument (NOT the function)
+        next_arg_icit: Icit,            // Icit of the argument currently on expr_stack
         min_prec: Precedence,
     },
 
@@ -326,6 +329,10 @@ pub enum State {
         binders: Vec<crate::syntax::Binder>,
         /// Accumulated binding groups parsed so far
         groups: Vec<crate::syntax::BindingGroup>,
+        /// Implicitness flag (Explicit for (...), Implicit for {...})
+        icit: hwml_core::common::Icit,
+        /// Whether this was an implicit binding ({...})
+        is_implicit: bool,
         /// Continuation state to return to after all bindings are parsed
         continuation: Box<State>,
     },

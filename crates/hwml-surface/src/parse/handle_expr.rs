@@ -28,6 +28,7 @@ use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::{Precedence, State};
 use crate::syntax::{App, Expression, ExpressionError, ExpressionHole, Paren, Underscore};
+use hwml_core::common::Icit;
 use std::ops::Range;
 
 impl<'input> Context<'input> {
@@ -194,10 +195,21 @@ impl<'input> Context<'input> {
 
         // Check if we should continue with application
         if min_prec <= Precedence::App && self.can_parse_app_argument() {
+            use hwml_core::common::Icit;
+
+            // Determine if next arg is implicit by peeking at token
+            let next_arg_icit = if self.at_token(Token::LBrace) {
+                Icit::Implicit
+            } else {
+                Icit::Explicit
+            };
+
             // Start building application
             // Push continuation (runs AFTER next arg is parsed)
             self.push_state(State::ExprApp {
                 elements: vec![partial],
+                arg_icits: vec![],
+                next_arg_icit,
                 min_prec,
             });
 
@@ -259,16 +271,35 @@ impl<'input> Context<'input> {
     pub(super) fn handle_expr_app(
         &mut self,
         mut elements: Vec<Box<Expression>>,
+        mut arg_icits: Vec<Icit>,
+        next_arg_icit: Icit,
         min_prec: Precedence,
     ) {
+        use hwml_core::common::Icit;
+
         // Pop the latest argument from expr_stack
         let arg = self.pop_expr();
+
+        // Add the argument with its icit (which was determined before parsing)
         elements.push(arg);
+        arg_icits.push(next_arg_icit);
 
         // Check if we can parse another argument
         if self.can_parse_app_argument() {
+            // Determine if next arg is implicit by peeking at token
+            let next_arg_icit = if self.at_token(Token::LBrace) {
+                Icit::Implicit
+            } else {
+                Icit::Explicit
+            };
+
             // Push continuation to accumulate more
-            self.push_state(State::ExprApp { elements, min_prec });
+            self.push_state(State::ExprApp {
+                elements,
+                arg_icits,
+                next_arg_icit,
+                min_prec
+            });
 
             // Parse next argument
             self.parse_app_argument();
@@ -276,7 +307,11 @@ impl<'input> Context<'input> {
             // Done with application - build the App node
             let start = elements[0].loc();
             let end = elements.last().unwrap().loc();
-            let app = Box::new(Expression::App(App::new(start.start..end.end, elements)));
+            let app = Box::new(Expression::App(App::new_with_icits(
+                start.start..end.end,
+                elements,
+                arg_icits,
+            )));
 
             // IMPORTANT: Go back through ExprFinish to check for arrows!
             // This handles cases like "X Y -> Z" where the app "X Y" is
@@ -294,6 +329,7 @@ impl<'input> Context<'input> {
             self.peek(),
             Some(Token::Identifier)
                 | Some(Token::LParen)
+                | Some(Token::LBrace)
                 | Some(Token::Underscore)
                 | Some(Token::Number)
                 | Some(Token::Type)
@@ -301,8 +337,28 @@ impl<'input> Context<'input> {
     }
 
     /// Parse an application argument (async - pushes to expr_stack)
+    /// Automatically detects and handles implicit arguments {expr}
     fn parse_app_argument(&mut self) {
-        self.parse_expression(Precedence::Atomic);
+        // Check if this is an implicit argument {expr}
+        if self.at_token(Token::LBrace) {
+            self.consume(Token::LBrace);
+
+            // Parse the inner expression synchronously to avoid state machine issues
+            let inner_expr = self.parse_type_expression_sync();
+
+            // Expect closing brace
+            if !self.at_token(Token::RBrace) {
+                self.emit_error("Expected '}' after implicit argument");
+            } else {
+                self.consume(Token::RBrace);
+            }
+
+            // Push the parsed expression
+            self.push_expr(inner_expr);
+        } else {
+            // Regular explicit argument
+            self.parse_expression(Precedence::Atomic);
+        }
     }
 
     /// Handle ParenAfterLParen - wrap expression in Paren and consume closing paren
@@ -453,7 +509,7 @@ impl<'input> Context<'input> {
                 if let Some((pattern, ty)) = extract_binding(expr) {
                     let loc = pattern.loc();
                     let binder = Binder::new(loc, pattern);
-                    let group = TypedBindingGroup::new(vec![binder], ty);
+                    let group = TypedBindingGroup::new(vec![binder], ty, Icit::Explicit);
                     Some(crate::syntax::TypedBindings::new(vec![group]))
                 } else {
                     None
@@ -469,7 +525,7 @@ impl<'input> Context<'input> {
                     if let Some((pattern, ty)) = extract_binding(elem) {
                         let loc = pattern.loc();
                         let binder = Binder::new(loc, pattern);
-                        groups.push(TypedBindingGroup::new(vec![binder], ty));
+                        groups.push(TypedBindingGroup::new(vec![binder], ty, Icit::Explicit));
                     } else {
                         // If any element isn't a telescope binding, fail
                         return None;

@@ -8,6 +8,7 @@ use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::{Precedence, State};
 use crate::syntax::{Binder, BindingGroup, Bindings, Pattern, TypedBindingGroup, UntypedBindingGroup};
+use hwml_core::common::Icit;
 
 impl Context<'_> {
     /// Start parsing bindings - called from places that need bindings
@@ -25,10 +26,19 @@ impl Context<'_> {
     /// Handle ParseBindingsStart - accumulate binding groups
     pub(super) fn handle_parse_bindings_start(&mut self, mut groups: Vec<BindingGroup>) {
         // Check if we have more bindings to parse
-        // Bindings start with '(', bare identifier, or underscore
-        if self.at_token(Token::LParen) {
-            self.consume(Token::LParen);
-            
+        // Bindings start with '(' for explicit, '{' for implicit, bare identifier, or underscore
+        if self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
+            // Determine if this is an implicit binding group
+            let is_implicit = self.at_token(Token::LBrace);
+            let icit = if is_implicit { Icit::Implicit } else { Icit::Explicit };
+
+            // Consume opening delimiter
+            if is_implicit {
+                self.consume(Token::LBrace);
+            } else {
+                self.consume(Token::LParen);
+            }
+
             // Parse binders (identifiers or underscores)
             let mut binders = vec![];
             while self.at_token(Token::Identifier) || self.at_token(Token::Underscore) {
@@ -46,31 +56,36 @@ impl Context<'_> {
                     ));
                 }
             }
-            
+
             // Check if this is a typed binding group (has : Type)
             if self.at_token(Token::Colon) {
                 self.consume(Token::Colon);
-                
+
                 // Push continuation (runs AFTER type expression is parsed)
                 self.push_state(State::BindingGroupAfterType {
                     binders,
                     groups,
+                    icit,
+                    is_implicit,
                     continuation: Box::new(State::ParseBindingsStart { groups: vec![] }), // dummy, will be replaced
                 });
-                
+
                 // Parse type expression asynchronously (runs FIRST)
                 // This allows complex types like Pi, match expressions, etc.
                 self.parse_expression(Precedence::Lowest);
             } else {
                 // Untyped binding group
-                if !self.at_token(Token::RParen) {
-                    self.emit_error("Expected ')' or ':' after binders");
+                let closing_token = if is_implicit { Token::RBrace } else { Token::RParen };
+                let closing_str = if is_implicit { "'}'" } else { "')'" };
+
+                if !self.at_token(closing_token) {
+                    self.emit_error(&format!("Expected {} or ':' after binders", closing_str));
                 } else {
-                    self.consume(Token::RParen);
+                    self.consume(closing_token);
                 }
-                
+
                 groups.push(BindingGroup::Untyped(UntypedBindingGroup::new(binders)));
-                
+
                 // Continue parsing more binding groups
                 self.push_state(State::ParseBindingsStart { groups });
             }
@@ -108,20 +123,25 @@ impl Context<'_> {
         &mut self,
         binders: Vec<Binder>,
         mut groups: Vec<BindingGroup>,
+        icit: Icit,
+        is_implicit: bool,
     ) {
         // Pop the type expression from expr_stack
         let ty = self.pop_expr();
-        
-        // Expect ')'
-        if !self.at_token(Token::RParen) {
-            self.emit_error("Expected ')' after typed binding");
+
+        // Expect closing delimiter matching the opening
+        let closing_token = if is_implicit { Token::RBrace } else { Token::RParen };
+        let closing_str = if is_implicit { "'}'" } else { "')'" };
+
+        if !self.at_token(closing_token) {
+            self.emit_error(&format!("Expected {} after typed binding", closing_str));
         } else {
-            self.consume(Token::RParen);
+            self.consume(closing_token);
         }
-        
-        // Add this typed binding group
-        groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty)));
-        
+
+        // Add this typed binding group with the correct icit
+        groups.push(BindingGroup::Typed(TypedBindingGroup::new(binders, ty, icit)));
+
         // Continue parsing more binding groups
         self.push_state(State::ParseBindingsStart { groups });
     }
@@ -195,7 +215,7 @@ impl Context<'_> {
         }
 
         // Add this group
-        groups.push(crate::syntax::TypedBindingGroup::new(binders, ty));
+        groups.push(crate::syntax::TypedBindingGroup::new(binders, ty, Icit::Explicit));
 
         // Continue parsing more telescope bindings
         self.push_state(State::ParseTelescopeBindings { groups });

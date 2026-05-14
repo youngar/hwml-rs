@@ -3,6 +3,7 @@
 use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::syntax::{Statement, Inductive, Constructor, TypedBindings, Id, Expression, ExpressionHole, App};
+use hwml_core::common::Icit;
 use std::ops::Range;
 
 impl<'input> Context<'input> {
@@ -148,7 +149,7 @@ impl<'input> Context<'input> {
                 // Parse type
                 let ty = self.parse_simple_type();
 
-                let group = TypedBindingGroup::new(binders, ty);
+                let group = TypedBindingGroup::new(binders, ty, Icit::Explicit);
                 groups.push(group);
             }
 

@@ -2,6 +2,7 @@ use crate::lex::Token;
 use crate::parse::context::Context;
 use crate::parse::state::{Precedence, State};
 use crate::syntax::Expression;
+use hwml_core::common::Icit;
 use std::ops::Range;
 
 impl Context<'_> {
@@ -27,10 +28,7 @@ impl Context<'_> {
         self.consume(Token::Arrow);
 
         // Push continuation (runs AFTER target expression is parsed)
-        self.push_state(State::PiAfterBindings {
-            loc,
-            bindings,
-        });
+        self.push_state(State::PiAfterBindings { loc, bindings });
 
         // Parse target expression (will push result to expr_stack)
         self.parse_expression(Precedence::Lowest);
@@ -63,15 +61,29 @@ impl Context<'_> {
 
     /// Parse typed bindings for Pi types
     /// Pi requires ALL bindings to be typed: Pi (x : A) (y : B) -> C
+    /// Also supports implicit bindings: Pi {x : A} (y : B) -> C
     /// Unlike fun which allows untyped bindings: fun x y => e
     fn parse_pi_typed_bindings(&mut self) -> crate::syntax::TypedBindings {
         use crate::syntax::{Binder, Pattern, TypedBindingGroup};
 
         let mut groups = vec![];
 
-        // Expect at least one typed binding group: (x : A) or (x y : A)
-        while self.at_token(Token::LParen) {
-            self.consume(Token::LParen);
+        // Expect at least one typed binding group: (x : A) or {x : A}
+        while self.at_token(Token::LParen) || self.at_token(Token::LBrace) {
+            // Determine if this is explicit (x : A) or implicit {x : A}
+            let is_implicit = self.at_token(Token::LBrace);
+            let icit = if is_implicit {
+                Icit::Implicit
+            } else {
+                Icit::Explicit
+            };
+
+            // Consume opening delimiter
+            if is_implicit {
+                self.consume(Token::LBrace);
+            } else {
+                self.consume(Token::LParen);
+            }
 
             // Parse binders (identifiers or underscores)
             let mut binders = vec![];
@@ -101,15 +113,23 @@ impl Context<'_> {
             // Parse the type
             let ty = self.parse_type_expression_sync();
 
-            // Expect ')'
-            if !self.at_token(Token::RParen) {
-                self.emit_error("Expected ')' after typed binding");
+            // Expect closing delimiter matching the opening
+            if is_implicit {
+                if !self.at_token(Token::RBrace) {
+                    self.emit_error("Expected '}' after implicit binding");
+                } else {
+                    self.consume(Token::RBrace);
+                }
             } else {
-                self.consume(Token::RParen);
+                if !self.at_token(Token::RParen) {
+                    self.emit_error("Expected ')' after typed binding");
+                } else {
+                    self.consume(Token::RParen);
+                }
             }
 
-            // Add typed binding group
-            groups.push(TypedBindingGroup::new(binders, ty));
+            // Add typed binding group with the correct icit
+            groups.push(TypedBindingGroup::new(binders, ty, icit));
         }
 
         crate::syntax::TypedBindings::new(groups)
