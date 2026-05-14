@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use hwml_core::{
+    common::Icit,
     equal, eval,
     quote::type_quote,
     ty::{RcTy, Ty},
@@ -10,16 +11,41 @@ use hwml_core::{
 
 use crate::{
     constraint::{Constraint, ConstraintId, ConstraintStatus},
+    ctx::ElabCtx,
     error::ElabError,
     meta::MetaId,
     state::SolverState,
     unify::{Unifier, UnifyResult},
 };
 
+/// A postponed check that is ready to be elaborated.
+///
+/// The solver identifies postponed checks whose expected type is no longer
+/// meta-headed, packages them into this struct, and returns them to the caller.
+/// The caller then creates an Elaborator and runs the check.
+///
+/// This pattern avoids the borrowing conflict where both Solver and Elaborator
+/// need `&mut SolverState`.
+#[derive(Debug, Clone)]
+pub struct ReadyCheck<'db> {
+    /// The surface expression to check
+    pub expr: Box<hwml_surface::Expression>,
+    /// The concrete expected type (no longer meta-headed)
+    pub expected_ty: RcTy<'db>,
+    /// Captured elaboration context (local variables)
+    pub ctx: ElabCtx<'db>,
+    /// Placeholder meta to solve with the result
+    pub placeholder: MetaId,
+    /// Elaboration depth for proper scoping
+    pub depth: usize,
+}
+
 pub struct Solver<'a, 'db> {
     pub state: &'a mut SolverState<'db>,
     pub global: &'a GlobalEnv<'db>,
     pub db: &'db dyn salsa::Database,
+    /// Postponed checks that are ready to elaborate
+    ready_checks: Vec<ReadyCheck<'db>>,
 }
 
 #[derive(Debug)]
@@ -40,11 +66,20 @@ impl<'a, 'db> Solver<'a, 'db> {
         global: &'a GlobalEnv<'db>,
         db: &'db dyn salsa::Database,
     ) -> Self {
-        Solver { state, global, db }
+        Solver {
+            state,
+            global,
+            db,
+            ready_checks: Vec::new(),
+        }
     }
 
     /// Run flat constraint solver until queue empty or no progress.
-    pub fn run(&mut self) -> Result<(), SolveError<'db>> {
+    ///
+    /// Returns a list of postponed checks that are ready to elaborate.
+    /// The caller should process these by creating an Elaborator and running
+    /// the checks, then calling `run()` again to process any new constraints.
+    pub fn run(&mut self) -> Result<Vec<ReadyCheck<'db>>, SolveError<'db>> {
         loop {
             let cid = match self.state.pop_active() {
                 Some(c) => c,
@@ -59,7 +94,9 @@ impl<'a, 'db> Solver<'a, 'db> {
             }
             self.step_constraint(cid, &entry.constraint)?;
         }
-        Ok(())
+
+        // Return collected ready checks
+        Ok(std::mem::take(&mut self.ready_checks))
     }
 
     fn step_constraint(
@@ -90,6 +127,20 @@ impl<'a, 'db> Solver<'a, 'db> {
                 field_name,
                 result_val_meta,
                 result_ty_meta,
+                depth,
+            ),
+            Constraint::PostponedCheck {
+                expr,
+                expected_ty,
+                ctx,
+                placeholder,
+                depth,
+            } => self.step_postponed_check(
+                cid,
+                expr,
+                expected_ty,
+                ctx,
+                placeholder,
                 depth,
             ),
         }
@@ -179,7 +230,7 @@ impl<'a, 'db> Solver<'a, 'db> {
         rhs: &RcValue<'db>,
         depth: usize,
     ) -> bool {
-        if let (Value::PiCode(d1, c1), Value::PiCode(d2, c2)) = (lhs.as_ref(), rhs.as_ref()) {
+        if let (Value::PiCode(d1, _icit1, c1), Value::PiCode(d2, _icit2, c2)) = (lhs.as_ref(), rhs.as_ref()) {
             let universe_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
 
             // Emit: d1 = d2 : Type (domain equality)
@@ -407,7 +458,7 @@ impl<'a, 'db> Solver<'a, 'db> {
 
                         // Build the result: application of field to receiver
                         let field_syn = hwml_core::Syntax::constant_rc(field_qualified);
-                        let result_syn = hwml_core::Syntax::application_rc(field_syn, receiver_val);
+                        let result_syn = hwml_core::Syntax::application_rc(field_syn, receiver_val, Icit::Explicit);
 
                         // Evaluate the field type
                         let field_ty_val = eval::substitute(
@@ -469,6 +520,46 @@ impl<'a, 'db> Solver<'a, 'db> {
                 }))
             }
         }
+    }
+
+    // ─── PostponedCheck (DOE) ─────────────────────────────────────────────────────
+
+    #[allow(clippy::too_many_arguments)]
+    fn step_postponed_check(
+        &mut self,
+        cid: ConstraintId,
+        expr: Box<hwml_surface::Expression>,
+        expected_ty: RcTy<'db>,
+        ctx: ElabCtx<'db>,
+        placeholder: MetaId,
+        depth: usize,
+    ) -> Result<(), SolveError<'db>> {
+        // Force the expected type to resolve any solved metas
+        let forced_ty = force_ty(self.state, self.global, expected_ty.clone());
+
+        // Check if the type is still meta-headed
+        if let Ty::El(val) = forced_ty.as_ref() {
+            if let Value::Flex(flex) = val.as_ref() {
+                // Still meta-headed - reblock on the new meta
+                let meta_id = MetaId(flex.head.id.local_index as u32);
+                self.state.block_on(cid, &[meta_id]);
+                return Ok(());
+            }
+        }
+
+        // Type is no longer meta-headed! Package this check for the caller.
+        // The caller will create an Elaborator and run the check outside the solver.
+        self.ready_checks.push(ReadyCheck {
+            expr,
+            expected_ty: forced_ty,
+            ctx,
+            placeholder,
+            depth,
+        });
+
+        // Mark the constraint as solved (the actual elaboration happens externally)
+        self.state.mark_solved(cid);
+        Ok(())
     }
 }
 
