@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use hwml_core::{
+    common::Icit,
     eval,
     ty::{RcTy, Ty},
     val::{
@@ -344,7 +345,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let (fun_syn, fun_ty) = fun.into_inner();
 
         // Force fun_ty to find a PiCode.
-        let (dom_code, cod_clos) = self.force_to_pi(fun_ty)?;
+        let (dom_code, _icit, cod_clos) = self.force_to_pi(fun_ty)?;
 
         // Check argument against the domain.
         let dom_ty: RcTy<'db> = Rc::new(Ty::El(dom_code.clone()));
@@ -377,7 +378,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         let ret_code = self.flex_apply_clos(&cod_clos, &arg_val);
         let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
 
-        let app_syn = Syntax::application_rc(fun_syn, arg_syn);
+        let app_syn = Syntax::application_rc(fun_syn, arg_syn, Icit::Explicit);
         Ok(Checked::new((app_syn, ret_ty)))
     }
 
@@ -388,6 +389,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
     /// Check a lambda against a Pi type.
     ///
     /// `dom_code` = value-level type code for the domain.
+    /// `icit` = implicitness of the Pi binder (Explicit or Implicit)
     /// `cod_clos` = codomain closure: `cod_clos.apply(global, &var)` gives the return type code.
     /// `source` = Source file identifier for error messages (inherited from parent elaborator)
     pub fn check_lambda<Db>(
@@ -395,6 +397,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
         db: &'db Db,
         fun: &hwml_surface::Fun,
         dom_code: RcValue<'db>,
+        icit: Icit,
         cod_clos: Closure<'db>,
         source: Source<'db>,
     ) -> Result<Checked<RcSyntax<'db>>, ElabError<'db>>
@@ -452,8 +455,8 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 let remaining_fun = build_remaining_fun(fun, &remaining_names, &rest_groups);
                 let ret_ty_el: RcTy<'db> = Rc::new(Ty::El(ret_code.clone()));
                 match inner_kernel.force_to_pi(ret_ty_el) {
-                    Ok((dom2, cod2)) => inner_kernel
-                        .check_lambda(db, &remaining_fun, dom2, cod2, source)?
+                    Ok((dom2, icit2, cod2)) => inner_kernel
+                        .check_lambda(db, &remaining_fun, dom2, icit2, cod2, source)?
                         .into_inner(),
                     Err(_) => {
                         // Codomain not yet a Pi (unsolved meta). Mint a fresh meta for
@@ -486,7 +489,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                             let cod_term = Rc::new(Syntax::UniverseCode(0));
                             let cod_clos2 = Closure::new(inner_kernel.ctx.to_local_env(), cod_term);
                             inner_kernel
-                                .check_lambda(db, &remaining_fun, dom_val, cod_clos2, source)?
+                                .check_lambda(db, &remaining_fun, dom_val, Icit::Explicit, cod_clos2, source)?
                                 .into_inner()
                         }
                     }
@@ -508,8 +511,9 @@ impl<'a, 'db> Kernel<'a, 'db> {
             }
         };
 
-        // Wrap in a lambda binding.
-        let lambda_syn = Syntax::lambda_rc(Binding(body_syn));
+        // Wrap in a lambda binding with the correct icit from the Pi type.
+        // This implements Phase 3: automatic implicit lambda insertion!
+        let lambda_syn = Syntax::lambda_rc(icit, Binding(body_syn));
         Ok(Checked::new(lambda_syn))
     }
 
@@ -638,19 +642,19 @@ impl<'a, 'db> Kernel<'a, 'db> {
                     dummy_ty,
                 )))
             }
-            Syntax::PiCode(dom, Binding(cod)) => {
+            Syntax::PiCode(dom, _icit, Binding(cod)) => {
                 let dom_val = self.flex_eval_with_local(dom, local.clone());
                 let cod_clos = Closure::new(local, cod.clone());
-                Rc::new(Value::PiCode(dom_val, cod_clos))
+                Rc::new(Value::PiCode(dom_val, *_icit, cod_clos))
             }
             Syntax::Lambda(lam) => {
                 let body_clos = Closure::new(local, lam.body.0.clone());
-                Value::lambda_rc(body_clos)
+                Value::lambda_rc(lam.icit, body_clos)
             }
             Syntax::Application(app) => {
                 let fun_val = self.flex_eval_with_local(&app.function, local.clone());
                 let arg_val = self.flex_eval_with_local(&app.argument, local.clone());
-                eval::run_application(self.global, &fun_val, arg_val)
+                eval::run_application(self.global, &fun_val, arg_val, app.icit)
                     .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)))
             }
             _ => eval::substitute(self.global, syn, local)
@@ -668,21 +672,22 @@ impl<'a, 'db> Kernel<'a, 'db> {
         val
     }
 
-    /// Force a semantic type to `Pi` shape: extract `(dom_code, cod_clos)`.
-    /// Handles `Ty::El(Value::PiCode(dom, cod))` and `Ty::Pi(dom, cod)`.
+    /// Force a semantic type to `Pi` shape: extract `(dom_code, icit, cod_clos)`.
+    /// Handles `Ty::El(Value::PiCode(dom, icit, cod))` and `Ty::Pi(dom, cod)`.
     pub fn force_to_pi(
         &self,
         ty: RcTy<'db>,
-    ) -> Result<(RcValue<'db>, Closure<'db>), ElabError<'db>> {
+    ) -> Result<(RcValue<'db>, Icit, Closure<'db>), ElabError<'db>> {
         match ty.as_ref() {
             Ty::El(code) => {
                 // Force the code to resolve any solved metavariables
                 let forced_code = self.force_deep(code.clone());
                 match forced_code.as_ref() {
-                    Value::PiCode(dom, cod) => Ok((dom.clone(), cod.clone())),
+                    Value::PiCode(dom, icit, cod) => Ok((dom.clone(), *icit, cod.clone())),
                     _ => Err(ElabError::TypeMismatch {
                         expected: Rc::new(Ty::El(Rc::new(Value::PiCode(
                             Rc::new(Value::UniverseCode(0)),
+                            Icit::Explicit,
                             hwml_core::val::Closure::new(
                                 hwml_core::val::LocalEnv::new(),
                                 Rc::new(Syntax::UniverseCode(0)),
@@ -704,6 +709,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
                 let _ = cod;
                 Ok((
                     dom_code,
+                    Icit::Explicit, // Legacy Pi types are always explicit
                     Closure::new(
                         hwml_core::val::LocalEnv::new(),
                         Rc::new(Syntax::UniverseCode(0)),
@@ -796,7 +802,7 @@ impl<'a, 'db> Kernel<'a, 'db> {
             let cod_clos = hwml_core::val::Closure::new(env.local.clone(), cod_syn);
 
             // Wrap in a PiCode
-            result = Rc::new(Value::PiCode(dom_val, cod_clos));
+            result = Rc::new(Value::PiCode(dom_val, Icit::Explicit, cod_clos));
         }
 
         result
@@ -847,12 +853,15 @@ fn build_remaining_fun(
     let mut groups: Vec<hwml_surface::BindingGroup> = remaining_names
         .iter()
         .map(|n| {
-            let binder = Box::new(hwml_surface::Expression::Id(hwml_surface::Id {
-                loc: 0..0,
-                value: n.clone().into_boxed_str(),
-            }));
+            let binder = hwml_surface::Binder::new(
+                0..0,
+                hwml_surface::Pattern::Id(hwml_surface::Id {
+                    loc: 0..0,
+                    value: n.clone().into_boxed_str(),
+                }),
+            );
             hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
-                binders: binder,
+                binders: vec![binder],
             })
         })
         .collect();
@@ -878,8 +887,11 @@ fn peel_first_binder_group(
 
     let names = match first {
         hwml_surface::BindingGroup::Untyped(ug) => {
-            // The binder is an expression (typically an Id).
-            extract_binder_name(&ug.binders).into_iter().collect()
+            // The binders are a Vec<Binder>
+            ug.binders
+                .iter()
+                .filter_map(|b| extract_binder_name(b))
+                .collect()
         }
         hwml_surface::BindingGroup::Typed(tg) => tg
             .binders
@@ -890,10 +902,16 @@ fn peel_first_binder_group(
     (names, rest)
 }
 
-pub(crate) fn extract_binder_name(expr: &Expression) -> Option<String> {
-    match expr {
-        Expression::Id(id) => Some(id.value.to_string()),
-        Expression::Paren(p) => extract_binder_name(&p.expr),
+pub(crate) fn extract_binder_name(binder: &hwml_surface::Binder) -> Option<String> {
+    match &binder.pattern {
+        hwml_surface::Pattern::Id(id) => Some(id.value.to_string()),
+        hwml_surface::Pattern::Paren(p) => {
+            // For parenthesized patterns, recursively extract from the inner pattern
+            match &*p.inner {
+                hwml_surface::Pattern::Id(id) => Some(id.value.to_string()),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }

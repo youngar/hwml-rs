@@ -488,14 +488,47 @@ fn run_solver<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let mut solver = Solver::new(elab.kernel.state, elab.kernel.global, db);
-    solver.run().map_err(|e| match e {
-        SolveError::Elab(e) => e,
-        SolveError::NoProgress => ElabError::CannotInfer {
-            span: None, // Solver doesn't have a specific location
-            elab_backtrace: elab.context.snapshot(),
-        },
-    })
+    loop {
+        // Run solver and collect ready checks
+        let ready_checks = {
+            let mut solver = Solver::new(elab.kernel.state, elab.kernel.global, db);
+            solver.run().map_err(|e| match e {
+                SolveError::Elab(e) => e,
+                SolveError::NoProgress => ElabError::CannotInfer {
+                    span: None,
+                    elab_backtrace: elab.context.snapshot(),
+                },
+            })?
+        };
+
+        // If no checks ready, we're done
+        if ready_checks.is_empty() {
+            break;
+        }
+
+        // Process each ready check
+        for check in ready_checks {
+            // Create a temporary elaborator with the captured context
+            let mut temp_elab = Elaborator::with_context(
+                elab.kernel.global,
+                check.ctx.clone(),
+                elab.kernel.state,
+                elab.kernel.resolver,
+                elab.kernel.stub_table,
+                elab.context.clone(),
+            );
+
+            // Run the postponed check
+            let result = elab::expr::check(db, &mut temp_elab, &check.expr, check.expected_ty)?;
+
+            // Solve the placeholder with the result
+            let result_syn = result.into_inner();
+            let result_val = temp_elab.kernel.eval_syn_flex(&result_syn);
+            elab.kernel.state.solve_meta(check.placeholder, result_syn, result_val)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Run the constraint solver in lenient mode (for use during mutual recursion).
@@ -510,12 +543,41 @@ pub fn run_solver_lenient<'a, 'db, Db>(
 where
     Db: salsa::Database,
 {
-    let mut solver = Solver::new(elab.kernel.state, elab.kernel.global, db);
-    match solver.run() {
-        Ok(()) => Ok(()),
-        Err(SolveError::Elab(e)) => Err(e), // Real errors still propagate
-        Err(SolveError::NoProgress) => Ok(()), // NoProgress is OK during mutual recursion
+    loop {
+        // Run solver and collect ready checks
+        let ready_checks = {
+            let mut solver = Solver::new(elab.kernel.state, elab.kernel.global, db);
+            match solver.run() {
+                Ok(checks) => checks,
+                Err(SolveError::Elab(e)) => return Err(e),
+                Err(SolveError::NoProgress) => return Ok(()), // OK during mutual recursion
+            }
+        };
+
+        // If no checks ready, we're done
+        if ready_checks.is_empty() {
+            break;
+        }
+
+        // Process each ready check
+        for check in ready_checks {
+            let mut temp_elab = Elaborator::with_context(
+                elab.kernel.global,
+                check.ctx.clone(),
+                elab.kernel.state,
+                elab.kernel.resolver,
+                elab.kernel.stub_table,
+                elab.context.clone(),
+            );
+
+            let result = elab::expr::check(db, &mut temp_elab, &check.expr, check.expected_ty)?;
+            let result_syn = result.into_inner();
+            let result_val = temp_elab.kernel.eval_syn_flex(&result_syn);
+            elab.kernel.state.solve_meta(check.placeholder, result_syn, result_val)?;
+        }
     }
+
+    Ok(())
 }
 
 /// Run solver then zonk. Use when a definition is complete and all metas must be resolved.
@@ -574,11 +636,10 @@ fn build_fun_expr(
 }
 
 /// Extract a name string from a binder expression.
-fn binder_to_name(expr: &hwml_surface::Expression) -> String {
-    if let hwml_surface::Expression::Id(id) = expr {
-        id.value.to_string()
-    } else {
-        "_".to_string()
+fn binder_to_name(binder: &hwml_surface::Binder) -> String {
+    match &binder.pattern {
+        hwml_surface::Pattern::Id(id) => id.value.to_string(),
+        _ => "_".to_string(),
     }
 }
 
