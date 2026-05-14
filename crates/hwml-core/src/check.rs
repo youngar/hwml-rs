@@ -1,5 +1,5 @@
 use crate::binding::Binding;
-use crate::common::Level;
+use crate::common::{Icit, Level};
 use crate::equal;
 use crate::eval;
 use crate::pattern_unify;
@@ -94,7 +94,7 @@ impl<'db, 'g> TCEnvironment<'db, 'g> {
         self.push_var(ty);
         let body = f(self);
         self.truncate(depth);
-        Binding(body)
+        Binding::anonymous(body)
     }
 
     #[allow(dead_code)]
@@ -328,14 +328,14 @@ pub fn type_synth<'db, 'g>(
         // UniverseCode n : UniverseCode (n+1)
         Syntax::UniverseCode(level) => Ok(Rc::new(Value::UniverseCode(level + 1))),
 
-        // PiCode (source, target) : UniverseCode (max(i, j))
+        // PiCode (source, icit, target) : UniverseCode (max(i, j))
         // where source : UniverseCode i and target : UniverseCode j
-        Syntax::PiCode(source, target) => {
+        Syntax::PiCode(source, icit, target) => {
             // Synthesize the type of the source
             let source_ty = type_synth(env, source)?;
             let Value::UniverseCode(source_level) = source_ty.as_ref() else {
                 return Err(Error::BadCtor {
-                    tm: Rc::new(Syntax::PiCode(source.clone(), target.clone())),
+                    tm: Rc::new(Syntax::PiCode(source.clone(), *icit, target.clone())),
                     ty_exp: source_ty,
                 });
             };
@@ -345,12 +345,12 @@ pub fn type_synth<'db, 'g>(
 
             // Check the target under the extended environment
             env.push_var(sem_source);
-            let target_ty = type_synth(env, &target.0)?;
+            let target_ty = type_synth(env, &target.body)?;
             env.pop();
 
             let Value::UniverseCode(target_level) = target_ty.as_ref() else {
                 return Err(Error::BadCtor {
-                    tm: Rc::new(Syntax::PiCode(source.clone(), target.clone())),
+                    tm: Rc::new(Syntax::PiCode(source.clone(), *icit, target.clone())),
                     ty_exp: target_ty,
                 });
             };
@@ -466,7 +466,7 @@ pub fn type_synth_metavariable<'db, 'g>(
 
     // Check each argument against its expected type and build up the local environment.
     let mut local_env = LocalEnv::new();
-    for (arg, arg_ty) in metavariable
+    for (arg, arg_ty_binder) in metavariable
         .substitution
         .iter()
         .zip(meta_info.arguments.iter())
@@ -477,7 +477,7 @@ pub fn type_synth_metavariable<'db, 'g>(
             local: local_env.clone(),
             transparent: val::TransparentEnv::new(),
         };
-        let expected_ty = eval::eval(&mut temp_env, arg_ty).map_err(|_| Error::BadSynth {
+        let expected_ty = eval::eval(&mut temp_env, &arg_ty_binder.value).map_err(|_| Error::BadSynth {
             tm: Syntax::metavariable_rc(metavariable.id, metavariable.substitution.clone()),
         })?;
 
@@ -511,9 +511,9 @@ pub fn type_synth_application<'db, 'g>(
     let fun_ty = type_synth(env, &application.function)?;
 
     // NEW: Ensure that the applied term is a function `(x : src) -> tgt(x)` using PiCode.
-    let Value::PiCode(source, target) = &*fun_ty else {
+    let Value::PiCode(source, _icit, target) = &*fun_ty else {
         return Err(Error::BadElim {
-            tm: Syntax::application_rc(application.function.clone(), application.argument.clone()),
+            tm: Syntax::application_rc(application.function.clone(), application.argument.clone(), application.icit),
             ty_got: fun_ty,
         });
     };
@@ -696,7 +696,7 @@ fn type_check_lambda<'db, 'g>(
 ) -> Result<(), Error<'db>> {
     match ty {
         // NEW: Check lambda against PiCode (type codes)
-        Value::PiCode(source, target_closure) => {
+        Value::PiCode(source, icit, target_closure) => {
             let var = Value::variable_rc(Level::new(env.depth()), source.clone());
             let target = run_closure(env, target_closure, [var.clone()])?;
             env.push(var, source.clone());
@@ -705,7 +705,7 @@ fn type_check_lambda<'db, 'g>(
             r
         }
         _ => Err(Error::BadCtor {
-            tm: Syntax::lambda_rc(lam.body.clone()),
+            tm: Syntax::lambda_rc(lam.icit, lam.body.clone()),
             ty_exp: Rc::new(ty.clone()),
         }),
     }
@@ -756,8 +756,8 @@ fn type_check_type_constructor<'db, 'g>(
                 transparent: val::TransparentEnv::new(),
             };
 
-            for (arg, arg_ty) in tcon.arguments.iter().zip(&tcon_info.arguments) {
-                let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
+            for (arg, arg_ty_binder) in tcon.arguments.iter().zip(&tcon_info.arguments) {
+                let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.value)?;
                 type_check(env, arg, &sem_arg_ty)?;
                 let sem_arg = eval::eval(&mut env.values, arg)?;
                 ty_env.push(sem_arg);
@@ -801,8 +801,8 @@ fn type_check_data_constructor<'db, 'g>(
 
             // TODO: check that we have the correct number of arguments.
 
-            for (arg, arg_ty) in dc.arguments.iter().zip(&dc_info.arguments) {
-                let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
+            for (arg, arg_ty_binder) in dc.arguments.iter().zip(&dc_info.arguments) {
+                let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.value)?;
                 type_check(env, arg, &sem_arg_ty)?;
                 let sem_arg = eval::eval(&mut env.values, arg)?;
                 ty_env.push(sem_arg);
@@ -1117,7 +1117,7 @@ fn type_synth_transport<'db, 'g>(
     // For simplicity, we use U0 here.
     let universe_syntax = Rc::new(Syntax::UniverseCode(0));
     let constant_closure = val::Closure::new(LocalEnv::new(), universe_syntax);
-    let motive_expected_ty = Rc::new(Value::PiCode(eq_ty.ty.clone(), constant_closure));
+    let motive_expected_ty = Rc::new(Value::PiCode(eq_ty.ty.clone(), Icit::Explicit, constant_closure));
 
     // Check the motive against this type
     type_check(env, &transport.motive, &motive_expected_ty)?;
@@ -1223,11 +1223,11 @@ fn check_meta_type<'db, 'g>(
     }
 
     // NEW: PiCode types are valid if source and target are valid meta-level types
-    if let Syntax::PiCode(source, target) = term {
+    if let Syntax::PiCode(source, _icit, target) = term {
         check_meta_type(env, source)?;
         let ty = eval(env, source)?;
         env.push_var(ty);
-        let result = check_meta_type(env, &target.0);
+        let result = check_meta_type(env, &target.body);
         env.pop();
         return result;
     }
@@ -1265,11 +1265,11 @@ pub fn check_type<'db, 'g>(
     term: &Syntax<'db>,
 ) -> Result<(), Error<'db>> {
     // NEW: If the term is a PiCode, then we just check that it is valid.
-    if let Syntax::PiCode(source, target) = term {
+    if let Syntax::PiCode(source, _icit, target) = term {
         check_type(env, source)?;
         let ty = eval(env, source)?;
         env.push_var(ty);
-        let result = check_type(env, &target.0);
+        let result = check_type(env, &target.body);
         env.pop();
         return result;
     }
@@ -1354,8 +1354,8 @@ fn check_type_constructor_type<'db, 'g>(
         transparent: val::TransparentEnv::new(),
     };
 
-    for (arg, arg_ty) in tcon.arguments.iter().zip(&tcon_info.arguments) {
-        let sem_arg_ty = eval::eval(&mut ty_env, arg_ty)?;
+    for (arg, arg_ty_binder) in tcon.arguments.iter().zip(&tcon_info.arguments) {
+        let sem_arg_ty = eval::eval(&mut ty_env, &arg_ty_binder.value)?;
         type_check(env, arg, &sem_arg_ty)?;
         let sem_arg = eval::eval(&mut env.values, arg)?;
         ty_env.push(sem_arg);
@@ -1368,7 +1368,7 @@ mod tests {
     use super::*;
     use crate::common::{Index, UniverseLevel};
     use crate::syn::parse::parse_syntax;
-    use crate::syn::RcSyntax;
+    use crate::syn::{RcSyntax, Telescope};
 
     use crate::val::Closure;
     use crate::QualifiedName;
@@ -1617,6 +1617,7 @@ mod tests {
         let u0_syn = parse(&db, "U0");
         let pi_val = Rc::new(Value::PiCode(
             u0_val.clone(),
+            Icit::Explicit,
             Closure::new(val::LocalEnv::new(), u0_syn),
         ));
 
@@ -1665,6 +1666,7 @@ mod tests {
         let u0_syn = parse(&db, "U0");
         let pi_val = Rc::new(Value::PiCode(
             u0_val.clone(),
+            Icit::Explicit,
             Closure::new(val::LocalEnv::new(), u0_syn),
         ));
 
@@ -1674,7 +1676,7 @@ mod tests {
         // Now apply f to BitCode (the Bit type code) which has type 𝒰0
         // Construct the application manually: %0 BitCode
         let var_f = crate::syn::parse::parse_syntax_at_depth(&db, "%0", 1).expect("should parse");
-        let app = Syntax::application_rc(var_f, Syntax::BitCode.into());
+        let app = Syntax::application_rc(var_f, Syntax::BitCode.into(), Icit::Explicit);
 
         let ty = type_synth(&mut env, &app).expect("should synthesize");
 
@@ -1695,17 +1697,14 @@ mod tests {
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
-        // NEW: Declare ?[0] : U0 using UniverseCode
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Rc::new(Syntax::UniverseCode(0)));
+        global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let mut env = make_env(&db, &global);
 
-        // ?[0] should synthesize to U0
         let meta_stx = Syntax::metavariable(meta_id, vec![]);
         let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
 
-        // NEW: Using UniverseCode
         match &*ty {
             Value::UniverseCode(level) => assert_eq!(*level, 0),
             _ => panic!("Expected UniverseCode, got {:?}", ty),
@@ -1720,17 +1719,15 @@ mod tests {
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
-        // NEW: Declare ?[0] (%x : U0) : U0 using UniverseCode
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Rc::new(Syntax::UniverseCode(0))],
-            Rc::new(Syntax::UniverseCode(0)),
+            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            parse(&db, "U0"),
         );
 
         let mut env = make_env(&db, &global);
 
-        // ?[0 BitCode] should synthesize to U0
         let bit_code: RcSyntax = Syntax::BitCode.into();
         let meta_stx = Syntax::metavariable(meta_id, vec![bit_code]);
         let ty = type_synth(&mut env, &meta_stx).expect("should synthesize");
@@ -1750,17 +1747,15 @@ mod tests {
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
-        // NEW: Declare ?[0] (%x : U0) : U0 (expects 1 argument) using UniverseCode
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Rc::new(Syntax::UniverseCode(0))],
-            Rc::new(Syntax::UniverseCode(0)),
+            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            parse(&db, "U0"),
         );
 
         let mut env = make_env(&db, &global);
 
-        // ?[0] with no arguments should fail
         let meta_stx = Syntax::metavariable(meta_id, vec![]);
         assert!(type_synth(&mut env, &meta_stx).is_err());
     }
@@ -1773,17 +1768,15 @@ mod tests {
         let db = TestDatabase::default();
         let mut global = val::GlobalEnv::new();
 
-        // NEW: Declare ?[0] (%x : $Bit) : U0 (expects Bit type) using BitCode
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Rc::new(Syntax::BitCode)],
-            Rc::new(Syntax::UniverseCode(0)),
+            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "$Bit"))]),
+            parse(&db, "U0"),
         );
 
         let mut env = make_env(&db, &global);
 
-        // ?[0 U0] with universe instead of $Bit should fail
         let u0 = parse(&db, "U0");
         let meta_stx = Syntax::metavariable(meta_id, vec![u0]);
         assert!(type_synth(&mut env, &meta_stx).is_err());
@@ -2331,34 +2324,17 @@ mod tests {
         // the underlying mechanism: using transport to cast from Vec A (n + n)
         // to Vec A m given a proof that (n + n) = m.
 
+        use crate::test_utils::load_prelude;
+
         let db = TestDatabase::default();
-        let mut global = val::GlobalEnv::new();
 
-        // First, set up the type environment with Nat and Vec
-        // For this test, we'll use primitives to represent these types
-
-        // Register Nat : U0
-        let nat_id = "Nat".into_with_db(&db);
-        global.add_type_constructor(
-            nat_id,
-            val::TypeConstructorInfo::new(vec![], 0, UniverseLevel::new(0)),
-        );
-
-        // Register Vec : (A : U0) -> Nat -> U0
-        // Vec has one parameter (A : U0) and one index (n : Nat)
-        let vec_id = "Vec".into_with_db(&db);
-        let u0_syn: RcSyntax = Syntax::UniverseCode(0).into();
-        let nat_syn = Syntax::type_constructor_rc(nat_id, vec![]);
-        global.add_type_constructor(
-            vec_id,
-            val::TypeConstructorInfo::new(
-                vec![u0_syn.clone(), nat_syn.clone()],
-                1, // One parameter (A), one index (n)
-                UniverseLevel::new(0),
-            ),
-        );
+        // Set up Nat and Vec type constructors via prelude
+        let prelude = "tcon @Nat : -> U0 where dcon @Z : #[@Nat]; tcon @Vec (%a : U0) : (%n : #[@Nat]) -> U0 where dcon @VNil : #[@Vec %a [@Z]];";
+        let global = load_prelude(&db, prelude);
 
         let mut env = make_env(&db, &global);
+        let nat_id = "Nat".into_with_db(&db);
+        let vec_id = "Vec".into_with_db(&db);
         let u0: RcValue = Value::UniverseCode(0).into();
         let nat_val = Value::type_constructor_rc(nat_id, vec![]);
 
@@ -2569,7 +2545,7 @@ mod tests {
         let lam_expr = parse(&db, "λ %A → let %B : U0 = %A; %B");
         let u0: RcValue = Value::UniverseCode(0).into();
         let u0_closure = val::Closure::new(val::LocalEnv::new(), Syntax::UniverseCode(0).into());
-        let pi_ty: RcValue = Value::PiCode(u0, u0_closure).into();
+        let pi_ty: RcValue = Value::PiCode(u0, Icit::Explicit, u0_closure).into();
         let result = type_check(&mut env, &lam_expr, &pi_ty);
         assert!(result.is_ok(), "type_check failed: {:?}", result.err());
     }
@@ -2585,7 +2561,7 @@ mod tests {
         let lam_expr = parse(&db, "λ %x → let %y : U0 = %x; %y");
         let u0: RcValue = Value::UniverseCode(0).into();
         let u0_closure = val::Closure::new(val::LocalEnv::new(), Syntax::UniverseCode(0).into());
-        let pi_ty: RcValue = Value::PiCode(u0.clone(), u0_closure).into();
+        let pi_ty: RcValue = Value::PiCode(u0.clone(), Icit::Explicit, u0_closure).into();
         let result = type_check(&mut env, &lam_expr, &pi_ty);
         assert!(result.is_ok(), "type_check failed: {:?}", result.err());
     }
@@ -2601,7 +2577,8 @@ mod tests {
         // ∀ (%x : U0) → U0 should have type U1 (max(0, 0) = 0, so Pi : U1)
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
-            Binding(Syntax::UniverseCode(0).into()),
+            Icit::Explicit,
+            Binding::anonymous(Syntax::UniverseCode(0).into()),
         )
         .into();
         let u1: RcValue = Value::UniverseCode(1).into();
@@ -2611,7 +2588,8 @@ mod tests {
         // ∀ (%x : U0) → U1 should have type U2 (max(0, 1) = 1, so Pi : U2)
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
-            Binding(Syntax::UniverseCode(1).into()),
+            Icit::Explicit,
+            Binding::anonymous(Syntax::UniverseCode(1).into()),
         )
         .into();
         let u2: RcValue = Value::UniverseCode(2).into();
@@ -2621,7 +2599,8 @@ mod tests {
         // ∀ (%x : U1) → U0 should have type U2 (max(1, 0) = 1, so Pi : U2)
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(1).into(),
-            Binding(Syntax::UniverseCode(0).into()),
+            Icit::Explicit,
+            Binding::anonymous(Syntax::UniverseCode(0).into()),
         )
         .into();
         let u2: RcValue = Value::UniverseCode(2).into();
@@ -2638,7 +2617,8 @@ mod tests {
         // ∀ (%x : U0) → U0 can be checked against U2 (cumulativity: U1 <= U2)
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
-            Binding(Syntax::UniverseCode(0).into()),
+            Icit::Explicit,
+            Binding::anonymous(Syntax::UniverseCode(0).into()),
         )
         .into();
         let u2: RcValue = Value::UniverseCode(2).into();
@@ -2659,7 +2639,8 @@ mod tests {
         // (max(0, 1) = 1, so Pi : U2, but we're checking against U1)
         let pi_expr: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
-            Binding(Syntax::UniverseCode(1).into()),
+            Icit::Explicit,
+            Binding::anonymous(Syntax::UniverseCode(1).into()),
         )
         .into();
         let u1: RcValue = Value::UniverseCode(1).into();

@@ -90,7 +90,7 @@ pub fn eval<'db, 'g>(
         Syntax::UniverseCode(level) => Ok(Rc::new(Value::UniverseCode(*level))),
         Syntax::PiCode(source, icit, target) => {
             let source_val = eval(env, source)?;
-            let closure = Closure::new(env.local.clone(), target.0.clone());
+            let closure = Closure::new(env.local.clone(), target.body.clone());
             Ok(Rc::new(Value::PiCode(source_val, *icit, closure)))
         }
         Syntax::LiftCode(shift, inner) => {
@@ -779,9 +779,9 @@ where
     let mut types = Vec::new();
 
     // Evaluate each binding in the telescope.
-    for ty in &telescope.bindings {
+    for binder in telescope.iter() {
         // Evaluate this type.
-        let ty = eval(&mut env, ty)?;
+        let ty = eval(&mut env, &binder.value)?;
         types.push(ty.clone());
         // Create a variable of this type.
         // TODO: only push the variable if there is another binding.
@@ -796,7 +796,7 @@ mod tests {
     use crate::quote::{quote, type_quote};
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
-    use crate::syn::RcSyntax;
+    use crate::syn::{RcSyntax, Telescope};
     use crate::TestDatabase;
 
     /// Test helper context
@@ -922,7 +922,8 @@ mod tests {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // λ x → x at ∀ (x : U0) → U0
-        assert_eq!(c.eval_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %0 → %0");
+        // Values don't preserve names, so quoted lambdas use "_"
+        assert_eq!(c.eval_at("λ %x → %x", "∀ (%x : U0) → U0"), "λ %_ → %_");
     }
 
     #[test]
@@ -1013,6 +1014,7 @@ mod tests {
     fn test_eval_metavariable_no_args() {
         // A metavariable with no arguments evaluates to a Flex neutral
         use crate::common::MetaVariableId;
+        use crate::test_utils::parse;
         use crate::val::GlobalEnv;
 
         let db = TestDatabase::default();
@@ -1020,7 +1022,7 @@ mod tests {
 
         // Declare ?[0] : U0
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
+        global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let mut env = Environment::new(&global);
         let meta_stx = Syntax::metavariable(meta_id, vec![]);
@@ -1050,17 +1052,18 @@ mod tests {
     fn test_eval_metavariable_with_args() {
         // A metavariable with arguments evaluates to a Flex neutral with a local env
         use crate::common::{Level, MetaVariableId};
+        use crate::test_utils::parse;
         use crate::val::GlobalEnv;
 
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
 
-        // Declare ?[0] (%x : U0) : U0
+        // Declare ?[0] (%0 : U0) : U0
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(
             meta_id,
-            vec![Syntax::UniverseCode(0).into()],
-            Syntax::UniverseCode(0).into(),
+            Telescope::from_pairs(vec![("0".to_string(), parse(&db, "U0"))]),
+            parse(&db, "U0"),
         );
 
         let mut env = Environment::new(&global);
@@ -1099,20 +1102,22 @@ mod tests {
     fn test_eval_metavariable_application() {
         // Applying a Flex neutral to an argument adds to its spine
         use crate::common::MetaVariableId;
+        use crate::test_utils::parse;
         use crate::val::GlobalEnv;
 
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
 
-        // Declare ?[0] : ∀ (%x : U0) → U0
+        // Declare ?[0] : ∀ (%_ : U0) → U0
         let meta_id = MetaVariableId::new(0);
+        let u0_syntax = parse(&db, "U0");
         let pi_ty: RcSyntax = Syntax::PiCode(
-            Syntax::UniverseCode(0).into(),
+            u0_syntax.clone(),
             Icit::Explicit,
-            Binding(Syntax::UniverseCode(0).into()),
+            Binding::anonymous(u0_syntax),
         )
         .into();
-        global.add_metavariable(meta_id, vec![], pi_ty);
+        global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), pi_ty);
 
         let mut env = Environment::new(&global);
         // (?[0])[^sBit] - apply metavariable to ^sBit

@@ -1,5 +1,5 @@
 use crate::{
-    common::{Level, MetaVariableId},
+    common::{Icit, Level, MetaVariableId},
     eval::{self, run_closure},
     val::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
@@ -115,14 +115,19 @@ pub fn equate<'a, 'db: 'a>(
     match ty {
         // NEW: Type codes
         Value::UniverseCode(_level) => type_equiv(global, transparent, depth, lhs, rhs),
-        Value::PiCode(pi_source, pi_target) => {
+        Value::PiCode(pi_source, pi_icit, pi_target) => {
             // Eta-expand both sides and compare
             // Create a fresh variable of the source type
             let arg = Value::variable_rc(Level::new(depth), pi_source.clone());
 
             match (lhs, rhs) {
                 (Value::Lambda(lhs), Value::Lambda(rhs)) => {
-                    // Both are lambdas - compare bodies
+                    // Both are lambdas - STRICT ICIT MATCHING
+                    if lhs.icit != rhs.icit {
+                        return Err(Error::NotConvertible);
+                    }
+
+                    // Compare bodies
                     let lhs_body = lhs.body.apply(global, &arg);
                     let rhs_body = rhs.body.apply(global, &arg);
                     let target_ty = pi_target.apply(global, &arg);
@@ -138,7 +143,7 @@ pub fn equate<'a, 'db: 'a>(
                 (Value::Lambda(lam), other) | (other, Value::Lambda(lam)) => {
                     // One is a lambda, eta-expand the other
                     let lam_body = lam.body.apply(global, &arg);
-                    let other_app = crate::eval::run_application(global, other, arg.clone())?;
+                    let other_app = crate::eval::run_application(global, other, arg.clone(), *pi_icit)?;
                     let target_ty = pi_target.apply(global, &arg);
                     equate(
                         global,
@@ -151,8 +156,8 @@ pub fn equate<'a, 'db: 'a>(
                 }
                 _ => {
                     // Neither is a lambda - eta-expand both
-                    let lhs_app = crate::eval::run_application(global, lhs, arg.clone())?;
-                    let rhs_app = crate::eval::run_application(global, rhs, arg.clone())?;
+                    let lhs_app = crate::eval::run_application(global, lhs, arg.clone(), *pi_icit)?;
+                    let rhs_app = crate::eval::run_application(global, rhs, arg.clone(), *pi_icit)?;
                     let target_ty = pi_target.apply(global, &arg);
                     equate(
                         global,
@@ -471,7 +476,12 @@ pub fn type_equiv<'db>(
                 Err(Error::NotConvertible)
             }
         }
-        (Value::PiCode(s1, t1), Value::PiCode(s2, t2)) => {
+        (Value::PiCode(s1, icit1, t1), Value::PiCode(s2, icit2, t2)) => {
+            // STRICT ICIT MATCHING: {A} → B ≠ (A) → B
+            if icit1 != icit2 {
+                return Err(Error::NotConvertible);
+            }
+
             // Equate source types
             type_equiv(global, transparent, depth, s1, s2)?;
             // Equate target closures under a fresh variable
@@ -596,9 +606,9 @@ fn equate_type_constructors<'db>(
     };
 
     // Compare each argument.
-    for (larg, rarg, syn_ty) in izip!(lhs.iter(), rhs.iter(), type_info.arguments.iter()) {
+    for (larg, rarg, syn_ty_binder) in izip!(lhs.iter(), rhs.iter(), type_info.arguments.iter()) {
         // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty)?;
+        let sem_ty = eval::eval(&mut env, &syn_ty_binder.value)?;
 
         // Check that the arguments are convertible at the evaluated type.
         equate(global, transparent, depth, &larg, &rarg, &sem_ty)?;
@@ -650,9 +660,9 @@ fn equate_data_constructors<'db>(
     };
     env.extend(parameters);
 
-    for (larg, rarg, syn_ty) in izip!(lhs.iter(), rhs.iter(), data_info.arguments.iter()) {
+    for (larg, rarg, syn_ty_binder) in izip!(lhs.iter(), rhs.iter(), data_info.arguments.iter()) {
         // Evaluate the type of the current argument.
-        let sem_ty = eval::eval(&mut env, &syn_ty).map_err(Error::EvalError)?;
+        let sem_ty = eval::eval(&mut env, &syn_ty_binder.value).map_err(Error::EvalError)?;
 
         // Check that the arguments are convertible at the evaluated type.
         equate(global, transparent, depth, &larg, &rarg, &sem_ty)?;
@@ -854,6 +864,11 @@ pub fn equate_applications<'db>(
     lhs: &Application<'db>,
     rhs: &Application<'db>,
 ) -> Result<'db> {
+    // STRICT ICIT MATCHING: f {x} ≠ f x
+    if lhs.icit != rhs.icit {
+        return Err(Error::NotConvertible);
+    }
+
     // Compare arguments - but we need the type to do proper typed equality
     // For now, do structural comparison
     equate_normals(global, transparent, depth, &lhs.argument, &rhs.argument)
@@ -905,7 +920,7 @@ pub fn equate_cases<'db>(
     for (lparam, rparam, syn_ty) in izip!(
         lhs.parameters.iter(),
         rhs.parameters.iter(),
-        type_info.parameters().iter()
+        type_info.parameters()
     ) {
         // Evaluate the type of the current parameter.
         let sem_ty = eval::eval(&mut env, syn_ty).map_err(Error::EvalError)?;
@@ -1114,7 +1129,7 @@ pub fn equate_levels<'db>(
 mod tests {
     use super::*;
     use crate::common::{Index, MetaVariableId, UniverseLevel};
-    use crate::syn::Syntax;
+    use crate::syn::{Syntax, Telescope};
     use crate::val::{GlobalEnv, LocalEnv, Spine};
     use std::rc::Rc;
 
@@ -1139,9 +1154,13 @@ mod tests {
 
     #[test]
     fn test_equate_flexes_same_meta_empty_spine() {
+        use crate::test_utils::parse;
+        use crate::TestDatabase;
+
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
+        global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let transparent = TransparentEnv::new();
         let u0_ty: RcValue = Value::UniverseCode(0).into();
@@ -1154,11 +1173,15 @@ mod tests {
 
     #[test]
     fn test_equate_flexes_different_metas() {
+        use crate::test_utils::parse;
+        use crate::TestDatabase;
+
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
         let meta_id1 = MetaVariableId::new(0);
         let meta_id2 = MetaVariableId::new(1);
-        global.add_metavariable(meta_id1, vec![], Syntax::UniverseCode(0).into());
-        global.add_metavariable(meta_id2, vec![], Syntax::UniverseCode(0).into());
+        global.add_metavariable(meta_id1, Telescope::from_pairs(vec![]), parse(&db, "U0"));
+        global.add_metavariable(meta_id2, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let transparent = TransparentEnv::new();
         let u0_ty: RcValue = Value::UniverseCode(0).into();
@@ -1178,10 +1201,14 @@ mod tests {
 
     #[test]
     fn test_equate_flex_instances() {
+        use crate::test_utils::parse;
+        use crate::TestDatabase;
+
         // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
+        let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
         let meta_id = MetaVariableId::new(0);
-        global.add_metavariable(meta_id, vec![], Syntax::UniverseCode(0).into());
+        global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let transparent = TransparentEnv::new();
         let u0_ty: RcValue = Value::UniverseCode(0).into();
@@ -1269,7 +1296,7 @@ mod tests {
 
         // Create the identity function: λx : Bit. x
         let bit_ty = Value::bit_rc();
-        let identity = Value::lambda_rc(val::Closure::new(
+        let identity = Value::lambda_rc(Icit::Explicit, val::Closure::new(
             LocalEnv::new(),
             Rc::new(Syntax::variable(Index(0))),
         ));
@@ -1282,7 +1309,7 @@ mod tests {
         // f is at level 0, applied to zero
         let zero_val = Value::zero_rc();
         let zero_normal = val::Normal::new(bit_ty.clone(), zero_val.clone());
-        let app_eliminator = val::Eliminator::application(zero_normal);
+        let app_eliminator = val::Eliminator::application(zero_normal, Icit::Explicit);
         let spine = val::Spine::new(vec![app_eliminator]);
         let f_applied = Value::rigid_rc(val::Variable::new(Level::new(0)), spine, bit_ty.clone());
 
