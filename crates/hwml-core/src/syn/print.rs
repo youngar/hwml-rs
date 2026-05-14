@@ -1,3 +1,4 @@
+use crate::common::Icit;
 use crate::syn::*;
 use crate::*;
 use elegance::{Io, Printer, Render};
@@ -33,6 +34,15 @@ pub fn print_module_to_string<'db>(
 ) -> String {
     let mut p = Printer::new(String::new(), 80);
     let _ = print_module(db, module, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+pub fn print_constant_decl_to_string<'db>(
+    db: &'db dyn salsa::Database,
+    constant: &ConstantDecl<'db>,
+) -> String {
+    let mut p = Printer::new(String::new(), 80);
+    let _ = print_constant_decl(db, constant, &mut p);
     p.finish().unwrap_or_default()
 }
 
@@ -469,16 +479,25 @@ impl<'db> Print for Syntax<'db> {
                 p.text_owned(&format!("↑{} ", shift))?;
                 inner.print(db, st, p)
             }
-            Syntax::PiCode(source, target) => {
+            Syntax::PiCode(source, icit, target) => {
+                // Show different syntax for implicit vs explicit
+                use crate::common::Icit;
                 p.text("∀")?;
                 p.space()?;
-                p.text("(")?;
+                // Use {...} for implicit, (...) for explicit
+                match icit {
+                    Icit::Implicit => p.text("{")?,
+                    Icit::Explicit => p.text("(")?,
+                }
                 p.text_owned(&format!("%{}", st.depth))?;
                 p.space()?;
                 p.text(":")?;
                 p.space()?;
                 source.print(db, st, p)?;
-                p.text(")")?;
+                match icit {
+                    Icit::Implicit => p.text("}")?,
+                    Icit::Explicit => p.text(")")?,
+                }
                 p.space()?;
                 p.text("→")?;
                 p.space()?;
@@ -585,6 +604,7 @@ impl<'db> Print for Lambda<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
+        use crate::common::Icit;
         ensure(st, p, LAMBDA, |st, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
@@ -592,7 +612,17 @@ impl<'db> Print for Lambda<'db> {
                 p.cgroup(0, |p| {
                     p.text("λ ")?;
                     loop {
-                        print_binder(st, p, &next.body)?;
+                        // Show {binder} for implicit, binder for explicit
+                        match next.icit {
+                            Icit::Implicit => {
+                                p.text("{")?;
+                                print_binder(st, p, &next.body)?;
+                                p.text("}")?;
+                            }
+                            Icit::Explicit => {
+                                print_binder(st, p, &next.body)?;
+                            }
+                        }
                         st = st.inc_depth();
                         match next.body.term().as_ref() {
                             Syntax::Lambda(lam) => next = &lam,
@@ -617,29 +647,48 @@ impl<'db> Print for Application<'db> {
         st: State,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
+        use crate::common::Icit;
         ensure(st, p, APP, |st, p| {
-            // Collect all nested applications into a flat list
-            let mut args = vec![];
+            // Collect all nested applications into a flat list with their icits
+            let mut args_with_icit = vec![];
             let mut current = self;
             let function = loop {
-                args.push(current.argument.clone());
+                args_with_icit.push((current.argument.clone(), current.icit));
                 match current.function.as_ref() {
                     Syntax::Application(app) => current = &app,
                     _ => break &current.function,
                 }
             };
-            args.reverse();
+            args_with_icit.reverse();
 
-            // Print: function[arg1, arg2, arg3]
+            // Print: function[arg1, {arg2}, arg3] (show implicit args with braces)
             p.cgroup(0, |p| {
                 print_internal_subterm(db, st, p, &**function)?;
                 p.text("[")?;
-                if let Some((first, rest)) = args.split_first() {
-                    print_internal_subterm(db, st, p, &**first)?;
-                    for arg in rest {
+                if let Some(((first_arg, first_icit), rest)) = args_with_icit.split_first() {
+                    match first_icit {
+                        Icit::Implicit => {
+                            p.text("{")?;
+                            print_internal_subterm(db, st, p, &**first_arg)?;
+                            p.text("}")?;
+                        }
+                        Icit::Explicit => {
+                            print_internal_subterm(db, st, p, &**first_arg)?;
+                        }
+                    }
+                    for (arg, icit) in rest {
                         p.text(",")?;
                         p.space()?;
-                        print_internal_subterm(db, st, p, &**arg)?;
+                        match icit {
+                            Icit::Implicit => {
+                                p.text("{")?;
+                                print_internal_subterm(db, st, p, &**arg)?;
+                                p.text("}")?;
+                            }
+                            Icit::Explicit => {
+                                print_internal_subterm(db, st, p, &**arg)?;
+                            }
+                        }
                     }
                 }
                 p.text("]")
@@ -1050,31 +1099,38 @@ mod tests {
         let db = TestDatabase::default();
         let pi1: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
+            Icit::Explicit,
             Binding(Syntax::UniverseCode(1).into()),
         )
         .into();
         assert_snapshot!(p(&db, &pi1), @"∀ (%0 : 𝒰0) → 𝒰1");
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::variable_rc(Index(0)),
+            Icit::Explicit,
             Binding(Syntax::variable_rc(Index(0))),
         )
         .into();
-        let pi2: RcSyntax = Syntax::PiCode(Syntax::UniverseCode(0).into(), Binding(inner)).into();
+        let pi2: RcSyntax = Syntax::PiCode(
+            Syntax::UniverseCode(0).into(),
+            Icit::Explicit,
+            Binding(inner),
+        )
+        .into();
         assert_snapshot!(p(&db, &pi2), @"∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %1");
     }
 
     #[test]
     fn print_lambda() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::lambda_rc(Binding(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding(Syntax::lambda_rc(Icit::Explicit, Binding(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
     }
 
     #[test]
     fn print_application() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)))), @"@/f[@/x]");
-        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db))), Syntax::constant_rc("y".into_with_db(&db)))), @"@/f[@/x, @/y]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)), Icit::Explicit)), @"@/f[@/x]");
+        assert_snapshot!(p(&db, &Syntax::application(Syntax::application_rc(Syntax::constant_rc("f".into_with_db(&db)), Syntax::constant_rc("x".into_with_db(&db)), Icit::Explicit), Syntax::constant_rc("y".into_with_db(&db)), Icit::Explicit)), @"@/f[@/x, @/y]");
     }
 
     // =========================================================================
@@ -1100,7 +1156,7 @@ mod tests {
         let db = TestDatabase::default();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
-        assert_snapshot!(p(&db, &Syntax::lambda_rc(Binding(Syntax::case_rc(
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Icit::Explicit, Binding(Syntax::case_rc(
                         Index(0),
             vec![
                 CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(0, Syntax::constant_rc("a".into_with_db(&db)))),
@@ -1192,7 +1248,7 @@ mod tests {
         assert_snapshot!(p(&db, &transport), @"transport !2 to !0 by refl");
 
         // Test with lambda motive - keywords eliminate need for parentheses
-        let lambda_motive = Syntax::lambda_rc(Binding(Syntax::bit_rc()));
+        let lambda_motive = Syntax::lambda_rc(Icit::Explicit, Binding(Syntax::bit_rc()));
         let transport2 = Syntax::transport_rc(lambda_motive, Syntax::refl_rc(), Syntax::zero_rc());
         assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %0 → Bit by refl");
     }
@@ -1250,7 +1306,7 @@ mod tests {
     #[test]
     fn print_variable_bound() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::lambda(Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
     }
 
     #[test]
