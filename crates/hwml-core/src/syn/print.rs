@@ -6,10 +6,44 @@ use elegance::{Io, Printer, Render};
 const INDENT: isize = 2;
 const COLUMNS: usize = 80;
 
+/// Stack of binder names in binding order (innermost at the end).
+type NameStack = Vec<String>;
+
+trait NameStackExt {
+    /// Push a name, freshening if it shadows an existing binding.
+    /// Returns the freshened name. Anonymous binders ("_") are never freshened.
+    fn push_fresh(&mut self, name: String) -> String;
+}
+
+impl NameStackExt for NameStack {
+    fn push_fresh(&mut self, name: String) -> String {
+        if name == "_" {
+            self.push(name.clone());
+            return name;
+        }
+
+        if !self.contains(&name) {
+            self.push(name.clone());
+            return name;
+        }
+
+        let mut suffix = 1;
+        loop {
+            let fresh_name = format!("{}_{}", name, suffix);
+            if !self.contains(&fresh_name) {
+                self.push(fresh_name.clone());
+                return fresh_name;
+            }
+            suffix += 1;
+        }
+    }
+}
+
 pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
     let st = State::new();
-    let _ = syntax.print(db, st, &mut p);
+    let mut names = NameStack::new();
+    let _ = syntax.print(db, st, &mut names, &mut p);
     let _ = p.hard_break();
     let _ = p.finish();
 }
@@ -17,13 +51,15 @@ pub fn dump_syntax<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) {
 pub fn print_syntax_to_string<'db>(db: &'db dyn salsa::Database, syntax: &Syntax<'db>) -> String {
     let mut p = Printer::new(String::new(), 80);
     let st = State::new();
-    let _ = syntax.print(db, st, &mut p);
+    let mut names = NameStack::new();
+    let _ = syntax.print(db, st, &mut names, &mut p);
     p.finish().unwrap_or_default()
 }
 
 pub fn dump_module<'db>(db: &'db dyn salsa::Database, module: &CompilationUnit<'db>) {
     let mut p = Printer::new(Io(std::io::stdout()), COLUMNS);
-    let _ = print_module(db, module, &mut p);
+    let mut names = NameStack::new();
+    let _ = print_module(db, module, &mut names, &mut p);
     let _ = p.hard_break();
     let _ = p.finish();
 }
@@ -33,7 +69,8 @@ pub fn print_module_to_string<'db>(
     module: &CompilationUnit<'db>,
 ) -> String {
     let mut p = Printer::new(String::new(), 80);
-    let _ = print_module(db, module, &mut p);
+    let mut names = NameStack::new();
+    let _ = print_module(db, module, &mut names, &mut p);
     p.finish().unwrap_or_default()
 }
 
@@ -42,25 +79,27 @@ pub fn print_constant_decl_to_string<'db>(
     constant: &ConstantDecl<'db>,
 ) -> String {
     let mut p = Printer::new(String::new(), 80);
-    let _ = print_constant_decl(db, constant, &mut p);
+    let mut names = NameStack::new();
+    let _ = print_constant_decl(db, constant, &mut names, &mut p);
     p.finish().unwrap_or_default()
 }
 
 fn print_module<'db, R: Render>(
     db: &'db dyn salsa::Database,
     module: &CompilationUnit<'db>,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     let mut iter = module.declarations.iter();
 
     // Print the first element
     if let Some(first) = iter.next() {
-        print_declaration(db, first, p)?;
+        print_declaration(db, first, ns, p)?;
 
         // Print remaining elements with hard break before each
         for decl in iter {
             p.hard_break()?;
-            print_declaration(db, decl, p)?;
+            print_declaration(db, decl, ns, p)?;
         }
     }
 
@@ -70,26 +109,28 @@ fn print_module<'db, R: Render>(
 fn print_declaration<'db, R: Render>(
     db: &'db dyn salsa::Database,
     decl: &Declaration<'db>,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     match decl {
-        Declaration::PrimitiveDecl(prim) => print_primitive_decl(db, prim, p),
-        Declaration::ConstantDecl(c) => print_constant_decl(db, c, p),
-        Declaration::TypeConstructorDecl(tc) => print_type_constructor_decl(db, tc, p),
-        Declaration::MetavariableDecl(meta) => print_metavariable_decl(db, meta, p),
+        Declaration::PrimitiveDecl(prim) => print_primitive_decl(db, prim, ns, p),
+        Declaration::ConstantDecl(c) => print_constant_decl(db, c, ns, p),
+        Declaration::TypeConstructorDecl(tc) => print_type_constructor_decl(db, tc, ns, p),
+        Declaration::MetavariableDecl(meta) => print_metavariable_decl(db, meta, ns, p),
     }
 }
 
 pub fn print_primitive_decl<'db, R: Render>(
     db: &'db dyn salsa::Database,
     prim: &PrimitiveDecl<'db>,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("prim $")?;
     p.text_owned(prim.name.to_string(db))?;
     p.text(" : ")?;
     let st = State::new();
-    prim.ty.print(db, st, p)?;
+    prim.ty.print(db, st, ns, p)?;
     p.text(";")?;
     Ok(())
 }
@@ -97,15 +138,16 @@ pub fn print_primitive_decl<'db, R: Render>(
 pub fn print_constant_decl<'db, R: Render>(
     db: &'db dyn salsa::Database,
     c: &ConstantDecl<'db>,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("const @")?;
     p.text_owned(c.name.to_string(db))?;
     p.text(" : ")?;
     let st = State::new();
-    c.ty.print(db, st, p)?;
+    c.ty.print(db, st, ns, p)?;
     p.text(" = ")?;
-    c.value.print(db, st, p)?;
+    c.value.print(db, st, ns, p)?;
     p.text(";")?;
     Ok(())
 }
@@ -113,36 +155,45 @@ pub fn print_constant_decl<'db, R: Render>(
 pub fn print_type_constructor_decl<'db, R: Render>(
     db: &'db dyn salsa::Database,
     tc: &TypeConstructorDecl<'db>,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("tcon @")?;
     p.text_owned(tc.name.to_string(db))?;
 
-    // Print parameters as telescope
+    // Print parameters as telescope with names
     let mut st = State::new();
-    for param_ty in tc.parameters.iter() {
+    for binder in tc.parameters.iter() {
         p.text(" (%")?;
-        p.text_owned(format!("{}", st.depth))?;
+        p.text_owned(binder.name.clone())?;
         p.text(" : ")?;
-        param_ty.print(db, st, p)?;
+        binder.value.print(db, st, ns, p)?;
         p.text(")")?;
+        // Push the name AFTER printing the type (with freshening to avoid shadowing ambiguity)
+        ns.push_fresh(binder.name.clone());
         st = st.inc_depth();
     }
 
     p.text(" : ")?;
 
-    // Print indices as telescope
-    for index_ty in tc.indices.iter() {
+    // Print indices as telescope with names
+    for binder in tc.indices.iter() {
         p.text("(%")?;
-        p.text_owned(format!("{}", st.depth))?;
+        p.text_owned(binder.name.clone())?;
         p.text(" : ")?;
-        index_ty.print(db, st, p)?;
+        binder.value.print(db, st, ns, p)?;
         p.text(") ")?;
+        // Push the name AFTER printing the type (with freshening to avoid shadowing ambiguity)
+        ns.push_fresh(binder.name.clone());
         st = st.inc_depth();
     }
 
     p.text("-> ")?;
-    tc.universe.print(db, st, p)?;
+    tc.universe.print(db, st, ns, p)?;
+
+    for _ in 0..tc.indices.len() {
+        ns.pop();
+    }
 
     let dcon_base_st = State::new().with_depth(tc.parameters.len());
 
@@ -152,46 +203,56 @@ pub fn print_type_constructor_decl<'db, R: Render>(
         for dcon in &tc.data_constructors {
             p.text("    dcon @")?;
             p.text_owned(dcon.name.to_string(db))?;
-            // Print dcon parameters as telescope, then result type
             let mut dcon_st = dcon_base_st;
-            for param_ty in dcon.parameters.iter() {
+            let dcon_param_count = dcon.parameters.len();
+            for binder in dcon.parameters.iter() {
                 p.text(" (%")?;
-                p.text_owned(format!("{}", dcon_st.depth))?;
+                p.text_owned(binder.name.clone())?;
                 p.text(" : ")?;
-                param_ty.print(db, dcon_st, p)?;
+                binder.value.print(db, dcon_st, ns, p)?;
                 p.text(")")?;
+                ns.push_fresh(binder.name.clone());
                 dcon_st = dcon_st.inc_depth();
             }
             p.text(" : ")?;
-            dcon.result_type.print(db, dcon_st, p)?;
+            dcon.result_type.print(db, dcon_st, ns, p)?;
             p.hard_break()?;
+
+            for _ in 0..dcon_param_count {
+                ns.pop();
+            }
         }
     }
     p.text(";")?;
+
+    for _ in 0..tc.parameters.len() {
+        ns.pop();
+    }
+
     Ok(())
 }
 
 pub fn print_metavariable_decl<'db, R: Render>(
     db: &'db dyn salsa::Database,
     meta: &MetavariableDecl<'db>,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
 ) -> Result<(), R::Error> {
     p.text("meta ?[")?;
     p.text_owned(format!("{}", meta.id))?;
     p.text("]")?;
     let mut st = State::new();
-    // Print argument telescope
-    for arg_ty in meta.arguments.iter() {
+    for arg_binder in meta.arguments.iter() {
         p.text(" (")?;
         p.text("%")?;
         p.text_owned(format!("{}", st.depth))?;
         p.text(" : ")?;
-        arg_ty.print(db, st, p)?;
+        arg_binder.value.print(db, st, ns, p)?;
         p.text(")")?;
         st = st.inc_depth();
     }
     p.text(" : ")?;
-    meta.ty.print(db, st, p)?;
+    meta.ty.print(db, st, ns, p)?;
     p.text(";")?;
     Ok(())
 }
@@ -297,6 +358,7 @@ trait Print {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error>;
 }
@@ -304,6 +366,7 @@ trait Print {
 fn print_lhs_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
     x: &A,
     lhs_prec: Option<usize>,
@@ -312,12 +375,13 @@ where
     R: Render,
     A: Print,
 {
-    x.print(db, st.set_rhs_prec(lhs_prec), p)
+    x.print(db, st.set_rhs_prec(lhs_prec), ns, p)
 }
 
 fn print_rhs_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
     x: &A,
     rhs_prec: Option<usize>,
@@ -326,12 +390,13 @@ where
     R: Render,
     A: Print,
 {
-    x.print(db, st.set_lhs_prec(rhs_prec), p)
+    x.print(db, st.set_lhs_prec(rhs_prec), ns, p)
 }
 
 fn print_internal_subterm<R, A>(
     db: &dyn salsa::Database,
     st: State,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
     x: &A,
 ) -> Result<(), R::Error>
@@ -339,17 +404,18 @@ where
     R: Render,
     A: Print,
 {
-    x.print(db, st.set_prec((None, None)), p)
+    x.print(db, st.set_prec((None, None)), ns, p)
 }
 
 fn ensure_precedence<F, R>(
     st: State,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
     (lhs_prec, rhs_prec): Precedence,
     f: F,
 ) -> Result<(), R::Error>
 where
-    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    F: FnOnce(State, &mut NameStack, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
 {
     // If the parent binds tighter, or if equal, then we need parens to ensure
@@ -368,52 +434,20 @@ where
     if need_parens {
         p.igroup(INDENT, |p| {
             p.text("(")?;
-            f(st.set_prec((None, None)), p)?;
+            f(st.set_prec((None, None)), ns, p)?;
             p.text(")")
         })
     } else {
-        f(st, p)
+        f(st, ns, p)
     }
 }
 
-fn ensure<F, R>(st: State, p: &mut Printer<R>, properties: Properties, f: F) -> Result<(), R::Error>
+fn ensure<F, R>(st: State, ns: &mut NameStack, p: &mut Printer<R>, properties: Properties, f: F) -> Result<(), R::Error>
 where
-    F: FnOnce(State, &mut Printer<R>) -> Result<(), R::Error>,
+    F: FnOnce(State, &mut NameStack, &mut Printer<R>) -> Result<(), R::Error>,
     R: Render,
 {
-    ensure_precedence(st, p, properties.precedence, f)
-}
-
-fn print_binder<'db, R>(
-    st: State,
-    p: &mut Printer<R>,
-    _binding: &BindingSyntax<'db>,
-) -> Result<(), R::Error>
-where
-    R: Render,
-{
-    p.text_owned(format!("%{}", st.depth))
-}
-
-#[allow(dead_code)]
-fn print_binders<'db, R>(
-    st: State,
-    p: &mut Printer<R>,
-    binding: &DynBindingSyntax<'db>,
-) -> Result<(), R::Error>
-where
-    R: Render,
-{
-    if binding.arity == 0 {
-        return Ok(());
-    }
-    let depth = st.depth;
-    let _ = p.text_owned(format!("%{}", depth));
-    for i in 1..binding.arity {
-        p.space()?;
-        let _ = p.text_owned(format!("%{}", depth + i));
-    }
-    Ok(())
+    ensure_precedence(st, ns, p, properties.precedence, f)
 }
 
 impl<'db> Print for QualifiedName<'db> {
@@ -421,6 +455,7 @@ impl<'db> Print for QualifiedName<'db> {
         &self,
         db: &dyn salsa::Database,
         _st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         p.text_owned(&format!("@{}", self.to_string(db)))
@@ -432,9 +467,10 @@ impl<'db> Print for RcSyntax<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        self.as_ref().print(db, st, p)
+        self.as_ref().print(db, st, ns, p)
     }
 }
 
@@ -446,10 +482,18 @@ where
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
+        // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
+        ns.push_fresh(self.name.clone());
+
         let st = st.inc_depth();
-        self.term().print(db, st, p)
+        let result = self.term().print(db, st, ns, p);
+
+        // Pop the name after printing the body
+        ns.pop();
+        result
     }
 }
 
@@ -458,10 +502,20 @@ impl<'db> Print for DynBindingSyntax<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
+        for name in self.names.iter() {
+            ns.push_fresh(name.clone());
+        }
+
         let st = st.under_binders(st.depth + self.arity);
-        self.body.print(db, st, p)
+        let result = self.body.print(db, st, ns, p);
+
+        for _ in 0..self.arity {
+            ns.pop();
+        }
+        result
     }
 }
 
@@ -470,6 +524,7 @@ impl<'db> Print for Syntax<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         match self {
@@ -477,14 +532,12 @@ impl<'db> Print for Syntax<'db> {
             Syntax::UniverseCode(level) => p.text_owned(&format!("𝒰{}", level)),
             Syntax::LiftCode(shift, inner) => {
                 p.text_owned(&format!("↑{} ", shift))?;
-                inner.print(db, st, p)
+                inner.print(db, st, ns, p)
             }
             Syntax::PiCode(source, icit, target) => {
-                // Show different syntax for implicit vs explicit
                 use crate::common::Icit;
                 p.text("∀")?;
                 p.space()?;
-                // Use {...} for implicit, (...) for explicit
                 match icit {
                     Icit::Implicit => p.text("{")?,
                     Icit::Explicit => p.text("(")?,
@@ -493,7 +546,7 @@ impl<'db> Print for Syntax<'db> {
                 p.space()?;
                 p.text(":")?;
                 p.space()?;
-                source.print(db, st, p)?;
+                source.print(db, st, ns, p)?;
                 match icit {
                     Icit::Implicit => p.text("}")?,
                     Icit::Explicit => p.text(")")?,
@@ -501,43 +554,43 @@ impl<'db> Print for Syntax<'db> {
                 p.space()?;
                 p.text("→")?;
                 p.space()?;
-                target.print(db, st, p)
+                target.print(db, st, ns, p)
             }
             Syntax::BitCode => p.text("$Bit"),
 
             // Terms
-            Syntax::Lambda(lam) => lam.print(db, st, p),
-            Syntax::Application(app) => app.print(db, st, p),
-            Syntax::Let(let_expr) => let_expr.print(db, st, p),
+            Syntax::Lambda(lam) => lam.print(db, st, ns, p),
+            Syntax::Application(app) => app.print(db, st, ns, p),
+            Syntax::Let(let_expr) => let_expr.print(db, st, ns, p),
 
-            Syntax::TypeConstructor(type_constructor) => type_constructor.print(db, st, p),
-            Syntax::DataConstructor(data_constructor) => data_constructor.print(db, st, p),
-            Syntax::Case(case) => case.print(db, st, p),
+            Syntax::TypeConstructor(type_constructor) => type_constructor.print(db, st, ns, p),
+            Syntax::DataConstructor(data_constructor) => data_constructor.print(db, st, ns, p),
+            Syntax::Case(case) => case.print(db, st, ns, p),
 
-            Syntax::Eq(eq) => eq.print(db, st, p),
-            Syntax::Refl(refl) => refl.print(db, st, p),
-            Syntax::Transport(transport) => transport.print(db, st, p),
+            Syntax::Eq(eq) => eq.print(db, st, ns, p),
+            Syntax::Refl(refl) => refl.print(db, st, ns, p),
+            Syntax::Transport(transport) => transport.print(db, st, ns, p),
 
-            Syntax::HardwareUniverse(hwu) => hwu.print(db, st, p),
-            Syntax::SLift(slift) => slift.print(db, st, p),
-            Syntax::MLift(mlift) => mlift.print(db, st, p),
+            Syntax::HardwareUniverse(hwu) => hwu.print(db, st, ns, p),
+            Syntax::SLift(slift) => slift.print(db, st, ns, p),
+            Syntax::MLift(mlift) => mlift.print(db, st, ns, p),
 
-            Syntax::SignalUniverse(sig) => sig.print(db, st, p),
-            Syntax::Bit(bit) => bit.print(db, st, p),
-            Syntax::Zero(zero) => zero.print(db, st, p),
-            Syntax::One(one) => one.print(db, st, p),
+            Syntax::SignalUniverse(sig) => sig.print(db, st, ns, p),
+            Syntax::Bit(bit) => bit.print(db, st, ns, p),
+            Syntax::Zero(zero) => zero.print(db, st, ns, p),
+            Syntax::One(one) => one.print(db, st, ns, p),
 
-            Syntax::ModuleUniverse(mty) => mty.print(db, st, p),
-            Syntax::HArrow(harrow) => harrow.print(db, st, p),
-            Syntax::Module(module) => module.print(db, st, p),
-            Syntax::HApplication(app) => app.print(db, st, p),
+            Syntax::ModuleUniverse(mty) => mty.print(db, st, ns, p),
+            Syntax::HArrow(harrow) => harrow.print(db, st, ns, p),
+            Syntax::Module(module) => module.print(db, st, ns, p),
+            Syntax::HApplication(app) => app.print(db, st, ns, p),
 
-            Syntax::Prim(prim) => prim.print(db, st, p),
-            Syntax::Constant(constant) => constant.print(db, st, p),
-            Syntax::Variable(var) => var.print(db, st, p),
-            Syntax::Metavariable(meta) => meta.print(db, st, p),
+            Syntax::Prim(prim) => prim.print(db, st, ns, p),
+            Syntax::Constant(constant) => constant.print(db, st, ns, p),
+            Syntax::Variable(var) => var.print(db, st, ns, p),
+            Syntax::Metavariable(meta) => meta.print(db, st, ns, p),
 
-            Syntax::Check(chk) => chk.print(db, st, p),
+            Syntax::Check(chk) => chk.print(db, st, ns, p),
         }
     }
 }
@@ -547,16 +600,17 @@ impl<'db> Print for EqType<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, APP, |st, p| {
+        ensure(st, ns, p, APP, |st, ns, p| {
             p.text("Eq")?;
             p.space()?;
-            print_rhs_subterm(db, st, p, &*self.ty, APP.rhs_prec())?;
+            print_rhs_subterm(db, st, ns, p, &*self.ty, APP.rhs_prec())?;
             p.space()?;
-            print_rhs_subterm(db, st, p, &*self.lhs, APP.rhs_prec())?;
+            print_rhs_subterm(db, st, ns, p, &*self.lhs, APP.rhs_prec())?;
             p.space()?;
-            print_rhs_subterm(db, st, p, &*self.rhs, APP.rhs_prec())
+            print_rhs_subterm(db, st, ns, p, &*self.rhs, APP.rhs_prec())
         })
     }
 }
@@ -566,6 +620,7 @@ impl<'db> Print for Refl<'db> {
         &self,
         _db: &dyn salsa::Database,
         _st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         p.text("refl")
@@ -577,22 +632,23 @@ impl<'db> Print for Transport<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         // Print as: transport VALUE to MOTIVE by PROOF
         // Keywords provide clear boundaries, so we can use print_internal_subterm
-        ensure(st, p, APP, |st, p| {
+        ensure(st, ns, p, APP, |st, ns, p| {
             p.text("transport")?;
             p.space()?;
-            print_internal_subterm(db, st, p, &*self.value)?;
+            print_internal_subterm(db, st, ns, p, &*self.value)?;
             p.space()?;
             p.text("to")?;
             p.space()?;
-            print_internal_subterm(db, st, p, &*self.motive)?;
+            print_internal_subterm(db, st, ns, p, &*self.motive)?;
             p.space()?;
             p.text("by")?;
             p.space()?;
-            print_internal_subterm(db, st, p, &*self.proof)
+            print_internal_subterm(db, st, ns, p, &*self.proof)
         })
     }
 }
@@ -602,25 +658,32 @@ impl<'db> Print for Lambda<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         use crate::common::Icit;
-        ensure(st, p, LAMBDA, |st, p| {
+        ensure(st, ns, p, LAMBDA, |st, ns, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
                 let mut st = st;
+                let initial_stack_depth = ns.len();
+
                 p.cgroup(0, |p| {
                     p.text("λ ")?;
                     loop {
+                        // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
+                        let fresh_name = ns.push_fresh(next.body.name.clone());
+
                         // Show {binder} for implicit, binder for explicit
+                        // Print the freshened name in the binder position
                         match next.icit {
                             Icit::Implicit => {
                                 p.text("{")?;
-                                print_binder(st, p, &next.body)?;
+                                p.text_owned(format!("%{}", fresh_name))?;
                                 p.text("}")?;
                             }
                             Icit::Explicit => {
-                                print_binder(st, p, &next.body)?;
+                                p.text_owned(format!("%{}", fresh_name))?;
                             }
                         }
                         st = st.inc_depth();
@@ -633,8 +696,15 @@ impl<'db> Print for Lambda<'db> {
                     p.space()?;
                     p.text("→")
                 })?;
+
                 p.space()?;
-                print_rhs_subterm(db, st, p, &*next.body, LAMBDA.rhs_prec())
+                let body_result = print_rhs_subterm(db, st, ns, p, &*next.body, LAMBDA.rhs_prec());
+
+                while ns.len() > initial_stack_depth {
+                    ns.pop();
+                }
+
+                body_result
             })
         })
     }
@@ -645,10 +715,11 @@ impl<'db> Print for Application<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         use crate::common::Icit;
-        ensure(st, p, APP, |st, p| {
+        ensure(st, ns, p, APP, |st, ns, p| {
             // Collect all nested applications into a flat list with their icits
             let mut args_with_icit = vec![];
             let mut current = self;
@@ -663,17 +734,17 @@ impl<'db> Print for Application<'db> {
 
             // Print: function[arg1, {arg2}, arg3] (show implicit args with braces)
             p.cgroup(0, |p| {
-                print_internal_subterm(db, st, p, &**function)?;
+                print_internal_subterm(db, st, ns, p, &**function)?;
                 p.text("[")?;
                 if let Some(((first_arg, first_icit), rest)) = args_with_icit.split_first() {
                     match first_icit {
                         Icit::Implicit => {
                             p.text("{")?;
-                            print_internal_subterm(db, st, p, &**first_arg)?;
+                            print_internal_subterm(db, st, ns, p, &**first_arg)?;
                             p.text("}")?;
                         }
                         Icit::Explicit => {
-                            print_internal_subterm(db, st, p, &**first_arg)?;
+                            print_internal_subterm(db, st, ns, p, &**first_arg)?;
                         }
                     }
                     for (arg, icit) in rest {
@@ -682,11 +753,11 @@ impl<'db> Print for Application<'db> {
                         match icit {
                             Icit::Implicit => {
                                 p.text("{")?;
-                                print_internal_subterm(db, st, p, &**arg)?;
+                                print_internal_subterm(db, st, ns, p, &**arg)?;
                                 p.text("}")?;
                             }
                             Icit::Explicit => {
-                                print_internal_subterm(db, st, p, &**arg)?;
+                                print_internal_subterm(db, st, ns, p, &**arg)?;
                             }
                         }
                     }
@@ -702,10 +773,11 @@ impl<'db> Print for TypeConstructor<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, TCON, |st, p| {
-            print_constructor(db, st, p, "#", self.constructor, &self.arguments)
+        ensure(st, ns, p, TCON, |st, ns, p| {
+            print_constructor(db, st, ns, p, "#", self.constructor, &self.arguments)
         })
     }
 }
@@ -715,10 +787,11 @@ impl<'db> Print for DataConstructor<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, DCON_APP, |st, p| {
-            print_constructor(db, st, p, "", self.constructor, &self.arguments)
+        ensure(st, ns, p, DCON_APP, |st, ns, p| {
+            print_constructor(db, st, ns, p, "", self.constructor, &self.arguments)
         })
     }
 }
@@ -726,6 +799,7 @@ impl<'db> Print for DataConstructor<'db> {
 fn print_constructor<'db, R: Render>(
     db: &dyn salsa::Database,
     st: State,
+    ns: &mut NameStack,
     p: &mut Printer<R>,
     sigil: &'static str,
     constructor: QualifiedName<'db>,
@@ -734,16 +808,16 @@ fn print_constructor<'db, R: Render>(
     p.cgroup(0, |p| {
         p.text(sigil)?;
         p.text("[")?;
-        constructor.print(db, st, p)?;
+        constructor.print(db, st, ns, p)?;
         if let Some((last, rest)) = arguments.split_last() {
             let st = st.set_lhs_prec(DCON_APP.rhs_prec());
             let ist = st.set_rhs_prec(DCON_APP.lhs_prec());
             for arg in rest {
                 p.space()?;
-                arg.print(db, ist, p)?;
+                arg.print(db, ist, ns, p)?;
             }
             p.space()?;
-            last.print(db, st, p)?;
+            last.print(db, st, ns, p)?;
         }
         p.text("]")?;
         Ok(())
@@ -755,12 +829,11 @@ impl<'db> Print for Case<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, CASE, |st, p| {
-            // Print the scrutinee as a variable (de Bruijn index).
-            // The scrutinee is always a variable, never an arbitrary expression.
-            self.scrutinee.print(db, st, p)?;
+        ensure(st, ns, p, CASE, |st, ns, p| {
+            self.scrutinee.print(db, st, ns, p)?;
             p.space()?;
             p.text("case")?;
             p.space()?;
@@ -768,12 +841,12 @@ impl<'db> Print for Case<'db> {
             p.cgroup(0, |p| {
                 p.space()?;
                 if let Some((first, rest)) = self.branches.split_first() {
-                    print_internal_subterm(db, st, p, first)?;
+                    print_internal_subterm(db, st, ns, p, first)?;
                     p.space()?;
                     for branch in rest {
                         p.text("|")?;
                         p.space()?;
-                        print_internal_subterm(db, st, p, branch)?;
+                        print_internal_subterm(db, st, ns, p, branch)?;
                         p.space()?;
                     }
                 }
@@ -789,20 +862,39 @@ impl<'db> Print for CaseBranch<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        self.constructor.print(db, st, p)?;
+        let mut fresh_names = Vec::new();
+        for i in 0..self.body.arity {
+            let name = self.body.names.get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("{}", st.depth + i));
+            let fresh_name = ns.push_fresh(name);
+            fresh_names.push(fresh_name);
+        }
+
+        self.constructor.print(db, st, ns, p)?;
         if self.body.arity > 0 {
             p.space()?;
         }
-        print_binders(st, p, &self.body)?;
+        for (i, fresh_name) in fresh_names.iter().enumerate() {
+            if i > 0 {
+                p.space()?;
+            }
+            p.text_owned(format!("%{}", fresh_name))?;
+        }
         p.space()?;
         p.text("=>")?;
         p.space()?;
-        // Print the body with the state incremented by the number of binders
-        // We've already printed the binders manually, so print the body directly
         let body_st = st.under_binders(self.body.arity);
-        print_internal_subterm(db, body_st, p, &*self.body.body)
+        let result = print_internal_subterm(db, body_st, ns, p, &*self.body.body);
+
+        for _ in 0..self.body.arity {
+            ns.pop();
+        }
+
+        result
     }
 }
 
@@ -811,9 +903,10 @@ impl<'db> Print for HardwareUniverse<'db> {
         &self,
         _db: &dyn salsa::Database,
         st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, HARDWARE_UNIVERSE, |_st, p| {
+        ensure(st, _ns, p, HARDWARE_UNIVERSE, |_st, _ns, p| {
             p.text("HardwareUniverse")
         })
     }
@@ -824,11 +917,12 @@ impl<'db> Print for SLift<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, SLIFT, |st, p| {
+        ensure(st, ns, p, SLIFT, |st, ns, p| {
             p.text("^s")?;
-            print_rhs_subterm(db, st, p, &*self.ty, SLIFT.rhs_prec())
+            print_rhs_subterm(db, st, ns, p, &*self.ty, SLIFT.rhs_prec())
         })
     }
 }
@@ -838,11 +932,12 @@ impl<'db> Print for MLift<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, MLIFT, |st, p| {
+        ensure(st, ns, p, MLIFT, |st, ns, p| {
             p.text("^m")?;
-            print_rhs_subterm(db, st, p, &*self.ty, MLIFT.rhs_prec())
+            print_rhs_subterm(db, st, ns, p, &*self.ty, MLIFT.rhs_prec())
         })
     }
 }
@@ -852,9 +947,10 @@ impl<'db> Print for SignalUniverse<'db> {
         &self,
         _db: &dyn salsa::Database,
         st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, SIGNAL_UNIVERSE, |_st, p| p.text("SignalUniverse"))
+        ensure(st, _ns, p, SIGNAL_UNIVERSE, |_st, _ns, p| p.text("SignalUniverse"))
     }
 }
 
@@ -863,9 +959,10 @@ impl<'db> Print for Bit<'db> {
         &self,
         _db: &dyn salsa::Database,
         st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, BIT, |_st, p| p.text("Bit"))
+        ensure(st, _ns, p, BIT, |_st, _ns, p| p.text("Bit"))
     }
 }
 
@@ -874,9 +971,10 @@ impl<'db> Print for Zero<'db> {
         &self,
         _db: &dyn salsa::Database,
         st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, ZERO, |_st, p| p.text("0"))
+        ensure(st, _ns, p, ZERO, |_st, _ns, p| p.text("0"))
     }
 }
 
@@ -885,9 +983,10 @@ impl<'db> Print for One<'db> {
         &self,
         _db: &dyn salsa::Database,
         st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, ONE, |_st, p| p.text("1"))
+        ensure(st, _ns, p, ONE, |_st, _ns, p| p.text("1"))
     }
 }
 
@@ -896,6 +995,7 @@ impl<'db> Print for ModuleUniverse<'db> {
         &self,
         _db: &dyn salsa::Database,
         _st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         p.text("ModuleUniverse")
@@ -907,15 +1007,16 @@ impl<'db> Print for HArrow<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, HARROW, |st, p| {
+        ensure(st, ns, p, HARROW, |st, ns, p| {
             p.cgroup(0, |p| {
-                print_lhs_subterm(db, st, p, &*self.source, HARROW.lhs_prec())?;
+                print_lhs_subterm(db, st, ns, p, &*self.source, HARROW.lhs_prec())?;
                 p.space()?;
                 p.text("→")?;
                 p.space()?;
-                print_rhs_subterm(db, st, p, &*self.target, HARROW.rhs_prec())
+                print_rhs_subterm(db, st, ns, p, &*self.target, HARROW.rhs_prec())
             })
         })
     }
@@ -926,16 +1027,20 @@ impl<'db> Print for Module<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, MODULE, |st, p| {
+        ensure(st, ns, p, MODULE, |st, ns, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
                 let mut st = st;
+                let initial_stack_depth = ns.len();
+
                 p.cgroup(0, |p| {
                     p.text("mod ")?;
                     loop {
-                        print_binder(st, p, &next.body)?;
+                        let fresh_name = ns.push_fresh(next.body.name.clone());
+                        p.text_owned(format!("%{}", fresh_name))?;
                         st = st.inc_depth();
                         match next.body.term().as_ref() {
                             Syntax::Module(lam) => next = &lam,
@@ -946,8 +1051,15 @@ impl<'db> Print for Module<'db> {
                     p.space()?;
                     p.text("→")
                 })?;
+
                 p.space()?;
-                print_rhs_subterm(db, st, p, &*next.body, MODULE.rhs_prec())
+                let body_result = print_rhs_subterm(db, st, ns, p, &*next.body, MODULE.rhs_prec());
+
+                while ns.len() > initial_stack_depth {
+                    ns.pop();
+                }
+
+                body_result
             })
         })
     }
@@ -958,17 +1070,18 @@ impl<'db> Print for HApplication<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, HAPP, |st, p| {
+        ensure(st, ns, p, HAPP, |st, ns, p| {
             // Print: module<module_ty>(argument)
             p.cgroup(0, |p| {
-                print_internal_subterm(db, st, p, &*self.module)?;
+                print_internal_subterm(db, st, ns, p, &*self.module)?;
                 p.text("<")?;
-                print_internal_subterm(db, st, p, &*self.module_ty)?;
+                print_internal_subterm(db, st, ns, p, &*self.module_ty)?;
                 p.text(">")?;
                 p.text("(")?;
-                print_internal_subterm(db, st, p, &*self.argument)?;
+                print_internal_subterm(db, st, ns, p, &*self.argument)?;
                 p.text(")")
             })
         })
@@ -980,6 +1093,7 @@ impl<'db> Print for Prim<'db> {
         &self,
         db: &dyn salsa::Database,
         _st: State,
+        _ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         p.text_owned(&format!("${}", self.name.to_string(db)))
@@ -991,9 +1105,10 @@ impl<'db> Print for Constant<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        self.name.print(db, st, p)
+        self.name.print(db, st, ns, p)
     }
 }
 
@@ -1002,12 +1117,18 @@ impl<'db> Print for Variable<'db> {
         &self,
         _db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         if self.index.is_bound(st.depth) {
-            p.text_owned(&format!("{}", self.index.to_level(st.depth)))
+            let stack_index = ns.len().saturating_sub(1 + self.index.0);
+            if let Some(name) = ns.get(stack_index) {
+                p.text_owned(format!("%{}", name))
+            } else {
+                p.text_owned(format!("%{}", self.index.to_level(st.depth)))
+            }
         } else {
-            p.text_owned(&format!("{}", self.index.to_negative_level(st.depth)))
+            p.text_owned(format!("{}", self.index.to_negative_level(st.depth)))
         }
     }
 }
@@ -1017,13 +1138,14 @@ impl<'db> Print for Metavariable<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         p.text("?[")?;
         p.text_owned(&format!("{}", self.id))?;
         for arg in &self.substitution {
             p.text(" ")?;
-            arg.print(db, st, p)?;
+            arg.print(db, st, ns, p)?;
         }
         p.text("]")?;
         Ok(())
@@ -1035,20 +1157,29 @@ impl<'db> Print for Let<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
         // Print: let %x : ty = value; body
-        p.cgroup(2, |p| {
+        // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
+        let fresh_name = ns.push_fresh(self.body.name.clone());
+
+        let result = p.cgroup(2, |p| {
             p.text("let ")?;
-            print_binder(st, p, &self.body)?;
+            // Print the freshened name in the binder position
+            p.text_owned(format!("%{}", fresh_name))?;
             p.text(" : ")?;
-            print_internal_subterm(db, st, p, &*self.ty)?;
+            print_internal_subterm(db, st, ns, p, &*self.ty)?;
             p.text(" = ")?;
-            print_internal_subterm(db, st, p, &*self.value)?;
+            print_internal_subterm(db, st, ns, p, &*self.value)?;
             p.text(";")?;
             p.space()?;
-            print_internal_subterm(db, st, p, &self.body)
-        })
+            print_internal_subterm(db, st, ns, p, &self.body)
+        });
+
+        // Pop the binder name
+        ns.pop();
+        result
     }
 }
 
@@ -1057,14 +1188,15 @@ impl<'db> Print for Check<'db> {
         &self,
         db: &dyn salsa::Database,
         st: State,
+        ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, p, CHECK, |st, p| {
+        ensure(st, ns, p, CHECK, |st, ns, p| {
             p.igroup(0, |p| {
-                print_lhs_subterm(db, st, p, &*self.term, CHECK.lhs_prec())?;
+                print_lhs_subterm(db, st, ns, p, &*self.term, CHECK.lhs_prec())?;
                 p.text(" :")?;
                 p.space()?;
-                print_rhs_subterm(db, st, p, &*self.ty, CHECK.rhs_prec())
+                print_rhs_subterm(db, st, ns, p, &*self.ty, CHECK.rhs_prec())
             })
         })
     }
@@ -1100,30 +1232,30 @@ mod tests {
         let pi1: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding(Syntax::UniverseCode(1).into()),
+            Binding::anonymous(Syntax::UniverseCode(1).into()),
         )
         .into();
         assert_snapshot!(p(&db, &pi1), @"∀ (%0 : 𝒰0) → 𝒰1");
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::variable_rc(Index(0)),
             Icit::Explicit,
-            Binding(Syntax::variable_rc(Index(0))),
+            Binding::anonymous(Syntax::variable_rc(Index(0))),
         )
         .into();
         let pi2: RcSyntax = Syntax::PiCode(
             Syntax::UniverseCode(0).into(),
             Icit::Explicit,
-            Binding(inner),
+            Binding::anonymous(inner),
         )
         .into();
-        assert_snapshot!(p(&db, &pi2), @"∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %1");
+        assert_snapshot!(p(&db, &pi2), @"∀ (%0 : 𝒰0) → ∀ (%1 : %_) → %_");
     }
 
     #[test]
     fn print_lambda() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding(Syntax::lambda_rc(Icit::Explicit, Binding(Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::anonymous(Syntax::variable_rc(Index(0))))), @"λ %_ → %_");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::anonymous(Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(Syntax::variable_rc(Index(1))))))), @"λ %_ %_ → %_");
     }
 
     #[test]
@@ -1156,13 +1288,13 @@ mod tests {
         let db = TestDatabase::default();
         // Case with scrutinee at Index(0), which means the most recently bound variable
         // At depth 1 (under one binder), Index(0) prints as %0
-        assert_snapshot!(p(&db, &Syntax::lambda_rc(Icit::Explicit, Binding(Syntax::case_rc(
+        assert_snapshot!(p(&db, &Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(Syntax::case_rc(
                         Index(0),
             vec![
                 CaseBranch::new("Zero".into_with_db(&db), DynBinding::new(0, Syntax::constant_rc("a".into_with_db(&db)))),
                 CaseBranch::new("Succ".into_with_db(&db), DynBinding::new(1, Syntax::variable_rc(Index(0)))),
             ]
-        )))), @"λ %0 → %0 case { @/Zero => @/a | @/Succ %1 => %1 }");
+        )))), @"λ %_ → %_ case { @/Zero => @/a | @/Succ %_0 => %_0 }");
     }
 
     // =========================================================================
@@ -1248,9 +1380,9 @@ mod tests {
         assert_snapshot!(p(&db, &transport), @"transport !2 to !0 by refl");
 
         // Test with lambda motive - keywords eliminate need for parentheses
-        let lambda_motive = Syntax::lambda_rc(Icit::Explicit, Binding(Syntax::bit_rc()));
+        let lambda_motive = Syntax::lambda_rc(Icit::Explicit, Binding::anonymous(Syntax::bit_rc()));
         let transport2 = Syntax::transport_rc(lambda_motive, Syntax::refl_rc(), Syntax::zero_rc());
-        assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %0 → Bit by refl");
+        assert_snapshot!(p(&db, &transport2), @"transport 0 to λ %_ → Bit by refl");
     }
 
     // =========================================================================
@@ -1273,8 +1405,8 @@ mod tests {
     #[test]
     fn print_module() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::module(Binding(Syntax::variable_rc(Index(0))))), @"mod %0 → %0");
-        assert_snapshot!(p(&db, &Syntax::module(Binding(Syntax::module_rc(Binding(Syntax::variable_rc(Index(1))))))), @"mod %0 %1 → %0");
+        assert_snapshot!(p(&db, &Syntax::module(Binding::anonymous(Syntax::variable_rc(Index(0))))), @"mod %_ → %_");
+        assert_snapshot!(p(&db, &Syntax::module(Binding::anonymous(Syntax::module_rc(Binding::anonymous(Syntax::variable_rc(Index(1))))))), @"mod %_ %_ → %_");
     }
 
     #[test]
@@ -1306,7 +1438,7 @@ mod tests {
     #[test]
     fn print_variable_bound() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding(Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
+        assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::anonymous(Syntax::variable_rc(Index(0))))), @"λ %_ → %_");
     }
 
     #[test]
