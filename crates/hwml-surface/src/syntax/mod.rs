@@ -1,6 +1,7 @@
 pub mod validation;
 
 use derive_new::new;
+use hwml_core::common::Icit;
 use std::ops::Range;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -181,6 +182,8 @@ pub struct TypedBindings {
 pub struct TypedBindingGroup {
     pub binders: Vec<Binder>,
     pub ty: Box<Expression>,
+    /// Implicitness: Explicit for (x : A), Implicit for {x : A}
+    pub icit: Icit,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
@@ -188,10 +191,34 @@ pub struct UntypedBindingGroup {
     pub binders: Vec<Binder>,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct App {
     pub loc: Range<usize>,
     pub elements: Vec<Box<Expression>>,
+    /// Icit for each argument (NOT including the function at elements[0])
+    /// Length should be elements.len() - 1
+    pub arg_icits: Vec<Icit>,
+}
+
+impl App {
+    /// Create a new App with all explicit arguments
+    pub fn new(loc: Range<usize>, elements: Vec<Box<Expression>>) -> Self {
+        let arg_count = elements.len().saturating_sub(1);
+        App {
+            loc,
+            elements,
+            arg_icits: vec![Icit::Explicit; arg_count],
+        }
+    }
+
+    /// Create a new App with specified argument icits
+    pub fn new_with_icits(loc: Range<usize>, elements: Vec<Box<Expression>>, arg_icits: Vec<Icit>) -> Self {
+        App {
+            loc,
+            elements,
+            arg_icits,
+        }
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, new)]
