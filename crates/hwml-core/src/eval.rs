@@ -1,4 +1,4 @@
-use crate::common::Icit;
+use crate::Icit;
 use crate::val::{
     self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
     MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
@@ -1015,7 +1015,7 @@ mod tests {
         // A metavariable with no arguments evaluates to a Flex neutral
         use crate::common::MetaVariableId;
         use crate::test_utils::parse;
-        use crate::val::GlobalEnv;
+        use crate::GlobalEnv;
 
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
@@ -1051,9 +1051,9 @@ mod tests {
     #[test]
     fn test_eval_metavariable_with_args() {
         // A metavariable with arguments evaluates to a Flex neutral with a local env
-        use crate::common::{Level, MetaVariableId};
+        use crate::{Level, common::MetaVariableId};
         use crate::test_utils::parse;
-        use crate::val::GlobalEnv;
+        use crate::GlobalEnv;
         use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
@@ -1104,7 +1104,7 @@ mod tests {
         // Applying a Flex neutral to an argument adds to its spine
         use crate::common::MetaVariableId;
         use crate::test_utils::parse;
-        use crate::val::GlobalEnv;
+        use crate::GlobalEnv;
 
         let db = TestDatabase::default();
         let mut global = GlobalEnv::new();
@@ -1199,7 +1199,7 @@ mod tests {
 
     #[test]
     fn test_apply_constant_argument_type() {
-        use crate::common::Icit;
+        use crate::Icit;
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
 

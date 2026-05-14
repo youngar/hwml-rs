@@ -1,4 +1,4 @@
-use crate::common::Icit;
+use crate::Icit;
 use crate::syn::*;
 use crate::*;
 

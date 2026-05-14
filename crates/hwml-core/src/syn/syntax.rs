@@ -1,4 +1,4 @@
-use crate::common::Icit;
+use crate::Icit;
 use crate::*;
 use hwml_support::*;
 use std::{marker::PhantomData, rc::Rc};

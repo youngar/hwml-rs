@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::db::{HwmlDatabase, SourceFile, VfsFileMap};
+use crate::{HwmlDatabase, SourceFile, VfsFileMap};
 
 /// Compiler session that owns both the Salsa database and file cache.
 ///

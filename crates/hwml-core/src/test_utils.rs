@@ -4,13 +4,14 @@
 //! and setting up test environments.
 
 use crate::check_module::check_module;
-use crate::common::Level;
+use crate::Level;
 use crate::eval;
 use crate::quote::{quote, type_quote};
 use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
 use crate::syn::print::print_syntax_to_string;
-use crate::syn::RcSyntax;
-use crate::val::{Environment, GlobalEnv, RcValue, Value};
+use crate::RcSyntax;
+use crate::val::Environment;
+use crate::{GlobalEnv, RcValue, Value};
 use crate::TestDatabase;
 
 // ========== Prelude String Constants ==========
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_eval_str_at_depth() {
-        use crate::common::Level;
+        use crate::Level;
 
         let db = TestDatabase::default();
         let global = load_prelude(&db, NAT_PRELUDE);

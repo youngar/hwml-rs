@@ -3,7 +3,7 @@
 //! This module provides Salsa queries for collecting and aggregating diagnostics
 //! from parsing and elaboration.
 
-use crate::db::{SourceFile, VfsFileMap};
+use crate::{SourceFile, VfsFileMap};
 use hwml_diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Position, Span};
 use std::collections::HashMap;
 use std::path::PathBuf;

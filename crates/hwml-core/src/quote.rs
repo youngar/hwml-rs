@@ -991,7 +991,8 @@ fn quote_transport<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Index, Level, UniverseLevel};
+    use crate::{Index, Level};
+    use crate::common::UniverseLevel;
     use crate::eval;
     use crate::syn::parse::parse_syntax;
     use crate::syn::print::print_syntax_to_string;
@@ -1732,7 +1733,7 @@ mod tests {
 
     #[test]
     fn test_quote_eta_expansion_implicit() {
-        use crate::common::Icit;
+        use crate::Icit;
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
 

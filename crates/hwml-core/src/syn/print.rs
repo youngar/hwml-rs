@@ -1,4 +1,4 @@
-use crate::common::Icit;
+use crate::Icit;
 use crate::syn::*;
 use crate::*;
 use elegance::{Io, Printer, Render};
@@ -539,7 +539,7 @@ impl<'db> Print for Syntax<'db> {
                 inner.print(db, st, ns, p)
             }
             Syntax::PiCode(source, icit, target) => {
-                use crate::common::Icit;
+                use crate::Icit;
                 p.text("∀")?;
                 p.space()?;
                 match icit {
@@ -674,7 +674,7 @@ impl<'db> Print for Lambda<'db> {
         ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        use crate::common::Icit;
+        use crate::Icit;
         ensure(st, ns, p, LAMBDA, |st, ns, p| {
             p.cgroup(2, |p| {
                 let mut next = self;
@@ -731,7 +731,7 @@ impl<'db> Print for Application<'db> {
         ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        use crate::common::Icit;
+        use crate::Icit;
         ensure(st, ns, p, APP, |st, ns, p| {
             // Collect all nested applications into a flat list with their icits
             let mut args_with_icit = vec![];

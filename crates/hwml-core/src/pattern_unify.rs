@@ -458,7 +458,7 @@ fn unify_equations<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::val::GlobalEnv;
+    use crate::GlobalEnv;
     use crate::TestDatabase;
     use hwml_support::IntoWithDb;
 

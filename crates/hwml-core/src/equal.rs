@@ -1128,8 +1128,9 @@ pub fn equate_levels<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Index, MetaVariableId, UniverseLevel};
-    use crate::syn::{Syntax, Telescope};
+    use crate::Index;
+    use crate::common::{MetaVariableId, UniverseLevel};
+    use crate::{Syntax, syn::Telescope};
     use crate::val::{GlobalEnv, LocalEnv, Spine};
     use std::rc::Rc;
 

@@ -1,9 +1,9 @@
-use crate::binding::{Binding, DynBinding};
-use crate::common::{DBParseError, Icit, Index, NegativeLevel};
-use crate::name::Name;
+use crate::{Binding, DynBinding};
+use crate::common::{DBParseError, NegativeLevel};
+use crate::{Icit, Index, Name};
 use crate::syn::declaration::{CompilationUnit, DataConstructorDecl, Declaration};
-use crate::syn::{CaseBranch, RcSyntax, Syntax, Telescope};
-use crate::{MetaVariableId, QualifiedName};
+use crate::syn::{CaseBranch, Telescope};
+use crate::{MetaVariableId, QualifiedName, RcSyntax, Syntax};
 use core::fmt::Debug;
 use hwml_support::FromWithDb;
 use logos::{Lexer, Logos};
@@ -1419,7 +1419,8 @@ pub fn parse_module<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Index, MetaVariableId, UniverseLevel};
+    use crate::Index;
+    use crate::common::{MetaVariableId, UniverseLevel};
     use crate::syn::print::print_syntax_to_string;
     use crate::TestDatabase;
     use hwml_support::IntoWithDb;

@@ -1,4 +1,4 @@
-use crate::common::Icit;
+use crate::Icit;
 use crate::*;
 use std::{collections::HashMap, fmt, marker::PhantomData, rc::*};
 use syn::{RcSyntax, Telescope};
