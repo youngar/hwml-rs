@@ -91,10 +91,11 @@ This directory contains research pages documenting external systems, academic pa
 
 ### Type Theory & Elaboration
 
-- [[benes-flow-variational-overloading]] - **NEWEST (2026-05-06):** Beneš OOPSLA 2025 deep dive, variational type-checking, choice constraints, HOW to implement!
-- [[parse-forest-type-disambiguation]] - **NEW (2026-05-06):** SPPF + constraints = NO type-checker backtracking!
-- [[mixfix-backtracking-free-parsing]] - **NEW (2026-05-06):** Danielsson-Norell analysis, bounded backtracking, precedence DAG
-- [[mixfix-type-directed-parsing]] - **NEW (2026-05-06):** Mixfix operators, type-based overloading, suspended constraints
+- [[implicit-arguments-first-class-polymorphism]] - **NEWEST (2026-05-13):** DOE algorithm for implicit arguments, comparison with FCIF/Quick Look, implementation roadmap
+- [[benes-flow-variational-overloading]] - Beneš OOPSLA 2025 deep dive, variational type-checking, choice constraints, HOW to implement!
+- [[parse-forest-type-disambiguation]] - SPPF + constraints = NO type-checker backtracking!
+- [[mixfix-backtracking-free-parsing]] - Danielsson-Norell analysis, bounded backtracking, precedence DAG
+- [[mixfix-type-directed-parsing]] - Mixfix operators, type-based overloading, suspended constraints
 - [[provenance-deep-dive]] - Provenance tracking: RedPRL philosophy, InfoTree, async solvers (comprehensive)
 - [[provenance-implementation-examples]] - Production code from Lean 4, Agda, GHC, Idris 2, cooltt
 - [[provenance-action-plan]] - 5-phase implementation plan (4-6 weeks, concrete steps)
