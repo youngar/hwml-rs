@@ -144,7 +144,7 @@ fn pattern_quote<'db>(
                             global, state, &app.argument.value,
                             rename, ambiguous, meta_id, arity, outer_depth,
                         )?;
-                        result = Syntax::application_rc(result, arg_syn);
+                        result = Syntax::application_rc(result, arg_syn, app.icit);
                     }
                     _ => return Err(RenameError::Soft),
                 }
@@ -183,16 +183,16 @@ fn pattern_quote<'db>(
             let body_syn = pattern_quote_closure(
                 global, state, &lam.body, rename, ambiguous, meta_id, arity, outer_depth,
             )?;
-            Ok(Syntax::lambda_rc(Binding(body_syn)))
+            Ok(Syntax::lambda_rc(lam.icit, Binding(body_syn)))
         }
 
-        Value::PiCode(dom, cod) => {
+        Value::PiCode(dom, icit, cod) => {
             let dom_syn =
                 pattern_quote(global, state, dom, rename, ambiguous, meta_id, arity, outer_depth)?;
             let cod_syn = pattern_quote_closure(
                 global, state, cod, rename, ambiguous, meta_id, arity, outer_depth,
             )?;
-            Ok(Rc::new(Syntax::PiCode(dom_syn, Binding(cod_syn))))
+            Ok(Rc::new(Syntax::PiCode(dom_syn, *icit, Binding(cod_syn))))
         }
 
         Value::LiftCode(n, inner) => {
@@ -357,7 +357,7 @@ fn rename_value<'db>(
                             rename_value(global, state, &app.argument.ty, rename, ambiguous, meta_id)?;
                         let new_arg_val =
                             rename_value(global, state, &app.argument.value, rename, ambiguous, meta_id)?;
-                        new_elims.push(Eliminator::application(Normal::new(new_arg_ty, new_arg_val)));
+                        new_elims.push(Eliminator::application(Normal::new(new_arg_ty, new_arg_val), app.icit));
                     }
                     _ => return Err(RenameError::Soft),
                 }
@@ -393,12 +393,12 @@ fn rename_value<'db>(
 
         Value::Lambda(lam) => {
             let new_clos = rename_closure(global, state, &lam.body, rename, ambiguous, meta_id)?;
-            Ok(Value::lambda_rc(new_clos))
+            Ok(Value::lambda_rc(lam.icit, new_clos))
         }
-        Value::PiCode(dom, cod) => {
+        Value::PiCode(dom, icit, cod) => {
             let new_dom = rename_value(global, state, dom, rename, ambiguous, meta_id)?;
             let new_cod = rename_closure(global, state, cod, rename, ambiguous, meta_id)?;
-            Ok(Rc::new(Value::PiCode(new_dom, new_cod)))
+            Ok(Rc::new(Value::PiCode(new_dom, *icit, new_cod)))
         }
         Value::LiftCode(n, inner) => {
             let new_inner = rename_value(global, state, inner, rename, ambiguous, meta_id)?;

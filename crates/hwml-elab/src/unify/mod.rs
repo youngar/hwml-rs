@@ -22,6 +22,7 @@
 
 pub mod pattern;
 
+use hwml_core::common::Icit;
 use std::rc::Rc;
 
 use hwml_core::{
@@ -75,7 +76,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
         arg: RcValue<'db>,
         arg_ty: RcValue<'db>,
     ) -> RcValue<'db> {
-        let elim = Eliminator::application(Normal::new(arg_ty, arg));
+        let elim = Eliminator::application(Normal::new(arg_ty, arg), Icit::Explicit);
         let mut spine = Spine::empty();
         spine.push(elim);
         eval::run_spine(self.global, fun, &spine)
@@ -110,7 +111,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
         // HArrow eta: at El(HArrow), eta-expand both sides under a fresh variable.
         if let Ty::El(code) = ty.as_ref() {
             match code.as_ref() {
-                Value::PiCode(dom, cod) => {
+                Value::PiCode(dom, _icit, cod) => {
                     let dom = dom.clone();
                     let cod = cod.clone();
                     let var: RcValue<'db> =
@@ -189,7 +190,7 @@ impl<'a, 'db> Unifier<'a, 'db> {
                 self.unify_universe_codes(*n, *m, &lhs, &rhs)
             }
             (Value::BitCode, Value::BitCode) => Ok(UnifyResult::Solved),
-            (Value::PiCode(d1, c1), Value::PiCode(d2, c2)) => {
+            (Value::PiCode(d1, _icit1, c1), Value::PiCode(d2, _icit2, c2)) => {
                 self.unify_pi_codes(d1.clone(), c1.clone(), d2.clone(), c2.clone())
             }
             (Value::LiftCode(n, i1), Value::LiftCode(m, i2)) => {
@@ -725,7 +726,7 @@ pub(crate) fn intersection_syntax_solution<'db>(
         .collect();
     let mut body: RcSyntax<'db> = Syntax::metavariable_rc(meta_vid, subst);
     for _ in 0..old_arity {
-        body = Syntax::lambda_rc(Binding(body));
+        body = Syntax::lambda_rc(Icit::Explicit, Binding(body));
     }
     body
 }

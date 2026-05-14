@@ -30,10 +30,10 @@ pub fn subst_value<'db>(
         Value::Rigid(rigid) => subst_rigid(global, rigid, local),
         Value::Flex(flex) => subst_flex(global, flex, local),
         Value::Lambda(lam) => subst_lambda(global, lam, local),
-        Value::PiCode(source, target) => {
+        Value::PiCode(source, icit, target) => {
             let new_source = subst_value(global, source, local)?;
             let new_target = subst_closure(target, local);
-            Ok(Rc::new(Value::PiCode(new_source, new_target)))
+            Ok(Rc::new(Value::PiCode(new_source, *icit, new_target)))
         }
         Value::LiftCode(shift, inner) => {
             let new_inner = subst_value(global, inner, local)?;
@@ -120,7 +120,7 @@ fn subst_lambda<'db>(
     local: &LocalEnv<'db>,
 ) -> Result<RcValue<'db>, eval::Error<'db>> {
     let new_closure = subst_closure(&lam.body, local);
-    Ok(Value::lambda_rc(new_closure))
+    Ok(Value::lambda_rc(lam.icit, new_closure))
 }
 
 /// Substitute into a Closure by substituting its captured local environment.
@@ -163,7 +163,7 @@ fn subst_spine_vals<'db>(
             Eliminator::Application(app) => {
                 let new_ty = subst_value(global, &app.argument.ty, local)?;
                 let new_val = subst_value(global, &app.argument.value, local)?;
-                new_elims.push(Eliminator::application(Normal::new(new_ty, new_val)));
+                new_elims.push(Eliminator::application(Normal::new(new_ty, new_val), app.icit));
             }
             Eliminator::Case(_) => {
                 // Case branches contain closures; substitute them.
