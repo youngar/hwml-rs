@@ -729,7 +729,7 @@ fn pattern_unify_lowers_rigid_with_spine() {
     spine.push(Eliminator::application(Normal::new(
         var_ty.clone(),
         x0.clone(),
-    )));
+    ), hwml_core::common::Icit::Explicit));
     let rhs = Rc::new(Value::Rigid(hwml_core::val::Rigid::new(
         hwml_core::val::Variable::new(Level::new(0)),
         spine,
@@ -760,14 +760,25 @@ fn universe_expr() -> Box<hwml_surface::Expression> {
     }))
 }
 
+fn id_binder(name: &[u8]) -> hwml_surface::Binder {
+    hwml_surface::Binder {
+        loc: 0..0,
+        pattern: hwml_surface::Pattern::Id(hwml_surface::Id {
+            loc: 0..0,
+            value: std::str::from_utf8(name).expect("valid UTF-8").into(),
+        }),
+    }
+}
+
 /// Build the type `(A : Type) -> A -> A` as a surface expression.
 fn build_id_type() -> hwml_surface::Expression {
     let pi = hwml_surface::Pi {
         loc: 0..0,
         bindings: hwml_surface::TypedBindings {
             groups: vec![hwml_surface::TypedBindingGroup {
-                binders: vec![id_expr(b"A")],
+                binders: vec![id_binder(b"A")],
                 ty: universe_expr(),
+                icit: hwml_core::common::Icit::Explicit,
             }],
         },
         target: Box::new(hwml_surface::Expression::Arrow(hwml_surface::Arrow {
@@ -786,10 +797,10 @@ fn build_id_fun() -> hwml_surface::Expression {
         bindings: hwml_surface::Bindings {
             groups: vec![
                 hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
-                    binders: id_expr(b"A"),
+                    binders: vec![id_binder(b"A")],
                 }),
                 hwml_surface::BindingGroup::Untyped(hwml_surface::UntypedBindingGroup {
-                    binders: id_expr(b"a"),
+                    binders: vec![id_binder(b"a")],
                 }),
             ],
         },
