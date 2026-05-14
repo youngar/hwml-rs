@@ -695,6 +695,11 @@ fn elab_statements<'db, Db>(
                 // Open statements were already processed in Pass 1
                 // Meta statements are currently ignored
             }
+            Statement::Invalid(err) => {
+                // Invalid statements from parse errors - skip elaboration
+                // The parse error will already be reported
+                eprintln!("[ELAB] Skipping invalid statement: {}", err.message);
+            }
         }
     }
 }
@@ -873,23 +878,31 @@ where
 
         // Run constraint solver to completion
         // LENIENT: Continue even if solver fails (collect all errors)
+        //
+        // NOTE: Postponed checks (DOE) are currently not supported in program elaboration.
+        // For now, we just run the solver and ignore ready checks.
         let mut solver = Solver::new(&mut state, global, db);
-        if let Err(solve_err) = solver.run() {
-            use crate::solver::SolveError;
-            match solve_err {
-                SolveError::NoProgress => {
-                    errors.push(ElabError::NotImplemented {
-                        feature: format!("Constraint solver made no progress in SCC {}", scc_idx),
-                        span: None,
-                        elab_backtrace: Vec::new(),
-                    });
-                }
-                SolveError::Elab(elab_err) => {
-                    errors.push(elab_err);
-                }
+        match solver.run() {
+            Ok(_ready_checks) => {
+                // TODO(DOE): Process ready_checks here once DOE is fully enabled
             }
-            // Continue to next SCC instead of breaking the entire library
-            continue;
+            Err(solve_err) => {
+                use crate::solver::SolveError;
+                match solve_err {
+                    SolveError::NoProgress => {
+                        errors.push(ElabError::NotImplemented {
+                            feature: format!("Constraint solver made no progress in SCC {}", scc_idx),
+                            span: None,
+                            elab_backtrace: Vec::new(),
+                        });
+                    }
+                    SolveError::Elab(elab_err) => {
+                        errors.push(elab_err);
+                    }
+                }
+                // Continue to next SCC instead of breaking the entire library
+                continue;
+            }
         }
 
         // Zonk to substitute solved metavariables
@@ -1066,14 +1079,19 @@ where
 
         // Run constraint solver to completion
         let mut solver = Solver::new(&mut state, global, db);
-        if let Err(e) = solver.run() {
-            errors.push(ElabError::UnificationFailure {
-                lhs: Rc::new(hwml_core::Value::UniverseCode(0)),
-                rhs: Rc::new(hwml_core::Value::UniverseCode(0)),
-                span: None,
-                elab_backtrace: Vec::new(),
-            });
-            continue;
+        match solver.run() {
+            Ok(_ready_checks) => {
+                // TODO(DOE): Process ready_checks here once DOE is fully enabled
+            }
+            Err(_e) => {
+                errors.push(ElabError::UnificationFailure {
+                    lhs: Rc::new(hwml_core::Value::UniverseCode(0)),
+                    rhs: Rc::new(hwml_core::Value::UniverseCode(0)),
+                    span: None,
+                    elab_backtrace: Vec::new(),
+                });
+                continue;
+            }
         }
 
         // Zonk to substitute solved metavariables
@@ -1244,6 +1262,9 @@ fn gather_declarations<'db, Db>(
             }
             Statement::Open(_) | Statement::Meta(_) => {
                 // These don't contribute to the SCC graph
+            }
+            Statement::Invalid(_) => {
+                // Invalid statements from parse errors - skip
             }
         }
     }

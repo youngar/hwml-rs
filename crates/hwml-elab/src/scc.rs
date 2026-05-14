@@ -75,14 +75,16 @@ fn extract_expr_refs<'db>(
                 match group {
                     hwml_surface::BindingGroup::Typed(tg) => {
                         for binder in &tg.binders {
-                            if let Expression::Id(id) = &**binder {
+                            if let hwml_surface::Pattern::Id(id) = &binder.pattern {
                                 extended_locals.insert(id.value.as_bytes().to_vec());
                             }
                         }
                     }
                     hwml_surface::BindingGroup::Untyped(ug) => {
-                        if let Expression::Id(id) = &*ug.binders {
-                            extended_locals.insert(id.value.as_bytes().to_vec());
+                        for binder in &ug.binders {
+                            if let hwml_surface::Pattern::Id(id) = &binder.pattern {
+                                extended_locals.insert(id.value.as_bytes().to_vec());
+                            }
                         }
                     }
                 }
@@ -114,12 +116,18 @@ fn extract_expr_refs<'db>(
             // Elaborate receiver, field name doesn't contribute dependencies
             extract_expr_refs(db, &dot.receiver, refs, locals);
         }
+        Expression::TypeAscription(asc) => {
+            extract_expr_refs(db, &asc.expr, refs, locals);
+            extract_expr_refs(db, &asc.ty, refs, locals);
+        }
         // Terminal cases: no recursive refs
         Expression::Universe(_)
         | Expression::Num(_)
         | Expression::Str(_)
         | Expression::Underscore(_)
-        | Expression::FatArrow(_) => {}
+        | Expression::FatArrow(_)
+        | Expression::Error(_)
+        | Expression::Hole(_) => {}
     }
 }
 
@@ -145,7 +153,7 @@ pub fn extract_statement_deps<'db>(
                     extract_expr_refs(db, &tg.ty, &mut refs, &mut locals);
                     // Add binders to locals for value elaboration
                     for binder in &tg.binders {
-                        if let Expression::Id(id) = &**binder {
+                        if let hwml_surface::Pattern::Id(id) = &binder.pattern {
                             locals.insert(id.value.as_bytes().to_vec());
                         }
                     }
@@ -191,8 +199,8 @@ pub fn extract_statement_deps<'db>(
         Statement::Prim(prim) => {
             extract_expr_refs(db, &prim.ty, &mut refs, &mut locals);
         }
-        // Meta, Open, Namespace don't contribute to dependency graph
-        Statement::Meta(_) | Statement::Open(_) | Statement::Namespace(_) => {}
+        // Meta, Open, Namespace, Invalid don't contribute to dependency graph
+        Statement::Meta(_) | Statement::Open(_) | Statement::Namespace(_) | Statement::Invalid(_) => {}
     }
 
     refs
@@ -216,7 +224,7 @@ pub fn statement_declares<'db>(
         Statement::Meta(meta) => surface_id_to_path(db, &meta.id)
             .ok()
             .filter(|p| !p.is_empty()),
-        Statement::Open(_) | Statement::Namespace(_) => None,
+        Statement::Open(_) | Statement::Namespace(_) | Statement::Invalid(_) => None,
     }
 }
 
