@@ -11,10 +11,12 @@ pub mod quote;
 pub mod source_range;
 pub mod syn;
 pub mod test_utils;
-pub mod ty; // Semantic type system (type codes architecture)
 pub mod typed;
 pub mod val;
 pub mod word;
+
+// Re-export val::ty as ty for backward compatibility
+pub use val::ty;
 
 pub use binding::*;
 pub use common::*;
@@ -32,7 +34,11 @@ pub use syn::declaration::{
 pub use syn::telescope::Cell;
 pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
 pub use typed::*;
-pub use val::{GlobalEnv, RcValue, Value};
+pub use val::{
+    ConstantInfo, DataConstructorInfo, Environment, Global, GlobalEnv, LocalEnv, LookupError,
+    LookupErrorKind, LookupResult, MetaVariableLookupError, MetavariableInfo, PrimitiveInfo,
+    RcTy, RcValue, TransparentEnv, Ty, TypeConstructorInfo, Value,
+};
 
 /// Test-only database for hwml-core unit tests.
 ///
