@@ -10,10 +10,11 @@ use std::rc::Rc;
 use hwml_core::{
     eval::{self, run_spine},
     val::{
-        Closure, DataConstructor, Eliminator, EqType, Flex, GlobalEnv, Lambda, LocalEnv,
-        MetaVariable, Normal, Rigid, Spine, Transport, TypeConstructor, Variable,
+        self, Closure, DataConstructor, Eliminator, EqType, Flex, GlobalEnv, Lambda, LocalEnv,
+        MetaVariable, Normal, RcTy, Rigid, Spine, Transport, Ty, TyClosure, TyMetaVariable,
+        TyVariable, TypeConstructor, Variable,
     },
-    RcValue, Value,
+    Icit, RcValue, Value,
 };
 
 /// Substitute levels `0..local.depth()-1` throughout a value.
@@ -80,6 +81,111 @@ pub fn subst_value<'db>(
     }
 }
 
+/// Substitute levels throughout a semantic type.
+///
+/// **CRITICAL FIX**: This traverses the Strong Tarski `Ty` structure and substitutes
+/// through term-level components (like spines in RigidTy/FlexTy and args in TyConstructor).
+pub fn subst_ty<'db>(
+    global: &GlobalEnv<'db>,
+    ty: &RcTy<'db>,
+    local: &LocalEnv<'db>,
+) -> Result<RcTy<'db>, eval::Error<'db>> {
+    if local.depth() == 0 {
+        return Ok(ty.clone());
+    }
+
+    match ty.as_ref() {
+        // Base cases: no variables inside
+        Ty::UniverseType | Ty::SignalUniverseType | Ty::ModuleUniverseType => Ok(ty.clone()),
+        Ty::Universe(_) | Ty::BitType => Ok(ty.clone()),
+
+        // Pi type: substitute in domain and closure
+        Ty::Pi(source, icit, target) => {
+            let new_source = subst_ty(global, source, local)?;
+            let new_target = subst_ty_closure(global, target, local)?;
+            Ok(Ty::pi_rc(new_source, *icit, new_target))
+        }
+
+        // HArrow: substitute in both types
+        Ty::HArrow(source, target) => {
+            let new_source = subst_ty(global, source, local)?;
+            let new_target = subst_ty(global, target, local)?;
+            Ok(Ty::harrow_rc(new_source, new_target))
+        }
+
+        // LiftType: substitute in inner type
+        Ty::LiftType(shift, inner) => {
+            let new_inner = subst_ty(global, inner, local)?;
+            Ok(Ty::lift_type_rc(*shift, new_inner))
+        }
+
+        // TyConstructor: substitute in term-level arguments
+        Ty::TyConstructor(name, args) => {
+            let new_args: Result<Vec<_>, _> = args
+                .iter()
+                .map(|arg| subst_value(global, arg, local))
+                .collect();
+            Ok(Ty::ty_constructor_rc(name.clone(), new_args?))
+        }
+
+        // RigidTy: substitute in spine (terms!) and type boundary
+        Ty::RigidTy(var, spine, orig_ty) => {
+            let new_spine = subst_spine_vals(global, spine, local)?;
+            let new_ty = subst_ty(global, orig_ty, local)?;
+            Ok(Ty::rigid_ty_rc(var.clone(), new_spine, new_ty))
+        }
+
+        // FlexTy: substitute in spine (terms!) and type boundary
+        Ty::FlexTy(meta, spine, orig_ty) => {
+            let new_spine = subst_spine_vals(global, spine, local)?;
+            let new_ty = subst_ty(global, orig_ty, local)?;
+            Ok(Ty::flex_ty_rc(meta.clone(), new_spine, new_ty))
+        }
+
+        // **PHASE 9**: Handle Signal and Module El types
+        Ty::SignalEl(code) | Ty::ModuleEl(code) => {
+            let new_code = subst_value(global, code, local)?;
+            match ty.as_ref() {
+                Ty::SignalEl(_) => Ok(Ty::signal_el_rc(new_code)),
+                Ty::ModuleEl(_) => Ok(Ty::module_el_rc(new_code)),
+                _ => unreachable!(),
+            }
+        }
+        // **PHASE 9**: Decoded types - no substitution needed for now
+        // In a full implementation, we'd need to substitute in nested types
+        _ => Ok(ty.clone()),
+    }
+}
+
+/// Substitute through a TyClosure's captured environment.
+fn subst_ty_closure<'db>(
+    global: &GlobalEnv<'db>,
+    closure: &TyClosure<'db>,
+    local: &LocalEnv<'db>,
+) -> Result<TyClosure<'db>, eval::Error<'db>> {
+    match closure {
+        TyClosure::Syntactic {
+            local: closure_local,
+            body,
+        } => {
+            // Substitute through the captured environment
+            let new_local = subst_local_env(global, closure_local, local)?;
+            Ok(TyClosure::new(new_local, body.clone()))
+        }
+        TyClosure::Decoding {
+            global: closure_global,
+            value_closure,
+        } => {
+            // Substitute through the value closure's environment
+            let new_value_closure = subst_closure(value_closure, local);
+            Ok(TyClosure::new_decoding(
+                closure_global.clone(),
+                new_value_closure,
+            ))
+        }
+    }
+}
+
 fn subst_rigid<'db>(
     global: &GlobalEnv<'db>,
     rigid: &Rigid<'db>,
@@ -93,7 +199,7 @@ fn subst_rigid<'db>(
         run_spine(global, head_val, &subst_spine)
     } else {
         // Outer free variable: keep level, substitute in spine and ty.
-        let new_ty = subst_value(global, &rigid.ty, local)?;
+        let new_ty = subst_ty(global, &rigid.ty, local)?;
         Ok(Rc::new(Value::Rigid(Rigid::new(
             Variable::new(level),
             subst_spine,
@@ -109,7 +215,7 @@ fn subst_flex<'db>(
 ) -> Result<RcValue<'db>, eval::Error<'db>> {
     let new_inner = subst_local_env(global, &flex.head.local, local)?;
     let new_spine = subst_spine_vals(global, &flex.spine, local)?;
-    let new_ty = subst_value(global, &flex.ty, local)?;
+    let new_ty = subst_ty(global, &flex.ty, local)?;
     let new_head = MetaVariable::new(flex.head.id, new_inner);
     Ok(Rc::new(Value::Flex(Flex::new(new_head, new_spine, new_ty))))
 }
@@ -161,7 +267,8 @@ fn subst_spine_vals<'db>(
     for elim in spine.iter() {
         match elim {
             Eliminator::Application(app) => {
-                let new_ty = subst_value(global, &app.argument.ty, local)?;
+                // **PHASE 9**: app.argument.ty is RcTy, not RcValue
+                let new_ty = subst_ty(global, &app.argument.ty, local)?;
                 let new_val = subst_value(global, &app.argument.value, local)?;
                 new_elims.push(Eliminator::application(
                     Normal::new(new_ty, new_val),

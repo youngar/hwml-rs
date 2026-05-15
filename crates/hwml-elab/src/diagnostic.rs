@@ -19,13 +19,8 @@ where
         Ty::UniverseType => "Type".to_string(),
         Ty::SignalUniverseType => "Signal".to_string(),
         Ty::ModuleUniverseType => "Module".to_string(),
-        Ty::El(code) => {
-            // Quote the type code to syntax and print it
-            match hwml_core::quote::type_quote(db, global, 0, code) {
-                Ok(syntax) => hwml_core::syn::print::print_syntax_to_string(db, &syntax),
-                Err(_) => format!("{:?}", code), // Fallback to debug format
-            }
-        }
+        // **PHASE 9**: Ty::El deleted - types are already decoded
+        // Standard types (Universe, Pi, BitType, etc.) are handled below
         Ty::SignalEl(code) => match hwml_core::quote::type_quote(db, global, 0, code) {
             Ok(syntax) => format!(
                 "Signal[{}]",
@@ -40,7 +35,7 @@ where
             ),
             Err(_) => format!("Module[{:?}]", code),
         },
-        Ty::Pi(dom, cod) => {
+        Ty::Pi(dom, _icit, _cod) => {
             // Pi types are displayed as: (x : A) → B
             // We show the domain and a placeholder for the codomain since closures are complex
             let dom_str = format_type(db, global, dom);
@@ -51,6 +46,25 @@ where
             let source_str = format_type(db, global, source);
             let target_str = format_type(db, global, target);
             format!("{} → {}", source_str, target_str)
+        }
+        // Strong Tarski decoded types
+        Ty::Universe(n) => format!("Type_{}", n),
+        Ty::BitType => "Bit".to_string(),
+        Ty::LiftType(shift, inner) => {
+            let inner_str = format_type(db, global, inner);
+            format!("Lift^{}({})", shift, inner_str)
+        }
+        Ty::TyConstructor(name, _args) => {
+            // Type constructors display with their name
+            format!("{:?}", name)
+        }
+        Ty::RigidTy(_var, _spine, _ty) => {
+            // Neutral rigid type - display as stuck variable
+            "?rigid_ty".to_string()
+        }
+        Ty::FlexTy(_meta, _spine, _ty) => {
+            // Neutral flex type - display as unsolved meta
+            "?flex_ty".to_string()
         }
     }
 }
@@ -201,14 +215,11 @@ where
                 name
             ));
         }
-        ElabError::TypeMismatch {
-            expected, actual, ..
-        } => {
-            // Only add suggestion if types are obviously different
-            if !matches!((expected.as_ref(), actual.as_ref()), (Ty::El(_), Ty::El(_))) {
-                builder = builder
-                    .with_suggestion("ensure the expression produces a value of the expected type");
-            }
+        ElabError::TypeMismatch { .. } => {
+            // **PHASE 9**: El variant removed - all types are now decoded
+            // Always add suggestion for type mismatches
+            builder = builder
+                .with_suggestion("ensure the expression produces a value of the expected type");
         }
         ElabError::UnsolvedMeta { meta, .. } => {
             builder = builder

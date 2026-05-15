@@ -2,7 +2,7 @@ use crate::*;
 use std::{collections::HashMap, fmt};
 use syn::{RcSyntax, Telescope};
 
-use crate::val::{RcValue, Value};
+use val::{RcValue, Value};
 
 /// Tracks transparent bindings (Let-bound variables) for δ-reduction.
 #[derive(Clone, Debug)]
@@ -81,7 +81,7 @@ impl<'db> LocalEnv<'db> {
     }
 
     /// Extend the environment by pushing a variable onto the end.
-    pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn push_var(&mut self, ty: val::RcTy<'db>) -> RcValue<'db> {
         let depth = self.depth();
         let value = Value::variable_rc(Level::new(depth), ty);
         self.push(value.clone());
@@ -107,7 +107,7 @@ impl<'db> LocalEnv<'db> {
 
     pub fn extend_vars<T>(&mut self, types: T)
     where
-        T: IntoIterator<Item = RcValue<'db>>,
+        T: IntoIterator<Item = val::RcTy<'db>>,
     {
         for ty in types {
             self.push_var(ty);
@@ -183,20 +183,40 @@ pub enum Global<'db> {
     DataConstructor(DataConstructorInfo<'db>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GlobalEnv<'db> {
+    /// Database reference for Salsa queries (needed for encode_type in quotation).
+    /// Stored here to avoid threading through all evaluation functions.
+    db: &'db dyn salsa::Database,
     /// Constant environment mapping QualifiedName to values.
     constants: HashMap<QualifiedName<'db>, Global<'db>>,
     /// Metavariable context mapping MetaVariableId to metavariable info.
     metavariables: HashMap<MetaVariableId, MetavariableInfo<'db>>,
 }
 
+// Manual Debug impl because salsa::Database doesn't implement Debug
+impl<'db> fmt::Debug for GlobalEnv<'db> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GlobalEnv")
+            .field("db", &"<dyn Database>")
+            .field("constants", &self.constants)
+            .field("metavariables", &self.metavariables)
+            .finish()
+    }
+}
+
 impl<'db> GlobalEnv<'db> {
-    pub fn new() -> Self {
+    pub fn new(db: &'db dyn salsa::Database) -> Self {
         Self {
+            db,
             constants: HashMap::new(),
             metavariables: HashMap::new(),
         }
+    }
+
+    /// Get the database reference
+    pub fn db(&self) -> &'db dyn salsa::Database {
+        self.db
     }
 
     pub fn contains(&self, name: QualifiedName<'db>) -> bool {
@@ -530,7 +550,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     }
 
     /// Extend the environment by pushing a variable onto the end.
-    pub fn push_var(&mut self, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn push_var(&mut self, ty: val::RcTy<'db>) -> RcValue<'db> {
         self.transparent.push_rigid();
         self.local.push_var(ty)
     }
@@ -538,7 +558,7 @@ impl<'db, 'g> Environment<'db, 'g> {
     /// Extend the environment with multiple variables.
     pub fn extend_vars<T>(&mut self, types: T)
     where
-        T: IntoIterator<Item = RcValue<'db>>,
+        T: IntoIterator<Item = val::RcTy<'db>>,
     {
         for ty in types {
             self.push_var(ty);
@@ -547,7 +567,11 @@ impl<'db, 'g> Environment<'db, 'g> {
 
     /// Push a transparent binding (for Let expressions).
     /// This adds both the variable to the local environment and tracks it as transparent.
-    pub fn push_transparent(&mut self, ty: RcValue<'db>, value: RcValue<'db>) -> RcValue<'db> {
+    pub fn push_transparent(
+        &mut self,
+        ty: val::RcTy<'db>,
+        value: RcValue<'db>,
+    ) -> RcValue<'db> {
         let var = self.local.push_var(ty);
         self.transparent.push_transparent(value);
         var

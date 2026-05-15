@@ -184,9 +184,20 @@ where
                         elab::expr::check(db, &mut inner, ty_expr, Rc::new(Ty::UniverseType))?
                             .into_inner();
                     let ty_code = inner.kernel.eval_syn_flex(&ty_syn);
+                    // **PHASE 9**: Decode type code into semantic type
+                    let ty_semantic = hwml_core::eval::decode_type_code(
+                        inner.kernel.global,
+                        &ty_code,
+                    )
+                    .map_err(|_| ElabError::NotImplemented {
+                        elab_backtrace: inner.context.snapshot(),
+                        feature: "decode_type_code in definition".to_string(),
+                        span: def.ty.as_ref().map(|t| {
+                            hwml_core::SourceRange::new(inner.context.source(), t.loc().clone())
+                        }),
+                    })?;
                     let val_syn =
-                        elab::expr::check(db, &mut inner, &def.value, Rc::new(Ty::El(ty_code)))?
-                            .into_inner();
+                        elab::expr::check(db, &mut inner, &def.value, ty_semantic)?.into_inner();
                     (ty_syn, val_syn)
                 }
                 None => {
@@ -229,8 +240,16 @@ where
 
             let ty_code = inner.kernel.eval_syn_flex(&ty_syn);
             let fun_expr = build_fun_expr(&def.bindings.groups, &def.value);
-            let val_syn = elab::expr::check(db, &mut inner, &fun_expr, Rc::new(Ty::El(ty_code)))?
-                .into_inner();
+            // **PHASE 9**: Decode type code into semantic type
+            let ty_semantic = hwml_core::eval::decode_type_code(inner.kernel.global, &ty_code)
+                .map_err(|_| ElabError::NotImplemented {
+                    elab_backtrace: inner.context.snapshot(),
+                    feature: "decode_type_code in definition (with bindings)".to_string(),
+                    span: def.ty.as_ref().map(|t| {
+                        hwml_core::SourceRange::new(inner.context.source(), t.loc().clone())
+                    }),
+                })?;
+            let val_syn = elab::expr::check(db, &mut inner, &fun_expr, ty_semantic)?.into_inner();
 
             (ty_syn, val_syn)
         }
@@ -458,12 +477,20 @@ where
             inner.eval_syn_flex(&ty_syn)
         };
 
-        let dom_ty: hwml_core::ty::RcTy<'db> = Rc::new(Ty::El(ty_code.clone()));
+        // **PHASE 9**: Decode immediately - no need for intermediate El wrapper
+        let ty_semantic =
+            hwml_core::eval::decode_type_code(elab.kernel.global, &ty_code).map_err(|_| {
+                ElabError::NotImplemented {
+                    elab_backtrace: Vec::new(),
+                    feature: "decode_type_code".to_string(),
+                    span: None,
+                }
+            })?;
 
         for binder in &group.binders {
             let binder_name = binder_to_name(binder);
-            let var = current_ctx.fresh_var(ty_code.clone());
-            current_ctx = current_ctx.push_bound(binder_name, dom_ty.clone(), var);
+            let var = current_ctx.fresh_var(ty_semantic.clone());
+            current_ctx = current_ctx.push_bound(binder_name, ty_semantic.clone(), var);
             types.push(ty_syn.clone());
         }
     }
@@ -668,8 +695,14 @@ pub fn verify_elaborated_constant<'db>(
     };
     hwml_core::check::check_type(&mut env, &ty_clean)?;
     let mut eval_env = Environment::new(global);
-    let ty_val =
+    let ty_code =
         eval::eval(&mut eval_env, &ty_clean).map_err(hwml_core::check::Error::EvaluationFailure)?;
+    // **PHASE 9**: Decode type code into semantic type
+    let ty_val = hwml_core::eval::decode_type_code(global, &ty_code).map_err(|_| {
+        hwml_core::check::Error::EvaluationFailure(hwml_core::eval::Error::NotATypeCode {
+            value: ty_code.clone(),
+        })
+    })?;
     hwml_core::check::type_check(&mut env, &val_clean, &ty_val)
 }
 
@@ -687,20 +720,25 @@ fn quote_type<'a, 'db>(
             let (syn, _) = elab.kernel.synth_universe(None, None)?.into_inner();
             Ok(syn)
         }
-        CoreTy::El(code) => {
-            let depth = elab.kernel.ctx.depth();
+        // **PHASE 9**: All other ty variants get encoded and quoted
+        _ => {
+            // Encode the Ty variant to a Value (type code)
+            let ty_code =
+                hwml_core::quote::encode_type(db, elab.kernel.global, 0, ty).map_err(|_| {
+                    ElabError::CannotInfer {
+                        span: None,
+                        elab_backtrace: elab.context.snapshot(),
+                    }
+                })?;
+            // Quote the type code back to syntax
             let universe_val = Value::UniverseCode(0);
-            match hwml_core::quote::quote(db, elab.kernel.global, depth, code, &universe_val) {
+            match hwml_core::quote::quote(db, elab.kernel.global, 0, &ty_code, &universe_val) {
                 Ok(syn) => Ok(syn),
                 Err(_) => Err(ElabError::CannotInfer {
-                    span: None, // Quote errors don't have a specific location
+                    span: None,
                     elab_backtrace: elab.context.snapshot(),
                 }),
             }
         }
-        _ => Err(ElabError::CannotInfer {
-            span: None, // Type conversion errors don't have a specific location
-            elab_backtrace: elab.context.snapshot(),
-        }),
     }
 }

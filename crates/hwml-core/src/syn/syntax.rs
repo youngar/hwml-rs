@@ -325,7 +325,7 @@ impl<'db> Syntax<'db> {
     }
 
     pub fn let_expr(
-        ty: RcSyntax<'db>,
+        ty: syn::RcTy<'db>,
         value: RcSyntax<'db>,
         body: BindingSyntax<'db>,
     ) -> Syntax<'db> {
@@ -333,18 +333,18 @@ impl<'db> Syntax<'db> {
     }
 
     pub fn let_rc(
-        ty: RcSyntax<'db>,
+        ty: syn::RcTy<'db>,
         value: RcSyntax<'db>,
         body: BindingSyntax<'db>,
     ) -> RcSyntax<'db> {
         Rc::new(Syntax::let_expr(ty, value, body))
     }
 
-    pub fn check(ty: RcSyntax<'db>, term: RcSyntax<'db>) -> Syntax<'db> {
+    pub fn check(ty: syn::RcTy<'db>, term: RcSyntax<'db>) -> Syntax<'db> {
         Syntax::Check(Check::new(ty, term))
     }
 
-    pub fn check_rc(ty: RcSyntax<'db>, term: RcSyntax<'db>) -> RcSyntax<'db> {
+    pub fn check_rc(ty: syn::RcTy<'db>, term: RcSyntax<'db>) -> RcSyntax<'db> {
         Rc::new(Syntax::check(ty, term))
     }
 }
@@ -710,25 +710,31 @@ impl<'db> Metavariable<'db> {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Let<'db> {
-    pub ty: RcSyntax<'db>,
+    /// The type annotation - must be a syntactic TYPE, not a term!
+    /// This enforces Tarski separation: types vs terms
+    pub ty: syn::RcTy<'db>,
     pub value: RcSyntax<'db>,
     pub body: BindingSyntax<'db>,
 }
 
 impl<'db> Let<'db> {
-    pub fn new(ty: RcSyntax<'db>, value: RcSyntax<'db>, body: BindingSyntax<'db>) -> Let<'db> {
+    pub fn new(
+        ty: syn::RcTy<'db>,
+        value: RcSyntax<'db>,
+        body: BindingSyntax<'db>,
+    ) -> Let<'db> {
         Let { ty, value, body }
     }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone)]
 pub struct Check<'db> {
-    pub ty: RcSyntax<'db>,
+    pub ty: syn::RcTy<'db>, // ← CHANGED: Now holds a type!
     pub term: RcSyntax<'db>,
 }
 
 impl<'db> Check<'db> {
-    pub fn new(ty: RcSyntax<'db>, term: RcSyntax<'db>) -> Check<'db> {
+    pub fn new(ty: syn::RcTy<'db>, term: RcSyntax<'db>) -> Check<'db> {
         Check { ty, term }
     }
 }

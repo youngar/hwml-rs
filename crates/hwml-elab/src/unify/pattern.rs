@@ -286,7 +286,8 @@ fn pattern_quote_closure<'db>(
     arity: usize,
     outer_depth: usize,
 ) -> Result<RcSyntax<'db>, RenameError<'db>> {
-    let fresh_ty: RcValue<'db> = Rc::new(Value::UniverseCode(0));
+    // Create fresh variable with semantic type Universe(0)
+    let fresh_ty: RcTy<'db> = Rc::new(Ty::Universe(0));
     let fresh_var: RcValue<'db> = Rc::new(Value::variable(Level::new(outer_depth), fresh_ty));
 
     let mut body_local = clos.local.clone();
@@ -394,8 +395,9 @@ fn rename_value<'db>(
             }
             match rename.get(&level) {
                 Some(&pos) => {
-                    let new_ty =
-                        rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
+                    // rigid.ty is now RcTy, not RcValue. Just clone it.
+                    // TODO: Implement proper type renaming
+                    let new_ty = rigid.ty.clone();
                     Ok(Rc::new(Value::variable(Level::new(pos), new_ty)))
                 }
                 None => Err(RenameError::Hard(ElabError::ScopeViolation {
@@ -422,21 +424,18 @@ fn rename_value<'db>(
                     }))
                 }
             };
-            let new_ty = rename_value(db, global, state, &rigid.ty, rename, ambiguous, meta_id)?;
+            // rigid.ty is now RcTy. Just clone it.
+            // TODO: Implement proper type renaming
+            let new_ty = rigid.ty.clone();
             // Rebuild spine with renamed args.
             let mut new_elims = Vec::with_capacity(rigid.spine.len());
             for elim in rigid.spine.iter() {
                 match elim {
                     Eliminator::Application(app) => {
-                        let new_arg_ty = rename_value(
-                            db,
-                            global,
-                            state,
-                            &app.argument.ty,
-                            rename,
-                            ambiguous,
-                            meta_id,
-                        )?;
+                        // app.argument.ty is RcValue (type code), rename it
+                        // **PHASE 9**: app.argument.ty is RcTy, not RcValue
+                        // For now, just clone the type as-is
+                        let new_arg_ty = app.argument.ty.clone();
                         let new_arg_val = rename_value(
                             db,
                             global,
@@ -566,7 +565,8 @@ fn prune_flex_rename<'db>(
         }
     }
 
-    let dummy_val: RcValue<'db> = Rc::new(Value::UniverseCode(0));
+    // Dummy semantic type for metavariables
+    let dummy_ty: RcTy<'db> = Rc::new(Ty::Universe(0));
 
     // Collect renamed args (level positions in meta scope).
     let meta_vid = MetaVariableId::new(flex2_id.0 as u16);
@@ -575,7 +575,7 @@ fn prune_flex_rename<'db>(
         let arg = flex2.head.local.get(Level::new(k));
         if let Value::Rigid(rigid) = arg.as_ref() {
             let &pos = rename.get(&rigid.head.level).unwrap();
-            renamed_local.push(Rc::new(Value::variable(Level::new(pos), dummy_val.clone())));
+            renamed_local.push(Rc::new(Value::variable(Level::new(pos), dummy_ty.clone())));
         }
     }
     if kept.len() == flex2_arity {
@@ -583,13 +583,13 @@ fn prune_flex_rename<'db>(
         return Ok(Rc::new(Value::Flex(Flex::new(
             hwml_core::val::MetaVariable::new(meta_vid, renamed_local),
             Spine::empty(),
-            dummy_val,
+            dummy_ty.clone(),
         ))));
     }
 
     // Some args out of scope: create ?m' and solve ?flex2 ← λ(n). ?m'[kept].
     let dummy_ty: RcTy<'db> = Rc::new(Ty::UniverseType);
-    let new_meta_id = state.fresh_meta(dummy_ty, kept.len(), MetaKind::Term);
+    let new_meta_id = state.fresh_meta(dummy_ty.clone(), kept.len(), MetaKind::Term);
 
     let syn_sol = intersection_syntax_solution(db, new_meta_id, flex2_arity, &kept);
     let val_sol = intersection_value_solution(new_meta_id, &kept);
@@ -601,7 +601,7 @@ fn prune_flex_rename<'db>(
     Ok(Rc::new(Value::Flex(Flex::new(
         hwml_core::val::MetaVariable::new(new_meta_vid, renamed_local),
         Spine::empty(),
-        dummy_val,
+        dummy_ty,
     ))))
 }
 

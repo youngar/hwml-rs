@@ -83,7 +83,10 @@ impl<'a, 'db> Unifier<'a, 'db> {
         arg: RcValue<'db>,
         arg_ty: RcValue<'db>,
     ) -> RcValue<'db> {
-        let elim = Eliminator::application(Normal::new(arg_ty, arg), Icit::Explicit);
+        // **PHASE 9**: Decode arg_ty to get semantic type for Normal
+        let arg_ty_semantic = hwml_core::eval::decode_type_code(self.global, &arg_ty)
+            .unwrap_or_else(|_| Rc::new(Ty::universe(0)));
+        let elim = Eliminator::application(Normal::new(arg_ty_semantic, arg), Icit::Explicit);
         let mut spine = Spine::empty();
         spine.push(elim);
         eval::run_spine(self.global, fun, &spine)
@@ -114,41 +117,33 @@ impl<'a, 'db> Unifier<'a, 'db> {
             return Ok(UnifyResult::Solved);
         }
 
-        // Pi eta: at El(PiCode), eta-expand both sides under a fresh variable.
-        // HArrow eta: at El(HArrow), eta-expand both sides under a fresh variable.
-        if let Ty::El(code) = ty.as_ref() {
-            match code.as_ref() {
-                Value::PiCode(dom, _icit, cod) => {
-                    let dom = dom.clone();
-                    let cod = cod.clone();
-                    let var: RcValue<'db> =
-                        Rc::new(Value::variable(Level::new(self.depth), dom.clone()));
-                    let lhs_app = self.apply_val(lhs, var.clone(), dom.clone());
-                    let rhs_app = self.apply_val(rhs, var.clone(), dom.clone());
-                    let ret_code = cod.apply(self.global, &var);
-                    let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
-                    self.depth += 1;
-                    let result = self.unify_at(lhs_app, rhs_app, ret_ty);
-                    self.depth -= 1;
-                    return result;
-                }
-                Value::HArrow(harrow) => {
-                    // Hardware arrow eta-expansion (for Module values)
-                    let source = harrow.source.clone();
-                    let target_closure = harrow.target.clone();
-                    let var: RcValue<'db> =
-                        Rc::new(Value::variable(Level::new(self.depth), source.clone()));
-                    let lhs_app = self.apply_val(lhs, var.clone(), source.clone());
-                    let rhs_app = self.apply_val(rhs, var.clone(), source.clone());
-                    let ret_code = target_closure.apply(self.global, &var);
-                    let ret_ty: RcTy<'db> = Rc::new(Ty::El(ret_code));
-                    self.depth += 1;
-                    let result = self.unify_at(lhs_app, rhs_app, ret_ty);
-                    self.depth -= 1;
-                    return result;
-                }
-                _ => {}
-            }
+        // **PHASE 9**: Pi eta-expansion - handle decoded Ty::Pi directly
+        if let Ty::Pi(dom_ty, _icit, ty_closure) = ty.as_ref() {
+            // Encode domain type back to a value for the rigid variable
+            let dom_code = hwml_core::quote::encode_type(
+                self.global.db(),
+                self.global,
+                self.depth,
+                dom_ty.as_ref(),
+            )
+            .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)));
+
+            // Decode domain type for variable creation
+            let var: RcValue<'db> =
+                Rc::new(Value::variable(Level::new(self.depth), dom_ty.clone()));
+
+            // Apply both sides to the fresh variable
+            let lhs_app = self.apply_val(lhs, var.clone(), dom_code.clone());
+            let rhs_app = self.apply_val(rhs, var.clone(), dom_code.clone());
+
+            // Compute return type by applying the type closure
+            let ret_ty = hwml_core::val::run_ty_closure(self.global, ty_closure, [var.clone()])
+                .unwrap_or_else(|_| Rc::new(Ty::universe(0)));
+
+            self.depth += 1;
+            let result = self.unify_at(lhs_app, rhs_app, ret_ty);
+            self.depth -= 1;
+            return result;
         }
 
         if matches!(ty.as_ref(), Ty::UniverseType) {
@@ -380,7 +375,10 @@ impl<'a, 'db> Unifier<'a, 'db> {
         }
 
         // Create a fresh variable and unify the codomains
-        let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), d1));
+        // Decode d1 (type code) to semantic type for variable
+        let d1_ty = hwml_core::eval::decode_type_code(self.global, &d1)
+            .unwrap_or_else(|_| Rc::new(Ty::Universe(0)));
+        let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), d1_ty));
         let ret1 = c1.apply(self.global, &var);
         let ret2 = c2.apply(self.global, &var);
 
@@ -473,8 +471,10 @@ impl<'a, 'db> Unifier<'a, 'db> {
         }
 
         // Create a fresh variable and unify the target closures
-        let var: RcValue<'db> =
-            Rc::new(Value::variable(Level::new(self.depth), ha1.source.clone()));
+        // Decode source type code to semantic type for variable
+        let source_ty = hwml_core::eval::decode_type_code(self.global, &ha1.source)
+            .unwrap_or_else(|_| Rc::new(Ty::Universe(0)));
+        let var: RcValue<'db> = Rc::new(Value::variable(Level::new(self.depth), source_ty));
         let tgt1 = ha1.target.apply(self.global, &var);
         let tgt2 = ha2.target.apply(self.global, &var);
 
@@ -645,9 +645,10 @@ impl<'a, 'db> Unifier<'a, 'db> {
             // Create fresh variables for the constructor arguments
             let args: Vec<RcValue<'db>> = (0..b1.arity)
                 .map(|i| {
+                    // Use Universe(0) as semantic type
                     let var: RcValue<'db> = Rc::new(Value::variable(
                         Level::new(self.depth + i),
-                        Rc::new(Value::UniverseCode(0)), // Use U0 as approximation
+                        Rc::new(Ty::Universe(0)), // Use Universe(0) as approximation
                     ));
                     var
                 })
@@ -753,7 +754,7 @@ pub(crate) fn intersection_value_solution<'db>(
     new_meta_id: MetaId,
     kept: &[usize],
 ) -> RcValue<'db> {
-    let dummy_ty: RcValue<'db> = Rc::new(Value::UniverseCode(0));
+    let dummy_ty: RcTy<'db> = Rc::new(Ty::Universe(0));
     let mut inner_local = LocalEnv::new();
     for &pos in kept {
         inner_local.push(Rc::new(Value::variable(Level::new(pos), dummy_ty.clone())));

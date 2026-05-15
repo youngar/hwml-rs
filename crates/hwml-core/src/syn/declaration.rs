@@ -1,6 +1,6 @@
-use crate::syn::*;
 use crate::Icit;
 use crate::*;
+use syn::*;
 
 /// A primitive declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -38,7 +38,9 @@ pub struct TypeConstructorDecl<'db> {
     /// The indices of the type constructor (telescope of types)
     pub indices: Telescope<'db>,
     pub data_constructors: Vec<DataConstructorDecl<'db>>,
-    pub universe: RcSyntax<'db>,
+    /// The target universe this type constructor lives in (e.g., U0, U1, etc.)
+    /// This is a TYPE, not a term! Use syn::RcTy for proper Tarski separation.
+    pub target: syn::RcTy<'db>,
 }
 
 impl<'db> TypeConstructorDecl<'db> {
@@ -47,14 +49,14 @@ impl<'db> TypeConstructorDecl<'db> {
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
         data_constructors: Vec<DataConstructorDecl<'db>>,
-        universe: RcSyntax<'db>,
+        target: syn::RcTy<'db>,
     ) -> Self {
         TypeConstructorDecl {
             name,
             parameters,
             indices,
             data_constructors,
-            universe,
+            target,
         }
     }
 }
@@ -65,20 +67,20 @@ pub struct DataConstructorDecl<'db> {
     pub name: QualifiedName<'db>,
     /// The parameters of the data constructor (telescope of types)
     pub parameters: Telescope<'db>,
-    /// The result type (the type constructor applied to indices)
-    pub result_type: RcSyntax<'db>,
+    /// The target type (the type constructor applied to indices)
+    pub target: RcSyntax<'db>,
 }
 
 impl<'db> DataConstructorDecl<'db> {
     pub fn new(
         name: QualifiedName<'db>,
         parameters: Telescope<'db>,
-        result_type: RcSyntax<'db>,
+        target: RcSyntax<'db>,
     ) -> Self {
         DataConstructorDecl {
             name,
             parameters,
-            result_type,
+            target,
         }
     }
 
@@ -87,12 +89,12 @@ impl<'db> DataConstructorDecl<'db> {
         self.name
     }
 
-    /// Reconstruct the full Pi type from the telescope and result type.
-    pub fn full_type<DB>(&self, db: &'db DB) -> RcSyntax<'db>
+    /// Reconstruct the full Pi type from the telescope and target type.
+    pub fn full_type<DB>(&self, _db: &'db DB) -> RcSyntax<'db>
     where
         DB: salsa::Database + ?Sized,
     {
-        let mut result = self.result_type.clone();
+        let mut result = self.target.clone();
         for cell in self.parameters.iter().rev() {
             result = Syntax::PiCode(
                 cell.ty.clone(),
@@ -148,14 +150,14 @@ impl<'db> Declaration<'db> {
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
         data_constructors: Vec<DataConstructorDecl<'db>>,
-        universe: RcSyntax<'db>,
+        target: syn::RcTy<'db>,
     ) -> Self {
         Declaration::TypeConstructorDecl(TypeConstructorDecl::new(
             name,
             parameters,
             indices,
             data_constructors,
-            universe,
+            target,
         ))
     }
 
@@ -209,7 +211,7 @@ impl<'db> CompilationUnit<'db> {
         name: QualifiedName<'db>,
         parameters: Telescope<'db>,
         indices: Telescope<'db>,
-        ty: RcSyntax<'db>,
+        ty: syn::RcTy<'db>,
         data_constructors: Vec<DataConstructorDecl<'db>>,
     ) {
         let declaration =

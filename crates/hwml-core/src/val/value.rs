@@ -34,14 +34,16 @@ impl<'db> Closure<'db> {
 }
 
 /// A value in normal form.
+/// **PHASE 9**: After Strong Tarski, Normal stores the SEMANTIC TYPE (RcTy),
+/// not the type code. This eliminates the need for encode_type during evaluation.
 #[derive(Clone, Debug)]
 pub struct Normal<'db> {
-    pub ty: RcValue<'db>,
+    pub ty: val::RcTy<'db>,
     pub value: RcValue<'db>,
 }
 
 impl<'db> Normal<'db> {
-    pub fn new(ty: RcValue<'db>, value: RcValue<'db>) -> Normal<'db> {
+    pub fn new(ty: val::RcTy<'db>, value: RcValue<'db>) -> Normal<'db> {
         Normal { ty, value }
     }
 }
@@ -109,11 +111,19 @@ impl<'db> Value<'db> {
         Rc::new(Value::lambda(icit, body))
     }
 
-    pub fn let_expr(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> Value<'db> {
+    pub fn let_expr(
+        ty: val::RcTy<'db>,
+        value: RcValue<'db>,
+        body: RcValue<'db>,
+    ) -> Value<'db> {
         Value::Let(Let::new(ty, value, body))
     }
 
-    pub fn let_expr_rc(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> RcValue<'db> {
+    pub fn let_expr_rc(
+        ty: val::RcTy<'db>,
+        value: RcValue<'db>,
+        body: RcValue<'db>,
+    ) -> RcValue<'db> {
         Rc::new(Value::let_expr(ty, value, body))
     }
 
@@ -285,47 +295,59 @@ impl<'db> Value<'db> {
         Rc::new(Value::constant(name))
     }
 
-    pub fn rigid(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
+    pub fn rigid(head: Variable, spine: Spine<'db>, ty: val::RcTy<'db>) -> Value<'db> {
         Value::Rigid(Rigid { head, spine, ty })
     }
 
-    pub fn rigid_rc(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn rigid_rc(head: Variable, spine: Spine<'db>, ty: val::RcTy<'db>) -> RcValue<'db> {
         Rc::new(Value::rigid(head, spine, ty))
     }
 
-    pub fn variable(level: Level, ty: RcValue<'db>) -> Value<'db> {
+    pub fn variable(level: Level, ty: val::RcTy<'db>) -> Value<'db> {
         Value::rigid(Variable::new(level), Spine::empty(), ty)
     }
 
-    pub fn variable_rc(level: Level, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn variable_rc(level: Level, ty: val::RcTy<'db>) -> RcValue<'db> {
         Rc::new(Value::variable(level, ty))
     }
 
-    pub fn flex(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> Value<'db> {
+    pub fn flex(
+        head: MetaVariable<'db>,
+        spine: Spine<'db>,
+        ty: val::RcTy<'db>,
+    ) -> Value<'db> {
         Value::Flex(Flex { head, spine, ty })
     }
 
-    pub fn flex_rc(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn flex_rc(
+        head: MetaVariable<'db>,
+        spine: Spine<'db>,
+        ty: val::RcTy<'db>,
+    ) -> RcValue<'db> {
         Rc::new(Value::flex(head, spine, ty))
     }
 
-    pub fn metavariable(id: MetaVariableId, local: LocalEnv<'db>, ty: RcValue<'db>) -> Value<'db> {
+    pub fn metavariable(
+        id: MetaVariableId,
+        local: LocalEnv<'db>,
+        ty: val::RcTy<'db>,
+    ) -> Value<'db> {
         Value::flex(MetaVariable::new(id, local), Spine::empty(), ty)
     }
 
     pub fn metavariable_rc(
         id: MetaVariableId,
         local: LocalEnv<'db>,
-        ty: RcValue<'db>,
+        ty: val::RcTy<'db>,
     ) -> RcValue<'db> {
         Rc::new(Value::metavariable(id, local, ty))
     }
 
-    pub fn identity_closure(id: MetaVariableId, ty: RcValue<'db>) -> Value<'db> {
+    pub fn identity_closure(id: MetaVariableId, ty: val::RcTy<'db>) -> Value<'db> {
         Value::flex(MetaVariable::new(id, LocalEnv::new()), Spine::empty(), ty)
     }
 
-    pub fn identity_closure_rc(id: MetaVariableId, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn identity_closure_rc(id: MetaVariableId, ty: val::RcTy<'db>) -> RcValue<'db> {
         Rc::new(Value::identity_closure(id, ty))
     }
 }
@@ -353,13 +375,13 @@ impl<'db> Lambda<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Let<'db> {
-    pub ty: RcValue<'db>,
+    pub ty: val::RcTy<'db>,
     pub value: RcValue<'db>,
     pub body: RcValue<'db>,
 }
 
 impl<'db> Let<'db> {
-    pub fn new(ty: RcValue<'db>, value: RcValue<'db>, body: RcValue<'db>) -> Let<'db> {
+    pub fn new(ty: val::RcTy<'db>, value: RcValue<'db>, body: RcValue<'db>) -> Let<'db> {
         Let { ty, value, body }
     }
 }
@@ -635,7 +657,7 @@ impl<'db> Prim<'db> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Constant<'db> {
     pub name: QualifiedName<'db>,
     _marker: PhantomData<&'db ()>,
@@ -652,13 +674,13 @@ impl<'db> Constant<'db> {
 
 #[derive(Clone, Debug)]
 pub struct Flex<'db> {
-    pub ty: RcValue<'db>,
+    pub ty: val::RcTy<'db>,
     pub head: MetaVariable<'db>,
     pub spine: Spine<'db>,
 }
 
 impl<'db> Flex<'db> {
-    pub fn new(head: MetaVariable<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> Flex<'db> {
+    pub fn new(head: MetaVariable<'db>, spine: Spine<'db>, ty: val::RcTy<'db>) -> Flex<'db> {
         Flex { head, spine, ty }
     }
 }
@@ -685,26 +707,30 @@ impl<'db> MetaVariable<'db> {
 
 #[derive(Clone, Debug)]
 pub struct StuckApplication<'db> {
-    pub ty: RcValue<'db>,
+    pub ty: val::RcTy<'db>,
     pub head: Constant<'db>,
     pub spine: Spine<'db>,
 }
 
 impl<'db> StuckApplication<'db> {
-    pub fn new(head: Constant<'db>, spine: Spine<'db>, ty: RcValue<'db>) -> StuckApplication<'db> {
+    pub fn new(
+        head: Constant<'db>,
+        spine: Spine<'db>,
+        ty: val::RcTy<'db>,
+    ) -> StuckApplication<'db> {
         StuckApplication { head, spine, ty }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Rigid<'db> {
-    pub ty: RcValue<'db>,
+    pub ty: val::RcTy<'db>,
     pub head: Variable,
     pub spine: Spine<'db>,
 }
 
 impl<'db> Rigid<'db> {
-    pub fn new(head: Variable, spine: Spine<'db>, ty: RcValue<'db>) -> Rigid<'db> {
+    pub fn new(head: Variable, spine: Spine<'db>, ty: val::RcTy<'db>) -> Rigid<'db> {
         Rigid { head, spine, ty }
     }
 }
@@ -833,5 +859,5 @@ impl<'db> CaseBranch<'db> {
 
 #[derive(Clone, Debug)]
 pub struct SemTelescope<'db> {
-    pub types: Vec<RcValue<'db>>,
+    pub types: Vec<val::RcTy<'db>>,
 }

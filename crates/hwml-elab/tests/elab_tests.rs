@@ -22,12 +22,13 @@ use hwml_elab::{
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn empty_global<'db>() -> GlobalEnv<'db> {
-    GlobalEnv::new()
+fn empty_global<'db>(db: &'db dyn salsa::Database) -> GlobalEnv<'db> {
+    GlobalEnv::new(db)
 }
 
 fn make_meta_flex<'db>(id: MetaId, local: LocalEnv<'db>) -> hwml_core::val::Flex<'db> {
-    let dummy: hwml_core::RcValue<'db> = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Flex now takes RcTy (semantic type), not RcValue (type code)
+    let dummy: hwml_core::ty::RcTy<'db> = Rc::new(Ty::Universe(0));
     let mv = MetaVariable::new(MetaVariableId::new(id.0 as u16), local);
     hwml_core::val::Flex::new(mv, Spine::empty(), dummy)
 }
@@ -96,7 +97,8 @@ fn solve_meta_wakes_blocked_constraints() {
 
 #[test]
 fn force_flex_returns_solution_after_solve() {
-    let global = empty_global();
+    let db = TestDatabase::default();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty = Rc::new(Ty::UniverseType);
     let meta_id = state.fresh_meta(ty.clone(), 0, MetaKind::Term);
@@ -124,7 +126,7 @@ fn force_flex_returns_solution_after_solve() {
 #[test]
 fn pattern_unify_linear_solves_meta() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
@@ -132,7 +134,8 @@ fn pattern_unify_linear_solves_meta() {
     let meta_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
 
     // Build local env: [Variable(level 0)].
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let mut local = LocalEnv::new();
     local.push(Rc::new(Value::variable(Level::new(0), var_ty.clone())));
 
@@ -154,13 +157,14 @@ fn pattern_unify_linear_solves_meta() {
 #[test]
 fn pattern_unify_scope_violation_returns_err() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
     // ?m of arity 1, parameterized over level 0.
     let meta_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let mut local = LocalEnv::new();
     local.push(Rc::new(Value::variable(Level::new(0), var_ty.clone())));
 
@@ -183,10 +187,11 @@ fn unify_rigid_mismatch_is_hard_failure() {
     use hwml_elab::unify::Unifier;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
 
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     // Two distinct rigid variables at different levels.
     let x: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let y: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
@@ -205,13 +210,14 @@ fn unify_rigid_mismatch_is_hard_failure() {
 #[test]
 fn pattern_unify_nonlinear_soft_fails_when_rhs_mentions_duplicate() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
     // ?m of arity 2, but BOTH args are the same level 0 (non-linear).
     let meta_id = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let mut local = LocalEnv::new();
     local.push(x0.clone());
@@ -235,13 +241,14 @@ fn pattern_unify_nonlinear_soft_fails_when_rhs_mentions_duplicate() {
 #[test]
 fn pattern_unify_nonlinear_succeeds_when_rhs_avoids_duplicate() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
     // ?m[x, x, z]: non-linear for x (level 0), linear for z (level 1).
     let meta_id = state.fresh_meta(ty.clone(), 3, MetaKind::Term);
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let z1 = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
     let mut local = LocalEnv::new();
@@ -271,12 +278,13 @@ fn unify_same_meta_trivial_succeeds_without_solving() {
     use hwml_elab::unify::Unifier;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
     let meta_id = state.fresh_meta(ty.clone(), 1, MetaKind::Term);
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let mut local = LocalEnv::new();
     local.push(x0.clone());
@@ -288,7 +296,7 @@ fn unify_same_meta_trivial_succeeds_without_solving() {
             local.clone(),
         ),
         hwml_core::val::Spine::empty(),
-        Rc::new(Value::UniverseCode(0)),
+        Rc::new(Ty::Universe(0)),
     )));
     let rhs = lhs.clone();
 
@@ -304,12 +312,13 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
     use hwml_elab::unify::Unifier;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
     let meta_id = state.fresh_meta(ty.clone(), 2, MetaKind::Term);
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let y1 = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
 
@@ -322,7 +331,7 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
     let lhs = Rc::new(Value::Flex(hwml_core::val::Flex::new(
         hwml_core::val::MetaVariable::new(meta_vid, lhs_local),
         hwml_core::val::Spine::empty(),
-        Rc::new(Value::UniverseCode(0)),
+        Rc::new(Ty::Universe(0)),
     )));
 
     // ?m[y, x] (rhs local = [y, x]) — positions differ
@@ -332,7 +341,7 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
     let rhs = Rc::new(Value::Flex(hwml_core::val::Flex::new(
         hwml_core::val::MetaVariable::new(meta_vid, rhs_local),
         hwml_core::val::Spine::empty(),
-        Rc::new(Value::UniverseCode(0)),
+        Rc::new(Ty::Universe(0)),
     )));
 
     let metas_before = state.iter_metas().count();
@@ -359,7 +368,7 @@ fn unify_same_meta_partial_intersection_creates_new_meta() {
 #[test]
 fn expect_fast_path_equal_types_no_meta() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
     let resolver = Resolver::new();
@@ -382,7 +391,7 @@ fn expect_fast_path_equal_types_no_meta() {
 #[test]
 fn expect_slow_path_emits_constraint() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
     let resolver = Resolver::new();
@@ -392,8 +401,8 @@ fn expect_slow_path_emits_constraint() {
     // synth_universe(Some(0)) returns (UniverseCode(0), Ty::UniverseType).
     let checked = kernel.synth_universe(Some(0), None).unwrap();
 
-    // Expect at Ty::El(UniverseCode(0)) — different from Ty::UniverseType → slow path.
-    let different_ty: hwml_core::ty::RcTy = Rc::new(Ty::El(Rc::new(Value::UniverseCode(0))));
+    // **PHASE 9**: Expect at Ty::Universe(0) — different from Ty::UniverseType → slow path.
+    let different_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let constraint_before = kernel.state.iter_constraints().count();
 
     let _ = kernel.expect(different_ty, checked).into_inner();
@@ -411,7 +420,7 @@ fn elaborate_identity_function() {
     use hwml_surface::Expression;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
 
@@ -441,9 +450,10 @@ fn elaborate_identity_function() {
     );
 
     // Check the fun against the synthesized type.
-    // We need the type as El(code). Evaluate ty_syn to get the code.
+    // **PHASE 9**: Decode the type code into a semantic type.
     let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
-    let ty_as_el: hwml_core::ty::RcTy = Rc::new(Ty::El(ty_code));
+    let ty_as_el: hwml_core::ty::RcTy =
+        hwml_core::eval::decode_type_code(&global, &ty_code).expect("should decode type code");
     let _val_syn = expr::check(&db, &mut elab, &fun_val, ty_as_el)
         .expect("identity function should type-check")
         .into_inner();
@@ -474,7 +484,7 @@ fn elaborate_identity_verifier_passes() {
     use hwml_elab::elab::decl::verify_elaborated_constant;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ctx = ElabCtx::empty();
 
@@ -494,8 +504,10 @@ fn elaborate_identity_verifier_passes() {
         .expect("type synthesis should succeed")
         .into_inner();
 
+    // **PHASE 9**: Decode the type code into a semantic type.
     let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
-    let ty_as_el: hwml_core::ty::RcTy = Rc::new(Ty::El(ty_code));
+    let ty_as_el: hwml_core::ty::RcTy =
+        hwml_core::eval::decode_type_code(&global, &ty_code).expect("should decode type code");
     let val_syn = expr::check(&db, &mut elab, &fun_val, ty_as_el)
         .expect("identity function should type-check")
         .into_inner();
@@ -525,11 +537,12 @@ fn solver_data_constructor_injectivity() {
     use hwml_core::val::DataConstructor;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let a1: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let b1: hwml_core::RcValue = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
 
@@ -574,11 +587,12 @@ fn solver_data_constructor_mismatch_is_hard_failure() {
     use hwml_core::val::DataConstructor;
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let a: hwml_core::RcValue = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
 
     let qn1 = make_qn(&db, "Con1");
@@ -614,7 +628,7 @@ fn solver_data_constructor_mismatch_is_hard_failure() {
 #[test]
 fn solver_identity_solves_equal_rigid_values() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
@@ -644,11 +658,12 @@ fn solver_identity_solves_equal_rigid_values() {
 #[test]
 fn pattern_unify_prunes_out_of_scope_flex_arg() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
     let y1 = Rc::new(Value::variable(Level::new(1), var_ty.clone()));
 
@@ -682,11 +697,12 @@ fn pattern_unify_prunes_out_of_scope_flex_arg() {
 #[test]
 fn pattern_unify_no_prune_when_all_flex_args_in_scope() {
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
 
     // Both ?m and ?m2 parameterized over x only.
@@ -721,11 +737,12 @@ fn pattern_unify_lowers_rigid_with_spine() {
     use hwml_core::val::{Eliminator, Normal, Spine};
 
     let db = TestDatabase::default();
-    let global = empty_global();
+    let global = empty_global(&db);
     let mut state = SolverState::new();
     let ty: hwml_core::ty::RcTy = Rc::new(Ty::UniverseType);
 
-    let var_ty: hwml_core::RcValue = Rc::new(Value::UniverseCode(0));
+    // **PHASE 9**: Variables now take RcTy (semantic type), not RcValue (type code)
+    let var_ty: hwml_core::ty::RcTy = Rc::new(Ty::Universe(0));
     let x0 = Rc::new(Value::variable(Level::new(0), var_ty.clone()));
 
     // ?m of arity 1.

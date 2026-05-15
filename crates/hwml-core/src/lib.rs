@@ -32,12 +32,15 @@ pub use syn::declaration::{
     TypeConstructorDecl,
 };
 pub use syn::telescope::Cell;
-pub use syn::{parse_module, BindingSyntax, DynBindingSyntax, RcSyntax, Syntax};
+pub use syn::{
+    parse_module, BindingSyntax, BindingTy, DynBindingSyntax, RcSyntax, RcTy as SynRcTy, Syntax,
+    Ty as SynTy,
+};
 pub use typed::*;
 pub use val::{
     ConstantInfo, DataConstructorInfo, Environment, Global, GlobalEnv, LocalEnv, LookupError,
-    LookupErrorKind, LookupResult, MetaVariableLookupError, MetavariableInfo, PrimitiveInfo,
-    RcTy, RcValue, TransparentEnv, Ty, TypeConstructorInfo, Value,
+    LookupErrorKind, LookupResult, MetaVariableLookupError, MetavariableInfo, PrimitiveInfo, RcTy,
+    RcValue, TransparentEnv, Ty, TypeConstructorInfo, Value,
 };
 
 /// Test-only database for hwml-core unit tests.

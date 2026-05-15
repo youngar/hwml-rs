@@ -52,13 +52,16 @@ type Result<'db, T> = std::result::Result<T, Error<'db>>;
 // ============================================================================
 
 /// Read a normal (value * type) back into syntax.
+/// **PHASE 9**: Normal now stores semantic type, so we encode it here during quotation.
 pub fn quote_normal<'db>(
     db: &'db dyn salsa::Database,
     global: &GlobalEnv<'db>,
     depth: usize,
     normal: &Normal<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    quote(db, global, depth, &normal.value, &normal.ty)
+    // Encode the semantic type to a type code for quotation
+    let ty_code = encode_type(db, global, depth, &normal.ty)?;
+    quote(db, global, depth, &normal.value, &ty_code)
 }
 
 /// Read a value back into syntax at a given type.
@@ -391,16 +394,21 @@ where
     V: QuoteNeutral<'db>,
 {
     // Create a fresh variable for the binder
-    let arg = Value::variable_rc(Level::new(depth), source.clone());
+    // Decode the source type code into a semantic type
+    let source_ty_semantic = crate::eval::decode_type_code(global, source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty_semantic.clone());
 
-    // Get the result type
-    let result_ty = run_closure(global, target, [arg.clone()])?;
+    // Get the result type code by applying the closure
+    let result_ty_code = run_closure(global, target, [arg.clone()])?;
 
-    // Apply the neutral to the variable, passing icit for correct spine construction
-    let app_val = neutral.apply(arg, source.clone(), result_ty.clone(), icit);
+    // Decode the result type code into a semantic type
+    let result_ty_semantic = crate::eval::decode_type_code(global, &result_ty_code)?;
 
-    // Quote the application at the result type
-    let body = quote(db, global, depth + 1, &app_val, &result_ty)?;
+    // Apply the neutral to the variable, passing semantic types and icit
+    let app_val = neutral.apply(global, arg, source_ty_semantic, result_ty_semantic, icit)?;
+
+    // Quote the application at the result type code
+    let body = quote(db, global, depth + 1, &app_val, &result_ty_code)?;
 
     // PRESERVE Icit when creating lambda
     let name_str = format!("{}", depth);
@@ -409,45 +417,57 @@ where
 }
 
 /// Trait for values that can be eta-expanded (neutrals with spines).
+/// **PHASE 9**: Now takes semantic types instead of type codes.
 trait QuoteNeutral<'db> {
     fn apply(
         &self,
+        global: &GlobalEnv<'db>,
         arg: RcValue<'db>,
-        arg_ty: RcValue<'db>,
-        result_ty: RcValue<'db>,
+        arg_ty: val::RcTy<'db>,
+        result_ty: val::RcTy<'db>,
         icit: crate::common::Icit,
-    ) -> RcValue<'db>;
+    ) -> std::result::Result<RcValue<'db>, crate::eval::Error<'db>>;
 }
 
 impl<'db> QuoteNeutral<'db> for Rigid<'db> {
     fn apply(
         &self,
+        global: &GlobalEnv<'db>,
         arg: RcValue<'db>,
-        arg_ty: RcValue<'db>,
-        result_ty: RcValue<'db>,
+        arg_ty: val::RcTy<'db>,
+        result_ty: val::RcTy<'db>,
         icit: crate::common::Icit,
-    ) -> RcValue<'db> {
+    ) -> std::result::Result<RcValue<'db>, crate::eval::Error<'db>> {
         // Rigid applied to an argument: extend the spine
-        // The correct Icit comes from the Pi type during eta-expansion
+        // **PHASE 9**: Normal now stores semantic types directly
         let mut new_spine = self.spine.clone();
         new_spine.push(Eliminator::application(Normal::new(arg_ty, arg), icit));
-        Value::rigid_rc(self.head.clone(), new_spine, result_ty)
+        Ok(Value::rigid_rc(
+            self.head.clone(),
+            new_spine,
+            result_ty,
+        ))
     }
 }
 
 impl<'db> QuoteNeutral<'db> for Flex<'db> {
     fn apply(
         &self,
+        global: &GlobalEnv<'db>,
         arg: RcValue<'db>,
-        arg_ty: RcValue<'db>,
-        result_ty: RcValue<'db>,
+        arg_ty: val::RcTy<'db>,
+        result_ty: val::RcTy<'db>,
         icit: crate::common::Icit,
-    ) -> RcValue<'db> {
+    ) -> std::result::Result<RcValue<'db>, crate::eval::Error<'db>> {
         // Flex applied to an argument: extend the spine
-        // The correct Icit comes from the Pi type during eta-expansion
+        // **PHASE 9**: Normal now stores semantic types directly
         let mut new_spine = self.spine.clone();
         new_spine.push(Eliminator::application(Normal::new(arg_ty, arg), icit));
-        Value::flex_rc(self.head.clone(), new_spine, result_ty)
+        Ok(Value::flex_rc(
+            self.head.clone(),
+            new_spine,
+            result_ty,
+        ))
     }
 }
 
@@ -528,7 +548,9 @@ pub fn quote_pi_code<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     let syn_source = type_quote(db, global, depth, source)?;
 
-    let arg = Value::variable_rc(Level::new(depth), source.clone());
+    // Decode the type code into a semantic type before creating the variable
+    let source_ty = crate::eval::decode_type_code(global, source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty);
     let sem_target = run_closure(global, target, [arg])?;
     let syn_target = type_quote(db, global, depth + 1, &sem_target)?;
 
@@ -556,8 +578,14 @@ pub fn quote_let<'db>(
     let_val: &val::Let<'db>,
     _expected_ty: &Value<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
-    let syn_ty = quote_at_unknown_type(db, global, depth, &let_val.ty)?;
-    let syn_value = quote(db, global, depth, &let_val.value, &let_val.ty)?;
+    // Encode the semantic type back to a type code, then quote it
+    let ty_code = encode_type(db, global, depth, &let_val.ty)?;
+    let syn_ty_code = quote_at_unknown_type(db, global, depth, &ty_code)?;
+
+    // Wrap it in El to make it a syntactic type (syn::RcTy)
+    let syn_ty = syn::Ty::el_rc(syn_ty_code);
+
+    let syn_value = quote(db, global, depth, &let_val.value, &ty_code)?;
     let syn_body = quote(db, global, depth + 1, &let_val.body, _expected_ty)?;
     let name_str = format!("{}", depth);
     let name = Name::from_with_db(db, name_str);
@@ -681,7 +709,9 @@ pub fn quote_harrow<'db>(
     let syn_source = type_quote(db, global, depth, &harrow.source)?;
 
     // Create a fresh variable for the binder
-    let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
+    // Decode the type code into a semantic type
+    let source_ty = crate::eval::decode_type_code(global, &harrow.source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty);
     let sem_target = run_closure(global, &harrow.target, [arg])?;
     let syn_target = type_quote(db, global, depth + 1, &sem_target)?;
 
@@ -698,7 +728,9 @@ pub fn quote_lambda<'db>(
     target: &Closure<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Create a fresh variable for the binder
-    let arg = Value::variable_rc(Level::new(depth), source.clone());
+    // Decode the type code into a semantic type
+    let source_ty = crate::eval::decode_type_code(global, source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty);
 
     // Get the result type and body value
     let result_ty = run_closure(global, target, [arg.clone()])?;
@@ -722,7 +754,9 @@ pub fn quote_module<'db>(
     harrow: &HArrow<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Create a fresh variable for the binder
-    let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
+    // Decode the type code into a semantic type
+    let source_ty = crate::eval::decode_type_code(global, &harrow.source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty);
 
     // Get the result type and body value
     let result_ty = run_closure(global, &harrow.target, [arg.clone()])?;
@@ -966,7 +1000,9 @@ fn quote_transport<'db>(
 ) -> Result<'db, RcSyntax<'db>> {
     // Quote the motive by eta-expansion
     // The motive is a closure with arity 1, so we quote it as a lambda
-    let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
+    // Decode the type code into a semantic type
+    let eq_ty_semantic = crate::eval::decode_type_code(global, &eq.ty)?;
+    let var = Value::variable_rc(Level::new(depth), eq_ty_semantic);
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
     let motive_body = type_quote(db, global, depth + 1, &motive_result)?;
     let name_str = format!("{}", depth);
@@ -985,6 +1021,285 @@ fn quote_transport<'db>(
 }
 
 // ============================================================================
+// Type Quotation - Quote val::Ty back to syn::Ty
+// ============================================================================
+
+/// Quote UniverseType to syntax.
+pub fn quote_ty_universe_type<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _depth: usize,
+) -> Result<'db, syn::RcTy<'db>> {
+    Ok(syn::Ty::universe_type_rc())
+}
+
+/// Quote SignalUniverseType to syntax.
+pub fn quote_ty_signal_universe_type<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _depth: usize,
+) -> Result<'db, syn::RcTy<'db>> {
+    Ok(syn::Ty::signal_universe_type_rc())
+}
+
+/// Quote ModuleUniverseType to syntax.
+pub fn quote_ty_module_universe_type<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    _depth: usize,
+) -> Result<'db, syn::RcTy<'db>> {
+    Ok(syn::Ty::module_universe_type_rc())
+}
+
+/// Quote Pi type to syntax.
+///
+/// Quotes both the domain and codomain, creating a binding for the target.
+/// The codomain is quoted at depth+1 since it's under a binder.
+pub fn quote_ty_pi<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    source: &val::RcTy<'db>,
+    target: &val::TyClosure<'db>,
+) -> Result<'db, syn::RcTy<'db>> {
+    // Quote the domain
+    let source_syn = quote_ty(db, global, depth, source)?;
+
+    // To quote the codomain, we need to:
+    // 1. Create a fresh variable at the current depth
+    // 2. Apply the closure to this variable to get the semantic codomain type
+    // 3. Quote that semantic type at depth+1
+
+    // source is already a semantic type (RcTy), use it directly
+    let var = Value::variable_rc(Level::new(depth), source.clone());
+
+    // Apply the closure to the variable
+    let codomain_ty = val::run_ty_closure(global, target, [var])?;
+
+    // Quote the resulting type at depth+1
+    let target_syn = quote_ty(db, global, depth + 1, &codomain_ty)?;
+
+    // Create a binding with an anonymous name
+    let binding = Binding::new(Name::anonymous(db), target_syn);
+
+    Ok(syn::Ty::pi_rc(source_syn, binding))
+}
+
+/// Quote HArrow type to syntax.
+pub fn quote_ty_harrow<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    source: &val::RcTy<'db>,
+    target: &val::RcTy<'db>,
+) -> Result<'db, syn::RcTy<'db>> {
+    let source_syn = quote_ty(db, global, depth, source)?;
+    let target_syn = quote_ty(db, global, depth, target)?;
+    Ok(syn::Ty::harrow_rc(source_syn, target_syn))
+}
+
+/// Quote El type to syntax.
+///
+/// Quotes the type code and wraps it in syn::Ty::El.
+pub fn quote_ty_el<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    code: &RcValue<'db>,
+) -> Result<'db, syn::RcTy<'db>> {
+    let code_syn = type_quote(db, global, depth, code)?;
+    Ok(syn::Ty::el_rc(code_syn))
+}
+
+/// Quote SignalEl type to syntax.
+pub fn quote_ty_signal_el<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    code: &RcValue<'db>,
+) -> Result<'db, syn::RcTy<'db>> {
+    let code_syn = type_quote(db, global, depth, code)?;
+    Ok(syn::Ty::signal_el_rc(code_syn))
+}
+
+/// Quote ModuleEl type to syntax.
+pub fn quote_ty_module_el<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    code: &RcValue<'db>,
+) -> Result<'db, syn::RcTy<'db>> {
+    let code_syn = type_quote(db, global, depth, code)?;
+    Ok(syn::Ty::module_el_rc(code_syn))
+}
+
+// ============================================================================
+// Strong Tarski: Type Encoding (Quotation)
+// ============================================================================
+
+/// Encode a semantic type back into a type code (term).
+///
+/// This is the reverse of `decode_type_code`. We convert structured semantic
+/// types back into type codes (which are terms/values):
+/// - `Universe(n)` → `UniverseCode(n)`
+/// - `Pi(A, i, B)` → `PiCode(A_code, i, B_closure)`
+/// - `BitType` → `BitCode`
+/// - `RigidTy(var, ...)` → `Rigid(var, ...)`
+/// - `FlexTy(meta, ...)` → `Flex(meta, ...)`
+pub fn encode_type<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    ty: &val::Ty<'db>,
+) -> Result<'db, RcValue<'db>> {
+    use val::Ty;
+    match ty {
+        // Encode decoded types back to type codes
+        Ty::Universe(level) => Ok(Rc::new(Value::UniverseCode(*level))),
+
+        Ty::BitType => Ok(Rc::new(Value::BitCode)),
+
+        Ty::LiftType(shift, inner_ty) => {
+            let inner_code = encode_type(db, global, depth, inner_ty)?;
+            Ok(Rc::new(Value::LiftCode(*shift, inner_code)))
+        }
+
+        Ty::TyConstructor(name, args) => {
+            // Args are already terms (RcValue), no need to encode
+            Ok(Rc::new(Value::TypeConstructor(TypeConstructor {
+                constructor: name.clone(),
+                arguments: args.clone(),
+            })))
+        }
+
+        // Encode Pi types back to PiCode
+        Ty::Pi(source_ty, icit, target_closure) => {
+            // Encode the source type
+            let source_code = encode_type(db, global, depth, source_ty)?;
+
+            // Handle the closure - extract or create value closure
+            let target_val_closure = match target_closure.as_ref() {
+                // SHORTCUT: If it's a Decoding closure, extract the inner value closure!
+                val::TyClosure::Decoding { value_closure, .. } => value_closure.clone(),
+
+                // If it's a Syntactic closure, we need to quote it
+                val::TyClosure::Syntactic { local, body } => {
+                    // Quote the syntactic body to get a term
+                    let body_syntax = quote_ty_to_syntax(db, global, depth, local, body)?;
+                    Closure::new(local.clone(), body_syntax)
+                }
+            };
+
+            Ok(Rc::new(Value::PiCode(
+                source_code,
+                *icit,
+                target_val_closure,
+            )))
+        }
+
+        // Encode neutral types back to neutral terms
+        Ty::RigidTy(ty_var, spine, ty) => {
+            let var = Variable::new(ty_var.level);
+            Ok(Rc::new(Value::Rigid(Rigid {
+                head: var,
+                spine: spine.clone(), // Spine is already terms
+                ty: ty.clone(),
+            })))
+        }
+
+        Ty::FlexTy(ty_meta, spine, ty) => {
+            let meta = MetaVariable::new(ty_meta.id, ty_meta.local.clone());
+            Ok(Rc::new(Value::Flex(Flex {
+                head: meta,
+                spine: spine.clone(), // Spine is already terms
+                ty: ty.clone(),
+            })))
+        }
+
+        // **PHASE 9**: Deleted Ty::El - Signal/Module variants remain
+        Ty::SignalEl(code) => Ok(code.clone()),
+        Ty::ModuleEl(code) => Ok(code.clone()),
+
+        // Meta-level types encode to universe codes (convention)
+        Ty::UniverseType => Ok(Rc::new(Value::UniverseCode(0))),
+        Ty::SignalUniverseType => Ok(Rc::new(Value::UniverseCode(0))),
+        Ty::ModuleUniverseType => Ok(Rc::new(Value::UniverseCode(0))),
+
+        // HArrow needs special handling (not a type code)
+        Ty::HArrow(_source, _target) => {
+            // HArrow is not a type code, encode as Universe(0)
+            Ok(Rc::new(Value::UniverseCode(0)))
+        }
+    }
+}
+
+/// Helper: Quote a syntactic type closure body to a term
+fn quote_ty_to_syntax<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    local: &LocalEnv<'db>,
+    body: &syn::RcTy<'db>,
+) -> Result<'db, RcSyntax<'db>> {
+    // Create a fresh variable
+    // **PHASE 9**: Use Universe(0) as dummy type instead of el_rc
+    let var_ty = val::Ty::universe_rc(0);
+    let var = Value::variable_rc(Level::new(depth), var_ty);
+
+    // Evaluate the body
+    let mut extended_local = local.clone();
+    extended_local.push(var);
+    let mut env = Environment {
+        global,
+        local: extended_local,
+        transparent: TransparentEnv::new(),
+    };
+    let result_ty = eval::eval_ty(&mut env, body)?;
+
+    // Encode and quote the result
+    let result_code = encode_type(db, global, depth + 1, &result_ty)?;
+    quote(db, global, depth + 1, &result_code, &result_code)
+}
+
+/// Quote a semantic type back to syntax (Strong Tarski).
+///
+/// **Updated**: Now handles decoded types by encoding them first.
+pub fn quote_ty<'db>(
+    db: &'db dyn salsa::Database,
+    global: &GlobalEnv<'db>,
+    depth: usize,
+    ty: &val::Ty<'db>,
+) -> Result<'db, syn::RcTy<'db>> {
+    use val::Ty;
+    match ty {
+        // Native type formers quote directly to syntax
+        Ty::UniverseType => quote_ty_universe_type(db, global, depth),
+        Ty::SignalUniverseType => quote_ty_signal_universe_type(db, global, depth),
+        Ty::ModuleUniverseType => quote_ty_module_universe_type(db, global, depth),
+        Ty::Pi(source, _icit, target) => quote_ty_pi(db, global, depth, source, target),
+        Ty::HArrow(source, target) => quote_ty_harrow(db, global, depth, source, target),
+
+        // Decoded types: encode to type code, quote, wrap in El
+        Ty::Universe(_)
+        | Ty::BitType
+        | Ty::LiftType(_, _)
+        | Ty::TyConstructor(_, _)
+        | Ty::RigidTy(_, _, _)
+        | Ty::FlexTy(_, _, _) => {
+            let code = encode_type(db, global, depth, ty)?;
+            // **FIX**: Type codes have semantic type UniverseType, not themselves!
+            // We need to quote the code as an instance of UniverseType
+            let code_syntax = type_quote(db, global, depth, &code)?;
+            Ok(Rc::new(syn::Ty::El(code_syntax)))
+        }
+
+        // **PHASE 9**: Deleted Ty::El - Signal/Module variants remain
+        Ty::SignalEl(code) => quote_ty_signal_el(db, global, depth, code),
+        Ty::ModuleEl(code) => quote_ty_module_el(db, global, depth, code),
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -993,10 +1308,10 @@ mod tests {
     use super::*;
     use crate::common::UniverseLevel;
     use crate::eval;
-    use crate::syn::parse::parse_syntax;
-    use crate::syn::print::print_syntax_to_string;
-    use crate::syn::Telescope;
-    use crate::val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
+    use syn::parse::parse_syntax;
+    use syn::print::print_syntax_to_string;
+    use syn::Telescope;
+    use val::{DataConstructorInfo, RcValue, TypeConstructorInfo};
     use crate::TestDatabase;
     use crate::{Index, Level};
     use hwml_support::salsa::IntoWithDb;
@@ -1015,7 +1330,7 @@ mod tests {
         fn new(db: &'db TestDatabase) -> Self {
             Self {
                 db,
-                global: GlobalEnv::new(),
+                global: GlobalEnv::new(db),
             }
         }
 
@@ -1232,10 +1547,14 @@ mod tests {
         let db = TestDatabase::default();
         let c = Ctx::new(&db);
         // Variable at level 1, quoted at depth 2 → Index(0) → prints as "!0" (unbound)
-        let bit_var = Value::variable(Level::new(1), c.bit());
+        // **PHASE 9**: BitCode decodes to Ty::BitType
+        let bit_ty = val::Ty::bit_type_rc();
+        let bit_var = Value::variable(Level::new(1), bit_ty);
         assert_eq!(c.q_depth(2, &bit_var, &Value::bit()), "!0");
         // Same for universe-typed variable
-        let u0_var = Value::variable(Level::new(1), c.u0());
+        // **PHASE 9**: U0 has type Universe(1)
+        let u0_ty_semantic = val::Ty::universe_rc(1);
+        let u0_var = Value::variable(Level::new(1), u0_ty_semantic);
         let u0_ty: RcValue = Value::UniverseCode(0).into();
         assert_eq!(c.q_depth(2, &u0_var, &u0_ty), "!0");
     }
@@ -1263,13 +1582,17 @@ mod tests {
         let c = Ctx::new(&db);
         // Pi types eta-expand neutrals: f : A → B becomes λx. f x
         let pi_ty = c.pi_u0_u0();
-        let var = Value::variable(Level::new(0), Rc::new(pi_ty.clone()));
+        // **PHASE 9**: Decode PiCode to Ty::Pi
+        let pi_ty_semantic = eval::decode_type_code(&c.global, &Rc::new(pi_ty.clone())).expect("decode Pi");
+        let var = Value::variable(Level::new(0), pi_ty_semantic);
         // λ %0 → %0[%0] (function applied to its argument, using depth-based names)
         assert_eq!(c.q(&var, &pi_ty), "λ %0 → %0[%0]");
 
         // HArrow types do NOT eta-expand neutrals
         let harrow_ty = c.harrow_bit_bit();
-        let harrow_var = Value::variable(Level::new(1), Rc::new(harrow_ty.clone()));
+        // **PHASE 9**: Decode HArrowCode to Ty::HArrow
+        let harrow_ty_semantic = eval::decode_type_code(&c.global, &Rc::new(harrow_ty.clone())).expect("decode HArrow");
+        let harrow_var = Value::variable(Level::new(1), harrow_ty_semantic);
         // Quote at depth 2: prints as !0 (no eta-expansion)
         assert_eq!(c.q_depth(2, &harrow_var, &harrow_ty), "!0");
     }
@@ -1312,7 +1635,7 @@ mod tests {
 
         let unit_id = "Unit".into_with_db(&db);
         let tt_id = "tt".into_with_db(&db);
-        let unit_tcon = crate::val::TypeConstructor::new(unit_id, vec![]);
+        let unit_tcon = val::TypeConstructor::new(unit_id, vec![]);
         let tt_dcon = Value::data_constructor(tt_id, vec![]);
         let syntax = quote_data_constructor(
             &db,
@@ -1339,13 +1662,15 @@ mod tests {
         use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
         let u0: RcValue = Value::UniverseCode(0).into();
         let u0_rc = u0.clone();
 
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
-        let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_rc.clone());
+        // **PHASE 9**: U0 has type Universe(1)
+        let u0_ty = val::Ty::universe_rc(1);
+        let meta = Value::metavariable(meta_id, LocalEnv::new(), u0_ty.clone());
         let syntax = quote(&db, &global, 0, &meta, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[0]");
 
@@ -1357,7 +1682,7 @@ mod tests {
         );
         let mut local = LocalEnv::new();
         local.push(Value::bit_rc());
-        let meta2 = Value::metavariable(meta_id2, local, u0_rc);
+        let meta2 = Value::metavariable(meta_id2, local, u0_ty);
         let syntax = quote(&db, &global, 0, &meta2, &u0).expect("quote");
         assert_eq!(print_syntax_to_string(&db, &syntax), "?[1 Bit]");
     }
@@ -1390,7 +1715,7 @@ mod tests {
         let c = Ctx::new(&db);
 
         // ^s(x) where x is a variable
-        let var = Value::variable(Level::new(0), Value::signal_universe_rc());
+        let var = Value::variable(Level::new(0), val::Ty::signal_universe_type_rc());
         let slift = Value::slift(Rc::new(var));
         assert_eq!(c.tq_depth(1, &slift), "^s!0");
     }
@@ -1672,7 +1997,7 @@ mod tests {
     #[test]
     fn test_lift_code_identity() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // LiftCode(1, UniverseCode(0)) should quote back to itself
         // This represents U_0 lifted to U_1 for universe polymorphism
@@ -1699,7 +2024,7 @@ mod tests {
     #[test]
     fn test_lift_code_nested() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // LiftCode can nest: LiftCode(1, LiftCode(2, UniverseCode(0)))
         // This represents U_0 lifted by 2, then lifted by 1 more
@@ -1735,15 +2060,16 @@ mod tests {
 
         // 1. Create a Pi type: {A : U0} -> A (implicit function)
         let u0: RcValue = Value::UniverseCode(0).into();
-        let u0_stx: RcSyntax = Syntax::UniverseCode(0).into();
+        let _u0_stx: RcSyntax = Syntax::UniverseCode(0).into();
         let pi_type = Rc::new(Value::PiCode(
             u0.clone(),
             Icit::Implicit,
             Closure::new(LocalEnv::new(), Syntax::variable_rc(Index(0))),
         ));
 
-        // 2. Create a Neutral/Rigid variable with this implicit Pi type
-        let neutral_var = Value::variable(Level::new(0), pi_type.clone());
+        // **PHASE 9**: Decode the Pi type code into a Ty::Pi
+        let pi_ty = eval::decode_type_code(&c.global, &pi_type).expect("decode Pi");
+        let neutral_var = Value::variable(Level::new(0), pi_ty.clone());
 
         // 3. Quote it at its type (triggers eta-expansion)
         let quoted = quote(c.db, &c.global, 0, &neutral_var, &pi_type).expect("Quotation failed");

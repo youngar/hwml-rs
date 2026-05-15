@@ -1,5 +1,4 @@
-use crate::syn::*;
-use crate::Icit;
+use syn::*;
 use crate::*;
 use elegance::{Io, Printer, Render};
 
@@ -61,6 +60,18 @@ where
 {
     let mut p = Printer::new(String::new(), 80);
     let st = State::new();
+    let mut names = NameStack::new();
+    let _ = syntax.print(db, st, &mut names, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+/// Print syntax to string with verbose diagnostics mode (shows implicits and De Bruijn levels)
+pub fn print_syntax_to_string_verbose<'db, DB>(db: &'db DB, syntax: &Syntax<'db>) -> String
+where
+    DB: salsa::Database,
+{
+    let mut p = Printer::new(String::new(), 80);
+    let st = State::new_verbose();
     let mut names = NameStack::new();
     let _ = syntax.print(db, st, &mut names, &mut p);
     p.finish().unwrap_or_default()
@@ -202,7 +213,7 @@ pub fn print_type_constructor_decl<'db, R: Render>(
     }
 
     p.text("-> ")?;
-    tc.universe.print(db, st, ns, p)?;
+    tc.target.print(db, st, ns, p)?;
 
     for _ in 0..tc.indices.len() {
         ns.pop();
@@ -228,7 +239,7 @@ pub fn print_type_constructor_decl<'db, R: Render>(
                 dcon_st = dcon_st.inc_depth();
             }
             p.text(" : ")?;
-            dcon.result_type.print(db, dcon_st, ns, p)?;
+            dcon.target.print(db, dcon_st, ns, p)?;
             p.hard_break()?;
 
             for _ in 0..dcon_param_count {
@@ -317,8 +328,13 @@ const CHECK: Properties = Properties::new((Some(2), Some(3)));
 struct State {
     /// Ambient binder depth.
     depth: usize,
-    // The parent precedence.
+    /// The parent precedence.
     precedence: Precedence,
+    /// **VERBOSE DIAGNOSTICS MODE**: Show implicit arguments and De Bruijn levels.
+    /// This is used for disambiguation when types print identically in normal mode.
+    /// Only exposes mathematically valid information (implicits, variable levels),
+    /// NOT compiler internals like El wrappers.
+    verbose: bool,
 }
 
 impl State {
@@ -326,6 +342,15 @@ impl State {
         State {
             depth: 0,
             precedence: (None, None),
+            verbose: false,
+        }
+    }
+
+    fn new_verbose() -> State {
+        State {
+            depth: 0,
+            precedence: (None, None),
+            verbose: true,
         }
     }
 
@@ -702,16 +727,22 @@ impl<'db> Print for Lambda<'db> {
                         // Push the binder name onto the stack (with freshening to avoid shadowing ambiguity)
                         let fresh_name = ns.push_fresh(next.body.name.to_string(db));
 
+                        // **VERBOSE DIAGNOSTICS MODE**: Show De Bruijn level for binders
+                        let binder_text = if st.verbose {
+                            format!("%{}#{}", fresh_name, st.depth)
+                        } else {
+                            format!("%{}", fresh_name)
+                        };
+
                         // Show {binder} for implicit, binder for explicit
-                        // Print the freshened name in the binder position
                         match next.icit {
                             Icit::Implicit => {
                                 p.text("{")?;
-                                p.text_owned(format!("%{}", fresh_name))?;
+                                p.text_owned(binder_text)?;
                                 p.text("}")?;
                             }
                             Icit::Explicit => {
-                                p.text_owned(format!("%{}", fresh_name))?;
+                                p.text_owned(binder_text)?;
                             }
                         }
                         st = st.inc_depth();
@@ -1156,7 +1187,14 @@ impl<'db> Print for Variable<'db> {
         if self.index.is_bound(st.depth) {
             let stack_index = ns.len().saturating_sub(1 + self.index.0);
             if let Some(name) = ns.get(stack_index) {
-                p.text_owned(format!("%{}", name))
+                // **VERBOSE DIAGNOSTICS MODE**: Show De Bruijn level to disambiguate shadowing
+                if st.verbose {
+                    let level = self.index.to_level(st.depth);
+                    // Extract numeric value from Level (level.0) to avoid double-% printing
+                    p.text_owned(format!("%{}#{}", name, level.0))
+                } else {
+                    p.text_owned(format!("%{}", name))
+                }
             } else {
                 p.text_owned(format!("%{}", self.index.to_level(st.depth)))
             }
@@ -1224,14 +1262,28 @@ impl<'db> Print for Check<'db> {
         ns: &mut NameStack,
         p: &mut Printer<R>,
     ) -> Result<(), R::Error> {
-        ensure(st, ns, p, CHECK, |st, ns, p| {
-            p.igroup(0, |p| {
-                print_lhs_subterm(db, st, ns, p, &*self.term, CHECK.lhs_prec())?;
-                p.text(" :")?;
-                p.space()?;
-                print_rhs_subterm(db, st, ns, p, &*self.ty, CHECK.rhs_prec())
+        // Simplify printing of type codes checked against universe types
+        // E.g., (U0 : UniverseType) prints as just U0
+        use syn::Ty;
+        let should_simplify = matches!(
+            self.ty.as_ref(),
+            Ty::UniverseType | Ty::SignalUniverseType | Ty::ModuleUniverseType
+        );
+
+        if should_simplify {
+            // Just print the term without the type annotation
+            self.term.print(db, st, ns, p)
+        } else {
+            // Print the full check annotation
+            ensure(st, ns, p, CHECK, |st, ns, p| {
+                p.igroup(0, |p| {
+                    print_lhs_subterm(db, st, ns, p, &*self.term, CHECK.lhs_prec())?;
+                    p.text(" :")?;
+                    p.space()?;
+                    print_rhs_subterm(db, st, ns, p, &*self.ty, CHECK.rhs_prec())
+                })
             })
-        })
+        }
     }
 }
 
@@ -1289,6 +1341,38 @@ mod tests {
         let db = TestDatabase::default();
         assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(0))))), @"λ %0 → %0");
         assert_snapshot!(p(&db, &Syntax::lambda(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::lambda_rc(Icit::Explicit, Binding::new(Name::anonymous(&db), Syntax::variable_rc(Index(1))))))), @"λ %0 %1 → %0");
+    }
+
+    #[test]
+    fn print_verbose_mode_shadowed_variables() {
+        use crate::name::str_to_name;
+        let db = TestDatabase::default();
+
+        // Create: λ x → λ x → %1 (the outer x)
+        // Normal mode: λ %x → λ %x_1 → %x (freshened to avoid collision)
+        // Verbose mode: λ %x#0 → λ %x_1#1 → %x#0 (freshened names + De Bruijn levels)
+        let x_name = str_to_name(&db, "x").unwrap();
+        let inner_lambda = Syntax::lambda_rc(
+            Icit::Explicit,
+            Binding::new(x_name.clone(), Syntax::variable_rc(Index(1))) // refers to outer x
+        );
+        let outer_lambda = Syntax::lambda(
+            Icit::Explicit,
+            Binding::new(x_name, inner_lambda)
+        );
+
+        // Normal mode - uses freshening
+        let normal = print_syntax_to_string(&db, &outer_lambda);
+        assert_eq!(normal, "λ %x %x_1 → %x");
+
+        // Verbose mode - shows De Bruijn levels PLUS freshening
+        // The key difference: if both print as "x", verbose shows x#0 vs x#1 to disambiguate
+        let verbose = print_syntax_to_string_verbose(&db, &outer_lambda);
+        assert_eq!(verbose, "λ %x#0 %x_1#1 → %x#0");
+
+        // The verbose mode is most useful when comparing types that look identical.
+        // For example, if an error says "Expected: ∀ x. ∀ x. x  Got: ∀ x. ∀ x. x"
+        // verbose mode would show "∀ x#0. ∀ x_1#1. x#0" vs "∀ x#0. ∀ x_1#1. x_1#1"
     }
 
     #[test]
@@ -1498,7 +1582,8 @@ mod tests {
     #[test]
     fn print_check() {
         let db = TestDatabase::default();
-        assert_snapshot!(p(&db, &Syntax::check(Syntax::UniverseCode(0).into(), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
+        // **PHASE 9: EL ELISION** - El wrapper is now hidden in pretty-printing
+        assert_snapshot!(p(&db, &Syntax::check(syn::Ty::universe(0), Syntax::constant_rc("x".into_with_db(&db)))), @"@x : 𝒰0");
     }
 
     // =========================================================================
@@ -1561,3 +1646,124 @@ mod tests {
         );
     }
 }
+
+// ============================================================================
+// Printing for syn::Ty - Syntax-Level Types
+// ============================================================================
+
+/// Print a syn::Ty type expression to a string (helper function)
+pub fn print_ty_to_string<'db>(db: &'db dyn salsa::Database, ty: &syn::Ty<'db>) -> String {
+    let mut p = Printer::new(String::new(), 80);
+    let st = State::new();
+    let mut names = NameStack::new();
+    let _ = ty.print(db, st, &mut names, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+/// Print a syn::Ty type with verbose diagnostics (shows implicits and De Bruijn levels)
+pub fn print_ty_to_string_verbose<'db>(db: &'db dyn salsa::Database, ty: &syn::Ty<'db>) -> String {
+    let mut p = Printer::new(String::new(), 80);
+    let st = State::new_verbose();
+    let mut names = NameStack::new();
+    let _ = ty.print(db, st, &mut names, &mut p);
+    p.finish().unwrap_or_default()
+}
+
+impl<'db> Print for syn::Ty<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        ns: &mut NameStack,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        use syn::Ty;
+        match self {
+            // Universe types
+            Ty::UniverseType => p.text("UniverseType"),
+            Ty::SignalUniverseType => p.text("SignalUniverseType"),
+            Ty::ModuleUniverseType => p.text("ModuleUniverseType"),
+
+            // Pi type: (x : A) → B
+            Ty::Pi(source, target) => {
+                p.text("(")?;
+                let name = target.name.to_string(db);
+                let fresh_name = if name.is_empty() || name == "_" {
+                    "_".to_string()
+                } else {
+                    compute_fresh_name(&name, ns)
+                };
+                p.text_owned(format!("%{} : ", fresh_name))?;
+                source.print(db, st, ns, p)?;
+                p.text(") → ")?;
+
+                // Push the binder name and print the target type
+                ns.push_fresh(name);
+                let result = target.term().print(db, st.inc_depth(), ns, p);
+                ns.pop();
+                result
+            }
+
+            // Hardware arrow: A ⇒ B
+            Ty::HArrow(source, target) => {
+                source.print(db, st, ns, p)?;
+                p.text(" ⇒ ")?;
+                target.print(db, st, ns, p)
+            }
+
+            // Type constructor type: ![@Name args...]
+            Ty::TyConstructorTy(name, args) => {
+                p.text("![@")?;
+                p.text_owned(name.name.name(db).to_string(db))?;
+                for arg in args {
+                    p.text(" ")?;
+                    arg.print(db, st, ns, p)?;
+                }
+                p.text("]")
+            }
+
+            // El decoders
+            // **STRATEGY 2: EL ELISION** - Hide the El wrapper from the user!
+            // The El is a Tarski bridge that exists in the AST for mathematical rigor,
+            // but should be invisible in surface syntax and error messages.
+            Ty::El(code) => {
+                // Just print the inner code directly - no "El(...)" wrapper!
+                match code.as_ref() {
+                    Syntax::Check(check) if matches!(check.ty.as_ref(), Ty::UniverseType) => {
+                        // If explicitly checked against UniverseType, print just the term
+                        check.term.print(db, st, ns, p)
+                    }
+                    _ => {
+                        // Print the code directly - users see ∀ (%x : A) → B, not El(∀ (%x : A) → B)
+                        code.print(db, st, ns, p)
+                    }
+                }
+            }
+
+            Ty::SignalEl(code) => {
+                // **STRATEGY 2: EL ELISION** - Also hide SignalEl wrapper
+                code.print(db, st, ns, p)
+            }
+
+            Ty::ModuleEl(code) => {
+                // **STRATEGY 2: EL ELISION** - Also hide ModuleEl wrapper
+                code.print(db, st, ns, p)
+            }
+        }
+    }
+}
+
+impl<'db> Print for syn::RcTy<'db> {
+    fn print<R: Render>(
+        &self,
+        db: &dyn salsa::Database,
+        st: State,
+        ns: &mut NameStack,
+        p: &mut Printer<R>,
+    ) -> Result<(), R::Error> {
+        self.as_ref().print(db, st, ns, p)
+    }
+}
+
+// Note: BindingTy<'db> is Binding<'db, RcTy<'db>>, which is already covered
+// by the generic Print implementation for Binding<'db, A> where A: Print

@@ -1,0 +1,5 @@
+// Test parsing just the module syntax
+tcon @Nat : -> U0 where
+    dcon @Zero : #[@Nat]
+    dcon @Succ : #[@Nat] -> #[@Nat]
+;

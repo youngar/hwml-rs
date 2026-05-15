@@ -1,0 +1,7 @@
+// Hardware module test
+// Testing what the current system can handle
+
+// A simple constant that is a hardware module value
+// Without proper primitives, this won't type-check as hardware
+// but it demonstrates the module syntax
+const @SimpleModule : U0 = mod %x -> %x;

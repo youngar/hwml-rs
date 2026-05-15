@@ -135,6 +135,19 @@ pub fn saturate_value<'db>(
     }
 }
 
+/// Saturate a semantic type.
+/// **PHASE 9**: Types can now contain closures that may need saturation.
+pub fn saturate_ty<'db>(
+    _db: &'db dyn salsa::Database,
+    _global: &GlobalEnv<'db>,
+    ty: &val::RcTy<'db>,
+) -> Result<'db, val::RcTy<'db>> {
+    // For now, types don't contain HApplications that need saturation
+    // TODO: If we ever have type-level computations with hardware modules, add saturation here
+    // RcTy is already Rc-wrapped, just clone the Rc
+    Ok(ty.clone())
+}
+
 /// Saturate an HApplication value.
 ///
 /// If the module is a concrete `Module` closure, we perform beta-reduction
@@ -189,7 +202,9 @@ fn saturate_closure<'db>(
 ) -> Result<'db, Closure<'db>> {
     // Create a fresh variable at the closure's depth
     let depth = closure.local.depth();
-    let var = Value::variable_rc(crate::common::Level::new(depth), var_ty);
+    // Decode the type code into a semantic type
+    let var_semantic_ty = crate::eval::decode_type_code(global, &var_ty)?;
+    let var = Value::variable_rc(crate::common::Level::new(depth), var_semantic_ty);
 
     // Run the closure with the fresh variable to get the body
     let body = run_closure(global, closure, [var.clone()])?;
@@ -255,7 +270,11 @@ fn saturate_rigid<'db>(
     global: &GlobalEnv<'db>,
     rigid: &val::Rigid<'db>,
 ) -> Result<'db, RcValue<'db>> {
-    let new_ty = saturate_value(db, global, &rigid.ty)?;
+    // Encode the semantic type to a type code, saturate it, then decode back
+    let ty_code = crate::quote::encode_type(db, global, 0, &rigid.ty)?;
+    let saturated_ty_code = saturate_value(db, global, &ty_code)?;
+    let new_ty = crate::eval::decode_type_code(global, &saturated_ty_code)?;
+
     let new_spine = saturate_spine(db, global, &rigid.spine)?;
     Ok(Value::rigid_rc(rigid.head.clone(), new_spine, new_ty))
 }
@@ -265,7 +284,11 @@ fn saturate_flex<'db>(
     global: &GlobalEnv<'db>,
     flex: &val::Flex<'db>,
 ) -> Result<'db, RcValue<'db>> {
-    let new_ty = saturate_value(db, global, &flex.ty)?;
+    // Encode the semantic type to a type code, saturate it, then decode back
+    let ty_code = crate::quote::encode_type(db, global, 0, &flex.ty)?;
+    let saturated_ty_code = saturate_value(db, global, &ty_code)?;
+    let new_ty = crate::eval::decode_type_code(global, &saturated_ty_code)?;
+
     let new_spine = saturate_spine(db, global, &flex.spine)?;
     Ok(Value::flex_rc(flex.head.clone(), new_spine, new_ty))
 }
@@ -290,7 +313,7 @@ fn saturate_eliminator<'db>(
     match elim {
         val::Eliminator::Application(app) => {
             let new_value = saturate_value(db, global, &app.argument.value)?;
-            let new_ty = saturate_value(db, global, &app.argument.ty)?;
+            let new_ty = saturate_ty(db, global, &app.argument.ty)?;
             Ok(val::Eliminator::application(
                 val::Normal {
                     value: new_value,
@@ -343,8 +366,8 @@ pub fn saturate_and_quote<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syn::{print::print_syntax_to_string, Syntax};
-    use crate::val::LocalEnv;
+    use syn::{print::print_syntax_to_string, Syntax};
+    use val::LocalEnv;
     use crate::TestDatabase;
     use hwml_support::salsa::IntoWithDb;
 
@@ -352,7 +375,7 @@ mod tests {
     #[test]
     fn test_saturate_no_happlication() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // Simple value: One
         let value = Value::one();
@@ -366,7 +389,7 @@ mod tests {
     #[test]
     fn test_saturate_happlication_with_module() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // Create a Module closure that returns its argument (identity)
         // mod %0 - the body just refers to the bound variable
@@ -396,7 +419,7 @@ mod tests {
     #[test]
     fn test_saturate_happlication_with_constant() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // Create an HApplication where the module is a constant
         let constant = Value::constant("myModule".into_with_db(&db));
@@ -418,7 +441,7 @@ mod tests {
     #[test]
     fn test_saturate_nested_happlication() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // Inner module: mod 0 (ignores argument, returns Zero)
         let inner_module_body = Syntax::zero_rc();
@@ -465,7 +488,7 @@ mod tests {
     #[test]
     fn test_saturate_and_quote() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // Create a simple HApplication that reduces to One
         let module_body = Syntax::one_rc(); // mod that ignores arg and returns 1

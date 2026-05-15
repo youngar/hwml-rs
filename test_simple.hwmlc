@@ -1,0 +1,5 @@
+// Simple test for Verilog generation
+// Basic identity gate - using HardwareUniverse primitives
+
+// The identity circuit: just passes through the input
+const @Identity : HardwareUniverse = mod %x -> %x;

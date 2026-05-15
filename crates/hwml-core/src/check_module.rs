@@ -6,12 +6,12 @@
 
 use crate::check::{check_type, type_check, TCEnvironment};
 use crate::eval;
-use crate::syn::declaration::{
+use syn::declaration::{
     CompilationUnit, ConstantDecl, DataConstructorDecl, Declaration, MetavariableDecl,
     PrimitiveDecl, TypeConstructorDecl,
 };
-use crate::syn::{RcSyntax, Syntax, Telescope};
-use crate::val::{
+use syn::{RcSyntax, Syntax, Telescope};
+use val::{
     ConstantInfo, DataConstructorInfo, GlobalEnv, PrimitiveInfo, TypeConstructorInfo, Value,
 };
 use crate::*;
@@ -107,7 +107,7 @@ fn validate_primitive<'db>(
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
-        values: crate::val::Environment::new(global),
+        values: val::Environment::new(global),
         types: Vec::new(),
     };
     check_type(&mut tc_env, &prim.ty)?;
@@ -128,16 +128,17 @@ fn validate_constant<'db>(
 ) -> Result<bool, Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
-        values: crate::val::Environment::new(global),
+        values: val::Environment::new(global),
         types: Vec::new(),
     };
 
     check_type(&mut tc_env, &constant.ty)?;
 
-    let mut eval_env = crate::val::Environment::new(global);
-    let ty_val = eval::eval(&mut eval_env, &constant.ty)?;
+    let mut eval_env = val::Environment::new(global);
+    let ty_val_code = eval::eval(&mut eval_env, &constant.ty)?;
+    let ty_val = crate::eval::decode_type_code(global, &ty_val_code)?;
 
-    let is_hardware = is_hardware_type(&ty_val);
+    let is_hardware = is_hardware_type(&ty_val_code);
     type_check(&mut tc_env, &constant.value, &ty_val)?;
 
     Ok(is_hardware)
@@ -147,8 +148,18 @@ fn add_type_constructor_to_env<'db>(
     global: &mut GlobalEnv<'db>,
     tcon: &TypeConstructorDecl<'db>,
 ) -> Result<(), Error<'db>> {
-    let level = match tcon.universe.as_ref() {
-        Syntax::UniverseCode(level) => *level,
+    // Extract universe level from the target type (syn::RcTy).
+    // With type-aware syntax, this is El(UniverseCode(level)) or El(Check(UniverseCode(level), ...))
+    use syn::Ty;
+    let level = match tcon.target.as_ref() {
+        Ty::El(code) => match code.as_ref() {
+            Syntax::UniverseCode(level) => *level,
+            Syntax::Check(check) => match check.term.as_ref() {
+                Syntax::UniverseCode(level) => *level,
+                _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
+            },
+            _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
+        },
         _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
     };
 
@@ -167,7 +178,7 @@ fn add_type_constructor_to_env<'db>(
     for dcon in &tcon.data_constructors {
         global.add_data_constructor(
             dcon.name,
-            DataConstructorInfo::new(dcon.parameters.clone(), dcon.result_type.clone()),
+            DataConstructorInfo::new(dcon.parameters.clone(), dcon.target.clone()),
         );
     }
 
@@ -181,30 +192,43 @@ fn validate_type_constructor<'db>(
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
-        values: crate::val::Environment::new(global),
+        values: val::Environment::new(global),
         types: Vec::new(),
     };
 
-    check_type(&mut tc_env, &tcon.universe)?;
-    let universe_ty = crate::check::type_synth(&mut tc_env, &tcon.universe)?;
-    let Value::UniverseCode(tcon_universe_level) = &*universe_ty else {
-        return Err(Error::InvalidTypeConstructorUniverse(tcon.name));
+    // The target field is now a syn::RcTy - validate it with check_ty
+    crate::check::check_ty(&mut tc_env, &tcon.target)?;
+
+    // Extract the universe level from the type (El(UniverseCode(...)) or El(Check(UniverseCode(...), ...)))
+    use syn::Ty;
+    let tcon_universe_level = match tcon.target.as_ref() {
+        Ty::El(code) => match code.as_ref() {
+            Syntax::UniverseCode(level) => *level,
+            Syntax::Check(check) => match check.term.as_ref() {
+                Syntax::UniverseCode(level) => *level,
+                _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
+            },
+            _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
+        },
+        _ => return Err(Error::InvalidTypeConstructorUniverse(tcon.name)),
     };
 
     for param_binder in tcon.parameters.iter() {
         check_type(&mut tc_env, &param_binder.ty)?;
-        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.ty)?;
+        let param_ty_val_code = eval::eval(&mut tc_env.values, &param_binder.ty)?;
+        let param_ty_val = crate::eval::decode_type_code(global, &param_ty_val_code)?;
         tc_env.push_var(param_ty_val);
     }
 
     for index_binder in tcon.indices.iter() {
         check_type(&mut tc_env, &index_binder.ty)?;
-        let index_ty_val = eval::eval(&mut tc_env.values, &index_binder.ty)?;
+        let index_ty_val_code = eval::eval(&mut tc_env.values, &index_binder.ty)?;
+        let index_ty_val = crate::eval::decode_type_code(global, &index_ty_val_code)?;
         tc_env.push_var(index_ty_val);
     }
 
     for dcon in tcon.data_constructors.iter() {
-        validate_data_constructor(db, global, tcon, *tcon_universe_level, dcon)?;
+        validate_data_constructor(db, global, tcon, tcon_universe_level, dcon)?;
     }
 
     Ok(())
@@ -219,24 +243,26 @@ fn validate_data_constructor<'db>(
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
-        values: crate::val::Environment::new(global),
+        values: val::Environment::new(global),
         types: Vec::new(),
     };
 
     // Add type constructor parameters (but not indices) to match parser scoping.
     for param_binder in tcon.parameters.iter() {
-        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.ty)?;
+        let param_ty_val_code = eval::eval(&mut tc_env.values, &param_binder.ty)?;
+        let param_ty_val = crate::eval::decode_type_code(global, &param_ty_val_code)?;
         tc_env.push_var(param_ty_val);
     }
 
     // Validate data constructor parameters.
     for param_binder in dcon.parameters.iter() {
         check_type(&mut tc_env, &param_binder.ty)?;
-        let param_ty_val = eval::eval(&mut tc_env.values, &param_binder.ty)?;
+        let param_ty_val_code = eval::eval(&mut tc_env.values, &param_binder.ty)?;
+        let param_ty_val = crate::eval::decode_type_code(global, &param_ty_val_code)?;
         tc_env.push_var(param_ty_val);
     }
 
-    check_type(&mut tc_env, &dcon.result_type)?;
+    check_type(&mut tc_env, &dcon.target)?;
 
     // TODO: strict positivity and universe level checking
 
@@ -254,13 +280,14 @@ fn validate_metavariable<'db>(
 ) -> Result<(), Error<'db>> {
     let mut tc_env = TCEnvironment {
         db,
-        values: crate::val::Environment::new(global),
+        values: val::Environment::new(global),
         types: Vec::new(),
     };
 
     for arg_binder in meta.arguments.iter() {
         check_type(&mut tc_env, &arg_binder.ty)?;
-        let arg_ty_val = eval::eval(&mut tc_env.values, &arg_binder.ty)?;
+        let arg_ty_val_code = eval::eval(&mut tc_env.values, &arg_binder.ty)?;
+        let arg_ty_val = crate::eval::decode_type_code(global, &arg_ty_val_code)?;
         tc_env.push_var(arg_ty_val);
     }
 
@@ -321,7 +348,7 @@ pub fn extract_lift_inner_type<'a, 'db>(ty: &'a Value<'db>) -> Option<&'a RcValu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syn::parse::parse_module;
+    use syn::parse::parse_module;
     use crate::TestDatabase;
 
     #[test]
@@ -330,9 +357,10 @@ mod tests {
         // A dependent metavariable: ?[0] : (A : U0) -> A -> U0
         // The type of the second argument (%x : %A) references the first argument.
         let db = TestDatabase::default();
-        let input = "prim $Nat : U0; meta ?[0] (%A : U0) (%x : %A) : U0;";
+        // **PHASE 9**: Universe codes are check-only, so we need type annotations
+        let input = "prim $Nat : (U0 : UniverseType); meta ?[0] (%A : (U0 : UniverseType)) (%x : %A) : (U0 : UniverseType);";
         let module = parse_module(&db, input).expect("Failed to parse module");
-        let result = check_module(&db, &module, GlobalEnv::new());
+        let result = check_module(&db, &module, GlobalEnv::new(&db));
         assert!(
             result.is_ok(),
             "Dependent metavariable should type-check: {:?}",

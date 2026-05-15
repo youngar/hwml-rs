@@ -118,7 +118,7 @@ impl<'db> ElabCtx<'db> {
     }
 
     /// Fresh rigid variable at the current depth, suitable for `push_bound`.
-    pub fn fresh_var(&self, ty: RcValue<'db>) -> RcValue<'db> {
+    pub fn fresh_var(&self, ty: RcTy<'db>) -> RcValue<'db> {
         Value::variable_rc(Level::new(self.depth()), ty)
     }
 }

@@ -6,26 +6,31 @@
 use crate::check_module::check_module;
 use crate::eval;
 use crate::quote::{quote, type_quote};
-use crate::syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
-use crate::syn::print::print_syntax_to_string;
-use crate::val::Environment;
+use crate::syn;
+use crate::val;
 use crate::Level;
 use crate::RcSyntax;
 use crate::TestDatabase;
 use crate::{GlobalEnv, RcValue, Value};
+use syn::parse::{parse_module, parse_syntax, parse_syntax_at_depth};
+use syn::print::print_syntax_to_string;
+use val::Environment;
 
 // ========== Prelude String Constants ==========
 // Note: Type constructor references use #[@Name args...], data constructor references use [@Name args...]
 
 /// Bool type: True and False constructors
+/// With type-aware parsing, we can write U0 directly (parsed as El(U0))
 pub const BOOL_PRELUDE: &str =
     "tcon @Bool : -> U0 where dcon @True : #[@Bool] dcon @False : #[@Bool];";
 
 /// Nat type: Zero and Succ constructors
+/// With type-aware parsing, we can write U0 directly (parsed as El(U0))
 pub const NAT_PRELUDE: &str =
     "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat];";
 
 /// Option type (parametric): None and Some constructors
+/// With type-aware parsing, we can write U0 directly (parsed as El(U0))
 pub const OPTION_PRELUDE: &str = "\
 tcon @Option (%a : U0) : -> U0 where \
     dcon @None : #[@Option %a] \
@@ -33,6 +38,7 @@ tcon @Option (%a : U0) : -> U0 where \
 
 /// Vec type (parametric + indexed): VNil and VCons constructors
 /// Note: Nat must be defined first
+/// With type-aware parsing, we can write U0 directly (parsed as El(U0))
 pub const VEC_PRELUDE: &str = "\
 tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat]; \
 tcon @Vec (%a : U0) : (%n : #[@Nat]) -> U0 where \
@@ -59,7 +65,7 @@ pub fn parse<'db>(db: &'db TestDatabase, input: &'db str) -> RcSyntax<'db> {
 pub fn load_prelude<'db>(db: &'db TestDatabase, prelude: &'db str) -> GlobalEnv<'db> {
     let module =
         parse_module(db, prelude).unwrap_or_else(|e| panic!("Failed to parse prelude: {:?}", e));
-    let checked = check_module(db, &module, GlobalEnv::new())
+    let checked = check_module(db, &module, GlobalEnv::new(db))
         .unwrap_or_else(|e| panic!("Failed to check prelude: {:?}", e));
     checked.global_env
 }
@@ -102,8 +108,8 @@ pub fn eval_str_at_depth<'db>(
     let mut env = Environment::new(global);
 
     // Add dummy variables to the environment
-    // Variables are added as rigid variables with type U0 for simplicity
-    let dummy_ty: RcValue = Value::UniverseCode(0).into();
+    // Variables are added as rigid variables with type Universe(0) for simplicity
+    let dummy_ty = val::Ty::universe_rc(0);
     let dummy_vars: Vec<_> = (0..depth)
         .map(|i| Value::variable_rc(Level::new(i), dummy_ty.clone()))
         .collect();
@@ -240,13 +246,15 @@ pub fn eval_with_context<'db>(
     let mut env = Environment::new(global);
 
     for (_var_name, ty_syntax) in &bindings {
-        // Evaluate the type in the current environment
-        let ty_val = eval::eval(&mut env, ty_syntax)
+        // Evaluate the type in the current environment (gets type code), then decode
+        let ty_code = eval::eval(&mut env, ty_syntax)
             .unwrap_or_else(|e| panic!("Failed to eval type '{:?}': {:?}", ty_syntax, e));
+        let ty_semantic = eval::decode_type_code(&env.global, &ty_code)
+            .unwrap_or_else(|e| panic!("Failed to decode type '{:?}': {:?}", ty_code, e));
 
         // Add variable to environment
         let level = Level::new(env.depth());
-        let var_val = Value::variable_rc(level, ty_val);
+        let var_val = Value::variable_rc(level, ty_semantic);
         env.push(var_val);
         env.transparent.push_rigid();
     }
@@ -357,7 +365,7 @@ mod tests {
     #[test]
     fn test_eval_str_at_depth_multiple_vars() {
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
 
         // Parse "%1" with depth 2 (two variables in scope)
         // With standard de Bruijn indexing:

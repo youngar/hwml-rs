@@ -1,8 +1,7 @@
-use crate::val::{
+use val::{
     self as dom, Closure, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, LocalEnv,
     MetaVariableLookupError, Normal, Rigid, SemTelescope, TransparentEnv, Value,
 };
-use crate::Icit;
 use crate::*;
 use std::{
     fmt::{self, Display},
@@ -17,6 +16,9 @@ pub enum Error<'db> {
     UnknownTypeConstructor { loc: Option<SourceRange<'db>> },
     UnknownDataConstructor { loc: Option<SourceRange<'db>> },
     MetaVariableLookupError(MetaVariableLookupError),
+    /// Value is not a valid type code (Strong Tarski - Phase 9)
+    /// This error surfaces when decode_type_code encounters a non-type value.
+    NotATypeCode { value: RcValue<'db> },
 }
 
 impl<'db> From<MetaVariableLookupError> for Error<'db> {
@@ -64,6 +66,9 @@ impl<'db> Display for Error<'db> {
                 Ok(())
             }
             Error::MetaVariableLookupError(e) => e.fmt(f),
+            Error::NotATypeCode { value } => {
+                write!(f, "value is not a valid type code: {:?}", value)
+            }
         }
     }
 }
@@ -150,8 +155,11 @@ fn eval_let<'db, 'g>(
     env: &mut Environment<'db, 'g>,
     let_expr: &syn::Let<'db>,
 ) -> Result<RcValue<'db>, Error<'db>> {
-    // Evaluate the type and value
-    let ty = eval(env, &let_expr.ty)?;
+    // The type annotation is now a syntactic TYPE (syn::RcTy), not a term!
+    // We need to evaluate it using eval_ty to get a semantic value (RcValue)
+    // Evaluate type annotation to get a semantic type
+    let ty = eval_ty(env, &let_expr.ty)?;
+
     let value = eval(env, &let_expr.value)?;
 
     // Push transparent binding and evaluate body
@@ -159,7 +167,7 @@ fn eval_let<'db, 'g>(
     let body = eval(env, &let_expr.body)?;
     env.pop();
 
-    // Return Let value with fully evaluated body
+    // Return Let value with semantic type
     Ok(Value::let_expr_rc(ty, value, body))
 }
 
@@ -345,8 +353,11 @@ fn eval_metavariable<'db, 'g>(
         transparent: TransparentEnv::new(),
     };
 
-    // Evaluate the type of the metavariable in the extended environment.
-    let meta_ty = eval(&mut type_env, &meta_info.ty)?;
+    // Evaluate the type code (which is a term/syntax) to get a value (type code)
+    let ty_code = eval(&mut type_env, &meta_info.ty)?;
+
+    // Decode the type code into a semantic type
+    let meta_ty = decode_type_code(env.global, &ty_code)?;
 
     // Create a metavariable value with the local environment.
     let meta_value = val::MetaVariable::new(meta.id, local_env);
@@ -371,27 +382,26 @@ fn apply_rigid<'db>(
     arg: RcValue<'db>,
     arg_icit: crate::common::Icit,
 ) -> Result<RcValue<'db>, Error<'db>> {
-    // If the operator is not pi-typed, bail.
-    let Value::PiCode(pi_source, pi_icit, pi_target) = rigid.ty.as_ref() else {
+    // **PHASE 9**: After Strong Tarski, rigid.ty should be a decoded Pi type
+    let val::Ty::Pi(pi_source, pi_icit, pi_target) = rigid.ty.as_ref() else {
         return Err(Error::BadApplication { loc: None });
     };
 
     // SANITY CHECK: Icit must match
     debug_assert_eq!(*pi_icit, arg_icit, "Icit mismatch in rigid application");
 
-    // Use the pi type of the neutral to compute typing information.
-    let source_ty = pi_source.clone();
-    let target_ty = run_closure(global, pi_target, [arg.clone()])?;
-
     // Build the application eliminator.
-    let arg_normal = Normal::new(source_ty, arg);
+    // **PHASE 9 FIX**: Store the SEMANTIC TYPE directly in Normal.
+    // No need to encode - we defer that to quotation time!
+    let arg_normal = Normal::new(pi_source.clone(), arg.clone());
     let eliminator = Eliminator::application(arg_normal, arg_icit);
 
     // Extend the spine with the application.
     let mut spine = rigid.spine.clone();
     spine.push(eliminator);
 
-    // Create the new rigid neutral.
+    // Apply the closure to get the target type
+    let target_ty = val::run_ty_closure(global, pi_target, [arg])?;
     let new_rigid = Rigid::new(rigid.head.clone(), spine, target_ty);
     Ok(Value::rigid_rc(
         new_rigid.head,
@@ -407,27 +417,26 @@ fn apply_flex<'db>(
     arg: RcValue<'db>,
     arg_icit: crate::common::Icit,
 ) -> Result<RcValue<'db>, Error<'db>> {
-    // If the operator is not pi-typed, bail.
-    let Value::PiCode(pi_source, pi_icit, pi_target) = flex.ty.as_ref() else {
+    // **PHASE 9**: After Strong Tarski, flex.ty should be a decoded Pi type
+    let val::Ty::Pi(pi_source, pi_icit, pi_target) = flex.ty.as_ref() else {
         return Err(Error::BadApplication { loc: None });
     };
 
     // SANITY CHECK: Icit must match
     debug_assert_eq!(*pi_icit, arg_icit, "Icit mismatch in flex application");
 
-    // Use the pi type of the neutral to compute typing information.
-    let source_ty = pi_source.clone();
-    let target_ty = run_closure(global, pi_target, [arg.clone()])?;
-
     // Build the application eliminator.
-    let arg_normal = Normal::new(source_ty, arg);
+    // **PHASE 9 FIX**: Store the SEMANTIC TYPE directly in Normal.
+    // No need to encode - we defer that to quotation time!
+    let arg_normal = Normal::new(pi_source.clone(), arg.clone());
     let eliminator = Eliminator::application(arg_normal, arg_icit);
 
     // Extend the spine with the application.
     let mut spine = flex.spine.clone();
     spine.push(eliminator);
 
-    // Create the new flex neutral.
+    // Apply the closure to get the target type
+    let target_ty = val::run_ty_closure(global, pi_target, [arg])?;
     let new_flex = Flex::new(flex.head.clone(), spine, target_ty);
     Ok(Value::flex_rc(new_flex.head, new_flex.spine, new_flex.ty))
 }
@@ -524,18 +533,23 @@ fn apply_constant<'db>(
     // Compute the result type by applying the codomain closure
     let result_ty = run_closure(global, pi_target, [arg.clone()])?;
 
+    // **PHASE 9**: Decode the source type code into a semantic type for Normal
+    let pi_source_semantic = decode_type_code(global, pi_source)?;
+
     // Create a stuck application with a spine of one argument
     // Use the domain type (pi_source) for the argument, not the function type
     let spine = val::Spine::new(vec![val::Eliminator::application(
         val::Normal {
-            ty: pi_source.clone(), // The argument's type is the domain of the Pi type
+            ty: pi_source_semantic, // The argument's SEMANTIC type
             value: arg,
         },
         arg_icit,
     )]);
 
+    // Decode the result type code to get a semantic type
+    let result_ty_semantic = decode_type_code(global, &result_ty)?;
     Ok(Rc::new(Value::StuckApplication(
-        val::StuckApplication::new(constant.clone(), spine, result_ty),
+        val::StuckApplication::new(constant.clone(), spine, result_ty_semantic),
     )))
 }
 
@@ -597,23 +611,22 @@ fn run_case_on_rigid<'db>(
     rigid: &Rigid<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<RcValue<'db>, Error<'db>> {
-    // Verify that the type is a type constructor.
-    let Value::TypeConstructor(type_constructor) = rigid.ty.as_ref() else {
+    // **PHASE 9**: After Strong Tarski, rigid.ty should be a decoded TyConstructor
+    let val::Ty::TyConstructor(constructor, _args) = rigid.ty.as_ref() else {
         return Err(Error::BadCase { loc: None });
     };
-    let constructor = type_constructor.constructor;
 
     // Look up the type information from the global environment.
     let type_info = global
-        .type_constructor(constructor)
+        .type_constructor(*constructor)
         .map_err(|_| Error::UnknownTypeConstructor { loc: None })?;
 
     // Get the parameters off of the type.
     let num_parameters = type_info.num_parameters();
-    let parameters = &type_constructor.arguments[..num_parameters];
+    let parameters = &_args[..num_parameters];
 
     // Build the case eliminator (no return type stored - case is check-only).
-    let eliminator = Eliminator::case(constructor, parameters.to_vec(), branches);
+    let eliminator = Eliminator::case(*constructor, parameters.to_vec(), branches);
 
     // Extend the spine with the case.
     let mut spine = rigid.spine.clone();
@@ -640,23 +653,22 @@ fn run_case_on_flex<'db>(
     flex: &Flex<'db>,
     branches: Vec<dom::CaseBranch<'db>>,
 ) -> Result<RcValue<'db>, Error<'db>> {
-    // Verify that the type is a type constructor.
-    let Value::TypeConstructor(type_constructor) = flex.ty.as_ref() else {
+    // **PHASE 9**: After Strong Tarski, flex.ty should be a decoded TyConstructor
+    let val::Ty::TyConstructor(constructor, _args) = flex.ty.as_ref() else {
         return Err(Error::BadCase { loc: None });
     };
-    let constructor = type_constructor.constructor;
 
     // Look up the type information from the global environment.
     let type_info = global
-        .type_constructor(constructor)
+        .type_constructor(*constructor)
         .map_err(|_| Error::UnknownTypeConstructor { loc: None })?;
 
     // Get the parameters off of the type.
     let num_parameters = type_info.num_parameters();
-    let parameters = &type_constructor.arguments[..num_parameters];
+    let parameters = &_args[..num_parameters];
 
     // Build the case eliminator (no return type stored - case is check-only).
-    let eliminator = Eliminator::case(constructor, parameters.to_vec(), branches);
+    let eliminator = Eliminator::case(*constructor, parameters.to_vec(), branches);
 
     // Extend the spine with the case.
     let mut spine = flex.spine.clone();
@@ -780,23 +792,269 @@ where
 
     // Evaluate each binding in the telescope.
     for binder in telescope.iter() {
-        // Evaluate this type.
-        let ty = eval(&mut env, &binder.ty)?;
+        // Evaluate the type code (which is a term/syntax) to get a value (type code)
+        let ty_code = eval(&mut env, &binder.ty)?;
+        // Decode the type code into a semantic type
+        let ty = decode_type_code(global, &ty_code)?;
         types.push(ty.clone());
-        // Create a variable of this type.
-        // TODO: only push the variable if there is another binding.
+        // Create a variable of this type
         env.push_var(ty);
     }
     Ok(SemTelescope { types })
+}
+
+// ============================================================================
+// Type Evaluation - Evaluate syn::Ty to val::Ty
+// ============================================================================
+
+/// Evaluate UniverseType to semantic type.
+fn eval_ty_universe_type<'db, 'g>(
+    _env: &mut Environment<'db, 'g>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    Ok(val::Ty::universe_type_rc())
+}
+
+/// Evaluate SignalUniverseType to semantic type.
+fn eval_ty_signal_universe_type<'db, 'g>(
+    _env: &mut Environment<'db, 'g>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    Ok(val::Ty::signal_universe_type_rc())
+}
+
+/// Evaluate ModuleUniverseType to semantic type.
+fn eval_ty_module_universe_type<'db, 'g>(
+    _env: &mut Environment<'db, 'g>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    Ok(val::Ty::module_universe_type_rc())
+}
+
+/// Evaluate Pi type to semantic type.
+///
+/// Evaluates the domain, captures the current environment, and stores the
+/// SYNTACTIC codomain in a TyClosure (to be evaluated later when applied).
+fn eval_ty_pi<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    source: &syn::RcTy<'db>,
+    target: &syn::BindingTy<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    // Evaluate the source type
+    let source_ty = eval_ty(env, source)?;
+
+    // Capture the current local environment
+    let closure_env = env.local.clone();
+
+    // CRITICAL: Do NOT evaluate the target type!
+    // The target contains a free De Bruijn variable (index 0) representing the
+    // Pi-bound variable. This can only be evaluated when we have the actual
+    // argument value (when the closure is applied).
+    //
+    // Store the SYNTACTIC target type in the closure.
+    let target_syntax = target.term().clone();
+
+    // Create a TyClosure - it captures the environment and the syntactic body
+    let ty_closure = val::TyClosure::new(closure_env, target_syntax);
+
+    // TODO: syn::Ty::Pi should carry Icit information. For now, default to Explicit.
+    Ok(val::Ty::pi_rc(source_ty, crate::Icit::Explicit, ty_closure))
+}
+
+/// Evaluate HArrow type to semantic type.
+fn eval_ty_harrow<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    source: &syn::RcTy<'db>,
+    target: &syn::RcTy<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    let source_ty = eval_ty(env, source)?;
+    let target_ty = eval_ty(env, target)?;
+    Ok(val::Ty::harrow_rc(source_ty, target_ty))
+}
+
+/// Evaluate TyConstructorTy to semantic type.
+///
+/// **Phase 0**: Type constructor types are native syntax-level forms.
+/// Unlike El(TypeConstructor(...)), these store type arguments directly.
+/// However, val::Ty::TyConstructor expects RcValue (terms), not RcTy.
+///
+/// For now, this is a placeholder that returns UniverseType.
+/// Full implementation in Phase 2 will properly convert type arguments to term codes.
+fn eval_ty_constructor_ty<'db, 'g>(
+    _env: &mut Environment<'db, 'g>,
+    name: &val::Constant<'db>,
+    _args: &[syn::RcTy<'db>],
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    // TODO: Implement proper evaluation
+    // Need to:
+    // 1. Evaluate each type argument (eval_ty)
+    // 2. Convert each type to its encoding (type_quote)
+    // 3. Create val::Ty::TyConstructor with the encoded values
+    //
+    // For now, just return a placeholder to make things compile
+    Ok(val::Ty::ty_constructor_rc(name.name, vec![]))
+}
+
+// ============================================================================
+// Strong Tarski: Type Code Decoder
+// ============================================================================
+
+/// Decode a type code (term) into a semantic type (Strong Tarski).
+///
+/// This is the heart of Strong Tarski architecture. Instead of wrapping type codes
+/// in `El`, we decode them into structured semantic types:
+/// - `UniverseCode(n)` → `Universe(n)`
+/// - `PiCode(A, i, B)` → `Pi(A_ty, i, B_closure)`
+/// - `BitCode` → `BitType`
+/// - `Rigid(var)` → `RigidTy(var, ...)`
+/// - `Flex(meta)` → `FlexTy(meta, ...)`
+pub fn decode_type_code<'db>(
+    global: &GlobalEnv<'db>,
+    code: &val::RcValue<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    match code.as_ref() {
+        // Decode universe codes
+        Value::UniverseCode(level) => Ok(val::Ty::universe_rc(*level)),
+
+        // Decode Pi codes
+        Value::PiCode(source_code, icit, target_closure) => {
+            // Recursively decode the source type code
+            let source_ty = decode_type_code(global, source_code)?;
+
+            // Create a decoding type closure
+            // This will decode the result when the closure is applied
+            let decoding_closure =
+                val::TyClosure::new_decoding(global.clone(), target_closure.clone());
+
+            Ok(val::Ty::pi_rc(source_ty, *icit, decoding_closure))
+        }
+
+        // Decode Bit code
+        Value::BitCode => Ok(val::Ty::bit_type_rc()),
+
+        // Decode Lift codes
+        Value::LiftCode(shift, inner_code) => {
+            let inner_ty = decode_type_code(global, inner_code)?;
+            Ok(val::Ty::lift_type_rc(*shift, inner_ty))
+        }
+
+        // Decode type constructors
+        Value::TypeConstructor(tc) => {
+            // Note: TypeConstructor args are TERMS (RcValue), not type codes
+            // We store them as-is in TyConstructor
+            Ok(val::Ty::ty_constructor_rc(
+                tc.constructor.clone(),
+                tc.arguments.clone(),
+            ))
+        }
+
+        // Decode neutral types: Rigid → RigidTy
+        Value::Rigid(rigid) => {
+            let ty_var = val::TyVariable::new(rigid.head.level);
+            // CRITICAL: The spine contains TERMS (RcValue), not types!
+            // We reuse the existing spine directly.
+            Ok(val::Ty::rigid_ty_rc(
+                ty_var,
+                rigid.spine.clone(),
+                rigid.ty.clone(),
+            ))
+        }
+
+        // Decode neutral types: Flex → FlexTy
+        Value::Flex(flex) => {
+            let ty_meta = val::TyMetaVariable::new(flex.head.id, flex.head.local.clone());
+            // CRITICAL: The spine contains TERMS (RcValue), not types!
+            Ok(val::Ty::flex_ty_rc(
+                ty_meta,
+                flex.spine.clone(),
+                flex.ty.clone(),
+            ))
+        }
+
+        // **PHASE 9 REFINEMENT**: Signal and Module domains have their own type systems.
+        // Signal values (Bit, Zero, One, etc.) can act as types in the Signal domain.
+        // Module values (HArrow, etc.) can act as types in the Module domain.
+        // These should be wrapped in SignalEl/ModuleEl, not decoded like type codes.
+
+        // Signal domain values that can act as types
+        Value::Bit(_) |  Value::Zero(_) | Value::One(_) => {
+            Ok(val::Ty::signal_el_rc(code.clone()))
+        }
+
+        // Module domain values that can act as types (including HArrow)
+        Value::HArrow(_) => {
+            Ok(val::Ty::module_el_rc(code.clone()))
+        }
+
+        // **PHASE 9**: Any other value is not a valid type code - error!
+        // This enforces that only valid type codes, Signal types, or Module types
+        // can be decoded. Data values, lambdas, etc. should never reach here.
+        _ => Err(Error::NotATypeCode {
+            value: code.clone(),
+        }),
+    }
+}
+
+/// Evaluate El type to semantic type (Strong Tarski).
+///
+/// **Updated for Strong Tarski**: Instead of wrapping the code in El,
+/// we now DECODE it into a structured semantic type.
+fn eval_ty_el<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    code: &syn::RcSyntax<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    let code_val = eval(env, code)?;
+    // **KEY CHANGE**: Decode instead of wrap!
+    decode_type_code(env.global, &code_val)
+}
+
+/// Evaluate SignalEl type to semantic type.
+fn eval_ty_signal_el<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    code: &syn::RcSyntax<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    let code_val = eval(env, code)?;
+    Ok(val::Ty::signal_el_rc(code_val))
+}
+
+/// Evaluate ModuleEl type to semantic type.
+fn eval_ty_module_el<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    code: &syn::RcSyntax<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    let code_val = eval(env, code)?;
+    Ok(val::Ty::module_el_rc(code_val))
+}
+
+/// Evaluate a syntax-level type to a semantic type
+///
+/// This is the key function that connects syntax-level types (syn::Ty) to
+/// semantic types (val::Ty). Following the Tarski universe pattern:
+/// - Universe types evaluate to themselves
+/// - Pi types create TyClosure with environments
+/// - El decoders evaluate the code and wrap in val::Ty::El
+pub fn eval_ty<'db, 'g>(
+    env: &mut Environment<'db, 'g>,
+    ty: &syn::Ty<'db>,
+) -> Result<val::RcTy<'db>, Error<'db>> {
+    use syn::Ty;
+    match ty {
+        Ty::UniverseType => eval_ty_universe_type(env),
+        Ty::SignalUniverseType => eval_ty_signal_universe_type(env),
+        Ty::ModuleUniverseType => eval_ty_module_universe_type(env),
+        Ty::Pi(source, target) => eval_ty_pi(env, source, target),
+        Ty::HArrow(source, target) => eval_ty_harrow(env, source, target),
+        Ty::TyConstructorTy(name, args) => eval_ty_constructor_ty(env, name, args),
+        Ty::El(code) => eval_ty_el(env, code),
+        Ty::SignalEl(code) => eval_ty_signal_el(env, code),
+        Ty::ModuleEl(code) => eval_ty_module_el(env, code),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::quote::{quote, type_quote};
-    use crate::syn::parse::parse_syntax;
-    use crate::syn::print::print_syntax_to_string;
-    use crate::syn::{RcSyntax, Telescope};
+    use syn::parse::parse_syntax;
+    use syn::print::print_syntax_to_string;
+    use syn::{RcSyntax, Telescope};
     use crate::TestDatabase;
 
     /// Test helper context
@@ -809,7 +1067,7 @@ mod tests {
         fn new(db: &'db TestDatabase) -> Self {
             Self {
                 db,
-                global: GlobalEnv::new(),
+                global: GlobalEnv::new(db),
             }
         }
 
@@ -1018,7 +1276,7 @@ mod tests {
         use crate::GlobalEnv;
 
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
 
         // Declare ?[0] : U0
         let meta_id = MetaVariableId::new(0);
@@ -1043,7 +1301,7 @@ mod tests {
         let quoted =
             crate::quote::quote(&db, &global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
-            crate::syn::print::print_syntax_to_string(&db, &quoted),
+            syn::print::print_syntax_to_string(&db, &quoted),
             "?[0]"
         );
     }
@@ -1057,7 +1315,7 @@ mod tests {
         use hwml_support::FromWithDb;
 
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
 
         // Declare ?[0] (%0 : U0) : U0
         let meta_id = MetaVariableId::new(0);
@@ -1094,7 +1352,7 @@ mod tests {
         let quoted =
             crate::quote::quote(&db, &global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
-            crate::syn::print::print_syntax_to_string(&db, &quoted),
+            syn::print::print_syntax_to_string(&db, &quoted),
             "?[0 ^sBit]"
         );
     }
@@ -1107,7 +1365,7 @@ mod tests {
         use crate::GlobalEnv;
 
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
 
         // Declare ?[0] : ∀ (%_ : U0) → U0
         let meta_id = MetaVariableId::new(0);
@@ -1141,7 +1399,7 @@ mod tests {
         let quoted =
             crate::quote::quote(&db, &global, 0, &result, &u0_ty).expect("quote should succeed");
         assert_eq!(
-            crate::syn::print::print_syntax_to_string(&db, &quoted),
+            syn::print::print_syntax_to_string(&db, &quoted),
             "?[0][^sBit]"
         );
     }
@@ -1201,7 +1459,7 @@ mod tests {
     fn test_apply_constant_argument_type() {
         use crate::Icit;
         let db = TestDatabase::default();
-        let c = Ctx::new(&db);
+        let _c = Ctx::new(&db);
 
         // This test verifies that apply_constant uses the domain type (pi_source)
         // for the argument in the spine, not the function type (const_ty).
@@ -1221,10 +1479,10 @@ mod tests {
 
         // Verify that the code compiles with the correct types
         let u0: RcValue = Value::UniverseCode(0).into();
-        let u1: RcValue = Value::UniverseCode(1).into();
+        let _u1: RcValue = Value::UniverseCode(1).into();
 
         // Create a Pi type: U0 -> U1
-        let pi_type: RcValue = Value::PiCode(
+        let _pi_type: RcValue = Value::PiCode(
             u0.clone(),
             Icit::Explicit,
             Closure::new(LocalEnv::new(), Syntax::UniverseCode(1).into()),

@@ -1,0 +1,7 @@
+tcon @Vec (%A : (U0 : UniverseType)) : (%n : #[@Nat]) -> (U0 : UniverseType) where
+  dcon @VNil : #[@Vec %A @Zero]
+  dcon @VCons (%n : #[@Nat]) (%x : %A) (%xs : #[@Vec %A %n]) : #[@Vec %A (@Succ %n)];
+
+tcon @Nat : -> (U0 : UniverseType) where
+  dcon @Zero : #[@Nat]
+  dcon @Succ (%n : #[@Nat]) : #[@Nat];

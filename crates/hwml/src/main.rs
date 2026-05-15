@@ -150,7 +150,7 @@ fn run_workspace(args: Args, manifest_path: PathBuf) {
 
     // Use the same database for elaboration as we used for harvesting!
     // This is critical - interned types (QualifiedName, etc.) must come from the same database
-    let mut global_env = hwml_core::val::GlobalEnv::new();
+    let mut global_env = hwml_core::val::GlobalEnv::new(&workspace_db);
 
     let mut total_elaborated = 0;
     let mut total_errors = 0;
@@ -390,7 +390,7 @@ fn run_single_file(args: Args, file_path: PathBuf) {
     let source_info = hwml_core::SourceInfo::File(source_file_id);
     let source = hwml_core::Source::new(&db, source_info);
 
-    let mut global = hwml_core::val::GlobalEnv::new();
+    let mut global = hwml_core::val::GlobalEnv::new(&db);
     let result =
         hwml_elab::program::elab_program_with_source(&db, &mut global, &program, Some(source));
 
@@ -466,66 +466,13 @@ fn run_core(args: Args) {
         }
     };
 
-    if args.verbose {
-        println!(
-            "Parsed module with {} declarations:",
-            module.declarations.len()
-        );
-        for decl in &module.declarations {
-            match decl {
-                hwml_core::syn::declaration::Declaration::PrimitiveDecl(p) => {
-                    println!("  - prim {}: {:?}", p.name.name(&db).to_string(&db), p.ty);
-                }
-                hwml_core::syn::declaration::Declaration::ConstantDecl(c) => {
-                    println!(
-                        "  - const {}: {:?} = {:?}",
-                        c.name.name(&db).to_string(&db),
-                        c.ty,
-                        c.value
-                    );
-                }
-                hwml_core::syn::declaration::Declaration::TypeConstructorDecl(tc) => {
-                    println!(
-                        "  - tcon {} with {} data constructors",
-                        tc.name.name(&db).to_string(&db),
-                        tc.data_constructors.len()
-                    );
-                }
-                hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {
-                    println!("  - meta ?{}: {:?}", m.id.local_index, m.ty);
-                }
-            }
-        }
-    }
-
-    // Display the parsed module
-    println!("Module:");
-    for decl in &module.declarations {
-        match decl {
-            hwml_core::syn::declaration::Declaration::PrimitiveDecl(p) => {
-                print!("  prim ${} : ", p.name.name(&db).to_string(&db));
-                hwml_core::syn::dump_syntax(&db, &p.ty);
-            }
-            hwml_core::syn::declaration::Declaration::ConstantDecl(c) => {
-                print!("  const @{} : ", c.name.name(&db).to_string(&db));
-                hwml_core::syn::dump_syntax(&db, &c.ty);
-            }
-            hwml_core::syn::declaration::Declaration::TypeConstructorDecl(tc) => {
-                print!("  tcon @{} : ", tc.name.name(&db).to_string(&db));
-                hwml_core::syn::dump_syntax(&db, &tc.universe);
-
-                // Print data constructors
-                for dcon in &tc.data_constructors {
-                    print!("    dcon @{} : ", dcon.name.name(&db).to_string(&db));
-                    hwml_core::syn::dump_syntax(&db, &dcon.full_type(&db));
-                }
-            }
-            hwml_core::syn::declaration::Declaration::MetavariableDecl(m) => {
-                print!("  meta ?{} : ", m.id.local_index);
-                hwml_core::syn::dump_syntax(&db, &m.ty);
-            }
-        }
-    }
+    // Display the parsed module using the built-in pretty-printer
+    // This properly prints type constructors with their parameters and indices
+    println!("\nModule:");
+    println!(
+        "{}",
+        hwml_core::syn::print::print_module_to_string(&db, &module)
+    );
 
     // If CIRCT emission is requested, emit all hardware constants as HW modules
     #[cfg(feature = "circt")]

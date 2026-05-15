@@ -73,7 +73,7 @@ pub fn translate_module<'c, 'db>(
     use hwml_core::val::GlobalEnv;
 
     // Start with an empty global environment
-    let initial_env = GlobalEnv::new();
+    let initial_env = GlobalEnv::new(db);
 
     // Type-check all declarations and build the global environment
     let checked =

@@ -22,7 +22,7 @@ use hwml_surface::syntax::Statement;
 /// complete constant declaration in core IR syntax.
 fn elab_str(input: &str) -> String {
     let db = TestDatabase::default();
-    let global = GlobalEnv::new();
+    let global = GlobalEnv::new(&db);
 
     let parse_result = hwml_surface::parsing::parse_with_errors(input.as_bytes());
     if !parse_result.errors.is_empty() {

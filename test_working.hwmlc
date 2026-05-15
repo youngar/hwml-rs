@@ -1,0 +1,5 @@
+// Hardware module example - simple combinational logic
+// Testing Verilog generation after Strong Tarski refactoring
+
+// Simple identity module - passes input through unchanged
+const @Identity : ModuleEl(Bit → Bit) = mod %x → %x;

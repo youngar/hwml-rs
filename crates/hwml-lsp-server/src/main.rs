@@ -316,7 +316,7 @@ impl Server {
             let file_source = hwml_core::Source::new(db, source_info);
 
             // Run elaboration
-            let mut global = hwml_core::val::GlobalEnv::new();
+            let mut global = hwml_core::val::GlobalEnv::new(db);
             let elab_result = hwml_elab::program::elab_program_with_source(
                 db,
                 &mut global,

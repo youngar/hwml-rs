@@ -138,17 +138,26 @@ impl<'a, 'db> Elaborator<'a, 'db> {
     /// `ty_code` = value-level type code for the rigid neutral's annotation.
     pub fn under_binder<R>(
         &mut self,
+        _db: &'db dyn salsa::Database,
         name: String,
         ty: RcTy<'db>,
         ty_code: hwml_core::RcValue<'db>,
         f: impl FnOnce(&mut Elaborator<'a, 'db>, hwml_core::RcValue) -> R,
-    ) -> R {
-        let var = self.kernel.ctx.fresh_var(ty_code);
+    ) -> Result<R, ElabError<'db>> {
+        let ty_semantic =
+            hwml_core::eval::decode_type_code(self.kernel.global, &ty_code).map_err(|_| {
+                ElabError::NotImplemented {
+                    elab_backtrace: Vec::new(),
+                    feature: "decode_type_code".to_string(),
+                    span: None,
+                }
+            })?;
+        let var = self.kernel.ctx.fresh_var(ty_semantic);
         let new_ctx = self.kernel.ctx.push_bound(name, ty, var.clone());
         let old_ctx = std::mem::replace(&mut self.kernel.ctx, new_ctx);
         let result = f(self, var);
         self.kernel.ctx = old_ctx;
-        result
+        Ok(result)
     }
 
     /// Helper to push a trace frame.

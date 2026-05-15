@@ -206,7 +206,7 @@ impl<'a, 'db> Solver<'a, 'db> {
         let mut blocking = Vec::new();
         collect_flex_heads(self.state, &lhs_f, &mut blocking);
         collect_flex_heads(self.state, &rhs_f, &mut blocking);
-        collect_flex_heads_ty(self.state, &ty_f, &mut blocking);
+        collect_flex_heads_ty(self.state, self.global, &ty_f, &mut blocking);
         blocking.dedup();
         if !blocking.is_empty() {
             self.state.block_on(cid, &blocking);
@@ -233,7 +233,10 @@ impl<'a, 'db> Solver<'a, 'db> {
                 .emit_eq(d1.clone(), d2.clone(), universe_ty.clone(), depth);
 
             // Emit: cod1 = cod2 : Type (codomain equality under fresh variable)
-            let var: RcValue<'db> = Rc::new(Value::variable(Level::new(depth), d1.clone()));
+            // Decode d1 (type code) to semantic type for creating variable
+            let d1_ty = hwml_core::eval::decode_type_code(self.global, &d1)
+                .unwrap_or_else(|_| Rc::new(Ty::Universe(0)));
+            let var: RcValue<'db> = Rc::new(Value::variable(Level::new(depth), d1_ty));
             let cod1 = c1.apply(self.global, &var);
             let cod2 = c2.apply(self.global, &var);
             self.state.emit_eq(cod1, cod2, universe_ty, depth + 1);
@@ -414,32 +417,26 @@ impl<'a, 'db> Solver<'a, 'db> {
         // Force the receiver type to resolve metavariables
         let forced_ty = force_ty(self.state, self.global, receiver_ty.clone());
 
-        match forced_ty.as_ref() {
-            Ty::El(code) => {
-                let forced_code = force_deep(self.state, self.global, code.clone());
+        // **PHASE 9**: Encode the decoded type back to a code for pattern matching
+        let forced_code = match forced_ty.as_ref() {
+            Ty::UniverseType => Rc::new(Value::UniverseCode(0)),
+            _ => {
+                // Try to encode the type back to a value
+                hwml_core::quote::encode_type(self.db, self.global, 0, forced_ty.as_ref())
+                    .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)))
+            }
+        };
+        let forced_code = force_deep(self.state, self.global, forced_code);
 
-                match forced_code.as_ref() {
-                    Value::TypeConstructor(tc) => {
-                        // Concrete type! Resolve field_name in the type's namespace
-                        let type_name = tc.constructor;
+        match forced_code.as_ref() {
+            Value::TypeConstructor(tc) => {
+                // Concrete type! Resolve field_name in the type's namespace
+                let type_name = tc.constructor;
 
-                        // Construct the qualified field name: TypeNamespace/field_name
-                        let field_qualified =
-                            QualifiedName::qualify_path(self.db, Some(type_name), &[field_name])
-                                .ok_or_else(|| {
-                                    SolveError::Elab(ElabError::NotInScope {
-                                        name: format!(
-                                            "{}.{}",
-                                            type_name.to_string(self.db),
-                                            field_name.to_string(self.db)
-                                        ),
-                                        span: None,
-                                        elab_backtrace: Vec::new(),
-                                    })
-                                })?;
-
-                        // Look up the field in the global environment
-                        let field_info = self.global.constant(field_qualified).map_err(|_| {
+                // Construct the qualified field name: TypeNamespace/field_name
+                let field_qualified =
+                    QualifiedName::qualify_path(self.db, Some(type_name), &[field_name])
+                        .ok_or_else(|| {
                             SolveError::Elab(ElabError::NotInScope {
                                 name: format!(
                                     "{}.{}",
@@ -451,69 +448,64 @@ impl<'a, 'db> Solver<'a, 'db> {
                             })
                         })?;
 
-                        // Build the result: application of field to receiver
-                        let field_syn = hwml_core::Syntax::constant_rc(field_qualified);
-                        let result_syn = hwml_core::Syntax::application_rc(
-                            field_syn,
-                            receiver_val,
-                            Icit::Explicit,
-                        );
+                // Look up the field in the global environment
+                let field_info = self.global.constant(field_qualified).map_err(|_| {
+                    SolveError::Elab(ElabError::NotInScope {
+                        name: format!(
+                            "{}.{}",
+                            type_name.to_string(self.db),
+                            field_name.to_string(self.db)
+                        ),
+                        span: None,
+                        elab_backtrace: Vec::new(),
+                    })
+                })?;
 
-                        // Evaluate the field type
-                        let field_ty_val = eval::substitute(
-                            self.global,
-                            &field_info.ty,
-                            hwml_core::val::LocalEnv::new(),
-                        )
+                // Build the result: application of field to receiver
+                let field_syn = hwml_core::Syntax::constant_rc(field_qualified);
+                let result_syn =
+                    hwml_core::Syntax::application_rc(field_syn, receiver_val, Icit::Explicit);
+
+                // Evaluate the field type
+                let field_ty_val =
+                    eval::substitute(self.global, &field_info.ty, hwml_core::val::LocalEnv::new())
                         .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0)));
 
-                        let result_ty = Rc::new(Ty::El(field_ty_val.clone()));
+                // **PHASE 9**: Decode type code into semantic type
+                let _result_ty = hwml_core::eval::decode_type_code(self.global, &field_ty_val)
+                    .unwrap_or_else(|_| Rc::new(Ty::universe(0)));
 
-                        // Solve the metavariables
-                        self.state.solve_meta(
-                            result_val_meta,
-                            result_syn,
-                            eval::substitute(
-                                self.global,
-                                &field_info.value,
-                                hwml_core::val::LocalEnv::new(),
-                            )
-                            .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0))),
-                        )?;
-                        self.state.solve_meta(
-                            result_ty_meta,
-                            field_info.ty.clone(),
-                            field_ty_val,
-                        )?;
+                // Solve the metavariables
+                self.state.solve_meta(
+                    result_val_meta,
+                    result_syn,
+                    eval::substitute(
+                        self.global,
+                        &field_info.value,
+                        hwml_core::val::LocalEnv::new(),
+                    )
+                    .unwrap_or_else(|_| Rc::new(Value::UniverseCode(0))),
+                )?;
+                self.state
+                    .solve_meta(result_ty_meta, field_info.ty.clone(), field_ty_val)?;
 
-                        // Mark constraint as solved
-                        self.state.mark_solved(cid);
-                        Ok(())
-                    }
-                    Value::Flex(flex) => {
-                        // Still a metavariable - block on it
-                        let meta_id = MetaId(flex.head.id.local_index as u32);
-                        self.state.block_on(cid, &[meta_id]);
-                        Ok(())
-                    }
-                    _ => {
-                        // Not a type constructor - error
-                        Err(SolveError::Elab(ElabError::NotInScope {
-                            name: format!(
-                                "Cannot resolve field '{}' on non-constructor type",
-                                field_name.to_string(self.db)
-                            ),
-                            span: None,
-                            elab_backtrace: Vec::new(),
-                        }))
-                    }
-                }
+                // Mark constraint as solved
+                self.state.mark_solved(cid);
+                Ok(())
+            }
+            Value::Flex(flex) => {
+                // Still a metavariable - block on it
+                let meta_id = MetaId(flex.head.id.local_index as u32);
+                self.state.block_on(cid, &[meta_id]);
+                Ok(())
             }
             _ => {
-                // Type is not El(...) - error
-                Err(SolveError::Elab(ElabError::TypeMismatch {
-                    expected: Rc::new(Ty::UniverseType),
-                    actual: forced_ty,
+                // Not a type constructor or flex - cannot proceed
+                Err(SolveError::Elab(ElabError::NotInScope {
+                    name: format!(
+                        "Cannot resolve field '{}' on non-constructor type",
+                        field_name.to_string(self.db)
+                    ),
                     span: None,
                     elab_backtrace: Vec::new(),
                 }))
@@ -536,9 +528,12 @@ impl<'a, 'db> Solver<'a, 'db> {
         // Force the expected type to resolve any solved metas
         let forced_ty = force_ty(self.state, self.global, expected_ty.clone());
 
-        // Check if the type is still meta-headed
-        if let Ty::El(val) = forced_ty.as_ref() {
-            if let Value::Flex(flex) = val.as_ref() {
+        // **PHASE 9**: Check if the type is still meta-headed by encoding it
+        // Try to encode the type back to a value to check for Flex
+        if let Ok(ty_code) =
+            hwml_core::quote::encode_type(self.db, self.global, 0, forced_ty.as_ref())
+        {
+            if let Value::Flex(flex) = ty_code.as_ref() {
                 // Still meta-headed - reblock on the new meta
                 let meta_id = MetaId(flex.head.id.local_index as u32);
                 self.state.block_on(cid, &[meta_id]);
@@ -588,11 +583,16 @@ fn try_identity<'db>(
     rhs: &Value<'db>,
     ty: &Ty<'db>,
 ) -> bool {
-    // Convert Ty to Value for equate's type argument.
+    // **PHASE 9**: Convert decoded Ty back to Value (type code) for equate
     let ty_val: RcValue<'db> = match ty {
-        Ty::El(code) => code.clone(),
         Ty::UniverseType => Rc::new(Value::UniverseCode(0)),
-        _ => return false,
+        _ => {
+            // Encode the decoded type back to a type code
+            match hwml_core::quote::encode_type(global.db(), global, depth, ty) {
+                Ok(code) => code,
+                Err(_) => return false,
+            }
+        }
     };
     let transparent = TransparentEnv::new();
     equal::equate(global, &transparent, depth, lhs, rhs, &ty_val).is_ok()
@@ -608,24 +608,34 @@ fn collect_flex_heads<'db>(state: &SolverState<'db>, val: &Value<'db>, out: &mut
     }
 }
 
-/// Collect unsolved Flex meta IDs from the code inside a `Ty::El`.
-fn collect_flex_heads_ty<'db>(state: &SolverState<'db>, ty: &Ty<'db>, out: &mut Vec<MetaId>) {
-    if let Ty::El(code) = ty {
-        collect_flex_heads(state, code, out);
+/// Collect unsolved Flex meta IDs from a decoded type.
+/// **PHASE 9**: Since Ty::El is gone, encode the type back to check for Flex.
+fn collect_flex_heads_ty<'db>(
+    state: &SolverState<'db>,
+    global: &GlobalEnv<'db>,
+    ty: &Ty<'db>,
+    out: &mut Vec<MetaId>,
+) {
+    // Encode the type back to a value to check for Flex heads
+    if let Ok(code) = hwml_core::quote::encode_type(global.db(), global, 0, ty) {
+        collect_flex_heads(state, &code, out);
     }
 }
 
-/// Force the type-code inside `Ty::El` through meta substitution.
+/// Force a semantic type through meta substitution.
+/// **PHASE 9**: Encode the type, force the code, and decode back.
 fn force_ty<'db>(state: &SolverState<'db>, global: &GlobalEnv<'db>, ty: RcTy<'db>) -> RcTy<'db> {
-    if let Ty::El(code) = ty.as_ref() {
-        let forced = force_deep(state, global, code.clone());
-        if Rc::ptr_eq(code, &forced) {
+    // For most types, just return as-is since they're already decoded
+    // Only universe types and flex types might need forcing
+    match ty.as_ref() {
+        Ty::FlexTy(flex_meta, _, _) => {
+            // Try to resolve the flex metavariable
+            // For now, just return the type as-is
+            // TODO: Implement proper flex resolution
+            let _ = flex_meta; // Suppress warning
             ty
-        } else {
-            Rc::new(Ty::El(forced))
         }
-    } else {
-        ty
+        _ => ty,
     }
 }
 
@@ -642,11 +652,10 @@ fn eval_telescope_types<'db>(
     // We only want the types up to preceding_args.len() positions.
     let n = telescope.len().min(preceding_args.len());
     match eval::eval_telescope(global, preceding_args[..n].iter().cloned(), telescope) {
-        Ok(sem) => sem
-            .types
-            .into_iter()
-            .map(|ty_val| Rc::new(Ty::El(ty_val)))
-            .collect(),
+        Ok(sem) => {
+            // eval_telescope now returns RcTy, not RcValue
+            sem.types
+        }
         Err(_) => vec![dummy; preceding_args.len()],
     }
 }

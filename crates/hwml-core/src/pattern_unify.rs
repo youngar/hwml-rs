@@ -1,5 +1,6 @@
 //! Pattern unification for dependent pattern matching.
 
+use crate::val;
 use crate::{
     common::{Level, MetaVariableId},
     equal, eval,
@@ -13,7 +14,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct PatternBinding<'db> {
     pub name: Option<String>,
-    pub ty: RcValue<'db>,
+    pub ty: val::RcTy<'db>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,7 +34,7 @@ pub enum PatternUnifyOutcome<'db> {
 pub enum Error<'db> {
     EvalError(eval::Error<'db>),
     EqualError(equal::Error<'db>),
-    LookupError(crate::val::LookupError<'db>),
+    LookupError(val::LookupError<'db>),
     Internal(String),
 }
 
@@ -49,8 +50,8 @@ impl<'db> From<equal::Error<'db>> for Error<'db> {
     }
 }
 
-impl<'db> From<crate::val::LookupError<'db>> for Error<'db> {
-    fn from(err: crate::val::LookupError<'db>) -> Self {
+impl<'db> From<val::LookupError<'db>> for Error<'db> {
+    fn from(err: val::LookupError<'db>) -> Self {
         Error::LookupError(err)
     }
 }
@@ -107,7 +108,9 @@ pub fn unify_pattern<'db>(
             local: local.clone(),
             transparent: TransparentEnv::new(),
         };
-        let ty = eval::eval(&mut env, &ty_binder.ty)?;
+        // Evaluate the type code (term) and decode it into a semantic type
+        let ty_code = eval::eval(&mut env, &ty_binder.ty)?;
+        let ty = eval::decode_type_code(global, &ty_code)?;
         let rigid_var = Value::variable_rc(Level::new(current_depth), ty.clone());
         new_bindings.push(PatternBinding { name: None, ty });
         local.push(rigid_var);
@@ -202,17 +205,17 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
 
             // Also check the spine for occurrences
             rigid.spine.iter().any(|elim| match elim {
-                crate::val::Eliminator::Application(app) => {
+                val::Eliminator::Application(app) => {
                     occurs_check(transparent, level, &app.argument.value)
                 }
-                crate::val::Eliminator::Case(_) => false,
+                val::Eliminator::Case(_) => false,
             })
         }
         Value::Flex(flex) => flex.spine.iter().any(|elim| match elim {
-            crate::val::Eliminator::Application(app) => {
+            val::Eliminator::Application(app) => {
                 occurs_check(transparent, level, &app.argument.value)
             }
-            crate::val::Eliminator::Case(_) => false,
+            val::Eliminator::Case(_) => false,
         }),
         Value::DataConstructor(dcon) => dcon
             .arguments
@@ -260,8 +263,9 @@ fn occurs_check(transparent: &TransparentEnv<'_>, level: Level, value: &Value<'_
         | Value::UniverseCode(_)
         | Value::BitCode => false,
         Value::Let(let_val) => {
-            occurs_check(transparent, level, &let_val.ty)
-                || occurs_check(transparent, level, &let_val.value)
+            // The type is now a semantic type (RcTy), which doesn't directly contain meta variables
+            // Occurs check only needs to check the value and body (which are terms)
+            occurs_check(transparent, level, &let_val.value)
                 || occurs_check(transparent, level, &let_val.body)
         }
         Value::StuckApplication(stuck) => {
@@ -337,9 +341,11 @@ fn unify_equations<'db>(
             (
                 Value::Lambda(l1),
                 Value::Lambda(l2),
-                Value::PiCode(pi_source, pi_icit, pi_target),
+                Value::PiCode(pi_source, _pi_icit, pi_target),
             ) => {
-                let var = Value::variable_rc(Level::new(depth), pi_source.clone());
+                // Decode the type code into a semantic type
+                let pi_source_ty = eval::decode_type_code(global, pi_source)?;
+                let var = Value::variable_rc(Level::new(depth), pi_source_ty);
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
                 let result_ty = eval::run_closure(global, pi_target, [var])?;
@@ -347,7 +353,9 @@ fn unify_equations<'db>(
             }
 
             (Value::Lambda(l1), _, Value::PiCode(pi_source, pi_icit, pi_target)) => {
-                let var = Value::variable_rc(Level::new(depth), pi_source.clone());
+                // Decode the type code into a semantic type
+                let pi_source_ty = eval::decode_type_code(global, pi_source)?;
+                let var = Value::variable_rc(Level::new(depth), pi_source_ty);
                 let l1_body = eval::run_closure(global, &l1.body, [var.clone()])?;
                 let rhs_applied = eval::run_application(global, &rhs, var.clone(), *pi_icit)?;
                 let result_ty = eval::run_closure(global, pi_target, [var])?;
@@ -355,7 +363,9 @@ fn unify_equations<'db>(
             }
 
             (_, Value::Lambda(l2), Value::PiCode(pi_source, pi_icit, pi_target)) => {
-                let var = Value::variable_rc(Level::new(depth), pi_source.clone());
+                // Decode the type code into a semantic type
+                let pi_source_ty = eval::decode_type_code(global, pi_source)?;
+                let var = Value::variable_rc(Level::new(depth), pi_source_ty);
                 let lhs_applied = eval::run_application(global, &lhs, var.clone(), *pi_icit)?;
                 let l2_body = eval::run_closure(global, &l2.body, [var.clone()])?;
                 let result_ty = eval::run_closure(global, pi_target, [var])?;
@@ -432,7 +442,9 @@ fn unify_equations<'db>(
                 // transport P1 h1 v1 ~ transport P2 h2 v2
                 // We need to unify the motives, proofs, and values
                 // For motives, we need to eta-expand them
-                let var = Value::variable_rc(Level::new(depth), Value::UniverseCode(0).into());
+                // Create a dummy variable with Universe(0) type
+                let dummy_ty = val::Ty::universe_rc(0);
+                let var = Value::variable_rc(Level::new(depth), dummy_ty);
                 let m1_body = eval::run_closure(global, &t1.motive, [var.clone()])?;
                 let m2_body = eval::run_closure(global, &t2.motive, [var.clone()])?;
                 let motive_ty = Value::UniverseCode(0).into();
@@ -640,9 +652,10 @@ mod tests {
         use crate::test_utils::{eval_str, eval_str_at_depth, load_prelude};
 
         let db = TestDatabase::default();
+        // **PHASE 9**: Universe codes are check-only, need type annotations
         let global = load_prelude(
             &db,
-            "tcon @Nat : -> U0 where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat]; meta ?[42] : U0;",
+            "tcon @Nat : -> (U0 : UniverseType) where dcon @Zero : #[@Nat] dcon @Succ (%n : #[@Nat]) : #[@Nat]; meta ?[42] : (U0 : UniverseType);",
         );
         let transparent = TransparentEnv::new();
 
@@ -653,7 +666,7 @@ mod tests {
             &vec![(
                 eval_str_at_depth(&db, &global, "%0", 1),
                 eval_str_at_depth(&db, &global, "?[42]", 1),
-                eval_str(&db, &global, "U0"),
+                eval_str(&db, &global, "(U0 : UniverseType)"),
             )],
         ) {
             Ok(EquationOutcome::Stuck(id)) => {
@@ -700,7 +713,7 @@ mod tests {
         use crate::test_utils::{eval_str, eval_str_at_depth};
 
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
         let transparent = TransparentEnv::new();
 
         match unify_equations(
@@ -729,7 +742,7 @@ mod tests {
         use crate::test_utils::eval_str;
 
         let db = TestDatabase::default();
-        let global = GlobalEnv::new();
+        let global = GlobalEnv::new(&db);
         let transparent = TransparentEnv::new();
 
         match unify_equations(
@@ -776,15 +789,17 @@ mod tests {
 
         // Create the equation: Rigid(Level(0)) =? @Zero
         // Rigid(Level(0)) represents the variable y
-        let nat_ty = eval_str(&db, &global, "#[@Nat]");
-        let y_var = Value::variable_rc(Level::new(0), nat_ty.clone());
+        let nat_ty_code = eval_str(&db, &global, "#[@Nat]");
+        // **PHASE 9**: Decode the type code to get the semantic type
+        let nat_ty = crate::eval::decode_type_code(&global, &nat_ty_code).expect("decode Nat");
+        let y_var = Value::variable_rc(Level::new(0), nat_ty);
 
         // Try to unify y =? @Zero
         match unify_equations(
             &global,
             &transparent,
             1, // depth = 1 because we have one binding (y)
-            &vec![(y_var, zero_val, nat_ty)],
+            &vec![(y_var, zero_val, nat_ty_code)],
         ) {
             Ok(EquationOutcome::Success(solutions)) => {
                 // Should succeed with no new solutions (y is already bound to @Zero)
@@ -820,7 +835,9 @@ mod tests {
         );
 
         // Create a transparent environment where y (level 1) = z (level 0)
-        let nat_ty = eval_str(&db, &global, "#[@Nat]");
+        let nat_ty_code = eval_str(&db, &global, "#[@Nat]");
+        // **PHASE 9**: Decode the type code to get the semantic type
+        let nat_ty = crate::eval::decode_type_code(&global, &nat_ty_code).expect("decode Nat");
         let z_var = Value::variable_rc(Level::new(0), nat_ty.clone());
 
         let mut transparent = TransparentEnv::new();
@@ -845,7 +862,7 @@ mod tests {
             &global,
             &transparent,
             2, // depth = 2 (z and y)
-            &vec![(z_var, succ_y_applied, nat_ty)],
+            &vec![(z_var, succ_y_applied, nat_ty_code)],
         ) {
             Ok(EquationOutcome::Success(_)) => {
                 panic!("SOUNDNESS BUG: Occurs check failed to detect cycle! z =? @Succ y where y = z should fail!")
@@ -877,7 +894,9 @@ mod tests {
         );
 
         // Create a transparent environment where x (level 0) = @Zero
-        let nat_ty = eval_str(&db, &global, "#[@Nat]");
+        let nat_ty_code = eval_str(&db, &global, "#[@Nat]");
+        // **PHASE 9**: Decode the type code to get the semantic type
+        let nat_ty = crate::eval::decode_type_code(&global, &nat_ty_code).expect("decode Nat");
         let zero_val = eval_str(&db, &global, "[@Zero]");
 
         let mut transparent = TransparentEnv::new();
@@ -893,7 +912,7 @@ mod tests {
             &global,
             &transparent,
             1, // depth = 1 (x)
-            &vec![(x_var, succ_zero, nat_ty)],
+            &vec![(x_var, succ_zero, nat_ty_code)],
         ) {
             Ok(EquationOutcome::Success(_)) => {
                 panic!("CORRECTNESS BUG: Miller pattern accepted transparent variable! x =? @Succ @Zero where x = @Zero should fail!")

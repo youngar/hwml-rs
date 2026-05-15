@@ -112,14 +112,13 @@ fn expr_span<'db>(
 /// Returns `Some(MetaId)` if the type is headed by an unsolved metavariable,
 /// `None` otherwise.
 ///
-/// A type is meta-headed when it's `Ty::El(Flex(?m, ...))` where `?m` is unsolved.
+/// A type is meta-headed when it's `Ty::FlexTy(?m, ...)` where `?m` is unsolved.
 /// This is used to detect when we need to postpone type-checking for DOE.
+///
+/// **PHASE 9**: After Strong Tarski, meta-headed types are `FlexTy` variants directly.
 fn is_meta_headed<'db>(ty: &RcTy<'db>) -> Option<MetaId> {
     match ty.as_ref() {
-        Ty::El(val) => match val.as_ref() {
-            Value::Flex(flex) => Some(MetaId(flex.head.id.local_index as u32)),
-            _ => None,
-        },
+        Ty::FlexTy(flex_meta, _, _) => Some(MetaId(flex_meta.id.local_index as u32)),
         _ => None,
     }
 }
@@ -220,7 +219,15 @@ where
     };
     let (result_ty_code_syn, _) = elab.kernel.synth_meta(result_ty_code_meta)?.into_inner();
     let result_ty_code = elab.kernel.eval_syn_flex(&result_ty_code_syn);
-    let result_ty: RcTy<'db> = Rc::new(Ty::El(result_ty_code));
+    // **PHASE 9**: Decode type code into semantic type
+    let result_ty: RcTy<'db> =
+        hwml_core::eval::decode_type_code(elab.kernel.global, &result_ty_code).map_err(|_| {
+            ElabError::NotImplemented {
+                elab_backtrace: elab.context.snapshot(),
+                feature: "decode_type_code in field access".to_string(),
+                span: dot_loc.clone(),
+            }
+        })?;
 
     let result_val_meta = if let Some(loc) = dot_loc.clone() {
         elab.kernel.state.fresh_meta_with_provenance(
@@ -593,7 +600,13 @@ fn synth_underscore<'a, 'db>(
             span: Some(loc.clone()),
             elab_backtrace: elab.context.snapshot(),
         })?;
-    let term_ty: RcTy<'db> = Rc::new(Ty::El(level_val));
+    // **PHASE 9**: Decode type code into semantic type
+    let term_ty: RcTy<'db> = hwml_core::eval::decode_type_code(elab.kernel.global, &level_val)
+        .map_err(|_| ElabError::NotImplemented {
+            elab_backtrace: elab.context.snapshot(),
+            feature: "decode_type_code in underscore".to_string(),
+            span: Some(loc.clone()),
+        })?;
     let term_id = elab.kernel.state.fresh_meta_with_provenance(
         term_ty.clone(),
         depth,
@@ -663,8 +676,17 @@ where
     let dom_syn = check(db, elab, dom_ty_expr, Rc::new(Ty::UniverseType))?.into_inner();
     let dom_code = elab.kernel.eval_syn_flex(&dom_syn);
 
-    let dom_ty: RcTy<'db> = Rc::new(Ty::El(dom_code.clone()));
-    let var = elab.kernel.ctx.fresh_var(dom_code.clone());
+    // **PHASE 9**: Decode type code into semantic type
+    let dom_ty_semantic: RcTy<'db> =
+        hwml_core::eval::decode_type_code(elab.kernel.global, &dom_code).map_err(|_| {
+            ElabError::NotImplemented {
+                elab_backtrace: Vec::new(),
+                feature: "decode_type_code in pi".to_string(),
+                span: None,
+            }
+        })?;
+    let var = elab.kernel.ctx.fresh_var(dom_ty_semantic.clone());
+    let dom_ty = dom_ty_semantic;
     let ext_ctx = elab.kernel.ctx.push_bound(name_str.clone(), dom_ty, var);
 
     let cod_checked = {
@@ -717,8 +739,14 @@ where
     let dom_syn = check(db, elab, &arrow.source, Rc::new(Ty::UniverseType))?.into_inner();
     let dom_code = elab.kernel.eval_syn_flex(&dom_syn);
 
-    let dom_ty: RcTy<'db> = Rc::new(Ty::El(dom_code.clone()));
-    let var = elab.kernel.ctx.fresh_var(dom_code.clone());
+    // **PHASE 9**: Decode type code into semantic type
+    let dom_ty: RcTy<'db> = hwml_core::eval::decode_type_code(elab.kernel.global, &dom_code)
+        .map_err(|_| ElabError::NotImplemented {
+            elab_backtrace: Vec::new(),
+            feature: "decode_type_code in arrow".to_string(),
+            span: None,
+        })?;
+    let var = elab.kernel.ctx.fresh_var(dom_ty.clone());
     let ext_ctx = elab.kernel.ctx.push_bound("_".to_string(), dom_ty, var);
 
     let cod_syn = {
@@ -766,7 +794,18 @@ where
 
     let ty_syn = check(db, elab, ty_expr, Rc::new(Ty::UniverseType))?.into_inner();
     let ty_code = elab.kernel.eval_syn_flex(&ty_syn);
-    let ty: RcTy<'db> = Rc::new(Ty::El(ty_code.clone()));
+    // **PHASE 9**: Decode type code into semantic type
+    let ty: RcTy<'db> =
+        hwml_core::eval::decode_type_code(elab.kernel.global, &ty_code).map_err(|_| {
+            ElabError::NotImplemented {
+                elab_backtrace: elab.context.snapshot(),
+                feature: "decode_type_code in let".to_string(),
+                span: Some(hwml_core::SourceRange::new(
+                    elab.context.source(),
+                    let_in.loc.clone(),
+                )),
+            }
+        })?;
 
     let val_syn = check(db, elab, &let_in.value, ty.clone())?.into_inner();
     let val_code = elab.kernel.eval_syn_flex(&val_syn);
@@ -788,8 +827,10 @@ where
     };
 
     let binder_name = Name::from_with_db(db, name_str);
+    // ty_syn is RcSyntax (term), wrap in El to make it a type
+    let ty_syn_as_ty = hwml_core::syn::Ty::el_rc(ty_syn);
     let let_syn: RcSyntax<'db> = Rc::new(Syntax::let_expr(
-        ty_syn,
+        ty_syn_as_ty,
         val_syn,
         Binding::new(binder_name, body_syn),
     ));

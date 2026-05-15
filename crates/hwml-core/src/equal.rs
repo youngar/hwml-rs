@@ -1,13 +1,14 @@
 use crate::{
-    common::{Icit, Level, MetaVariableId},
+    common::{Level, MetaVariableId},
     eval::{self, run_closure},
     val::{
         self, Application, Case, DataConstructor, Eliminator, Environment, Flex, GlobalEnv, HArrow,
-        LocalEnv, Module, Normal, RcValue, Rigid, Spine, TransparentEnv, TypeConstructor,
+        LocalEnv, Module, Normal, Rigid, Spine, TransparentEnv, TypeConstructor,
     },
     QualifiedName, UniverseLevel, Value,
 };
 use itertools::izip;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 #[deny(elided_lifetimes_in_paths)]
@@ -117,8 +118,9 @@ pub fn equate<'a, 'db: 'a>(
         Value::UniverseCode(_level) => type_equiv(global, transparent, depth, lhs, rhs),
         Value::PiCode(pi_source, pi_icit, pi_target) => {
             // Eta-expand both sides and compare
-            // Create a fresh variable of the source type
-            let arg = Value::variable_rc(Level::new(depth), pi_source.clone());
+            // **PHASE 9**: Decode the type code instead of wrapping in El
+            let source_ty = eval::decode_type_code(global, pi_source)?;
+            let arg = Value::variable_rc(Level::new(depth), source_ty);
 
             match (lhs, rhs) {
                 (Value::Lambda(lhs), Value::Lambda(rhs)) => {
@@ -486,7 +488,8 @@ pub fn type_equiv<'db>(
             // Equate source types
             type_equiv(global, transparent, depth, s1, s2)?;
             // Equate target closures under a fresh variable
-            let var = Value::variable_rc(Level::new(depth), s1.clone());
+            let source_ty = eval::decode_type_code(global, s1)?;
+            let var = Value::variable_rc(Level::new(depth), source_ty);
             let t1_body = run_closure(global, t1, vec![var.clone()])?;
             let t2_body = run_closure(global, t2, vec![var])?;
             type_equiv(global, transparent, depth + 1, &t1_body, &t2_body)
@@ -779,7 +782,8 @@ pub fn equate_harrows<'db>(
     // Check that source hardware types are convertible
     type_equiv(global, transparent, depth, &lhs.source, &rhs.source)?;
     // For target, we need to apply to a fresh variable and compare
-    let arg = Value::variable_rc(Level::new(depth), lhs.source.clone());
+    let source_ty = eval::decode_type_code(global, &lhs.source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty);
     let lhs_target = run_closure(global, &lhs.target, [arg.clone()])?;
     let rhs_target = run_closure(global, &rhs.target, [arg])?;
 
@@ -800,7 +804,8 @@ pub fn equate_modules<'db>(
     harrow: &HArrow<'db>,
 ) -> Result<'db> {
     // Create a fresh variable of the source type
-    let arg = Value::variable_rc(Level::new(depth), harrow.source.clone());
+    let source_ty = eval::decode_type_code(global, &harrow.source)?;
+    let arg = Value::variable_rc(Level::new(depth), source_ty);
 
     // Apply both module bodies to the fresh variable
     let lhs_result = run_closure(global, &lhs.body, [arg.clone()])?;
@@ -883,9 +888,14 @@ pub fn equate_normals<'db>(
     rhs: &Normal<'db>,
 ) -> Result<'db> {
     // First check that types are equal
-    type_equiv(global, transparent, depth, &lhs.ty, &rhs.ty)?;
+    // **PHASE 9**: type_equiv expects type codes, so encode the semantic types
+    let lhs_ty_code = crate::quote::encode_type(global.db(), global, depth, &lhs.ty)
+        .map_err(|_| Error::IllTyped)?;
+    let rhs_ty_code = crate::quote::encode_type(global.db(), global, depth, &rhs.ty)
+        .map_err(|_| Error::IllTyped)?;
+    type_equiv(global, transparent, depth, &lhs_ty_code, &rhs_ty_code)?;
     // Then check values at that type
-    equate(global, transparent, depth, &lhs.value, &rhs.value, &lhs.ty)
+    equate(global, transparent, depth, &lhs.value, &rhs.value, &lhs_ty_code)
 }
 
 /// Check that two case eliminators are convertible.
@@ -965,6 +975,7 @@ pub fn equate_cases<'db>(
             eval::eval_telescope(global, lhs.parameters.clone(), &data_info.arguments)?;
         let mut dcon_args = Vec::new();
         for ty in dcon_arg_tys.types {
+            // ty is already a semantic type from eval_telescope
             dcon_args.push(Value::variable_rc(Level::new(depth + dcon_args.len()), ty));
         }
 
@@ -1060,7 +1071,8 @@ fn equate_transports<'db>(
 
     // Compare motives by eta-expansion
     // Create a fresh variable and compare P x for both motives
-    let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
+    let eq_ty = eval::decode_type_code(global, &eq.ty)?;
+    let var = Value::variable_rc(Level::new(depth), eq_ty);
     let lhs_result = run_closure(global, &lhs.motive, vec![var.clone()])?;
     let rhs_result = run_closure(global, &rhs.motive, vec![var])?;
 
@@ -1126,13 +1138,202 @@ pub fn equate_levels<'db>(
     }
 }
 
+// ============================================================================
+// Type Equality - Equality for semantic types (val::Ty)
+// ============================================================================
+
+/// Check if two semantic types are equal.
+///
+/// This is the core equality function for types in the Tarski architecture.
+/// Types (val::Ty) are separate from type codes (Value), and have their own
+/// equality relation.
+pub fn types_equal<'db>(
+    global: &GlobalEnv<'db>,
+    transparent: &TransparentEnv<'db>,
+    depth: usize,
+    ty1: &val::Ty<'db>,
+    ty2: &val::Ty<'db>,
+) -> bool {
+    match (ty1, ty2) {
+        // Universe types: structurally equal
+        (val::Ty::UniverseType, val::Ty::UniverseType) => true,
+        (val::Ty::SignalUniverseType, val::Ty::SignalUniverseType) => true,
+        (val::Ty::ModuleUniverseType, val::Ty::ModuleUniverseType) => true,
+
+        // Pi types: check domain and codomain
+        (val::Ty::Pi(s1, i1, t1), val::Ty::Pi(s2, i2, t2)) => {
+            // Check implicitness matches
+            if i1 != i2 {
+                return false;
+            }
+            // Check domains are equal
+            if !types_equal(global, transparent, depth, s1, s2) {
+                return false;
+            }
+            // Check codomains are equal by applying both closures to a fresh variable
+            // and comparing the results. Use s1 directly as the semantic type.
+            let var = Value::variable_rc(Level::new(depth), s1.clone());
+
+            // Apply both closures to the same variable
+            let result1 = match val::run_ty_closure(global, t1, [var.clone()]) {
+                Ok(ty) => ty,
+                Err(_) => return false,
+            };
+            let result2 = match val::run_ty_closure(global, t2, [var]) {
+                Ok(ty) => ty,
+                Err(_) => return false,
+            };
+
+            types_equal(global, transparent, depth + 1, &result1, &result2)
+        }
+
+        // HArrow types: check source and target
+        (val::Ty::HArrow(s1, t1), val::Ty::HArrow(s2, t2)) => {
+            types_equal(global, transparent, depth, s1, s2)
+                && types_equal(global, transparent, depth, t1, t2)
+        }
+
+        // **PHASE 9**: Deleted Ty::El - SignalEl/ModuleEl remain for their domains
+
+        // SignalEl types: check the codes are equal
+        (val::Ty::SignalEl(c1), val::Ty::SignalEl(c2)) => {
+            signal_type_equiv(global, transparent, depth, c1, c2).is_ok()
+        }
+
+        // ModuleEl types: check the codes are equal
+        (val::Ty::ModuleEl(c1), val::Ty::ModuleEl(c2)) => {
+            module_type_equiv(global, transparent, depth, c1, c2).is_ok()
+        }
+
+        // ========== Strong Tarski: Decoded Type Equality ==========
+
+        // Universe equality: compare levels
+        (val::Ty::Universe(n1), val::Ty::Universe(n2)) => n1 == n2,
+
+        // BitType equality: trivially equal
+        (val::Ty::BitType, val::Ty::BitType) => true,
+
+        // LiftType equality: compare shift and inner type
+        (val::Ty::LiftType(n1, inner1), val::Ty::LiftType(n2, inner2)) => {
+            n1 == n2 && types_equal(global, transparent, depth, inner1, inner2)
+        }
+
+        // TyConstructor equality: compare names and arguments
+        (val::Ty::TyConstructor(name1, args1), val::Ty::TyConstructor(name2, args2)) => {
+            if name1 != name2 {
+                return false;
+            }
+            if args1.len() != args2.len() {
+                return false;
+            }
+            // Args are TERMS (RcValue), so use term-level equality
+            for (arg1, arg2) in args1.iter().zip(args2.iter()) {
+                // Use equate for term equality (need dummy type)
+                let dummy_ty = Rc::new(Value::UniverseCode(0));
+                if equate(global, transparent, depth, arg1, arg2, &dummy_ty).is_err() {
+                    return false;
+                }
+            }
+            true
+        }
+
+        // RigidTy equality: compare levels and spines
+        (val::Ty::RigidTy(var1, spine1, _), val::Ty::RigidTy(var2, spine2, _)) => {
+            if var1.level != var2.level {
+                return false;
+            }
+            // Spine reuse payoff! Use existing term-level spine equality
+            equate_spines(global, transparent, depth, spine1, spine2).is_ok()
+        }
+
+        // FlexTy equality: compare meta IDs and spines
+        (val::Ty::FlexTy(meta1, spine1, _), val::Ty::FlexTy(meta2, spine2, _)) => {
+            if meta1.id != meta2.id {
+                return false;
+            }
+            // Spine reuse payoff! Use existing term-level spine equality
+            equate_spines(global, transparent, depth, spine1, spine2).is_ok()
+        }
+
+        // **PHASE 9**: Deleted all Strong/Weak Tarski interop patterns
+        // After deleting Ty::El, all types are decoded uniformly.
+        // No more need for crossover comparison!
+
+        // Different constructors are not equal
+        _ => false,
+    }
+}
+
+/// Check subtyping relation for semantic types.
+///
+/// This implements:
+/// - Reflexivity: ty <: ty
+/// - Universe cumulativity: El(UniverseCode(n)) <: El(UniverseCode(m)) if n ≤ m
+/// - Pi contravariance/covariance: Pi(s1, t1) <: Pi(s2, t2) if s2 <: s1 and t1 <: t2
+pub fn is_subtype<'db>(
+    global: &GlobalEnv<'db>,
+    transparent: &TransparentEnv<'db>,
+    depth: usize,
+    sub_ty: &val::Ty<'db>,
+    super_ty: &val::Ty<'db>,
+) -> bool {
+    // Reflexivity: if types are equal, subtyping holds
+    if types_equal(global, transparent, depth, sub_ty, super_ty) {
+        return true;
+    }
+
+    // Universe cumulativity
+    // **PHASE 9**: After Strong Tarski, universes are decoded to Universe(n)
+    match (sub_ty, super_ty) {
+        (val::Ty::Universe(n), val::Ty::Universe(m)) => {
+            // Universe levels are cumulative: 𝒰ₙ <: 𝒰ₘ if n ≤ m
+            n <= m
+        }
+
+        // Pi type subtyping: contravariant in domain, covariant in codomain
+        (val::Ty::Pi(s1, i1, t1), val::Ty::Pi(s2, i2, t2)) => {
+            // Check implicitness matches
+            if i1 != i2 {
+                return false;
+            }
+            // s2 <: s1 (contravariant)
+            if !is_subtype(global, transparent, depth, s2, s1) {
+                return false;
+            }
+
+            // t1 <: t2 (covariant): apply both closures to a fresh variable
+            let var = Value::variable_rc(Level::new(depth), s1.clone());
+
+            let result1 = match val::run_ty_closure(global, t1, [var.clone()]) {
+                Ok(ty) => ty,
+                Err(_) => return false,
+            };
+            let result2 = match val::run_ty_closure(global, t2, [var]) {
+                Ok(ty) => ty,
+                Err(_) => return false,
+            };
+
+            is_subtype(global, transparent, depth + 1, &result1, &result2)
+        }
+
+        // ========== Strong Tarski: Decoded Type Subtyping ==========
+
+        // LiftType subtyping: compare shifts and inner types
+        (val::Ty::LiftType(n1, inner1), val::Ty::LiftType(n2, inner2)) => {
+            n1 == n2 && is_subtype(global, transparent, depth, inner1, inner2)
+        }
+
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{MetaVariableId, UniverseLevel};
-    use crate::val::{GlobalEnv, LocalEnv, Spine};
-    use crate::Index;
+    use crate::common::MetaVariableId;
+    use val::{GlobalEnv, LocalEnv, Spine};
     use crate::{syn::Telescope, Syntax};
+    use crate::{Icit, Index, RcValue};
     use std::rc::Rc;
 
     // =========================================================================
@@ -1141,14 +1342,16 @@ mod tests {
 
     #[test]
     fn test_equate_metavariable_ids_same() {
-        let global = GlobalEnv::new();
+        let db = crate::TestDatabase::default();
+        let global = GlobalEnv::new(&db);
         let id = MetaVariableId::new(0);
         assert!(equate_metavariable_ids(&global, 0, id, id).is_ok());
     }
 
     #[test]
     fn test_equate_metavariable_ids_different() {
-        let global = GlobalEnv::new();
+        let db = crate::TestDatabase::default();
+        let global = GlobalEnv::new(&db);
         let id1 = MetaVariableId::new(0);
         let id2 = MetaVariableId::new(1);
         assert!(equate_metavariable_ids(&global, 0, id1, id2).is_err());
@@ -1160,12 +1363,13 @@ mod tests {
         use crate::TestDatabase;
 
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let transparent = TransparentEnv::new();
-        let u0_ty: RcValue = Value::UniverseCode(0).into();
+        // **PHASE 9**: U0 has type Universe(1)
+        let u0_ty: val::RcTy = val::Ty::universe_rc(1);
         let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
         let flex1 = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
         let flex2 = val::Flex::new(meta_val, Spine::empty(), u0_ty);
@@ -1179,14 +1383,15 @@ mod tests {
         use crate::TestDatabase;
 
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
         let meta_id1 = MetaVariableId::new(0);
         let meta_id2 = MetaVariableId::new(1);
         global.add_metavariable(meta_id1, Telescope::from_pairs(vec![]), parse(&db, "U0"));
         global.add_metavariable(meta_id2, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let transparent = TransparentEnv::new();
-        let u0_ty: RcValue = Value::UniverseCode(0).into();
+        // **PHASE 9**: U0 has type Universe(1)
+        let u0_ty: val::RcTy = val::Ty::universe_rc(1);
         let flex1 = val::Flex::new(
             val::MetaVariable::new(meta_id1, LocalEnv::new()),
             Spine::empty(),
@@ -1208,12 +1413,13 @@ mod tests {
 
         // When a type is a Flex (metavariable), terms should be equal if they're both Flex with same head
         let db = TestDatabase::default();
-        let mut global = GlobalEnv::new();
+        let mut global = GlobalEnv::new(&db);
         let meta_id = MetaVariableId::new(0);
         global.add_metavariable(meta_id, Telescope::from_pairs(vec![]), parse(&db, "U0"));
 
         let transparent = TransparentEnv::new();
-        let u0_ty: RcValue = Value::UniverseCode(0).into();
+        // **PHASE 9**: U0 has type Universe(1)
+        let u0_ty: val::RcTy = val::Ty::universe_rc(1);
         let meta_val = val::MetaVariable::new(meta_id, LocalEnv::new());
         let flex_ty = val::Flex::new(meta_val.clone(), Spine::empty(), u0_ty.clone());
 
@@ -1230,7 +1436,8 @@ mod tests {
 
     #[test]
     fn test_type_equiv_universes() {
-        let global = GlobalEnv::new();
+        let db = crate::TestDatabase::default();
+        let global = GlobalEnv::new(&db);
         let transparent = TransparentEnv::new();
         let u0: RcValue = Value::UniverseCode(0).into();
         let u1: RcValue = Value::UniverseCode(1).into();
@@ -1245,7 +1452,8 @@ mod tests {
 
     #[test]
     fn test_type_equiv_lift() {
-        let global = GlobalEnv::new();
+        let db = crate::TestDatabase::default();
+        let global = GlobalEnv::new(&db);
         let transparent = TransparentEnv::new();
         // SLift types lift hardware types to the software universe
         // ^$Bit is SLift(Bit)
@@ -1260,27 +1468,29 @@ mod tests {
     fn test_asymmetric_let_equality() {
         // Test the critical case: (let x = v; body) should equal body[x := v]
         // This tests that δ-reduction correctly handles asymmetric Let comparisons
-        let global = GlobalEnv::new();
+        let db = crate::TestDatabase::default();
+        let global = GlobalEnv::new(&db);
         let transparent = TransparentEnv::new();
 
         // Create: let x : Bit = zero; x
-        let bit_ty = Value::bit_rc();
+        let bit_ty = val::Ty::bit_type_rc();  // The TYPE of Bit values
+        let bit_ty_code: RcValue = Value::BitCode.into();  // The type CODE for equate
         let zero_val = Value::zero_rc();
         let var_0 = Value::variable_rc(Level::new(0), bit_ty.clone());
-        let let_expr = Value::Let(val::Let::new(bit_ty.clone(), zero_val.clone(), var_0));
+        let let_expr = Value::Let(val::Let::new(bit_ty, zero_val.clone(), var_0));
 
         // Compare against: zero
         let zero_direct = Value::zero();
 
         // These should be definitionally equal!
         assert!(
-            equate(&global, &transparent, 0, &let_expr, &zero_direct, &bit_ty).is_ok(),
+            equate(&global, &transparent, 0, &let_expr, &zero_direct, &bit_ty_code).is_ok(),
             "Asymmetric Let equality failed: (let x = zero; x) should equal zero"
         );
 
         // Also test the symmetric case
         assert!(
-            equate(&global, &transparent, 0, &zero_direct, &let_expr, &bit_ty).is_ok(),
+            equate(&global, &transparent, 0, &zero_direct, &let_expr, &bit_ty_code).is_ok(),
             "Symmetric Let equality failed: zero should equal (let x = zero; x)"
         );
     }
@@ -1294,7 +1504,8 @@ mod tests {
         // Equation: f zero =? zero
         // Expected: Success (unfold f to λx.x, apply zero, get zero)
         // Without the fix: Would compare λx.x against zero and fail!
-        let global = GlobalEnv::new();
+        let db = crate::TestDatabase::default();
+        let global = GlobalEnv::new(&db);
 
         // Create the identity function: λx : Bit. x
         let bit_ty = Value::bit_rc();
@@ -1309,11 +1520,13 @@ mod tests {
 
         // Create f zero as a Rigid with a spine
         // f is at level 0, applied to zero
+        let bit_ty_semantic = val::Ty::bit_type_rc();
         let zero_val = Value::zero_rc();
-        let zero_normal = val::Normal::new(bit_ty.clone(), zero_val.clone());
+        // **PHASE 9**: Normal now stores semantic types
+        let zero_normal = val::Normal::new(bit_ty_semantic.clone(), zero_val.clone());
         let app_eliminator = val::Eliminator::application(zero_normal, Icit::Explicit);
         let spine = val::Spine::new(vec![app_eliminator]);
-        let f_applied = Value::rigid_rc(val::Variable::new(Level::new(0)), spine, bit_ty.clone());
+        let f_applied = Value::rigid_rc(val::Variable::new(Level::new(0)), spine, bit_ty_semantic.clone());
 
         // Try to equate f zero =? zero
         // This should succeed: f unfolds to λx.x, then (λx.x) zero reduces to zero
