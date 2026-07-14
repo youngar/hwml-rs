@@ -11,7 +11,7 @@
 use crate::*;
 use crate::{
     binding::{Binding, DynBinding},
-    common::{Index, Level},
+    common::{Icit, Index, Level},
     eval::{self, eval_telescope, run_closure},
     syn::{CaseBranch, RcSyntax, Syntax},
     val::{
@@ -102,8 +102,8 @@ pub fn quote<'db>(
         // - If the value is also a type code, quote it as a type
         // - If the value is a term of that type, quote it as an instance
         Value::UniverseCode(_level) => type_quote(global, depth, value),
-        Value::PiCode(source, target) => {
-            quote_pi_code_instances(global, depth, value, source, target)
+        Value::PiCode(source, icit, target) => {
+            quote_pi_code_instances(global, depth, value, source, *icit, target)
         }
         Value::BitCode => type_quote(global, depth, value),
 
@@ -337,7 +337,7 @@ pub fn quote_flex_instances<'db>(
 }
 
 /// Quote an instance of a PiCode type (a dependent function type).
-/// At type `PiCode(source, target)`, the instance can be:
+/// At type `PiCode(source, icit, target)`, the instance can be:
 /// - A Lambda value (quote as lambda)
 /// - A neutral with spine (eta-expand to lambda)
 /// - Another PiCode (quote as a type code)
@@ -346,27 +346,29 @@ pub fn quote_pi_code_instances<'db>(
     depth: usize,
     value: &Value<'db>,
     source: &RcValue<'db>,
+    icit: crate::common::Icit,
     target: &Closure<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     match value {
         // If the value is a Lambda, quote it directly
         Value::Lambda(lambda) => quote_lambda(global, depth, lambda, source, target),
         // If the value is a PiCode, it's a type code, so quote it as a type
-        Value::PiCode(_, _) => type_quote(global, depth, value),
+        Value::PiCode(_, _, _) => type_quote(global, depth, value),
         // Neutrals with spines (variables, metavariables) get eta-expanded
-        Value::Rigid(rigid) => quote_pi_eta_expand(global, depth, rigid, source, target),
-        Value::Flex(flex) => quote_pi_eta_expand(global, depth, flex, source, target),
+        Value::Rigid(rigid) => quote_pi_eta_expand(global, depth, rigid, source, icit, target),
+        Value::Flex(flex) => quote_pi_eta_expand(global, depth, flex, source, icit, target),
         _ => Err(Error::IllTyped(Rc::new(value.clone()))),
     }
 }
 
 /// Eta-expand a neutral value at a Pi type.
-/// Given a neutral `f : PiCode(source, target)`, produce `λ x. f x`.
+/// Given a neutral `f : PiCode(source, icit, target)`, produce `λ {icit} x. f x`.
 fn quote_pi_eta_expand<'db, V>(
     global: &GlobalEnv<'db>,
     depth: usize,
     neutral: &V,
     source: &RcValue<'db>,
+    icit: crate::common::Icit,
     target: &Closure<'db>,
 ) -> Result<'db, RcSyntax<'db>>
 where
@@ -378,13 +380,14 @@ where
     // Get the result type
     let result_ty = run_closure(global, target, [arg.clone()])?;
 
-    // Apply the neutral to the variable
-    let app_val = neutral.apply(arg, source.clone(), result_ty.clone());
+    // Apply the neutral to the variable, passing icit for correct spine construction
+    let app_val = neutral.apply(arg, source.clone(), result_ty.clone(), icit);
 
     // Quote the application at the result type
     let body = quote(global, depth + 1, &app_val, &result_ty)?;
 
-    Ok(Syntax::lambda_rc(Binding(body)))
+    // PRESERVE Icit when creating lambda
+    Ok(Syntax::lambda_rc(icit, Binding(body)))
 }
 
 /// Trait for values that can be eta-expanded (neutrals with spines).
@@ -394,6 +397,7 @@ trait QuoteNeutral<'db> {
         arg: RcValue<'db>,
         arg_ty: RcValue<'db>,
         result_ty: RcValue<'db>,
+        icit: crate::common::Icit,
     ) -> RcValue<'db>;
 }
 
@@ -403,10 +407,12 @@ impl<'db> QuoteNeutral<'db> for Rigid<'db> {
         arg: RcValue<'db>,
         arg_ty: RcValue<'db>,
         result_ty: RcValue<'db>,
+        icit: crate::common::Icit,
     ) -> RcValue<'db> {
         // Rigid applied to an argument: extend the spine
+        // The correct Icit comes from the Pi type during eta-expansion
         let mut new_spine = self.spine.clone();
-        new_spine.push(Eliminator::application(Normal::new(arg_ty, arg)));
+        new_spine.push(Eliminator::application(Normal::new(arg_ty, arg), icit));
         Value::rigid_rc(self.head.clone(), new_spine, result_ty)
     }
 }
@@ -417,10 +423,12 @@ impl<'db> QuoteNeutral<'db> for Flex<'db> {
         arg: RcValue<'db>,
         arg_ty: RcValue<'db>,
         result_ty: RcValue<'db>,
+        icit: crate::common::Icit,
     ) -> RcValue<'db> {
         // Flex applied to an argument: extend the spine
+        // The correct Icit comes from the Pi type during eta-expansion
         let mut new_spine = self.spine.clone();
-        new_spine.push(Eliminator::application(Normal::new(arg_ty, arg)));
+        new_spine.push(Eliminator::application(Normal::new(arg_ty, arg), icit));
         Value::flex_rc(self.head.clone(), new_spine, result_ty)
     }
 }
@@ -468,7 +476,7 @@ pub fn type_quote<'db>(
 
         // NEW: Type codes (types as first-class terms)
         Value::UniverseCode(level) => quote_universe_code(global, depth, *level),
-        Value::PiCode(source, target) => quote_pi_code(global, depth, source, target),
+        Value::PiCode(source, icit, target) => quote_pi_code(global, depth, source, *icit, target),
         Value::LiftCode(shift, inner_val) => {
             let quoted_inner = type_quote(global, depth, inner_val)?;
             Ok(Rc::new(Syntax::LiftCode(*shift, quoted_inner)))
@@ -503,6 +511,7 @@ pub fn quote_pi_code<'db>(
     global: &GlobalEnv<'db>,
     depth: usize,
     source: &RcValue<'db>,
+    icit: crate::common::Icit,
     target: &Closure<'db>,
 ) -> Result<'db, RcSyntax<'db>> {
     // Quote the source type code
@@ -514,7 +523,8 @@ pub fn quote_pi_code<'db>(
     let sem_target = run_closure(global, target, [arg])?;
     let syn_target = type_quote(global, depth + 1, &sem_target)?;
 
-    Ok(Rc::new(Syntax::PiCode(syn_source, Binding(syn_target))))
+    // PRESERVE Icit
+    Ok(Rc::new(Syntax::PiCode(syn_source, icit, Binding(syn_target))))
 }
 
 /// Quote a BitCode to syntax.
@@ -669,7 +679,8 @@ pub fn quote_lambda<'db>(
     // Quote the body at the result type
     let syn_body = quote(global, depth + 1, &body_val, &result_ty)?;
 
-    Ok(Syntax::lambda_rc(Binding(syn_body)))
+    // PRESERVE Icit from lambda
+    Ok(Syntax::lambda_rc(lambda.icit, Binding(syn_body)))
 }
 
 /// Quote a Module to syntax, using its HArrow type.
@@ -800,7 +811,8 @@ fn quote_eliminator<'db>(
     match eliminator {
         Eliminator::Application(app) => {
             let syn_arg = quote_normal(global, depth, &app.argument)?;
-            Ok(Syntax::application_rc(head, syn_arg))
+            // PRESERVE Icit from eliminator
+            Ok(Syntax::application_rc(head, syn_arg, app.icit))
         }
         Eliminator::Case(case) => quote_case_eliminator(global, depth, head, case),
     }
@@ -907,7 +919,7 @@ fn quote_transport<'db>(
     let var = Value::variable_rc(Level::new(depth), eq.ty.clone());
     let motive_result = run_closure(global, &transport.motive, vec![var])?;
     let motive_body = type_quote(global, depth + 1, &motive_result)?;
-    let motive = Syntax::lambda_rc(Binding(motive_body));
+    let motive = Syntax::lambda_rc(Icit::Explicit, Binding(motive_body));
 
     // Quote the proof at the equality type
     let eq_ty = Value::eq_rc(eq.ty.clone(), eq.lhs.clone(), eq.rhs.clone());
@@ -1019,7 +1031,7 @@ mod tests {
         /// Create ∀ (x : U0) → U0 Pi type
         fn pi_u0_u0(&self) -> Value<'db> {
             let u0_stx: RcSyntax = Syntax::UniverseCode(0).into();
-            Value::PiCode(self.u0(), Closure::new(LocalEnv::new(), u0_stx))
+            Value::PiCode(self.u0(), Icit::Explicit, Closure::new(LocalEnv::new(), u0_stx))
         }
 
         /// Create identity closure (returns variable at index 0)
@@ -1319,10 +1331,11 @@ mod tests {
         // ∀ (A : U0) → ∀ (x : A) → A
         let inner: RcSyntax = Syntax::PiCode(
             Syntax::variable_rc(Index(0)),          // domain is A
+            Icit::Explicit,
             Binding(Syntax::variable_rc(Index(1))), // codomain is A
         )
         .into();
-        let outer: RcValue = Value::PiCode(c.u0(), Closure::new(LocalEnv::new(), inner)).into();
+        let outer: RcValue = Value::PiCode(c.u0(), Icit::Explicit, Closure::new(LocalEnv::new(), inner)).into();
         // Note: Nested Pi types print with separate arrows
         assert_eq!(c.tq(&outer), "∀ (%0 : 𝒰0) → ∀ (%1 : %0) → %0");
     }
@@ -1480,7 +1493,7 @@ mod tests {
         let bool_type = parse_syntax(&db, "#[@Bool]").expect("parse bool type");
         let mut env_ty = Environment::new(&global);
         let bool_val = eval::eval(&mut env_ty, &bool_type).expect("eval bool type");
-        let fn_type = Value::PiCode(bool_val.clone(), Closure::new(LocalEnv::new(), bool_type));
+        let fn_type = Value::PiCode(bool_val.clone(), Icit::Explicit, Closure::new(LocalEnv::new(), bool_type));
 
         // Quote it back at its type
         let quoted = quote(&global, 0, &val, &fn_type).expect("quote failed");
@@ -1520,7 +1533,7 @@ mod tests {
         let nat_type = parse_syntax(&db, "#[@Nat]").expect("parse nat type");
         let mut env_ty = Environment::new(&global);
         let nat_val = eval::eval(&mut env_ty, &nat_type).expect("eval nat type");
-        let fn_type = Value::PiCode(nat_val.clone(), Closure::new(LocalEnv::new(), nat_type));
+        let fn_type = Value::PiCode(nat_val.clone(), Icit::Explicit, Closure::new(LocalEnv::new(), nat_type));
 
         // Quote it back at its type
         let quoted = quote(&global, 0, &val, &fn_type).expect("quote failed");
@@ -1658,5 +1671,42 @@ mod tests {
             "Nested LiftCode printing failed! Got: {}",
             printed
         );
+    }
+
+    #[test]
+    fn test_quote_eta_expansion_implicit() {
+        use crate::common::Icit;
+        let db = TestDatabase::default();
+        let c = Ctx::new(&db);
+
+        // 1. Create a Pi type: {A : U0} -> A (implicit function)
+        let u0: RcValue = Value::UniverseCode(0).into();
+        let u0_stx: RcSyntax = Syntax::UniverseCode(0).into();
+        let pi_type = Rc::new(Value::PiCode(
+            u0.clone(),
+            Icit::Implicit,
+            Closure::new(LocalEnv::new(), Syntax::variable_rc(Index(0))),
+        ));
+
+        // 2. Create a Neutral/Rigid variable with this implicit Pi type
+        let neutral_var = Value::variable(Level::new(0), pi_type.clone());
+
+        // 3. Quote it at its type (triggers eta-expansion)
+        let quoted = quote(&c.global, 0, &neutral_var, &pi_type).expect("Quotation failed");
+
+        // 4. Verify the resulting Syntax is a Lambda with an Implicit flag
+        match quoted.as_ref() {
+            Syntax::Lambda(lam) => {
+                assert_eq!(
+                    lam.icit,
+                    Icit::Implicit,
+                    "Eta-expansion dropped the Implicit flag!"
+                );
+            }
+            _ => panic!(
+                "Expected eta-expansion to produce a Lambda, got {:?}",
+                quoted
+            ),
+        }
     }
 }
